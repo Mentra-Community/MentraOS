@@ -310,7 +310,8 @@ A customer runs Call under its own package name and backend with one setting,
 `DEPLOYMENT_MINIAPP_VARIANTS`. Runtime stamps the pinned Call ZIP from the image
 and serves it, with its manifest entry, under the customer's package name, so the
 image stays Mentra's. Setup prints the `PACKAGE_NAME` and `PUBLIC_BASE_URL` the
-customer's Call backend needs from the same pair, and its smoke test expects Call
+customer's Call backend needs from the same pair, and the `MENTRA_CORE_URL` (this
+deployment's Core) it trusts tokens from, and its smoke test expects Call
 under the variant's name. This reference deploys no miniapp backend, so the
 customer runs Mentra's Call backend image themselves. Leaving `miniappVariants`
 empty, as Mentra's own deployments do, serves Mentra's Call unchanged. Only a Call

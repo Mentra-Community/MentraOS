@@ -811,6 +811,9 @@ class InstallerTests(unittest.TestCase):
             'com.acme.call': dict(PACKAGE_NAME='com.acme.call', PUBLIC_BASE_URL='https://call.acme.example'),
             'com.mentra.enterprise': dict(PACKAGE_NAME='com.mentra.enterprise', PUBLIC_BASE_URL='https://demo.acme.example'),
         })
+        self.assertEqual(setup.miniapp_backend_environments(config, 'https://core.acme.example')['com.acme.call'], dict(
+            PACKAGE_NAME='com.acme.call', PUBLIC_BASE_URL='https://call.acme.example',
+            MENTRA_CORE_URL='https://core.acme.example'))
         self.assertEqual(setup.miniapp_backend_environments({}), {})
         self.assertIn('miniappVariants', setup.RESTORED_KEYS)
 

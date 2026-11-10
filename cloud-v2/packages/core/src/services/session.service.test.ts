@@ -84,6 +84,21 @@ describe("Core JWKS", () => {
   })
 })
 
+describe("issueMiniappToken issuer", () => {
+  const issuer = async () => {
+    setSigningEnv()
+    const {token} = await issueMiniappToken({mentraUserId: "mu_01TEST", tenantId: "mentra", packageName: "com.mentra.notes"})
+    return jose.decodeJwt(token).iss
+  }
+
+  test("names this Core by CLOUD_CORE_ISSUER, cloud-core by default", async () => {
+    delete process.env.CLOUD_CORE_ISSUER
+    expect(await issuer()).toBe("cloud-core")
+    process.env.CLOUD_CORE_ISSUER = "https://core.workspace.example"
+    expect(await issuer()).toBe("https://core.workspace.example")
+  })
+})
+
 describe("issueMiniappToken features", () => {
   const issue = async (features?: string[]) => {
     setSigningEnv()

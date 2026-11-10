@@ -468,6 +468,8 @@ The pair is applied in two places, always together:
 - **Backend.** Run Mentra's backend image with `PACKAGE_NAME` set to your
   package name and its public URL (`PUBLIC_BASE_URL` for Mentra Call) set to
   `backendUrl`, injected however your platform provides environment variables.
+  Set `MENTRA_CORE_URL` to your Core's public URL: Mentra's backends trust
+  tokens from exactly that Core and refuse to start without it.
   The backend logs both at startup, and warns when `PACKAGE_NAME` differs from
   the miniapp's own name, since tokens for that name are then rejected.
 
@@ -498,7 +500,8 @@ docker run --rm -v "$PWD:/work" -w /work <mentra-cloud-image> \
 
 It writes `com.acme.call-2.1.62.zip` and prints the managed entry's
 `packageName`, `version` and `sha256` (add your `bundleUrl`), and the
-`PACKAGE_NAME` and `PUBLIC_BASE_URL` for the backend. Stamp each new Mentra
+`PACKAGE_NAME` and `PUBLIC_BASE_URL` for the backend, which also needs
+`MENTRA_CORE_URL`. Stamp each new Mentra
 release of the ZIP the same way.
 
 A renamed miniapp is a different package to Core: licensed features and Fleet

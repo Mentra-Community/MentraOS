@@ -26,6 +26,7 @@ import {startReportReconciliation} from "./services/report-reconciliation"
 import {assertSupabaseApiKeys} from "./services/account/gotrue.client"
 import {assertSigninConfiguration} from "./services/signin/config"
 import {assertOidcConfiguration} from "./services/oidc/startup"
+import {assertCoreIssuerConfiguration} from "./services/core-issuer"
 import {stopOidcBridge} from "./services/oidc/bridge"
 import {assertOrganizationConfiguration} from "./services/workspaces/organization"
 import {registerAfterSignInHook} from "./services/oidc/interactions"
@@ -54,6 +55,8 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   assertSupabaseApiKeys()
   // A malformed workspace setting (CLOUD_CORE_WORKSPACE_CREATION) stops Core here, not at the first request.
   assertOrganizationConfiguration()
+  // Every token names this Core by its issuer; one a miniapp backend can't match would fail them all.
+  assertCoreIssuerConfiguration()
   await connectMongo(mongoUrl)
   try {
     await runStartupMigrations()

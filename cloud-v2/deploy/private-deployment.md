@@ -46,7 +46,7 @@ repository.
 | `MENTRA_JWT_PUBLIC_KEY` | Public verification material | Matching Ed25519 SPKI body. |
 | `MENTRA_MINIAPP_JWT_PRIVATE_KEY` | Secret | Separate Ed25519 PKCS#8 body for miniapp tokens. |
 | `MENTRA_MINIAPP_JWT_PUBLIC_KEY` | Public verification material | Matching Ed25519 SPKI body. |
-| `CLOUD_CORE_ISSUER` | Public | Deployment-unique HTTPS Core origin. |
+| `CLOUD_CORE_ISSUER` | Public | Deployment-unique HTTPS Core origin, written exactly (no trailing slash): Core names itself by it in every token, and miniapp backends bound to this Core (`MENTRA_CORE_URL`, the same origin) accept it. |
 | `CLOUD_CORE_OIDC_PROVIDERS` | Public | Explicitly trusted workforce OIDC providers as JSON. |
 | `CLOUD_CORE_ADMIN_EMAILS` | Public | Organization Admins: comma-separated emails, verified by the provider (see below). |
 | `CLOUD_CORE_ADMIN_PORTAL_URL` | Public | The admin portal's HTTPS origin; Core's own origin when Core serves the portal. |

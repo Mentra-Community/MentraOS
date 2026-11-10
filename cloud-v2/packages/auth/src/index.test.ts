@@ -3,6 +3,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import * as jose from "jose";
 
 import {
+  LEGACY_CORE_ISSUER,
   MENTRA_JWKS_URLS,
   MentraAuthError,
   createMentraAuth,
@@ -283,6 +284,124 @@ describe("@mentra/auth multi-environment JWKS fallback", () => {
     expect(mentraJwksUrls()).toEqual(MENTRA_JWKS_URLS);
     expect(mentraJwksUrls()).toHaveLength(4);
     expect(mentraJwksUrl()).toBe(MENTRA_JWKS_URLS[0]);
+  });
+});
+
+describe("Core binding", () => {
+  const origin = (core: TestCore) => core.server.url.origin;
+  const configurationError = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (error) {
+      expect(error).toBeInstanceOf(MentraAuthError);
+      return (error as MentraAuthError).code;
+    }
+    throw new Error("expected a configuration error");
+  };
+
+  test("accepts a token whose issuer names the bound Core", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, coreUrl: origin(prodCore) });
+    const verified = await auth.verifyToken(await mintCoreToken(prodCore, { issuer: origin(prodCore) }));
+    expect(verified.mentraUserId).toBe("user_core");
+    expect(auth.coreUrl).toBe(origin(prodCore));
+  });
+
+  test("accepts the legacy issuer from the bound Core's own key set", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, coreUrl: origin(prodCore) });
+    const verified = await auth.verifyToken(await mintCoreToken(prodCore, { issuer: LEGACY_CORE_ISSUER }));
+    expect(verified.mentraUserId).toBe("user_core");
+  });
+
+  test("derives the key set from the Core URL, and normalizes it to its origin", () => {
+    expect(mentraJwksUrls({ coreUrl: `${origin(devCore)}/` })).toEqual([devCore.jwksUrl]);
+    expect(createMentraAuth({ packageName: TEST_PACKAGE, coreUrl: ` ${origin(devCore)}/ ` }).coreUrl).toBe(
+      origin(devCore),
+    );
+  });
+
+  test("rejects another Core's token, whatever issuer it names", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, coreUrl: origin(prodCore) });
+    for (const issuer of [origin(devCore), origin(prodCore), LEGACY_CORE_ISSUER]) {
+      await expect(auth.verifyToken(await mintCoreToken(devCore, { issuer }))).rejects.toBeInstanceOf(MentraAuthError);
+    }
+  });
+
+  test("rejects the bound Core's token when it names another Core", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, coreUrl: origin(prodCore) });
+    for (const issuer of [origin(stagingCore), "https://core.mentraglass.com.evil.example", "mentra"]) {
+      await expect(auth.verifyToken(await mintCoreToken(prodCore, { issuer }))).rejects.toThrow(/iss/);
+    }
+  });
+
+  test("reads MENTRA_CORE_URL, and the option wins over it", async () => {
+    await withEnv({ MENTRA_CORE_URL: origin(stagingCore) }, async () => {
+      const fromEnv = createMentraAuth({ packageName: TEST_PACKAGE });
+      expect(fromEnv.coreUrl).toBe(origin(stagingCore));
+      expect(mentraJwksUrls()).toEqual([stagingCore.jwksUrl]);
+      await expect(
+        fromEnv.verifyToken(await mintCoreToken(stagingCore, { issuer: origin(stagingCore) })),
+      ).resolves.toMatchObject({ mentraUserId: "user_core" });
+      await expect(
+        fromEnv.verifyToken(await mintCoreToken(prodCore, { issuer: origin(prodCore) })),
+      ).rejects.toBeInstanceOf(MentraAuthError);
+
+      const fromOption = createMentraAuth({ packageName: TEST_PACKAGE, coreUrl: origin(prodCore) });
+      expect(fromOption.coreUrl).toBe(origin(prodCore));
+    });
+  });
+
+  test("refuses to combine a binding with the settings it replaces", async () => {
+    const coreUrl = origin(prodCore);
+    for (const options of [{ jwksUrl: devCore.jwksUrl }, { jwksUrls: [devCore.jwksUrl] }, { issuer: "cloud-core" }]) {
+      expect(configurationError(() => createMentraAuth({ packageName: TEST_PACKAGE, coreUrl, ...options }))).toBe(
+        "invalid_configuration",
+      );
+    }
+    for (const name of ["MENTRA_AUTH_JWKS_URLS", "MENTRA_AUTH_JWKS_URL", "MENTRA_AUTH_ISSUERS", "MENTRA_AUTH_ISSUER"]) {
+      await withEnv({ MENTRA_CORE_URL: coreUrl, [name]: "cloud-core" }, async () => {
+        expect(() => createMentraAuth({ packageName: TEST_PACKAGE })).toThrow(name);
+      });
+    }
+  });
+
+  test("refuses a Core URL that isn't an origin", () => {
+    for (const coreUrl of ["core.mentraglass.com", "https://core.mentraglass.com/api", "https://core.mentraglass.com/?x", "ftp://core.mentraglass.com"]) {
+      expect(configurationError(() => createMentraAuth({ packageName: TEST_PACKAGE, coreUrl }))).toBe(
+        "invalid_configuration",
+      );
+    }
+  });
+
+  test("requireCoreUrl refuses to start unbound, and is met by MENTRA_CORE_URL", async () => {
+    await withEnv({ MENTRA_AUTH_JWKS_URLS: MENTRA_JWKS_URLS.join(",") }, async () => {
+      expect(() => createMentraAuth({ packageName: TEST_PACKAGE, requireCoreUrl: true })).toThrow("MENTRA_CORE_URL");
+    });
+    await withEnv({ MENTRA_CORE_URL: origin(prodCore) }, async () => {
+      expect(createMentraAuth({ packageName: TEST_PACKAGE, requireCoreUrl: true }).coreUrl).toBe(origin(prodCore));
+    });
+  });
+
+  test("leaves an unbound verifier as it was: explicit lists, env lists and the all-Cores default", async () => {
+    const explicit = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: [prodCore.jwksUrl, devCore.jwksUrl] });
+    expect(explicit.coreUrl).toBeUndefined();
+    await expect(explicit.verifyToken(await mintCoreToken(devCore))).resolves.toMatchObject({ mentraUserId: "user_core" });
+    // Each key set also accepts its own Core's name, so a Core that names itself breaks no unbound verifier,
+    // while a token never passes under another Core's name.
+    await expect(
+      explicit.verifyToken(await mintCoreToken(devCore, { issuer: origin(devCore) })),
+    ).resolves.toMatchObject({ mentraUserId: "user_core" });
+    await expect(explicit.verifyToken(await mintCoreToken(devCore, { issuer: origin(prodCore) }))).rejects.toThrow(/iss/);
+    const listed = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: [prodCore.jwksUrl], issuer: ["cloud-core", "mentra"] });
+    await expect(
+      listed.verifyToken(await mintCoreToken(prodCore, { issuer: origin(prodCore) })),
+    ).resolves.toMatchObject({ mentraUserId: "user_core" });
+    await expect(listed.verifyToken(await mintCoreToken(prodCore, { issuer: "https://elsewhere.example" }))).rejects.toThrow(/iss/);
+    await withEnv({ MENTRA_AUTH_JWKS_URLS: `${stagingCore.jwksUrl},${devCore.jwksUrl}` }, async () => {
+      expect(mentraJwksUrls()).toEqual([stagingCore.jwksUrl, devCore.jwksUrl]);
+    });
+    await withEnv({}, async () => {
+      expect(mentraJwksUrls()).toEqual(MENTRA_JWKS_URLS);
+    });
   });
 });
 
@@ -953,7 +1072,14 @@ async function mintCoreToken(
 
 /** Run `fn` with these environment variables set, restoring the previous values after. */
 async function withEnv(vars: Record<string, string>, fn: () => Promise<void>): Promise<void> {
-  const names = ["MENTRA_AUTH_JWKS_URL", "MENTRA_AUTH_JWKS_URLS", "MENTRA_AUTH_ALLOW_LOCAL_BUILDS"];
+  const names = [
+    "MENTRA_AUTH_JWKS_URL",
+    "MENTRA_AUTH_JWKS_URLS",
+    "MENTRA_AUTH_ISSUER",
+    "MENTRA_AUTH_ISSUERS",
+    "MENTRA_AUTH_ALLOW_LOCAL_BUILDS",
+    "MENTRA_CORE_URL",
+  ];
   const previous = new Map(names.map((name) => [name, process.env[name]]));
   for (const name of names) delete process.env[name];
   Object.assign(process.env, vars);

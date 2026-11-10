@@ -2496,13 +2496,15 @@ def print_teams(teams):
           f'Switch to PowerShell: & {path}  (send them the file if they use their own Cloud Shell).')
 
 
-def miniapp_backend_environments(config):
-    """The environment each customer variant's backend needs: the same pair its bundle is stamped with."""
+def miniapp_backend_environments(config, core=''):
+    """The environment each customer variant's backend needs: the same pair its bundle is stamped with, and the
+    Core it trusts tokens from (MENTRA_CORE_URL), without which Mentra's backends refuse to start."""
     environments = {}
     for source, variant in sorted((config.get('miniappVariants') or {}).items()):
         name = (variant.get('packageName') or '').strip() or source
         url = (variant.get('backendUrl') or '').strip().rstrip('/')
-        environments[name] = dict(PACKAGE_NAME=name, **({'PUBLIC_BASE_URL': url} if url else {}))
+        environments[name] = dict(PACKAGE_NAME=name, **({'PUBLIC_BASE_URL': url} if url else {}),
+                                  **({'MENTRA_CORE_URL': core} if core else {}))
     return environments
 
 
@@ -2541,7 +2543,7 @@ def finish(directory, result):
             if (directory / 'teams-policy.ps1').exists() and state.get('teamsPolicyApplied') != config['teamsGraphClientId']:
                 print(f"Still to do - Teams policy: a Teams administrator runs {directory / 'teams-policy.ps1'} once "
                       '(Cloud Shell, Switch to PowerShell), or run configure-teams again as one.')
-    for name, environment in miniapp_backend_environments(config).items():
+    for name, environment in miniapp_backend_environments(config, state.get('outputs', {}).get('coreOrigin', '')).items():
         settings = ' '.join(f'{key}={value}' for key, value in environment.items())
         print(f'Backend of {name}: run Mentra\'s backend image for it with {settings}')
     for handoff in state.get('handoffs') or []:

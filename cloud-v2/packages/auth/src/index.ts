@@ -6,6 +6,10 @@ import * as jose from "jose";
  * the same `kid`s with different key material, so we cannot pick the right key
  * by `kid` alone. Verification tries each endpoint in order and accepts the
  * first whose key validates the signature. See docs/issues/017.
+ *
+ * Deprecated as a default: a backend that trusts every Core accepts a dev or
+ * staging token for a production user. Bind it to its own Core instead
+ * ({@link MentraAuthOptions.coreUrl}, `MENTRA_CORE_URL`); see CORE-BINDING.md.
  */
 export const MENTRA_JWKS_URLS = [
   "https://core.mentraglass.com/.well-known/jwks.json", // prod
@@ -13,7 +17,17 @@ export const MENTRA_JWKS_URLS = [
   "https://core.dev.us-west-2.mentraglass.com/.well-known/jwks.json", // dev
   "https://core.debug.us-west-2.mentraglass.com/.well-known/jwks.json", // debug
 ];
-const DEFAULT_ISSUER = "cloud-core";
+/**
+ * Core's default issuer (`CLOUD_CORE_ISSUER` unset). A Core may instead name
+ * itself by its origin. A Core-bound verifier accepts either, but only from
+ * that Core's key set, so tokens minted before a Core switched still verify.
+ */
+export const LEGACY_CORE_ISSUER = "cloud-core";
+const DEFAULT_ISSUER = LEGACY_CORE_ISSUER;
+/** Where a Core publishes its key set, under its public URL. */
+const CORE_JWKS_PATH = "/.well-known/jwks.json";
+/** Settings that pick key sets or issuers themselves, so a Core binding can't be combined with them. */
+const UNBOUND_ENV_KEYS = ["MENTRA_AUTH_JWKS_URLS", "MENTRA_AUTH_JWKS_URL", "MENTRA_AUTH_ISSUERS", "MENTRA_AUTH_ISSUER"] as const;
 const DEFAULT_CLOCK_TOLERANCE = "2 minutes";
 const DEFAULT_ALGORITHMS = ["EdDSA"] as const;
 /**
@@ -47,9 +61,10 @@ export interface VerifiedMentraAuth {
    * a feature.
    *
    * The claim is honored from any key set this verifier trusts, because the
-   * token's signature is what vouches for it. By default that is every Mentra
-   * Core (prod, staging, dev and debug); a Private Cloud backend configured
-   * with its own JWKS URL honors only that Core. There is no feature setting.
+   * token's signature is what vouches for it. A backend bound to its Core
+   * ({@link MentraAuthOptions.coreUrl}) honors only that Core; an unbound one,
+   * by default, every Mentra Core (prod, staging, dev and debug). There is no
+   * feature setting.
    */
   features: string[];
   /**
@@ -84,6 +99,22 @@ export interface MentraAuthOptions {
    */
   packageName?: string;
   /**
+   * The public URL of the one Core this backend serves, such as
+   * `https://core.mentraglass.com`: an origin, with no path. Only that Core's
+   * key set (`<coreUrl>/.well-known/jwks.json`) is tried, and a token's `iss`
+   * must name that Core, or be the legacy `cloud-core` from that key set.
+   * Defaults to `MENTRA_CORE_URL`. It replaces `jwksUrl`, `jwksUrls` and
+   * `issuer`, and their environment variables: combining them is refused with
+   * `invalid_configuration`. See CORE-BINDING.md.
+   */
+  coreUrl?: string;
+  /**
+   * Refuse to start without a Core binding ({@link coreUrl} or
+   * `MENTRA_CORE_URL`), rather than fall back to the JWKS settings or every
+   * Mentra Core. Off by default.
+   */
+  requireCoreUrl?: boolean;
+  /**
    * Explicit single JWKS URL. Overrides the built-in Mentra environment list and
    * disables fallback (only this URL is tried). Use for local or self-hosted Core.
    */
@@ -95,7 +126,9 @@ export interface MentraAuthOptions {
    */
   jwksUrls?: string[];
   /**
-   * Expected token issuer.
+   * Expected token issuer. A key set served at `<origin>/.well-known/jwks.json`
+   * also accepts its own Core's name, `<origin>`, which a Core puts in its
+   * tokens when its `CLOUD_CORE_ISSUER` is its origin.
    */
   issuer?: string | string[];
   /**
@@ -207,6 +240,8 @@ export class MentraAuthError extends Error {
 }
 
 export class MentraAuth {
+  /** The Core this verifier is bound to, as an origin, or undefined when it isn't bound to one. */
+  readonly coreUrl: string | undefined;
   private readonly packageName: string;
   private readonly issuer: string | string[];
   private readonly algorithms: string[];
@@ -214,17 +249,21 @@ export class MentraAuth {
   private readonly clockTolerance: string | number;
   private readonly jwksUrls: string[];
   private readonly jwksSets: ReturnType<typeof jose.createRemoteJWKSet>[];
+  /** The issuers accepted from each key set: the configured ones, and the key set's own Core. */
+  private readonly jwksIssuers: string[][];
   private readonly allowLocalBuilds: boolean;
 
   constructor(options: MentraAuthOptions = {}) {
     this.packageName = resolvePackageName(options.packageName);
     this.allowLocalBuilds =
       options.allowLocalBuilds ?? env("MENTRA_AUTH_ALLOW_LOCAL_BUILDS")?.toLowerCase() === "true";
-    this.issuer = resolveIssuer(options.issuer);
+    const trust = resolveTrust(options);
+    this.coreUrl = trust.coreUrl;
+    this.issuer = trust.issuer;
     this.algorithms = options.algorithms ?? [...DEFAULT_ALGORITHMS];
     this.keyIds = new Set(options.keyIds ?? DEFAULT_KEY_IDS);
     this.clockTolerance = options.clockTolerance ?? DEFAULT_CLOCK_TOLERANCE;
-    this.jwksUrls = resolveJwksUrls(options);
+    this.jwksUrls = trust.jwksUrls;
     const remoteOptions = {
       timeoutDuration: options.timeoutMs ?? 5_000,
       cacheMaxAge: options.cacheMaxAgeMs,
@@ -233,6 +272,11 @@ export class MentraAuth {
     this.jwksSets = this.jwksUrls.map((url) =>
       jose.createRemoteJWKSet(new URL(url), remoteOptions),
     );
+    const configured = Array.isArray(this.issuer) ? this.issuer : [this.issuer];
+    this.jwksIssuers = this.jwksUrls.map((url) => {
+      const core = keySetCore(url);
+      return core && !configured.includes(core) ? [...configured, core] : [...configured];
+    });
   }
 
   async verifyToken(token: string): Promise<VerifiedMentraAuth> {
@@ -358,7 +402,6 @@ export class MentraAuth {
       throw new MentraAuthError("miniapp token rejected: unexpected token type");
     }
     const verifyOptions = {
-      issuer: this.issuer,
       audience: this.packageName,
       algorithms: this.algorithms,
       clockTolerance: this.clockTolerance,
@@ -368,7 +411,7 @@ export class MentraAuth {
     for (let i = 0; i < this.jwksSets.length; i++) {
       const isLast = i === this.jwksSets.length - 1;
       try {
-        const result = await jose.jwtVerify(token, this.jwksSets[i], verifyOptions);
+        const result = await jose.jwtVerify(token, this.jwksSets[i], { ...verifyOptions, issuer: this.jwksIssuers[i] });
         return result.payload;
       } catch (err) {
         if (isKeyMismatchError(err) && !isLast) {
@@ -428,7 +471,7 @@ export function mentraSignInChallenge(packageName: string): string {
   return `Bearer realm="${SIGN_IN_REALM}", package="${packageName}"`;
 }
 
-type JwksUrlOptions = Pick<MentraAuthOptions, "jwksUrl" | "jwksUrls">;
+type JwksUrlOptions = Pick<MentraAuthOptions, "jwksUrl" | "jwksUrls" | "coreUrl">;
 
 /**
  * The first JWKS URL that would be tried for these options (the production
@@ -441,10 +484,39 @@ export function mentraJwksUrl(options: JwksUrlOptions = {}): string {
 
 /**
  * The full ordered list of JWKS URLs that verification will try for these
- * options. Defaults to {@link MENTRA_JWKS_URLS} (all Mentra environments).
+ * options: the bound Core's key set alone, or else the JWKS settings, which
+ * default to {@link MENTRA_JWKS_URLS} (all Mentra environments).
  */
 export function mentraJwksUrls(options: JwksUrlOptions = {}): string[] {
   return resolveJwksUrls(options);
+}
+
+/**
+ * A Core's public URL as the origin tokens name it by, such as
+ * `https://core.mentraglass.com`. Refuses anything that isn't an HTTP(S)
+ * origin, since its key set and issuer are derived from it.
+ */
+export function mentraCoreOrigin(coreUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(coreUrl.trim());
+  } catch {
+    throw new MentraAuthError("the Core URL must be a URL, such as https://core.mentraglass.com", "invalid_configuration");
+  }
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== "/"
+  ) {
+    throw new MentraAuthError(
+      "the Core URL must be an origin, with no path, query or fragment, such as https://core.mentraglass.com",
+      "invalid_configuration",
+    );
+  }
+  return url.origin;
 }
 
 function resolvePackageName(packageName?: string): string {
@@ -459,7 +531,70 @@ function resolvePackageName(packageName?: string): string {
   return value;
 }
 
+interface Trust {
+  coreUrl?: string;
+  jwksUrls: string[];
+  issuer: string | string[];
+}
+
+/**
+ * Which key sets and issuers to trust. A Core binding (`coreUrl`, or else
+ * `MENTRA_CORE_URL`) trusts that Core alone, and refuses the settings it
+ * replaces rather than pick between them. Without one, the JWKS and issuer
+ * settings apply as before, unless `requireCoreUrl` asks for a binding.
+ */
+function resolveTrust(options: MentraAuthOptions): Trust {
+  const coreUrl = coreBinding(options);
+  if (!coreUrl) {
+    if (options.requireCoreUrl) {
+      throw new MentraAuthError(
+        "this backend needs its Core: set MENTRA_CORE_URL to the public URL of the Core it serves, such as https://core.mentraglass.com",
+        "invalid_configuration",
+      );
+    }
+    return { jwksUrls: resolveJwksUrls(options), issuer: resolveIssuer(options.issuer) };
+  }
+  const conflicting = [
+    ...(options.jwksUrls?.length ? ["jwksUrls"] : []),
+    ...(options.jwksUrl ? ["jwksUrl"] : []),
+    ...(options.issuer !== undefined ? ["issuer"] : []),
+    ...UNBOUND_ENV_KEYS.filter((name) => env(name)),
+  ];
+  if (conflicting.length > 0) {
+    throw new MentraAuthError(
+      `a backend bound to its Core trusts that Core's key set and issuer only: remove ${conflicting.join(", ")}`,
+      "invalid_configuration",
+    );
+  }
+  return { coreUrl, jwksUrls: [`${coreUrl}${CORE_JWKS_PATH}`], issuer: [coreUrl, LEGACY_CORE_ISSUER] };
+}
+
+/**
+ * The Core a key set belongs to, when it is served where a Core serves its own
+ * (`<origin>/.well-known/jwks.json`). A Core whose `CLOUD_CORE_ISSUER` is that
+ * origin names itself by it in its tokens, so the name is accepted from that key set alone, whatever
+ * issuers are configured: a token signed by one Core can never pass under
+ * another Core's name.
+ */
+function keySetCore(jwksUrl: string): string | undefined {
+  try {
+    const url = new URL(jwksUrl);
+    return url.pathname === CORE_JWKS_PATH && !url.search && !url.hash ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function coreBinding(options: Pick<MentraAuthOptions, "coreUrl">): string | undefined {
+  const coreUrl = options.coreUrl?.trim() || env("MENTRA_CORE_URL");
+  return coreUrl ? mentraCoreOrigin(coreUrl) : undefined;
+}
+
 function resolveJwksUrls(options: JwksUrlOptions): string[] {
+  const coreUrl = coreBinding(options);
+  if (coreUrl) {
+    return [`${coreUrl}${CORE_JWKS_PATH}`];
+  }
   if (options.jwksUrls && options.jwksUrls.length > 0) {
     return [...options.jwksUrls];
   }
