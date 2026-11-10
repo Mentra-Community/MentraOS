@@ -4,13 +4,16 @@ import {
   CAPTION_TIMEOUT_OPTIONS_SECONDS,
   DEFAULT_CAPTION_TIMEOUT_SECONDS,
   type CaptionPosition,
+  type OfflineModelStatus,
 } from "../../shared/types"
 import type {CaptionSettings} from "../hooks/useSettings"
 import {DisplayPreview} from "../hooks/useTranscripts"
+import {OfflineModelNotice} from "./OfflineModelNotice"
 
 interface SettingsProps {
   settings: CaptionSettings | null
   canPosition: boolean
+  offlineModelStatus: OfflineModelStatus | null
   displayPreview: DisplayPreview | null
   accentColor?: string
   accentForeground?: string
@@ -25,6 +28,7 @@ interface SettingsProps {
 export function Settings({
   settings,
   canPosition,
+  offlineModelStatus,
   displayPreview,
   accentColor = "#6DAEA6",
   accentForeground = "#FFFFFF",
@@ -176,6 +180,7 @@ export function Settings({
               />
             </button>
           </div>
+          <OfflineModelNotice enabled={useOfflineStt} status={offlineModelStatus} className="mt-3" />
         </div>
       </div>
 

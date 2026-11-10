@@ -19,6 +19,7 @@ import type {
   CloudClientStatus,
   DisplayPreview,
   LiveTranscript,
+  OfflineModelStatus,
   Transcript,
 } from "./types"
 
@@ -39,6 +40,8 @@ export interface Channels {
   "captions:display-capabilities": CaptionsDisplayCapabilities
   /** Phone-owned cloud-client status update. */
   "captions:cloud-status": CloudClientStatus
+  /** On-device speech model state, for offline captions. */
+  "captions:offline-model-status": OfflineModelStatus
 
   // ── UI → background ────────────────────────────────────────────────────
 

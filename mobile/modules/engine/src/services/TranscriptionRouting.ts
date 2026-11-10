@@ -130,15 +130,20 @@ export function needsCloud(
 }
 
 /**
- * Whether the listener needs the on-device recognizer running. preferLocal
- * asks for it whenever the picked model transcribes its language, which is
- * what starts (and, when missing, downloads) that model.
+ * Whether the listener needs the on-device recognizer running, which is what
+ * starts (and, when missing, downloads) the picked model. A listener in
+ * another language than that model's never needs it: it would only produce
+ * text nobody receives. Otherwise localOnly always does, every listener does
+ * while the cloud is down, a listener still on-device does until it switches
+ * away, and preferLocal does when the picked model serves it, hints included.
  */
 export function needsLocal(
   listener: RoutedListener,
   source: TranscriptionSource | null,
   state: TranscriptionRoutingState,
 ): boolean {
+  // Language only: hints decide where preferLocal starts, not whether a listener may finish on-device.
+  if (!onDeviceServes(listener, state.pickedLanguage, [])) return false
   if (source === "local" || listener.processing === "localOnly" || !state.cloudConnected) return true
   return (
     listener.processing === "preferLocal" &&

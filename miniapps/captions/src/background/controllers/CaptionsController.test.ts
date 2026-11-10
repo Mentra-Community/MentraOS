@@ -246,3 +246,49 @@ describe("CaptionsController offline speech to text", () => {
     expect(forLanguage.mock.calls[0]?.[2]).toEqual({processing: "localOnly"})
   })
 })
+
+describe("CaptionsController offline model status", () => {
+  test("forwards the phone's on-device model state to the UI and keeps it for the snapshot", () => {
+    let report: (status: unknown) => void = () => {}
+    const send = mock(() => {})
+    const controller = new CaptionsController({
+      transcription: {
+        onModelStatus: mock((handler: (status: unknown) => void) => {
+          report = handler
+          return () => {}
+        }),
+      },
+    } as never) as unknown as {
+      settings: {useOfflineStt: boolean}
+      ui: {send: typeof send}
+      subscribeOfflineModelStatus: () => void
+      sendSnapshot: () => void
+      getDisplayCapabilities: () => unknown
+    }
+    controller.ui = {send}
+    controller.settings.useOfflineStt = true
+    controller.getDisplayCapabilities = () => ({canPosition: false})
+    controller.subscribeOfflineModelStatus()
+
+    const unavailable = {language: "en-US", state: "unavailable", reason: "No on-device speech model for ru-RU"}
+    report(unavailable)
+    expect(send).toHaveBeenCalledWith("captions:offline-model-status", unavailable)
+
+    controller.sendSnapshot()
+    expect(send).toHaveBeenLastCalledWith(
+      "captions:snapshot",
+      expect.objectContaining({offlineModelStatus: unavailable}),
+    )
+  })
+
+  test("a phone without model status leaves it unknown", () => {
+    const controller = new CaptionsController({transcription: {}} as never) as unknown as {
+      ui: {send: () => void}
+      offlineModelStatus: unknown
+      subscribeOfflineModelStatus: () => void
+    }
+    controller.ui = {send: mock(() => {})}
+    controller.subscribeOfflineModelStatus()
+    expect(controller.offlineModelStatus).toBeNull()
+  })
+})

@@ -120,6 +120,23 @@ describe("what runs", () => {
     expect(needsCloud(listener("localOnly"), "local", "local")).toBe(false)
     expect(needsLocal(listener("localOnly"), null, state())).toBe(true)
   })
+
+  test("no listener runs the picked model in a language it doesn't transcribe", () => {
+    // A Russian localOnly listener with an English model picked would only get English text.
+    const russian = listener("localOnly", "transcription:ru-RU")
+    expect(needsLocal(russian, null, state())).toBe(false)
+    expect(needsLocal(russian, "local", state())).toBe(false)
+    expect(needsLocal(russian, "local", state({pickedLanguage: "ru-RU"}))).toBe(true)
+    expect(needsLocal(listener("preferCloud", "transcription:ru-RU"), null, state({cloudConnected: false}))).toBe(false)
+    expect(needsLocal(listener("preferCloud"), null, state({cloudConnected: false}))).toBe(true)
+  })
+
+  test("hints keep preferLocal from starting on-device, but not from finishing there or from a cloud outage", () => {
+    const hinted = state({hints: ["en", "ja"]})
+    expect(needsLocal(listener("preferLocal"), "cloud", hinted)).toBe(false)
+    expect(needsLocal(listener("preferLocal"), "local", hinted)).toBe(true)
+    expect(needsLocal(listener("preferLocal"), null, {...hinted, cloudConnected: false})).toBe(true)
+  })
 })
 
 describe("utterance tracking", () => {

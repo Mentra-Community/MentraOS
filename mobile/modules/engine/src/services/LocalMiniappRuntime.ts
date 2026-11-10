@@ -6390,6 +6390,9 @@ class LocalMiniappRuntime {
       this.broadcastCloudStatus()
     })
     sttModelManager.onSelectionChanged(() => this.updateCloudSubscriptions())
+    // Routing compares each listener's language with the picked model's, so read
+    // the saved Speech-page choice now, not only once on-device speech is needed.
+    void sttModelManager.getCurrentLanguageFromPreferences()
     // On-device transcription starting or stopping moves preferLocal and fallback listeners.
     localSttFallbackCoordinator.onModelStatusChanged(() => this.updateCloudSubscriptions())
 
@@ -6433,11 +6436,7 @@ class LocalMiniappRuntime {
     // "auto" follows the picked model; any other language must be the picked one.
     const hints = this.transcriptionHintsByApp.get(packageName) ?? []
     if (!onDeviceListeners.some((listener) => onDeviceServes(listener, language, hints))) {
-      return {
-        language,
-        state: "unavailable",
-        reason: `The on-device speech model is ${language}; choose another language on the Speech page`,
-      }
+      return {language, state: "unavailable", reason: this.otherLanguageReason(language, onDeviceListeners)}
     }
     switch (status.state) {
       case "downloading":
@@ -6450,6 +6449,23 @@ class LocalMiniappRuntime {
         // "idle" only lasts until the coordinator picks up this subscription.
         return {language, state: "loading"}
     }
+  }
+
+  /**
+   * Why on-device listeners in another language than the picked model's get
+   * nothing: either the phone has a model for their language that isn't the
+   * picked one, or it has no model for it at all.
+   */
+  private otherLanguageReason(language: string, listeners: readonly {stream: string}[]): string {
+    const requested = listeners
+      .map((listener) => listener.stream.slice("transcription:".length))
+      .find((stream) => stream !== "auto")
+    if (!requested) {
+      return `The on-device speech model is ${language}; choose another language on the Speech page`
+    }
+    const model = sttModelManager.findModelForLanguage(requested)
+    if (!model) return `No on-device speech model for ${requested}`
+    return `The on-device speech model is ${language}; choose ${model.displayName} on the Speech page`
   }
 
   private sendTranscriptionModelStatus(packageName: string, force = false): void {

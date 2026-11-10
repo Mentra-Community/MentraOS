@@ -24,17 +24,33 @@ export interface ExtractionProgress {
   currentFile?: string
 }
 
+/** One file of a model that is published as separate files rather than one archive. */
+export interface ModelFile {
+  /** Pinned download URL. */
+  url: string
+  /** Name in the model folder, one of `requiredFiles`. */
+  name: string
+  /** Lower-case hex SHA-256 of the file; a download that doesn't match is rejected. */
+  sha256: string
+}
+
 export interface LanguageConfig {
   /** Stable selection ID, also the model's folder name. One model per language. */
   code: string
   displayName: string
   fileName: string
   downloadUrl?: string
+  /** Download these files instead of a `.tar.bz2` archive. */
+  files?: ModelFile[]
   size: number
   type: "transducer" | "ctc"
   requiredFiles: string[]
   languageCode: string
 }
+
+/** Pinned revision of alphacep/vosk-model-small-streaming-ru (Apache-2.0), a streaming Zipformer2. */
+const VOSK_RU_BASE_URL =
+  "https://huggingface.co/alphacep/vosk-model-small-streaming-ru/resolve/e18123ee13f694036a1eea82eb43f9895387cb59"
 
 const DEFAULT_LANGUAGE = "en-kroko"
 
@@ -144,6 +160,38 @@ class STTModelManager {
       requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
       languageCode: "ko-KR",
     },
+    "ru": {
+      code: "ru",
+      displayName: "Русский",
+      fileName: "vosk-model-small-streaming-ru-0.54",
+      // int8 encoder and joiner; the full-precision decoder is small and decodes the same.
+      files: [
+        {
+          url: `${VOSK_RU_BASE_URL}/am-onnx/encoder.int8.onnx`,
+          name: "encoder.onnx",
+          sha256: "e0db705e94ec35d803b1df4f40cda23d064e1142977c80ab288430b109777a9d",
+        },
+        {
+          url: `${VOSK_RU_BASE_URL}/am-onnx/decoder.onnx`,
+          name: "decoder.onnx",
+          sha256: "89b3088a9e20e1ef7f2e85ce1a3478afe6a9c4ac57369cabcc4beb8e95328ea0",
+        },
+        {
+          url: `${VOSK_RU_BASE_URL}/am-onnx/joiner.int8.onnx`,
+          name: "joiner.onnx",
+          sha256: "b55784b071ab7512eab4c7c44e4f5478284ef33c83562cc6a249b972515a31e5",
+        },
+        {
+          url: `${VOSK_RU_BASE_URL}/lang/tokens.txt`,
+          name: "tokens.txt",
+          sha256: "93bbbc0bae6b78c0bbb743d4aa9fded3bb5ff3aac5f0200e3a769a5a05e0fdf6",
+        },
+      ],
+      size: 28572945,
+      type: "transducer",
+      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
+      languageCode: "ru-RU",
+    },
   }
 
   private constructor() {}
@@ -187,6 +235,12 @@ class STTModelManager {
 
   getAvailableLanguages(): LanguageConfig[] {
     return Object.values(this.languages)
+  }
+
+  /** The listed model whose language is `language` (BCP-47, any case), if there is one. */
+  findModelForLanguage(language: string): LanguageConfig | undefined {
+    const wanted = language.toLowerCase()
+    return this.getAvailableLanguages().find((model) => model.languageCode.toLowerCase() === wanted)
   }
 
   /** The listed model that replaces a saved legacy model, or undefined when `code` is current. */
@@ -344,56 +398,11 @@ class STTModelManager {
       await RNFS.mkdir(modelDir, {NSURLIsExcludedFromBackupKey: true})
       await this.removeStalePartials(modelDir, partialPrefix)
 
-      const downloadOptions = {
-        fromUrl: modelUrl,
-        toFile: tempPath,
-        progress: (res: RNFS.DownloadProgressCallbackResultT) => {
-          const percentage = res.contentLength > 0 ? Math.round((res.bytesWritten / res.contentLength) * 100) : 0
-          this.reportProgress(job, {
-            jobId: res.jobId,
-            bytesWritten: res.bytesWritten,
-            contentLength: res.contentLength,
-            percentage,
-          })
-        },
-        progressDivider: 10,
-        begin: (res: RNFS.DownloadBeginCallbackResultT) => {
-          console.log("Download started:", res)
-        },
-        connectionTimeout: 30000,
-        readTimeout: 30000,
+      if (language.files) {
+        await this.downloadModelFiles(id, language.files, language.size, partialPath, job)
+      } else {
+        await this.downloadArchive(id, modelUrl, tempPath, partialPath, job)
       }
-
-      const result = await RNFS.downloadFile(downloadOptions)
-      job.jobId = result.jobId
-      if (job.cancelled) await RNFS.stopDownload(result.jobId)
-
-      const downloadResult = await result.promise
-      if (job.cancelled) throw new Error(`Download of ${id} was cancelled`)
-
-      if (downloadResult.statusCode !== 200) {
-        throw new Error(`Download failed with status code: ${downloadResult.statusCode}`)
-      }
-
-      this.reportExtraction(job, {percentage: 0})
-
-      const subscription = BluetoothSdk.addListener("extraction_progress", (event) => {
-        this.reportExtraction(job, {percentage: event.percentage})
-      })
-
-      try {
-        const extractionResult = await BluetoothSdk.extractTarBz2(tempPath, partialPath)
-        if (!extractionResult) {
-          throw new Error("Native extraction returned failure status")
-        }
-      } catch (extractError) {
-        console.error("Native extraction failed:", extractError)
-        throw extractError
-      } finally {
-        subscription.remove()
-      }
-
-      await RNFS.unlink(tempPath)
 
       if (!(await this.hasModelFiles(language, partialPath))) {
         throw new Error(`Downloaded STT model ${id} is incomplete or invalid`)
@@ -418,6 +427,118 @@ class STTModelManager {
       }
       throw error
     }
+  }
+
+  /**
+   * Download a model published as separate files into `partialPath`, each
+   * under its folder name and checked against its pinned SHA-256. Progress
+   * covers all of them against the model's total `size`.
+   */
+  private async downloadModelFiles(
+    id: string,
+    modelFiles: ModelFile[],
+    totalSize: number,
+    partialPath: string,
+    job: DownloadJob,
+  ): Promise<void> {
+    await RNFS.mkdir(partialPath, {NSURLIsExcludedFromBackupKey: true})
+    let completedBytes = 0
+    for (const file of modelFiles) {
+      const filePath = `${partialPath}/${file.name}`
+      let fileBytes = 0
+      const result = await RNFS.downloadFile({
+        fromUrl: file.url,
+        toFile: filePath,
+        progress: (res: RNFS.DownloadProgressCallbackResultT) => {
+          fileBytes = res.bytesWritten
+          const bytesWritten = completedBytes + fileBytes
+          this.reportProgress(job, {
+            jobId: res.jobId,
+            bytesWritten,
+            contentLength: totalSize,
+            percentage: totalSize > 0 ? Math.min(100, Math.round((bytesWritten / totalSize) * 100)) : 0,
+          })
+        },
+        progressDivider: 10,
+        connectionTimeout: 30000,
+        readTimeout: 30000,
+      })
+      job.jobId = result.jobId
+      if (job.cancelled) await RNFS.stopDownload(result.jobId)
+
+      const downloadResult = await result.promise
+      if (job.cancelled) throw new Error(`Download of ${id} was cancelled`)
+      if (downloadResult.statusCode !== 200) {
+        throw new Error(`Download of ${file.name} failed with status code: ${downloadResult.statusCode}`)
+      }
+      const digest = (await RNFS.hash(filePath, "sha256")).toLowerCase()
+      if (digest !== file.sha256) {
+        throw new Error(`Downloaded ${file.name} for STT model ${id} is corrupt (sha256 ${digest})`)
+      }
+      completedBytes += downloadResult.bytesWritten ?? fileBytes
+    }
+    // Model files need no extraction.
+    this.reportExtraction(job, {percentage: 0})
+  }
+
+  /** Download a `.tar.bz2` model archive and extract it into `partialPath`. */
+  private async downloadArchive(
+    id: string,
+    modelUrl: string,
+    tempPath: string,
+    partialPath: string,
+    job: DownloadJob,
+  ): Promise<void> {
+    const downloadOptions = {
+      fromUrl: modelUrl,
+      toFile: tempPath,
+      progress: (res: RNFS.DownloadProgressCallbackResultT) => {
+        const percentage = res.contentLength > 0 ? Math.round((res.bytesWritten / res.contentLength) * 100) : 0
+        this.reportProgress(job, {
+          jobId: res.jobId,
+          bytesWritten: res.bytesWritten,
+          contentLength: res.contentLength,
+          percentage,
+        })
+      },
+      progressDivider: 10,
+      begin: (res: RNFS.DownloadBeginCallbackResultT) => {
+        console.log("Download started:", res)
+      },
+      connectionTimeout: 30000,
+      readTimeout: 30000,
+    }
+
+    const result = await RNFS.downloadFile(downloadOptions)
+    job.jobId = result.jobId
+    if (job.cancelled) await RNFS.stopDownload(result.jobId)
+
+    const downloadResult = await result.promise
+    if (job.cancelled) throw new Error(`Download of ${id} was cancelled`)
+
+    if (downloadResult.statusCode !== 200) {
+      throw new Error(`Download failed with status code: ${downloadResult.statusCode}`)
+    }
+
+    this.reportExtraction(job, {percentage: 0})
+
+    const subscription = BluetoothSdk.addListener("extraction_progress", (event) => {
+      this.reportExtraction(job, {percentage: event.percentage})
+    })
+
+    try {
+      const extractionResult = await BluetoothSdk.extractTarBz2(tempPath, partialPath)
+      if (!extractionResult) {
+        throw new Error("Native extraction returned failure status")
+      }
+    } catch (extractError) {
+      console.error("Native extraction failed:", extractError)
+      throw extractError
+    } finally {
+      subscription.remove()
+    }
+
+    await RNFS.unlink(tempPath)
   }
 
   /** Delete extracts left behind by a download that was interrupted mid-way. */

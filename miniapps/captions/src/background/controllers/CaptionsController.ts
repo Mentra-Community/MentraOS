@@ -53,6 +53,7 @@ import {
   type CaptionsDisplayCapabilities,
   type CaptionsSnapshot,
   type DisplayPreview,
+  type OfflineModelStatus,
   type Transcript,
 } from "../../shared/types"
 
@@ -125,6 +126,7 @@ export class CaptionsController {
   private currentDisplayText = ""
   private activeInterim: {text: string; speakerId?: string; speakerChanged: boolean} | null = null
   private cloudStatus: CloudClientStatus = {status: "disconnected", audioTransport: "none"}
+  private offlineModelStatus: OfflineModelStatus | null = null
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -152,6 +154,7 @@ export class CaptionsController {
     this.applySettingsToDisplay()
     this.subscribeTranscription()
     this.subscribeCloudStatus()
+    this.subscribeOfflineModelStatus()
 
     this.registerUiHandlers()
     console.log(`LocalCaptions: started (lang=${this.settings.language})`)
@@ -256,6 +259,7 @@ export class CaptionsController {
       displayPreview: this.lastDisplayPreview,
       cloudStatus: {...this.cloudStatus},
       displayCapabilities: this.getDisplayCapabilities(),
+      offlineModelStatus: this.offlineModelStatus ? {...this.offlineModelStatus} : null,
     }
     this.ui.send("captions:snapshot", snapshot)
   }
@@ -479,6 +483,28 @@ export class CaptionsController {
       )
     } catch (err) {
       console.log("LocalCaptions: cloud status subscribe failed", err)
+    }
+  }
+
+  /**
+   * Follows the phone's on-device speech model, so offline captions can say
+   * why no text arrives (say, no on-device model for the caption language)
+   * instead of staying blank.
+   */
+  private subscribeOfflineModelStatus(): void {
+    try {
+      this.unsubs.push(
+        this.session.transcription.onModelStatus((status) => {
+          const previous = this.offlineModelStatus
+          this.offlineModelStatus = {...status}
+          if (this.settings.useOfflineStt && status.state === "unavailable" && previous?.reason !== status.reason) {
+            console.log(`LocalCaptions: offline captions unavailable: ${status.reason ?? "unknown reason"}`)
+          }
+          this.ui.send("captions:offline-model-status", {...status})
+        }),
+      )
+    } catch (err) {
+      console.log("LocalCaptions: offline model status subscribe failed", err)
     }
   }
 

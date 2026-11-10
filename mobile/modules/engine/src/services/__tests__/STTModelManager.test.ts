@@ -2,7 +2,16 @@
 
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
-import {autoDownload, downloads, fakeRnfs, files, resetFakeRnfs, stopDownload, writeFiles} from "./fakeRnfs"
+import {
+  autoDownload,
+  downloads,
+  fakeRnfs,
+  files,
+  hashOverride,
+  resetFakeRnfs,
+  stopDownload,
+  writeFiles,
+} from "./fakeRnfs"
 
 const MODEL_FILES = ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"]
 let storedPath = ""
@@ -59,6 +68,12 @@ describe("speech-to-text catalog", () => {
     expect(manager.getLegacyReplacement("en")).toBe("en-kroko")
     expect(manager.getLegacyReplacement("en-kroko")).toBeUndefined()
     expect((await manager.getAllLanguageInfo()).some((info) => info.code === "en")).toBe(false)
+  })
+
+  test("finds the listed model for a language", () => {
+    expect(manager.findModelForLanguage("ru-RU")?.code).toBe("ru")
+    expect(manager.findModelForLanguage("FR-fr")?.code).toBe("fr")
+    expect(manager.findModelForLanguage("ja-JP")).toBeUndefined()
   })
 
   test("never turns a saved model into a different one", async () => {
@@ -156,5 +171,25 @@ describe("downloads", () => {
     await german
     expect(await manager.isModelAvailable("de")).toBe(true)
     expect(await manager.isModelAvailable("fr")).toBe(false)
+  })
+
+  test("a model published as files downloads each one, checks it, and needs no extraction", async () => {
+    const russian = manager.getAvailableLanguages().find((language) => language.code === "ru")!
+    const digests = new Map(russian.files!.map((file) => [file.name, file.sha256]))
+    hashOverride.fn = (path) => digests.get(path.split("/").pop()!)
+    await manager.downloadModel("ru")
+    expect(downloads.map((download) => download.fromUrl)).toEqual(russian.files!.map((file) => file.url))
+    expect(downloads.every((download) => download.fromUrl.startsWith("https://huggingface.co/"))).toBe(true)
+    expect(extract).not.toHaveBeenCalled()
+    for (const name of MODEL_FILES) expect(files.has(`/documents/stt_models/ru/${name}`)).toBe(true)
+    expect(await manager.isModelAvailable("ru")).toBe(true)
+    expect(manager.getBcp47ForLanguage("ru")).toBe("ru-RU")
+  })
+
+  test("a model file with the wrong checksum never reaches the final folder", async () => {
+    hashOverride.fn = () => "0000"
+    await expect(manager.downloadModel("ru")).rejects.toThrow("corrupt")
+    expect(await manager.isModelAvailable("ru")).toBe(false)
+    expect([...files.keys()].filter((path) => path.startsWith("/documents/stt_models/"))).toEqual([])
   })
 })

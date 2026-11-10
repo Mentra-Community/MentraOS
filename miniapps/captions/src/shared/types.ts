@@ -61,6 +61,21 @@ export interface CloudClientStatus {
   audioTransport: CloudClientAudioTransport
 }
 
+/**
+ * The phone's on-device speech model, as it serves this miniapp's offline
+ * captions (session.transcription.onModelStatus). `unavailable` with a
+ * `reason` means offline captions get no text, e.g. no on-device model for
+ * the caption language.
+ */
+export interface OfflineModelStatus {
+  /** BCP-47 language of the model picked on the phone's Speech page. */
+  language: string
+  state: "downloading" | "loading" | "ready" | "unavailable"
+  /** 0–100 while downloading. */
+  progress?: number
+  reason?: string
+}
+
 /** A single live-transcript broadcast: one interim/final result. */
 export interface LiveTranscript {
   type: "interim" | "final"
@@ -78,4 +93,6 @@ export interface CaptionsSnapshot {
   displayPreview: DisplayPreview | null
   cloudStatus: CloudClientStatus
   displayCapabilities: CaptionsDisplayCapabilities
+  /** Null until the phone reports it (phones before on-device model status never do). */
+  offlineModelStatus: OfflineModelStatus | null
 }

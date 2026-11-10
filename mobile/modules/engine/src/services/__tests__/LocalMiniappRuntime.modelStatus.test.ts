@@ -29,7 +29,11 @@ const Host = new Function(
   `${code}; return Host`,
 )(
   {getModelStatus: () => coordinatorStatus},
-  {getBcp47ForLanguage: () => "en-US"},
+  {
+    getBcp47ForLanguage: () => "en-US",
+    findModelForLanguage: (language: string) =>
+      ({"fr-FR": {displayName: "Français"}, "en-US": {displayName: "English"}})[language],
+  },
   {isConnected: () => cloudConnected},
   () => onDeviceSpeech,
   {TRANSCRIPTION: "transcription", TRANSCRIPTION_MODEL_STATUS: "transcription_model_status"},
@@ -95,6 +99,21 @@ test("a subscription in another language than the picked model's is unavailable,
       reason: expect.stringContaining("en-US"),
     })
   }
+})
+
+test("the reason says which Speech-page model serves the language, or that none does", () => {
+  const {runtime} = host({
+    french: {"transcription:fr-FR": "localOnly"},
+    russian: {"transcription:ru-RU": "localOnly"},
+  })
+  expect(runtime.transcriptionModelStatusFor("french").reason).toBe(
+    "The on-device speech model is en-US; choose Français on the Speech page",
+  )
+  expect(runtime.transcriptionModelStatusFor("russian")).toEqual({
+    language: "en-US",
+    state: "unavailable",
+    reason: "No on-device speech model for ru-RU",
+  })
 })
 
 test("a preferLocal auto-detect listener hinted at another language stays off the model", () => {

@@ -1,6 +1,11 @@
 import {useEffect, useRef, useState} from "react"
 
-import type {CaptionPosition, CaptionSettings, CaptionsDisplayCapabilities} from "../../shared/types"
+import type {
+  CaptionPosition,
+  CaptionSettings,
+  CaptionsDisplayCapabilities,
+  OfflineModelStatus,
+} from "../../shared/types"
 
 export type {CaptionSettings} from "../../shared/types"
 
@@ -16,6 +21,7 @@ export type {CaptionSettings} from "../../shared/types"
 export function useSettings() {
   const [settings, setSettings] = useState<CaptionSettings | null>(null)
   const [canPosition, setCanPosition] = useState(false)
+  const [offlineModelStatus, setOfflineModelStatus] = useState<OfflineModelStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const mountedRef = useRef(true)
 
@@ -30,9 +36,11 @@ export function useSettings() {
         const snapshot = payload as {
           settings: CaptionSettings
           displayCapabilities?: CaptionsDisplayCapabilities
+          offlineModelStatus?: OfflineModelStatus | null
         }
         setSettings(snapshot.settings)
         setCanPosition(snapshot.displayCapabilities?.canPosition === true)
+        setOfflineModelStatus(snapshot.offlineModelStatus ?? null)
         setLoading(false)
       }),
     )
@@ -41,6 +49,13 @@ export function useSettings() {
       on("captions:display-capabilities", (payload) => {
         if (!mountedRef.current) return
         setCanPosition((payload as CaptionsDisplayCapabilities).canPosition === true)
+      }),
+    )
+
+    offs.push(
+      on("captions:offline-model-status", (payload) => {
+        if (!mountedRef.current) return
+        setOfflineModelStatus(payload as OfflineModelStatus)
       }),
     )
 
@@ -109,6 +124,7 @@ export function useSettings() {
   return {
     settings,
     canPosition,
+    offlineModelStatus,
     loading,
     error: null as string | null,
     updateLanguage,

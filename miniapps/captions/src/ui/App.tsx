@@ -3,6 +3,7 @@ import {useColorScheme, useHistoryState, useSafeArea} from "@mentra/miniapp/ui"
 import {BottomNav} from "./components/BottomNav"
 import {Header} from "./components/Header"
 import {LanguageSelector} from "./components/LanguageSelector"
+import {OfflineModelNotice} from "./components/OfflineModelNotice"
 import {Settings} from "./components/Settings"
 import {TranscriptList} from "./components/TranscriptList"
 import {useDeveloperMode} from "./hooks/useDeveloperMode"
@@ -27,6 +28,7 @@ export function App() {
   const {
     settings,
     canPosition,
+    offlineModelStatus,
     updateLanguage,
     updateHints,
     updateUseOfflineStt,
@@ -108,6 +110,7 @@ export function App() {
             <Settings
               settings={settings}
               canPosition={canPosition}
+              offlineModelStatus={offlineModelStatus}
               displayPreview={displayPreview}
               accentColor={presentation.accentColor}
               accentForeground={presentation.accentForeground}
@@ -119,13 +122,22 @@ export function App() {
               onUpdateCaptionTimeoutSeconds={updateCaptionTimeoutSeconds}
             />
           ) : (
-            <TranscriptList
-              transcripts={transcripts}
-              isRecording={isRecording}
-              onToggleRecording={toggleRecording}
-              onClearTranscripts={clearTranscripts}
-              accentColor={presentation.accentColor}
-            />
+            <div className="h-full flex flex-col">
+              <OfflineModelNotice
+                enabled={settings?.useOfflineStt === true}
+                status={offlineModelStatus}
+                className="mx-4 mt-3"
+              />
+              <div className="min-h-0 flex-1">
+                <TranscriptList
+                  transcripts={transcripts}
+                  isRecording={isRecording}
+                  onToggleRecording={toggleRecording}
+                  onClearTranscripts={clearTranscripts}
+                  accentColor={presentation.accentColor}
+                />
+              </div>
+            </div>
           )}
         </div>
 
