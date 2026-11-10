@@ -11,6 +11,7 @@ prefix unless the hardware is validated and listed here.
 | Model | Display (Text) | Display (Images) | Microphone | Speaker | Camera |
 | --- | --- | --- | --- | --- | --- |
 | Even Realities G1 | Full | Full | Full | Not available | Not available |
+| Even Realities G2 | Full | Full | Full | Not available | Not available |
 | Mentra Live | Not available | Not available | Full | Full | Full |
 | Mentra Mach 1 | Full | Not available | Partial* | Not available | Not available |
 | Vuzix Z100 | Full | Not available | Partial* | Not available | Not available |
