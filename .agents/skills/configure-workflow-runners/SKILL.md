@@ -41,7 +41,10 @@ each job's `runs-on` must select a Blacksmith runner.
   - a signing job keeps `[self-hosted, macOS, ARM64, shared]`.
 
 Hardware/device-test jobs must stay on the configured self-hosted runner that
-owns their attached devices. Use Blacksmith for general Linux CI compute.
+owns their attached devices. In the monorepo that's `runs-on: [lab]`:
+pro-1-lab, the lab's main machine as its own user, which runs suites across the
+lab from its clone (`testing/agent`), one job at a time. Give it no secrets and
+no checkout; it never builds. Use Blacksmith for general Linux CI compute.
 
 Do not introduce `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, or another
 GitHub-hosted Linux label unless the user explicitly requests an exception.

@@ -102,6 +102,7 @@ describe("phone download failure diagnosis", () => {
     expect(phoneOtaErrorCopyKey({code: "hotspot_wifi_disabled"})).toBe("ota:errorPhoneWifiOff")
     expect(phoneOtaErrorCopyKey({code: "hotspot_join_failed"}, "ios")).toBe("ota:errorPhoneHotspotJoinIos")
     expect(phoneOtaErrorCopyKey({code: "hotspot_join_failed"}, "android")).toBe("ota:errorPhoneHotspotJoin")
+    expect(phoneOtaErrorCopyKey({code: "hotspot_other_glasses"}, "ios")).toBe("ota:errorPhoneOtherGlasses")
     expect(OTA_ERROR_ENGLISH_COPY["ota:errorPhoneWifiOff"]).toContain("Wi-Fi")
     expect(OTA_ERROR_ENGLISH_COPY["ota:errorPhoneHotspotJoinIos"]).toContain("Wi-Fi is on")
   })

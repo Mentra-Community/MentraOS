@@ -18,7 +18,10 @@ already tested: it never ships a source staging didn't release.
    branch from the beta's commit. The merged `main` must have exactly the
    beta's release inputs (`.github/ci/release-inputs.mjs`): anything else fails
    the release, and nothing is published. The PR's "Verify and deploy" checks
-   this before the merge (its `promotion` job), and names the beta.
+   this before the merge (its `promotion` job), and names the beta. Its
+   `promotion_lab` job then checks that beta on the lab, about an hour: the
+   current production app, and the beta's app updating the glasses from
+   production's software (see "What the lab checks first").
 4. **The merge is the approval.** The push to `main` starts `release.yml`,
    whose gate names the beta it promotes in the run summary, and the release
    runs without waiting for anyone. Review the PR as the release decision.
@@ -56,9 +59,31 @@ now, so a beta that passed them is ready:
   packages, the SDK and the Engine consumer.
 - The lab's nightly routines test the beta's app and glasses software on
   hardware.
-- The previous production app against the new Cloud: install the last beta
-  of the previous family (its app uses the staging backend) and run the lab's
-  suite against staging, where the new Cloud already runs.
+
+## What the lab checks first
+
+People keep the production app for days after the merge, iOS users through App
+Review, while Cloud V2, the miniapps and the glasses' OTA manifest go live at
+the merge. So `promotion_lab` runs on `pro-1-lab`, the self-hosted runner of
+the lab's main machine, and runs `testing/agent/promotion.ts` from its clone:
+two suites across the lab on the PR's branch, one after the other. Its summary
+lists each routine's verdict and links its run. On the current production app,
+as the stores deliver it, signed in to the lane's test account:
+
+- `account-email-android`: sign-out and sign-in.
+- `open-close-miniapps-android`: Home with the glasses, and a miniapp.
+- `mentra-ai-android`: a Cloud miniapp, asked by voice through the glasses.
+- `glasses-version-android`: the glasses connected, with their version.
+
+And on the beta's own app, `ota-promotion-android`: glasses on production's
+software, updated by it through its normal offer and hotspot. That's how
+people get the new glasses software: a production app only offers its own
+release's.
+
+The production app talks to production's Cloud as it is before the merge, so
+this doesn't cover the Cloud the merge deploys against old apps. A failed check
+is retried by rerunning `promotion_lab`. To run it yourself, from `testing/`:
+`bun agent/promotion.ts --beta <X.Y.Z-beta.N>`.
 
 ## Rehearse
 

@@ -59,10 +59,15 @@ def verify_compiled_code(source, exported, executable, root, diagnostics):
     raise ValueError('Export changed compiled iOS code; exact executables preserved in export-diagnostics')
 
 
+# The backend each channel's app talks to. A production rehearsal builds with
+# staging's config, but its downloads are never published.
+BACKENDS = {'dev': 'dev', 'beta': 'staging', 'production': 'prod'}
+
+
 def package(plan_path, ipa, output):
     plan = json.loads(Path(plan_path).read_text())
-    if plan['channel'] not in ('dev', 'beta'):
-        raise ValueError('Direct downloads are for coordinated dev/staging releases only')
+    if plan['channel'] not in BACKENDS:
+        raise ValueError('Direct downloads are for coordinated dev, beta and production releases only')
     ota_url = os.environ['COORDINATED_OTA_URL']
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -102,7 +107,7 @@ def package(plan_path, ipa, output):
         verify_compiled_code(source, app, info['CFBundleExecutable'], root, output / 'export-diagnostics')
         manifest = {'bundleId': BUNDLE_ID, 'app': 'Mentra.app', 'headSha': plan['sourceCommit'],
             'buildSha': plan['sourceCommit'], 'releaseIdentity': plan['releaseIdentity'],
-            'backend': 'dev' if plan['channel'] == 'dev' else 'staging', 'otaManifestUrl': ota_url,
+            'backend': BACKENDS[plan['channel']], 'otaManifestUrl': ota_url,
             'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'],
             'executableSha256': digest(app / info['CFBundleExecutable']),
             'javascriptSha256': digest(app / 'main.jsbundle'), 'profileUUID': profile['UUID'],
@@ -113,7 +118,7 @@ def package(plan_path, ipa, output):
 
 This is the {manifest['backend']} build. The same signed iOS app runs on a registered iPhone or Apple Silicon Mac.
 
-Mac: install Bun from https://bun.sh if needed, unzip, then open Install.command. macOS may require Open Anyway under Privacy & Security and approval to trust Mentra Labs prerelease software. The installer preserves your existing Mentra data. The bundled app retains its Apple signature.
+Mac: install Bun from https://bun.sh if needed, unzip, then open Install.command. macOS may require Open Anyway under Privacy & Security and approval to trust Mentra Labs software. The installer preserves your existing Mentra data. The bundled app retains its Apple signature.
 
 Your device must be included in this build's provisioning profile. Installing this replaces the current Mentra App. Connect your glasses and follow the OTA prompt to reach this release's pinned firmware.
 ''')

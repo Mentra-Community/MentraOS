@@ -4,23 +4,25 @@ import {mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
-import {downloadNames, prepareDownloads, publishDownloads, restoreDownloads, validateDownloads} from "./coordinated-install-downloads.mjs"
+import {downloadLinks, downloadNames, prepareDownloads, publishDownloads, restoreDownloads, validateDownloads} from "./coordinated-install-downloads.mjs"
 import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
 import {createIosRecord} from "./coordinated-mobile-records.mjs"
 
 const repository = "Mentra-Community/MentraOS"
 const ota = "https://artifactscdn.mentraglass.com/release.json"
+// Production is the bare X.Y.Z in mentra-v<X.Y.Z>; dev and beta are prereleases in mentra-builds-v<X.Y.Z>.
+const backends = {dev: "dev", beta: "staging", production: "prod"}
 function fixture(t, channel = "dev") {
   const directory = mkdtempSync(path.join(tmpdir(), "coordinated-downloads-test-"))
   t.after(() => rmSync(directory, {recursive: true, force: true}))
-  const identity = `3.2.1-${channel}.57`
+  const identity = channel === "production" ? "3.2.1" : `3.2.1-${channel}.57`
   const plan = {
     channel,
     sourceCommit: "a".repeat(40),
     releaseIdentity: identity,
     releaseSetId: `mentra-${identity}`,
     familyBaseVersion: "3.2.1",
-    artifactContainerTag: "mentra-builds-v3.2.1",
+    artifactContainerTag: channel === "production" ? "mentra-v3.2.1" : "mentra-builds-v3.2.1",
     members: {mentraos: {version: identity}},
     native: {buildNumber: 302010057, marketingVersion: "3.2.1"},
     artifactNames: {iosApp: `mentraos-${identity}-ios.ipa`},
@@ -35,7 +37,7 @@ function fixture(t, channel = "dev") {
       build: "302010057",
       version: "3.2.1",
       headSha: plan.sourceCommit,
-      backend: channel === "dev" ? "dev" : "staging",
+      backend: backends[channel],
       otaManifestUrl: ota,
       executableSha256: "e".repeat(64),
       javascriptSha256: "f".repeat(64),
@@ -54,7 +56,7 @@ function fixture(t, channel = "dev") {
   writeFileSync(path.join(directory, names.receipt), JSON.stringify(receipt))
   return {plan, directory, receipt, names}
 }
-for (const channel of ["dev", "beta"])
+for (const channel of ["dev", "beta", "production"])
   test(`${channel} installation page targets the exact ad hoc IPA and backend`, (t) => {
     const {plan, directory, names} = fixture(t, channel)
     prepareDownloads(directory, plan, repository, ota)
@@ -62,9 +64,18 @@ for (const channel of ["dev", "beta"])
     const page = readFileSync(path.join(directory, names.install), "utf8")
     assert.ok(plist.includes(names.iphone))
     assert.ok(page.includes(encodeURIComponent(names.manifest)))
-    assert.match(page, new RegExp(`${channel === "dev" ? "dev" : "staging"} backend`))
+    assert.match(page, new RegExp(`${backends[channel]} backend`))
+    assert.ok(plist.includes(`/${plan.artifactContainerTag}/`), "the iPhone download is in the channel's container")
     assert.doesNotMatch(page, /PR #|7 days/)
   })
+test("production downloads are named by the bare version and reject another channel's backend", (t) => {
+  const {plan, directory, names} = fixture(t, "production")
+  assert.equal(names.mac, "mentraos-3.2.1-mac.zip")
+  const receipt = prepareDownloads(directory, plan, repository, ota)
+  assert.throws(() => validateDownloads({...receipt, app: {...receipt.app, backend: "staging"}}, plan, ota))
+  assert.throws(() => downloadNames({...plan, releaseIdentity: "3.2.1-beta.57"}), /release identity/)
+  assert.match(downloadLinks(plan, repository).mac_url, /mentra-v3\.2\.1\/mentraos-3\.2\.1-mac\.zip$/)
+})
 test("publishes verified original bytes before the receipt and preserves them on retry", (t) => {
   const {plan, directory, names} = fixture(t)
   const calls = []
@@ -92,7 +103,9 @@ test("rejects stale source, release, native version, backend, OTA and partial do
   ]) {
     assert.throws(() => validateDownloads({...receipt, ...change}, plan, ota))
   }
-  assert.throws(() => downloadNames({...plan, releaseIdentity: "3.2.1"}), /dev or beta/)
+  assert.throws(() => downloadNames({...plan, releaseIdentity: "3.2.1"}), /release identity/)
+  assert.equal(downloadNames({...plan, channel: "production", releaseIdentity: "3.2.1"}).mac, "mentraos-3.2.1-mac.zip")
+  assert.throws(() => downloadNames({...plan, channel: "production"}), /release identity/)
 })
 test("iOS result keeps TestFlight evidence and adds verified downloads for finalization", (t) => {
   const {plan, directory, names} = fixture(t)
