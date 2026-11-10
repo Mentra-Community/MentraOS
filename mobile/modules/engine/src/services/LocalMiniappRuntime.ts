@@ -48,7 +48,8 @@ import micStateCoordinator from "./MicStateCoordinator"
 import {speechActivityService} from "./SpeechActivityService"
 import {wakeWordService} from "./WakeWordService"
 import micSessionManager, {MIC_SOURCE_CONFLICT, type MicSession} from "./MicSessionManager"
-import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, VOICE_CALL_PACKAGES, type MicUseCase} from "./micPolicy"
+import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, isVoiceCallPackage, type MicUseCase} from "./micPolicy"
+import {variantConfiguration, type MiniappVariant} from "./miniappVariant"
 import {BlobStore} from "./BlobStore"
 import {MiniappSystemActions} from "./MiniappSystemActions"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
@@ -194,6 +195,8 @@ export interface InstalledMiniappManifest {
     lifecycle?: unknown
     audience?: unknown
   }>
+  /** The bundle's variant stamp, set only for a release the current deployment manages. */
+  variant?: MiniappVariant
 }
 
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
@@ -1827,7 +1830,7 @@ class LocalMiniappRuntime {
         capabilities,
         permissions: declaredPermissions,
         visibility: this.currentVisiblePackage() === packageName ? "foreground" : "background",
-        configuration: getMiniappConfiguration(packageName),
+        configuration: variantConfiguration(getMiniappConfiguration(packageName), existing.installedManifest?.variant),
         // The SDK's HostFeatures. miniappInstall: system-list miniapps may call session.miniapps.install({url});
         // the Mentra Apps before it answer NOT_PERMITTED.
         // telemetry: `session.telemetry.capture` reaches the workspace's Fleet Management (Phase 12).
@@ -3724,7 +3727,10 @@ class LocalMiniappRuntime {
 
     // A voice call gets a microphone profile tuned for close-talk speech, so which app may ask for
     // one is a product decision, not a permission a manifest can grant itself.
-    if (useCase === "voice_call" && !VOICE_CALL_PACKAGES.includes(packageName)) {
+    if (
+      useCase === "voice_call" &&
+      !isVoiceCallPackage(packageName, this.connectedApps.get(packageName)?.installedManifest?.variant?.of)
+    ) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.PERMISSION_DENIED,
         message: `${packageName} is not allowed to acquire a voice_call microphone session`,
@@ -4349,7 +4355,8 @@ class LocalMiniappRuntime {
     // Other joiners are not required to: without a session the BLE LC3 uplink is simply not
     // selected and the audio rides the WHIP capture path, exactly as it did before.
     const glassesSession = micSessionManager.hasGlassesSession(packageName)
-    if (VOICE_CALL_PACKAGES.includes(packageName) && !glassesSession) {
+    const voiceCall = isVoiceCallPackage(packageName, this.connectedApps.get(packageName)?.installedManifest?.variant?.of)
+    if (voiceCall && !glassesSession) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.MIC_SESSION_REQUIRED,
         message: "acquire a glasses microphone session before joining a meeting",

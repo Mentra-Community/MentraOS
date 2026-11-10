@@ -431,7 +431,7 @@ RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName
                  'runtimeIdentityName', 'communicationName', 'location', 'tenantId', 'coreApiClientId', 'mobileClientId', 'coreAdminEmails', 'workspaceHostname',
                  'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
                  'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn',
-                 'miniappConfiguration', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
+                 'miniappConfiguration', 'miniappVariants', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
                  'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'mongoAccountName', 'reportStorageAccountName')
 # Restored even when empty: an empty value there is a deliberate choice.
 RESTORED_AS_IS = ('managedMiniappDirectory',)
@@ -803,6 +803,9 @@ def environment(config):
     env['MENTRA_GROUP_PREPARED'] = 'true'
     env['MENTRA_SKIP_SMOKE'] = 'true'
     env['MENTRA_REQUIRE_CALL'] = 'true'
+    # Call is served under its variant's package name when the deployment renames it.
+    env['MENTRA_REQUIRED_CALL_PACKAGE'] = ((config.get('miniappVariants') or {}).get('com.mentra.call') or {}).get(
+        'packageName') or 'com.mentra.call'
     return env
 
 
@@ -2493,6 +2496,16 @@ def print_teams(teams):
           f'Switch to PowerShell: & {path}  (send them the file if they use their own Cloud Shell).')
 
 
+def miniapp_backend_environments(config):
+    """The environment each customer variant's backend needs: the same pair its bundle is stamped with."""
+    environments = {}
+    for source, variant in sorted((config.get('miniappVariants') or {}).items()):
+        name = (variant.get('packageName') or '').strip() or source
+        url = (variant.get('backendUrl') or '').strip().rstrip('/')
+        environments[name] = dict(PACKAGE_NAME=name, **({'PUBLIC_BASE_URL': url} if url else {}))
+    return environments
+
+
 def finish(directory, result):
     state = read_json(directory / 'state.json')
     config = read_json(directory / 'deployment.config.json')
@@ -2528,6 +2541,9 @@ def finish(directory, result):
             if (directory / 'teams-policy.ps1').exists() and state.get('teamsPolicyApplied') != config['teamsGraphClientId']:
                 print(f"Still to do - Teams policy: a Teams administrator runs {directory / 'teams-policy.ps1'} once "
                       '(Cloud Shell, Switch to PowerShell), or run configure-teams again as one.')
+    for name, environment in miniapp_backend_environments(config).items():
+        settings = ' '.join(f'{key}={value}' for key, value in environment.items())
+        print(f'Backend of {name}: run Mentra\'s backend image for it with {settings}')
     for handoff in state.get('handoffs') or []:
         print(f"Still to do - {handoff['step']}: {handoff['action']}")
     if not config.get('verifiedEmailDomains'):

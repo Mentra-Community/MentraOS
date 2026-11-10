@@ -31,6 +31,7 @@
   "approvedSystemMiniapps": ["com.mentra.settings"],
   "managedMiniapps": [],
   "miniappConfiguration": {},
+  "miniappVariants": {},
   "managedMiniappDirectory": "/app/cloud-v2/deploy/azure/enterprise-reference/miniapps",
   "allowedGlassesModels": ["mentra-live"],
   "telemetryEnabled": false,

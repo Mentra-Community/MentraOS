@@ -287,7 +287,20 @@ export function isInstalledMiniappAllowed(
     if (context.assigned && !policy.managed.some((entry) => entry.packageName === packageName)) return true
     return isMiniappDevelopmentAllowed()
   }
-  if (!version || releaseIdentity?.source !== "deployment_manifest") return false
+  return isDeploymentManagedRelease(packageName, version, releaseIdentity)
+}
+
+/**
+ * Whether this install is the exact release the current deployment's manifest
+ * manages: its package, version and digest, installed from that deployment.
+ */
+export function isDeploymentManagedRelease(
+  packageName: string,
+  version: string | undefined,
+  releaseIdentity: {source: string; bundleSha256?: string; deploymentId?: string; deploymentOrigin?: string} | null,
+): boolean {
+  const policy = options?.config?.localMiniappPolicy
+  if (!policy || !version || releaseIdentity?.source !== "deployment_manifest") return false
 
   return policy.managed.some(
     (entry) =>

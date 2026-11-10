@@ -38,7 +38,7 @@ function fixture() {
     PermissionFeatures: {CAMERA: "camera", MICROPHONE: "microphone"},
     MiniappRequestType: {MEETING_JOIN: "meeting_join"},
     MiniappErrorCode: {INTERNAL: "INTERNAL"},
-    VOICE_CALL_PACKAGES: ["com.mentra.call"],
+    isVoiceCallPackage: (packageName: string) => packageName === "com.mentra.call",
     micSessionManager: {hasGlassesSession: () => true},
     parseAcsCallOrigin: () => "pasted",
     parseAcsVideoSource: (value: unknown) => value,
@@ -51,6 +51,7 @@ function fixture() {
   const Host = new Function(...Object.keys(scope), `${compiled}; return Host`)(...Object.values(scope))
   const host = new Host()
   Object.assign(host, {
+    connectedApps: new Map(),
     meetingCredentialRequests: new Map(),
     ensureMeetingStateBridge: () => {},
     requireManifestPermission: () => true,

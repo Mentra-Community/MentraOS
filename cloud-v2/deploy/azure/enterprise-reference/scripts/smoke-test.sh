@@ -37,7 +37,9 @@ request --fail --show-error --silent "$WORKSPACE/api/client/min-version" | jq -e
   (.data.recommended | type == "string" and semver)
 ' >/dev/null
 manifest="$(request --fail --show-error --silent "$WORKSPACE/.well-known/mentra-deployment.json")"
-if ! jq -e --arg origin "$WORKSPACE" --arg requireCall "${MENTRA_REQUIRE_CALL:-false}" '
+# MENTRA_REQUIRED_CALL_PACKAGE names a customer variant of Mentra Call (miniappVariants).
+if ! jq -e --arg origin "$WORKSPACE" --arg requireCall "${MENTRA_REQUIRE_CALL:-false}" \
+  --arg callPackage "${MENTRA_REQUIRED_CALL_PACKAGE:-com.mentra.call}" '
   .schemaVersion == 1 and
   (.services.coreUrl | startswith("https://")) and
   .services.runtimeUrl == $origin and
@@ -47,7 +49,7 @@ if ! jq -e --arg origin "$WORKSPACE" --arg requireCall "${MENTRA_REQUIRE_CALL:-f
   .features.nativeMeetings == true and
   (.telemetry | type == "boolean") and
   (.auth.sessionScopes | length > 0 and all(endswith("/mentra.session"))) and
-  (.miniapps.managed | type == "array" and (if $requireCall == "true" then any(.packageName == "com.mentra.call") else true end)) and
+  (.miniapps.managed | type == "array" and (if $requireCall == "true" then any(.packageName == $callPackage) else true end)) and
   ((.miniapps.configuration == null) or (.miniapps.configuration | type == "object")) and
   (.branding.logoUrls.light | startswith($origin + "/")) and
   (.branding.logoUrls.dark | startswith($origin + "/"))

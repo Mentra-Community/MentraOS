@@ -295,5 +295,33 @@ Existing installed consumer clients continue using the existing Call backend rou
 The new Call bundle requires host meeting-policy discovery; hosts lacking that API
 show an update message and cannot send requests to a public Call backend.
 
+### Your own variant of Mentra Call
+
+A customer runs Call under its own package name and backend with one setting,
+`miniappVariants` in `deployment.config.json`, keyed by Mentra's package name:
+
+```json
+"miniappVariants": {
+  "com.mentra.call": {"packageName": "com.acme.call", "backendUrl": "https://call.acme.example"}
+}
+```
+
+`deploy.sh` passes it to `main.bicep`, which gives it to Runtime as
+`DEPLOYMENT_MINIAPP_VARIANTS`. Runtime stamps the pinned Call ZIP from the image
+and serves it, with its manifest entry, under the customer's package name, so the
+image stays Mentra's. Setup prints the `PACKAGE_NAME` and `PUBLIC_BASE_URL` the
+customer's Call backend needs from the same pair, and its smoke test expects Call
+under the variant's name. This reference deploys no miniapp backend, so the
+customer runs Mentra's Call backend image themselves. Leaving `miniappVariants`
+empty, as Mentra's own deployments do, serves Mentra's Call unchanged. Only a Call
+build that declares `"acceptsVariant": true` can be stamped: the pinned 2.1.62
+predates it, so Runtime refuses to start with a Call variant until the reference
+pins a newer Call. See
+[Your own variant of a Mentra miniapp](../../deployment-manifest-reference.md#your-own-variant-of-a-mentra-miniapp).
+
+Under a private workspace's meeting policy Call still sends only Zoom and Google
+Meet requests to its backend; with a variant those reach the customer's backend
+instead of Mentra's.
+
 Before releasing, qualify licensed and unlicensed joins on both Android and iOS,
 including lobby admission, remote identity, two-way audio/video and cancellation.

@@ -64,6 +64,11 @@ import {
   parseDeploymentManifest,
 } from "./services/deployment-manifest";
 import { loadDeploymentMiniappBundles } from "./services/deployment-miniapps";
+import {
+  applyMiniappVariants,
+  parseMiniappVariants,
+  type MiniappVariants,
+} from "./services/miniapp-variant";
 import { parseWorkspaceAliases } from "./services/deployment-workspace-aliases";
 
 const logger = createLogger("runtime");
@@ -229,6 +234,8 @@ export interface StartRuntimeOptions {
   };
   /** Optional same-origin userland miniapp ZIPs declared by the deployment manifest. */
   deploymentMiniappBundles?: Array<{ path: string; body: Blob | ArrayBuffer }>;
+  /** Customer variants of managed miniapps. Defaults to DEPLOYMENT_MINIAPP_VARIANTS. */
+  miniappVariants?: MiniappVariants;
 }
 
 export interface RuntimeHandle {
@@ -265,9 +272,17 @@ export async function startRuntime(
   const legalDocuments = opts.legalDocuments ?? (await loadLegalDocuments());
   const deploymentBranding =
     opts.deploymentBranding ?? (await loadDeploymentBranding());
-  const deploymentMiniappBundles =
+  // Source bundles are checked against the manifest as written, then each
+  // customer variant replaces its source in what Runtime serves.
+  const served = await applyMiniappVariants(
+    deploymentManifest ?? "",
     opts.deploymentMiniappBundles ??
-    (await loadDeploymentMiniappBundles(deploymentManifest));
+      (await loadDeploymentMiniappBundles(deploymentManifest)),
+    opts.miniappVariants ??
+      parseMiniappVariants(process.env.DEPLOYMENT_MINIAPP_VARIANTS),
+  );
+  const servedManifest = deploymentManifest ? served.manifest : undefined;
+  const deploymentMiniappBundles = served.bundles;
   if (services.has("meetings") && !deploymentManifest) {
     throw new Error("meetings service requires a deployment manifest");
   }
@@ -365,7 +380,7 @@ export async function startRuntime(
   const api = createApiApp({
     readinessChecks: realtimeAudio ? [redisReadinessCheck] : [],
     services,
-    deploymentManifest,
+    deploymentManifest: servedManifest,
     deploymentWorkspaceAliases: opts.deploymentWorkspaceAliases ?? parseWorkspaceAliases(process.env.DEPLOYMENT_WORKSPACE_ALIASES),
     legalDocuments,
     deploymentBranding,

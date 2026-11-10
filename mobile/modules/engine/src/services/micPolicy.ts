@@ -147,6 +147,14 @@ export const MIC_USE_CASE_LOUDNESS_GATE: Record<MicUseCase, boolean> = {
  */
 export const VOICE_CALL_PACKAGES: readonly string[] = ["com.mentra.call"]
 
+/**
+ * Whether a package may make voice calls: one of {@link VOICE_CALL_PACKAGES},
+ * or a deployment's honored variant of one (see `miniappVariant.ts`).
+ */
+export function isVoiceCallPackage(packageName: string, variantOf?: string): boolean {
+  return VOICE_CALL_PACKAGES.includes(packageName) || (variantOf !== undefined && VOICE_CALL_PACKAGES.includes(variantOf))
+}
+
 /** Every use case, for validating an inbound request. */
 export const MIC_USE_CASES: readonly MicUseCase[] = [
   "voice_call",

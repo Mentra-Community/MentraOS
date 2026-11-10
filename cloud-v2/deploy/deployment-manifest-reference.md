@@ -433,6 +433,78 @@ own errors. Never put secrets here: the manifest is fetched before login.
 Backend authentication is configured separately in the
 [Core trust contract](./private-deployment.md#miniapp-backend-authentication).
 
+## Your own variant of a Mentra miniapp
+
+You can run a Mentra miniapp, such as Mentra Call, under your own package name
+and against your own backend, from Mentra's prebuilt artifacts: the miniapp ZIP
+and the backend image. Nothing is rebuilt from source. You choose one pair:
+
+| Half | Default | Meaning |
+| --- | --- | --- |
+| `packageName` | The miniapp's own, e.g. `com.mentra.call` | The name the Mentra App installs the miniapp under. Core issues the miniapp's backend tokens for this name, and the backend accepts only tokens for it. |
+| `backendUrl` | The backend compiled into the ZIP (Mentra's) | HTTPS URL of your deployment of the miniapp's backend. No credentials, query or fragment. |
+
+A renamed miniapp needs `backendUrl`: Mentra's backends accept only Mentra's
+package names. Setting only `backendUrl` keeps the package name.
+
+Only a build whose `miniapp.json` declares `"acceptsVariant": true` can be
+stamped: it reads its backend from the Mentra App and never calls its compiled
+backend under another name. Today that is Mentra Call and the Enterprise Demo,
+from their first builds that declare it; stamping refuses any other bundle,
+including earlier builds of those two.
+
+The pair is applied in two places, always together:
+
+- **Bundle.** The pair is stamped into the ZIP's `miniapp.json`: `packageName`
+  becomes yours, and `variant: {"of": "<Mentra's package>", "backendUrl": "..."}`
+  records the rest. The stamped ZIP has its own SHA-256, which pins both halves.
+  The Mentra App hands the stamped `backendUrl` to the miniapp (as its
+  `backendUrl` configuration, ahead of any `miniapps.configuration` value), and
+  lets a variant of Mentra Call make voice calls as Call does. It honors a stamp only on a release your manifest manages, matched by
+  package, version and SHA-256. Stamping removes Mentra's publisher signature,
+  because it changes `miniapp.json`, and requires Mentra App 3.5 or later
+  (`minHostVersion`). A stamped miniapp without its backend URL never falls
+  back to Mentra's backend.
+- **Backend.** Run Mentra's backend image with `PACKAGE_NAME` set to your
+  package name and its public URL (`PUBLIC_BASE_URL` for Mentra Call) set to
+  `backendUrl`, injected however your platform provides environment variables.
+  The backend logs both at startup, and warns when `PACKAGE_NAME` differs from
+  the miniapp's own name, since tokens for that name are then rejected.
+
+When Runtime serves your managed ZIPs, give it the pairs in
+`DEPLOYMENT_MINIAPP_VARIANTS`, a JSON object keyed by the Mentra package name:
+
+```json
+{"com.mentra.call": {"packageName": "com.acme.call", "backendUrl": "https://call.acme.example"}}
+```
+
+Keep the manifest's `miniapps.managed` entry for Mentra's ZIP as published.
+Runtime checks that ZIP against its entry, stamps it, and serves the stamped
+ZIP at `/miniapps/<packageName>-<version>.zip` in a manifest whose entry names
+your package and the stamped SHA-256. Stamping is deterministic, so a restart
+or an upgrade that keeps the ZIP serves identical bytes. Key any
+`miniapps.configuration` for the miniapp by your package name; configuration
+keyed by Mentra's name is refused while it is renamed. The Azure reference sets
+this from its `miniappVariants` setting.
+
+When you serve the ZIPs and manifest yourself, stamp the ZIP with the tool in
+the Mentra Cloud image and publish its output:
+
+```bash
+docker run --rm -v "$PWD:/work" -w /work <mentra-cloud-image> \
+  bun /app/cloud-v2/packages/runtime/src/cli/stamp-miniapp-variant.ts \
+  com.mentra.call-2.1.62.zip --package-name com.acme.call --backend-url https://call.acme.example
+```
+
+It writes `com.acme.call-2.1.62.zip` and prints the managed entry's
+`packageName`, `version` and `sha256` (add your `bundleUrl`), and the
+`PACKAGE_NAME` and `PUBLIC_BASE_URL` for the backend. Stamp each new Mentra
+release of the ZIP the same way.
+
+A renamed miniapp is a different package to Core: licensed features and Fleet
+assignments for Mentra's package name do not apply to it until you grant them
+for yours.
+
 ## Glasses
 
 `glasses.allowedModelsOverride` is required. It accepts `null` or an array of

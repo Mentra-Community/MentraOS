@@ -3,7 +3,7 @@
 import {beforeEach, describe, expect, test} from "bun:test"
 import {readFileSync} from "node:fs"
 
-import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, VOICE_CALL_PACKAGES} from "../micPolicy"
+import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, VOICE_CALL_PACKAGES, isVoiceCallPackage} from "../micPolicy"
 
 /**
  * Who may ask the host for which microphone.
@@ -55,7 +55,7 @@ function createHost(options: {micPermission?: boolean; acquireThrows?: Error} = 
     "micSessionManager",
     "MIC_SOURCE_CONFLICT",
     "MIC_USE_CASES",
-    "VOICE_CALL_PACKAGES",
+    "isVoiceCallPackage",
     "ENGINE_ONLY_USE_CASES",
     "logPermissionNotDeclared",
     "LOG_TAG",
@@ -66,7 +66,7 @@ function createHost(options: {micPermission?: boolean; acquireThrows?: Error} = 
     micSessionManager,
     MIC_SOURCE_CONFLICT,
     MIC_USE_CASES,
-    VOICE_CALL_PACKAGES,
+    isVoiceCallPackage,
     ENGINE_ONLY_USE_CASES,
     () => {},
     "TEST",
@@ -180,7 +180,8 @@ describe("meeting join gate", () => {
 
   test("an allowlisted package without a session is refused", () => {
     expect(handler).toContain("micSessionManager.hasGlassesSession(packageName)")
-    expect(handler).toContain("VOICE_CALL_PACKAGES.includes(packageName) && !glassesSession")
+    expect(handler).toContain("isVoiceCallPackage(packageName, this.connectedApps.get(packageName)?.installedManifest?.variant?.of)")
+    expect(handler).toContain("if (voiceCall && !glassesSession)")
     expect(handler).toContain("MiniappErrorCode.MIC_SESSION_REQUIRED")
   })
 

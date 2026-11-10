@@ -58,6 +58,7 @@ import type {MentraJSRouter} from "./MentraJSRouter"
 import {checkMiniappAge, type AgeGateVerdict, type AgeRatedMiniapp} from "./miniappAgeGate"
 import {developmentOriginName, miniappOrigin, miniappOriginUrl, type MiniappOriginPlatform} from "./miniappOrigin"
 import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
+import {honoredMiniappVariant} from "./miniappVariant"
 
 /** The miniapp's server no longer admits this account (Fleet revocation): it cannot launch until access returns. */
 export class MiniappAccessRevokedError extends Error {
@@ -456,7 +457,11 @@ class MiniappLauncher {
         lifecycle?: unknown
         audience?: unknown
       }>
+      variant?: unknown
     } | null
+    const releaseIdentity = appRegistry.getReleaseIdentity(packageName, version)
+    // A variant stamp counts only on a release the deployment's manifest pinned by digest.
+    const variant = honoredMiniappVariant(packageName, version, manifest?.variant, releaseIdentity ?? null)
     const declaredPermissions = (manifest?.permissions ?? [])
       .map((p) => p.type)
       .filter((t): t is string => typeof t === "string")
@@ -472,6 +477,7 @@ class MiniappLauncher {
           permissions: manifest.permissions,
           hardwareRequirements: manifest.hardwareRequirements,
           actions: manifest.actions,
+          ...(variant ? {variant} : {}),
         }
       : undefined
 
@@ -507,7 +513,7 @@ class MiniappLauncher {
       ageRating: manifest?.ageRating ?? null,
       // A development build never runs with the build's privileges, whatever name it claims.
       hostTrustedSystem:
-        !devBuild && isHostTrustedSystemMiniapp(packageName, appRegistry.getReleaseIdentity(packageName, version)),
+        !devBuild && isHostTrustedSystemMiniapp(packageName, releaseIdentity),
       // A snapshot on disk — do not wire the sidecar; the laptop is gone.
       devUrl: null,
       devPort: null,

@@ -67,6 +67,8 @@ param approvedSystemMiniapps array = ['com.mentra.settings']
 param managedMiniapps array = []
 @description('Non-secret configuration exposed to opted-in miniapps: an object keyed by package name whose values are objects of string entries (keys ^[A-Za-z][A-Za-z0-9._-]{0,63}$, values <= 2048 bytes, <= 32 entries and <= 16 KiB per package). Bicep does not enforce these Mentra App limits; deploy.sh validates them before deployment.')
 param miniappConfiguration object = {}
+@description('Customer variants of managed miniapps: an object keyed by the source package name (com.mentra.call), each value {packageName, backendUrl}. Runtime stamps the pair into the served bundle and its manifest entry; the miniapp backend reads the same pair as PACKAGE_NAME and PUBLIC_BASE_URL. Empty serves Mentra\'s bundles unchanged.')
+param miniappVariants object = {}
 @description('Container directory holding managed miniapp ZIPs. Empty delegates these routes to customer ingress.')
 param managedMiniappDirectory string = '/app/cloud-v2/deploy/azure/enterprise-reference/miniapps'
 param allowedGlassesModels array = ['mentra-live']
@@ -506,6 +508,8 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'DEPLOYMENT_MANAGED_MINIAPP_DIR'
               value: managedMiniappDirectory
             }
+            // Runtime stamps each pair into its managed bundle and the manifest entry it serves.
+            { name: 'DEPLOYMENT_MINIAPP_VARIANTS', value: empty(miniappVariants) ? '' : string(miniappVariants) }
             { name: 'CLOUD_RUNTIME_AUTH_AUDIENCE', value: 'cloud-runtime' }
             {
               name: 'CLOUD_RUNTIME_AUTH_ISSUERS'

@@ -3,6 +3,8 @@
 import {describe, expect, test} from "bun:test"
 import {readFileSync} from "node:fs"
 
+import {variantConfiguration} from "../miniappVariant"
+
 // A miniapp's token carries what Core knew about the user when it was minted (the features they hold), so the
 // runtime asks for a fresh one whenever the miniapp opens: on CONNECT, on its foreground edge, and when the
 // scheduled refresh falls due. If CONNECT's fresh mint fails, its retries go through the default path, which
@@ -126,6 +128,7 @@ function fixture() {
     "getModelCapabilities",
     "computeDeclaredPermissionRecord",
     "getMiniappConfiguration",
+    "variantConfiguration",
     "MiniappResponseType",
     "MiniappErrorCode",
     "LOG_TAG",
@@ -142,6 +145,7 @@ function fixture() {
     () => ({}),
     () => ({}),
     () => ({}),
+    variantConfiguration,
     {CONNECT_ACK: "connect_ack", AUTH_UPDATE: "auth_update"},
     {NOT_CONNECTED: "not_connected", INTERNAL: "internal"},
     "LOCAL_MINIAPP",
@@ -151,7 +155,7 @@ function fixture() {
 
   let visible: string | null = null
   const host = new Host()
-  const sent: Array<{type: string; auth?: Token}> = []
+  const sent: Array<{type: string; auth?: Token; configuration?: Record<string, string>}> = []
   const visibility: Array<[string, string]> = []
   host.connectedApps = new Map()
   host.handshookApps = new Set()
@@ -172,14 +176,14 @@ function fixture() {
   host.flushConnectWaiters = () => {}
 
   /** registerApp: a respawned miniapp replaces the old entry and drops its timers. */
-  const register = (packageName = CALL) => {
+  const register = (packageName = CALL, installedManifest?: {variant?: {of: string; backendUrl?: string}}) => {
     const existing = host.connectedApps.get(packageName)
     if (existing?.authRefreshTimerId != null) bgTimer.clearTimeout(existing.authRefreshTimerId)
     if (existing?.authRetryTimerId != null) bgTimer.clearTimeout(existing.authRetryTimerId)
     host.connectedApps.set(packageName, {
       lastPongAt: 0,
       unansweredPingRounds: 0,
-      installedManifest: undefined,
+      installedManifest,
       authRefreshTimerId: null,
       authRetryTimerId: null,
       authDelivered: false,
@@ -212,6 +216,8 @@ function fixture() {
     /** Tokens the miniapp was handed, in order (CONNECT's delivery and every AUTH_UPDATE after it). */
     /** The results the miniapp was sent for its own AUTH_REFRESH requests. */
     results,
+    /** The configuration each CONNECT_ACK handed the miniapp. */
+    acknowledged: () => sent.filter((message) => message.type === "connect_ack").map((message) => message.configuration),
     delivered: () => sent.filter((message) => message.type === "auth_update").map((message) => message.auth?.token),
     now: () => now,
     /** Timers still armed, with the delay each was armed for. */
@@ -277,6 +283,16 @@ describe("a miniapp that connects", () => {
 
     expect(f.requests).toEqual([{packageName: CALL, opts: {fresh: true}}])
     expect(f.delivered()).toEqual(["token-1"])
+  })
+
+  test("is handed its deployment variant's backend, and no backend without a variant", async () => {
+    const f = fixture()
+    await f.connect()
+    f.register(CALL, {variant: {of: "com.mentra.call", backendUrl: "https://call.acme.example"}})
+    f.host.handleConnect(CALL, {}, "req-variant")
+    await flush()
+
+    expect(f.acknowledged()).toEqual([{}, {backendUrl: "https://call.acme.example"}])
   })
 
   test("two opens within an hour get two tokens", async () => {

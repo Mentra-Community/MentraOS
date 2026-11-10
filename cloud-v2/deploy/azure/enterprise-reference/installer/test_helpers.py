@@ -56,13 +56,13 @@ else: sys.exit(9)
         self.assertNotIn('private-value', result.stdout + result.stderr)
         self.assertFalse(list(self.path.glob('mentra-acr-import.*')))
 
-    def smoke(self, with_call):
+    def smoke(self, with_call, call_package='com.mentra.call'):
         import hashlib
         bundle = self.path / 'bundle.zip'
         with zipfile.ZipFile(bundle, 'w') as archive:
             archive.writestr('miniapp.json', '{}')
         origin = 'https://workspace.example'
-        managed = ([dict(packageName='com.mentra.call', version='1.0.0',
+        managed = ([dict(packageName=call_package, version='1.0.0',
                          bundleUrl=origin + '/miniapps/custom-call-build.zip',
                          sha256=hashlib.sha256(bundle.read_bytes()).hexdigest().upper())] if with_call else [])
         manifest = dict(schemaVersion=1, services=dict(coreUrl=origin, runtimeUrl=origin),
@@ -99,6 +99,13 @@ elif url.endswith('.zip'):
     def test_smoke_accepts_custom_bundle_filename_and_uppercase_hash(self):
         self.env['MENTRA_REQUIRE_CALL'] = 'true'
         self.smoke(True)
+
+    def test_smoke_requires_calls_variant_under_its_own_package_name(self):
+        self.env['MENTRA_REQUIRE_CALL'] = 'true'
+        self.env['MENTRA_REQUIRED_CALL_PACKAGE'] = 'com.acme.call'
+        self.smoke(True, 'com.acme.call')
+        with self.assertRaises(AssertionError):
+            self.smoke(True)
 
     def test_zip_verification_bounds_actual_expansion(self):
         import hashlib

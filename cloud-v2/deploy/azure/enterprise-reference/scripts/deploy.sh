@@ -71,6 +71,18 @@ jq -e '
     type == "object" and
     (keys | length <= 100 and all(package_name)) and
     ([.[]] | all(miniapp_configuration));
+  # Shape only; Runtime checks each pair against its managed bundle at startup
+  # (cloud-v2/packages/runtime/src/services/miniapp-variant.ts).
+  def https_url: type == "string" and test("^https://[^/?#@]+(/[^?#]*)?$");
+  def miniapp_variant:
+    type == "object" and
+    (keys - ["packageName", "backendUrl"] | length == 0) and
+    ((.packageName // "") | . == "" or package_name) and
+    ((.backendUrl // "") | . == "" or https_url);
+  def miniapp_variant_map:
+    type == "object" and
+    (keys | all(package_name)) and
+    ([.[]] | all(miniapp_variant));
   def email_domain:
     type == "string" and length <= 253 and
     test("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$") and
@@ -110,6 +122,7 @@ jq -e '
   ((.verifiedEmailDomains // []) | type == "array" and all(email_domain) and (unique | length) == length) and
   ((.adminPortalSignIn // false) | type == "boolean") and
   ((.miniappConfiguration // {}) | miniapp_configuration_map) and
+  ((.miniappVariants // {}) | miniapp_variant_map) and
   ($minVersion | semver) and
   ($recommendedVersion | semver) and
   (($recommendedVersion | semver_key) >= ($minVersion | semver_key))
@@ -215,6 +228,7 @@ jq -n \
       approvedSystemMiniapps:{value:($c.approvedSystemMiniapps // ["com.mentra.settings"])},
       managedMiniapps:{value:($c.managedMiniapps // [])},
       miniappConfiguration:{value:($c.miniappConfiguration // {})},
+      miniappVariants:{value:($c.miniappVariants // {})},
       managedMiniappDirectory:{value:($c.managedMiniappDirectory // "/app/cloud-v2/deploy/azure/enterprise-reference/miniapps")},
       allowedGlassesModels:{value:($c.allowedGlassesModels // ["mentra-live"])},
       telemetryEnabled:{value:($c.telemetryEnabled // false)},

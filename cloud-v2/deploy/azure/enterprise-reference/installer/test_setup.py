@@ -802,5 +802,18 @@ class InstallerTests(unittest.TestCase):
             self.assertNotIn('private', json.dumps(result))
 
 
+    def test_miniapp_variant_backends_get_the_pair_their_bundles_carry(self):
+        config = dict(miniappVariants={
+            'com.mentra.call': dict(packageName='com.acme.call', backendUrl='https://call.acme.example/'),
+            'com.mentra.enterprise': dict(backendUrl='https://demo.acme.example'),
+        })
+        self.assertEqual(setup.miniapp_backend_environments(config), {
+            'com.acme.call': dict(PACKAGE_NAME='com.acme.call', PUBLIC_BASE_URL='https://call.acme.example'),
+            'com.mentra.enterprise': dict(PACKAGE_NAME='com.mentra.enterprise', PUBLIC_BASE_URL='https://demo.acme.example'),
+        })
+        self.assertEqual(setup.miniapp_backend_environments({}), {})
+        self.assertIn('miniappVariants', setup.RESTORED_KEYS)
+
+
 if __name__ == '__main__':
     unittest.main()
