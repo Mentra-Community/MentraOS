@@ -5,6 +5,7 @@ import {
   appProblems,
   environmentKeys,
   groupProblems,
+  isolationProblems,
   linkedGroups,
 } from "./porter-doppler-health.mjs"
 
@@ -51,4 +52,25 @@ test("checks contracted groups even when no managed app consumes them", async ()
   assert.deepEqual(await checkHealth(contract, {run}), ["prepared-doppler: missing Doppler keys API_KEY"])
   // Only reads the Porter project token is allowed to make; no kubectl.
   assert.deepEqual(calls, [["env", "pull", "--group"]])
+})
+
+test("flags environments that share a database without reporting it", () => {
+  const rules = [{name: "app database", keys: ["MONGODB_URI", "MONGODB_DB"], groups: ["dev", "stg", "prd", "absent"]}]
+  const uri = "MONGODB_URI=mongodb+srv://user:secret-data@cluster/\n"
+  const exported = new Map([
+    ["dev", `${uri}MONGODB_DB=app-dev\n`],
+    ["stg", `${uri}MONGODB_DB=app-dev\n`],
+    ["prd", `${uri}MONGODB_DB=app\n`],
+  ])
+  const problems = isolationProblems(rules, exported)
+  assert.deepEqual(problems, ["app database: dev and stg share MONGODB_URI + MONGODB_DB"])
+  assert.ok(!problems.join().includes("secret-data"))
+  exported.set("stg", `${uri}MONGODB_DB=app-staging\n`)
+  assert.deepEqual(isolationProblems(rules, exported), [])
+})
+
+test("a group without the resource does not share it", () => {
+  const rules = [{name: "tape", keys: ["BUCKET"], groups: ["dev", "prd"]}]
+  assert.deepEqual(isolationProblems(rules, new Map([["dev", "BUCKET=tape\n"], ["prd", "OTHER=1\n"]])), [])
+  assert.deepEqual(isolationProblems(undefined, new Map()), [])
 })

@@ -35,8 +35,33 @@ export function groupProblems(scope, exported) {
     ["DOPPLER_PROJECT", scope.project],
     ["DOPPLER_CONFIG", scope.config],
   ]) {
-    const actual = exported.match(new RegExp(`^${key}=(.*)$`, "m"))?.[1]?.replace(/^['"]|['"]$/g, "")
+    const actual = environmentValue(exported, key)
     if (actual !== expected) problems.push(`${scope.name}: unexpected ${key}`)
+  }
+  return problems
+}
+
+function environmentValue(text, key) {
+  return text.match(new RegExp(`^${key}=(.*)$`, "m"))?.[1]?.replace(/^['"]|['"]$/g, "")
+}
+
+// Groups listed together must not reach the same data: their values for the
+// rule's keys, taken together, must differ. A group without any of the keys
+// does not use that resource. Values are compared in memory, never reported.
+export function isolationProblems(rules, exportedByGroup) {
+  const problems = []
+  for (const rule of rules ?? []) {
+    const seen = []
+    for (const group of rule.groups) {
+      const exported = exportedByGroup.get(group)
+      if (exported === undefined) continue
+      const values = rule.keys.map((key) => environmentValue(exported, key) ?? "")
+      if (values.every((value) => !value)) continue
+      const tuple = JSON.stringify(values)
+      const twin = seen.find((other) => other.tuple === tuple)
+      if (twin) problems.push(`${rule.name}: ${twin.group} and ${group} share ${rule.keys.join(" + ")}`)
+      else seen.push({group, tuple})
+    }
   }
   return problems
 }
@@ -53,11 +78,13 @@ async function porter(args, token) {
 
 export async function checkHealth(contract, {run = porter, token = process.env.PORTER_TOKEN} = {}) {
   const problems = []
+  const exportedByGroup = new Map()
   for (const cluster of contract.clusters) {
     const apps = contract.apps.filter((app) => app.cluster === cluster.id)
     const flags = ["--project", String(contract.project), "--cluster", String(cluster.id)]
     for (const scope of contract.groups.filter((group) => group.cluster === cluster.id)) {
       const exported = await run(["env", "pull", "--group", scope.name, ...flags], token)
+      exportedByGroup.set(scope.name, exported)
       problems.push(...groupProblems(scope, exported))
     }
     // Bounded batches keep the audit read-only and avoid overloading the API.
@@ -75,6 +102,7 @@ export async function checkHealth(contract, {run = porter, token = process.env.P
       problems.push(...batch.flat())
     }
   }
+  problems.push(...isolationProblems(contract.isolation, exportedByGroup))
   return problems
 }
 

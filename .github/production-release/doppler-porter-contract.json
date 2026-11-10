@@ -864,6 +864,7 @@
         "MENTRA_AUTH_ALLOW_LOCAL_BUILDS",
         "MENTRA_CORE_URL",
         "MENTRA_DIRECTORY_URL",
+        "MONGODB_DB",
         "MONGODB_URI",
         "NGROK_DOMAIN",
         "OPENROUTER_API_KEY",
@@ -893,6 +894,7 @@
         "MENTRA_AUTH_ALLOW_LOCAL_BUILDS",
         "MENTRA_CORE_URL",
         "MENTRA_DIRECTORY_URL",
+        "MONGODB_DB",
         "MONGODB_URI",
         "NGROK_DOMAIN",
         "OPENROUTER_API_KEY",
@@ -919,6 +921,7 @@
         "MENTRA_AGENT_API_KEY",
         "MENTRA_AI_CERBERAS_API_KEY",
         "MENTRA_CORE_URL",
+        "MONGODB_DB",
         "MONGODB_URI",
         "OPENROUTER_API_KEY",
         "OPENROUTER_SEARCH_MODEL",
@@ -1000,7 +1003,6 @@
         "CLOUDFLARE_R2_ACCESS_KEY_ID",
         "CLOUDFLARE_R2_BUCKET_NAME",
         "CLOUDFLARE_R2_ENDPOINT",
-        "CLOUDFLARE_R2_PUBLIC_URL",
         "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
         "COOKIE_SECRET",
         "DOPPLER_CONFIG",
@@ -1051,6 +1053,7 @@
         "GEMINI_API_KEY",
         "MENTRA_CORE_URL",
         "MENTRA_PUBLIC_NOTES_BACKEND_URL",
+        "MONGODB_DB_NAME",
         "MONGODB_URI",
         "NODE_ENV",
         "OPENAI_API_KEY",
@@ -1392,7 +1395,6 @@
         "GEMINI_MODEL",
         "LINKLINGO_CODE_AGENT_USERS",
         "LINKLINGO_REVIEW_TOKEN",
-        "LINKLINGO_TAPE_BUCKET",
         "MENTRA_CORE_URL",
         "MENTRA_PUBLIC_LINKLINGO_BACKEND_URL",
         "NODE_ENV",
@@ -1417,7 +1419,6 @@
         "CLOUDFLARE_R2_ACCESS_KEY_ID",
         "CLOUDFLARE_R2_BUCKET_NAME",
         "CLOUDFLARE_R2_ENDPOINT",
-        "CLOUDFLARE_R2_PUBLIC_URL",
         "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
         "COOKIE_SECRET",
         "DOPPLER_CONFIG",
@@ -1467,6 +1468,7 @@
         "MENTRA_AI_PORT",
         "MENTRA_CORE_URL",
         "MENTRA_PUBLIC_MENTRA_AI_BACKEND_URL",
+        "MONGODB_DB",
         "MONGODB_URI",
         "NGROK_DOMAIN",
         "OPENROUTER_API_KEY",
@@ -1565,6 +1567,53 @@
         "PORT",
         "VEHICLE_DATABASES_API_KEY"
       ]
+    }
+  ],
+  "isolation": [
+    {
+      "name": "Mentra AI database",
+      "keys": ["MONGODB_URI", "MONGODB_DB"],
+      "groups": ["mentra-ai-miniapp-dev", "mentra-ai-staging-doppler", "mentra-ai-miniapp-prod"]
+    },
+    {
+      "name": "Notes database",
+      "keys": ["MONGODB_URI", "MONGODB_DB_NAME"],
+      "groups": ["mentra-notes-miniapp-dev", "mentra-notes-staging-doppler", "mentra-notes-miniapp-prod"]
+    },
+    {
+      "name": "Notes bucket",
+      "keys": ["CLOUDFLARE_R2_ENDPOINT", "CLOUDFLARE_R2_BUCKET_NAME"],
+      "groups": ["mentra-notes-miniapp-dev", "mentra-notes-staging-doppler", "mentra-notes-miniapp-prod"]
+    },
+    {
+      "name": "Notes public bucket URL",
+      "keys": ["CLOUDFLARE_R2_PUBLIC_URL"],
+      "groups": ["mentra-notes-miniapp-dev", "mentra-notes-staging-doppler", "mentra-notes-miniapp-prod"]
+    },
+    {
+      "name": "Call database",
+      "keys": ["MONGODB_URI", "MONGODB_DATABASE"],
+      "groups": ["mentra-call-miniapp-development", "mentra-call-miniapp-production"]
+    },
+    {
+      "name": "LinkLingo tape bucket",
+      "keys": ["LINKLINGO_TAPE_BUCKET"],
+      "groups": ["linklingo-dev-doppler", "linklingo-staging-doppler"]
+    },
+    {
+      "name": "Store database",
+      "keys": ["MONGO_URL"],
+      "groups": ["miniapp-store-dev-doppler", "miniapp-store-staging-doppler", "miniapp-store-prod-doppler"]
+    },
+    {
+      "name": "Fleet database",
+      "keys": ["MONGO_URL"],
+      "groups": ["mfm-dev-doppler", "mfm-staging-doppler", "mfm-prod-doppler"]
+    },
+    {
+      "name": "Fleet archive bucket",
+      "keys": ["MFM_ARCHIVE_S3_ENDPOINT", "MFM_ARCHIVE_S3_BUCKET"],
+      "groups": ["mfm-dev-doppler", "mfm-staging-doppler", "mfm-prod-doppler"]
     }
   ],
   "exceptions": [
