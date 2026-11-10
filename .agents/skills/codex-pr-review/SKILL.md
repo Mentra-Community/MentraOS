@@ -2,9 +2,9 @@
 name: codex-pr-review
 description: >-
   Run an independent local Codex (gpt-6.1-sol, medium) review of a GitHub pull
-  request and relay its verdict. Use for every PR an agent opens or updates,
-  except a simple change the agent may skip (see "When to skip"), and whenever
-  the user asks to review a PR "with Codex". The review is posted
+  request and relay its verdict. Use for a PR an agent opens or updates when
+  the agent judges a review worth it (see "When to skip"), and whenever the
+  user asks to review a PR "with Codex". The review is posted
   on the PR as approve / request-changes; it never edits, commits or merges.
 ---
 
@@ -12,15 +12,25 @@ description: >-
 
 ## When to skip
 
-The agent may skip the review for a simple change: one a reader can check in full at a glance,
-where a mistake would show at once and be cheap to undo. For example docs or copy, a one-line
-config value, a pure revert, a style tweak, or recorded routine steps that a hardware run just
-replayed. Always review changes to logic, CI and release workflows, firmware, signing,
-permissions or data handling, and anything that touches several areas. When skipping, say so in
-the PR description: `No Codex review: <reason>`.
+Whether to review is the agent's call. A review costs 5-20 minutes, so run it when it is likely
+to catch something the agent and the PR's own checks would miss, and skip it when the agent has
+high confidence in the change. For example:
 
-The same goes for a follow-up commit on a reviewed PR: one that is simple by itself, such as a
-renamed string or a fixed typo, doesn't need another review. Say so in a PR comment.
+- **Simple:** a reader can check it in full at a glance, and a mistake would show at once and be
+  cheap to undo: docs or copy, a one-line config value, a pure revert, a style tweak, or recorded
+  routine steps that a hardware run just replayed.
+- **Already reviewed:** the code was reviewed elsewhere and is ported, merged across, or reused
+  with small adjustments, such as a one-off job that runs a release workflow's reviewed steps.
+- **A follow-up:** a commit on a reviewed PR that fixes one of its findings or is simple by itself.
+- **Checked another way:** a dry run, a hardware run or tests exercise what a review would read,
+  and a failure would stop before doing harm.
+
+Lean toward a review for new logic in release workflows, firmware, signing, permissions or data
+handling, and for a change across several areas, where a mistake is costly or hard to undo. The
+user can always ask for one, or ask to skip it.
+
+When skipping, say why in the PR description (`No Codex review: <reason>`), or in a PR comment for
+a follow-up commit.
 
 ## Run it
 
