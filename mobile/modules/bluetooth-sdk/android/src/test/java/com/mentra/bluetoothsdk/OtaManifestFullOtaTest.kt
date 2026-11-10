@@ -37,8 +37,11 @@ class OtaManifestFullOtaTest {
         for (start in listOf(JSONObject.NULL, "20260709")) {
             assertFalse(hasUpdate(JSONObject().put("mtk_full_ota", full().put("start_firmware", start)), "20260709"))
         }
-        val delta = JSONObject().put("start_firmware", "20260709")
+        val delta = JSONObject().put("start_firmware", "20260709").put("end_firmware", "20260908.10")
         assertTrue(hasUpdate(JSONObject().put("mtk_patches", JSONArray().put(delta)), "MentraLive_20260709"))
+        // A reverse patch is never an update: it could be a userdata-wiping one.
+        val reverse = JSONObject().put("start_firmware", "20260923.0").put("end_firmware", "20260709")
+        assertFalse(hasUpdate(JSONObject().put("mtk_patches", JSONArray().put(reverse)), "MentraLive_20260923.0"))
         assertFalse(hasUpdate(JSONObject(), "20260709"))
         for (key in listOf("end_firmware", "url", "sha256", "size")) {
             val invalid = full().apply { remove(key) }

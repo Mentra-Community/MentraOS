@@ -112,7 +112,11 @@ export function planArtifacts(result: OtaCheckCurrentGlassesResult): OtaArtifact
   }
 
   if (result.updates.includes("mtk") && result.mtkPatch) {
-    const candidates = [...(manifest.mtk_patches ?? []), ...(manifest.mtk_full_ota ? [manifest.mtk_full_ota] : [])]
+    const candidates = [
+      ...(manifest.mtk_patches ?? []),
+      ...(manifest.mtk_full_ota ? [manifest.mtk_full_ota] : []),
+      ...(manifest.mtk_downgrade_patches ?? []),
+    ]
     const raw = candidates.find((entry) => firmwareUrl(entry) === firmwareUrl(result.mtkPatch!)) as unknown as
       | Record<string, unknown>
       | undefined
@@ -391,6 +395,9 @@ export function rewriteManifestForLocalServer(
   }
   if (manifest.mtk_full_ota) {
     rewriteFirmwareEntry(manifest.mtk_full_ota as unknown as Record<string, unknown>, byUrl, localUrl)
+  }
+  for (const downgrade of manifest.mtk_downgrade_patches ?? []) {
+    rewriteFirmwareEntry(downgrade as unknown as Record<string, unknown>, byUrl, localUrl)
   }
   if (manifest.bes_firmware) {
     rewriteFirmwareEntry(manifest.bes_firmware as unknown as Record<string, unknown>, byUrl, localUrl)

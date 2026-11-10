@@ -149,24 +149,91 @@ internal object OtaManifestChecker {
         return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
     }
 
+    /**
+     * Mentra 3.0's MTK. No downgrade goes below it: downgrades keep userdata (photos and videos),
+     * which holds only between builds with the same Android version, security patch level and AVB
+     * rollback indexes. The glasses (MtkOtaSelector), the engine and iOS keep the same floor.
+     */
+    internal const val MTK_DOWNGRADE_FLOOR = "MentraLive_20260709"
+    /** Each published downgrade's record, by its two versions. */
+    internal const val MTK_DOWNGRADE_RECORD_BASE_URL = "https://mtkfirmware.mentraglass.com/"
+
+    private fun normalizeMtk(version: String): String = version.trim().substringAfterLast('_')
+
+    /** Date, then revision (a date-only version is revision 0); false when either is unknown. */
+    internal fun isNewerMtk(target: String, current: String): Boolean {
+        val pattern = Regex("[0-9]{8}(\\.[0-9]{1,9})?")
+        val t = normalizeMtk(target)
+        val c = normalizeMtk(current)
+        if (!pattern.matches(t) || !pattern.matches(c)) return false
+        val targetParts = t.split('.').map { it.toLong() }
+        val currentParts = c.split('.').map { it.toLong() }
+        return targetParts[0] > currentParts[0] ||
+            (targetParts[0] == currentParts[0] && targetParts.getOrElse(1) { 0 } > currentParts.getOrElse(1) { 0 })
+    }
+
+    /**
+     * The older MTK this manifest pins, from Mentra 3.0's up: its full OTA's version, or else the
+     * one version its patches all end at.
+     */
+    internal fun mtkDowngradeTarget(manifest: JSONObject, currentVersion: String): String? {
+        val full = manifest.optJSONObject("mtk_full_ota")
+        var target: String? = (full?.opt("end_firmware") as? String)?.let(::normalizeMtk)
+        if (full == null) {
+            val patches = manifest.optJSONArray("mtk_patches")
+            for (index in 0 until (patches?.length() ?: 0)) {
+                val end = normalizeMtk(patches?.optJSONObject(index)?.optString("end_firmware", "") ?: "")
+                if (target != null && target != end) return null
+                target = end
+            }
+        }
+        if (target == null || !isNewerMtk(currentVersion, target) || isNewerMtk(MTK_DOWNGRADE_FLOOR, target)) return null
+        return target
+    }
+
+    /**
+     * Whether the glasses would downgrade their MTK to the older one this manifest pins: its
+     * release predates the newer MTK, so the downgrade's published record decides. Network.
+     */
+    fun hasMtkDowngrade(
+        manifest: JSONObject,
+        currentVersion: String,
+        fetchRecord: (String) -> JSONObject? = ::fetchRecordOrNull,
+    ): Boolean {
+        val target = mtkDowngradeTarget(manifest, currentVersion) ?: return false
+        val url = "${MTK_DOWNGRADE_RECORD_BASE_URL}mtk_ota_downgrade_${normalizeMtk(currentVersion)}_$target.json"
+        val record = fetchRecord(url) ?: return false
+        return normalizeMtk(record.optString("start_firmware", "")) == normalizeMtk(currentVersion) &&
+            normalizeMtk(record.optString("end_firmware", "")) == target &&
+            Regex("https?://[^/\\s]+/.*").matches(record.optString("url", "")) &&
+            Regex("[a-fA-F0-9]{64}").matches(record.optString("sha256", "")) &&
+            (record.opt("size") is Int || record.opt("size") is Long) &&
+            record.optLong("size", 0) in 1..(1024L * 1024 * 1024)
+    }
+
+    private fun fetchRecordOrNull(url: String): JSONObject? =
+        try {
+            fetch(url)
+        } catch (error: Exception) {
+            null
+        }
+
     private fun hasMtkUpdate(manifest: JSONObject, currentVersion: String): Boolean {
         if (currentVersion.isBlank()) return false
-        val current = currentVersion.trim().substringAfterLast('_')
+        val current = normalizeMtk(currentVersion)
         val patches = manifest.optJSONArray("mtk_patches")
         for (index in 0 until (patches?.length() ?: 0)) {
             val patch = patches?.optJSONObject(index) ?: continue
-            val startFirmware = patch.optString("start_firmware", "")
-            if (startFirmware.trim().substringAfterLast('_') == current) return true
+            // An upgrade only: a reverse patch listed here could be a userdata-wiping one.
+            if (normalizeMtk(patch.optString("start_firmware", "")) == current &&
+                isNewerMtk(patch.optString("end_firmware", ""), current)
+            ) {
+                return true
+            }
         }
         val full = manifest.optJSONObject("mtk_full_ota") ?: return false
-        val target = (full.opt("end_firmware") as? String)?.trim()?.substringAfterLast('_') ?: return false
-        val pattern = Regex("[0-9]{8}(\\.[0-9]{1,9})?")
-        if (!pattern.matches(current) || !pattern.matches(target)) return false
-        val currentParts = current.split('.').map { it.toLong() }
-        val targetParts = target.split('.').map { it.toLong() }
-        val newer = targetParts[0] > currentParts[0] ||
-            (targetParts[0] == currentParts[0] && targetParts.getOrElse(1) { 0 } > currentParts.getOrElse(1) { 0 })
-        return newer && !full.has("start_firmware") &&
+        val target = full.opt("end_firmware") as? String ?: return false
+        return isNewerMtk(target, current) && !full.has("start_firmware") &&
             Regex("https?://[^/\\s]+/.*").matches(full.optString("url", "")) &&
             Regex("[a-fA-F0-9]{64}").matches(full.optString("sha256", "")) &&
             (full.opt("size") is Int || full.opt("size") is Long) &&

@@ -145,6 +145,24 @@ describe("planArtifacts", () => {
     )
     expect(rewritten.mtk_full_ota).toEqual({...full, url: `http://phone:8791/artifacts/${hashes.mtk}`})
   })
+  test("plans and rewrites the downgrade added to the manifest for hotspot serving", () => {
+    const downgrade = {
+      start_firmware: "MentraLive_20260923.0",
+      end_firmware: "MentraLive_20260709",
+      url: MTK_URL,
+      sha256: hashes.mtk,
+      size: 15179481,
+    }
+    const full = {end_firmware: "MentraLive_20260709", url: "https://cdn.example.com/old-full.zip", sha256: "1".repeat(64), size: 1}
+    const body = JSON.stringify({mtk_full_ota: full, mtk_downgrade_patches: [downgrade]})
+    const plan = planArtifacts(checkResult({updates: ["mtk"], mtkPatch: downgrade, manifestBody: body}))
+    expect(plan).toEqual([{kind: "mtk", url: MTK_URL, sha256: hashes.mtk}])
+    const rewritten = JSON.parse(
+      rewriteManifestForLocalServer(body, [{...plan[0], filePath: "/down.zip"}], "http://phone:8791"),
+    )
+    expect(rewritten.mtk_downgrade_patches).toEqual([{...downgrade, url: `http://phone:8791/artifacts/${hashes.mtk}`}])
+    expect(rewritten.mtk_full_ota).toEqual(full)
+  })
   test("plans every pending artifact from the raw manifest", () => {
     const plan = planArtifacts(checkResult())
     expect(plan).toEqual([

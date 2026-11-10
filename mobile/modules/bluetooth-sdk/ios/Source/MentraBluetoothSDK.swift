@@ -1599,12 +1599,15 @@ public final class MentraBluetoothSDK {
         let manifestUrl = try resolveOtaVersionUrl(status: status)
         let manifest = try await OtaManifestChecker.fetch(manifestUrl)
         let otaStatus = try await waitForOtaManifestStatus(status, manifest: manifest)
-        return try OtaManifestChecker.hasUpdate(
+        if try OtaManifestChecker.hasUpdate(
             currentBuildNumber: otaStatus.buildNumber,
             currentMtkVersion: otaStatus.mtkFirmwareVersion,
             currentBesVersion: otaStatus.besFirmwareVersion,
             manifest: manifest
-        )
+        ) {
+            return true
+        }
+        return await OtaManifestChecker.hasMtkDowngrade(manifest: manifest, currentVersion: otaStatus.mtkFirmwareVersion)
     }
 
     /// Return bundled release changelogs crossed between two coordinated product versions, newest first.

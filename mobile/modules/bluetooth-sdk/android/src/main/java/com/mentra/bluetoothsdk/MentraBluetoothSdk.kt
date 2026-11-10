@@ -1491,7 +1491,7 @@ class MentraBluetoothSdk private constructor(
             otaStatus.mtkFirmwareVersion,
             otaStatus.besFirmwareVersion,
             manifest,
-        )
+        ) || OtaManifestChecker.hasMtkDowngrade(manifest, otaStatus.mtkFirmwareVersion)
     }
 
     /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */

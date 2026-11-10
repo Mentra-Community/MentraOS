@@ -6,6 +6,7 @@ import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlas
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {hasConfiguredModernOtaManifestPin, isLegacyOtaManifestSelected, resolveOtaManifestUrl} from "./otaManifestUrl"
 import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
+import {isNewerMtk, normalizeMtkVersion, resolveMtkDowngrade, type MtkDowngrade} from "./mtkDowngrade"
 import {observeManifestNativeErrors} from "./otaNativeNetworkDiagnostics"
 
 /**
@@ -47,7 +48,9 @@ export interface MtkFullOta {
   size: number
 }
 
-export type MtkUpdate = MtkPatch | MtkFullOta
+export type {MtkDowngrade}
+export type MtkUpdate = MtkPatch | MtkFullOta | MtkDowngrade
+
 
 export interface BesFirmware {
   version: string
@@ -62,6 +65,8 @@ export interface VersionJson {
   }
   mtk_patches?: MtkPatch[]
   mtk_full_ota?: MtkFullOta
+  /** Added by this app on a downgrade: the older release's manifest predates the newer MTK. */
+  mtk_downgrade_patches?: MtkDowngrade[]
   bes_firmware?: BesFirmware
   versionCode?: number
   versionName?: string
@@ -314,16 +319,17 @@ export function findMatchingMtkPatch(
     return null
   }
 
+  // An upgrade only: a reverse patch listed here could be a userdata-wiping one.
   return (
     patches.find((patch) => {
-      return normalizeMtkVersion(patch.start_firmware) === normalizeMtkVersion(currentVersion)
+      return (
+        normalizeMtkVersion(patch.start_firmware) === normalizeMtkVersion(currentVersion) &&
+        isNewerMtk(patch.end_firmware, currentVersion)
+      )
     }) || null
   )
 }
 
-function normalizeMtkVersion(version: string): string {
-  return version.trim().split("_").pop() ?? ""
-}
 
 /** Full OTAs are not rollback packages. Unknown versions must not grant eligibility. */
 export function selectMtkUpdate(
@@ -334,13 +340,7 @@ export function selectMtkUpdate(
   if (patch) return patch
   const full = manifest?.mtk_full_ota
   if (!full || !currentVersion || typeof full.end_firmware !== "string") return null
-  const current = normalizeMtkVersion(currentVersion)
-  const target = normalizeMtkVersion(full.end_firmware)
-  const versionPattern = /^\d{8}(?:\.\d{1,9})?$/
-  if (!versionPattern.test(current) || !versionPattern.test(target)) return null
-  const [currentDate, currentRevision = 0] = current.split(".").map(Number)
-  const [targetDate, targetRevision = 0] = target.split(".").map(Number)
-  if (targetDate < currentDate || (targetDate === currentDate && targetRevision <= currentRevision)) return null
+  if (!isNewerMtk(full.end_firmware, currentVersion)) return null
   if (
     full.start_firmware !== undefined ||
     typeof full.url !== "string" ||
@@ -439,7 +439,8 @@ export async function checkForOtaUpdate(
       })`,
     )
 
-    const mtkPatch = selectMtkUpdate(versionJson, currentMtkVersion)
+    const mtkPatch =
+      selectMtkUpdate(versionJson, currentMtkVersion) ?? (await resolveMtkDowngrade(versionJson, currentMtkVersion))
     const mtkUpdateAvailable = mtkPatch !== null
     if (!currentMtkVersion && versionJson?.mtk_patches?.length) {
       console.log(`OTA: MTK current version unknown - skipping MTK patch check`)
