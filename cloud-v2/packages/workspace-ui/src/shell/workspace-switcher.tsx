@@ -245,8 +245,13 @@ export function WorkspaceSwitcher({
             })
           )}
 
-          <MenuSeparator />
-          {extraItems}
+          {/* A separator only before something: with no extra items it would close the menu on an empty strip. */}
+          {extraItems ? (
+            <>
+              <MenuSeparator />
+              {extraItems}
+            </>
+          ) : null}
 
           {invitations.length > 0 ? (
             <>
