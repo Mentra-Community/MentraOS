@@ -51,6 +51,11 @@ private struct PendingHotspotConnection {
 
 private final class GlassesHotspotConnector {
     func connect(ssid: String, password: String) async throws {
+        // iOS rejoins every saved configuration by itself. Keep only the pair being joined, so a
+        // phone near many pairs never wanders onto another one's hotspot left from an earlier session.
+        for other in await NEHotspotConfigurationManager.shared.configuredSSIDs() where other != ssid {
+            NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: other)
+        }
         let configuration = NEHotspotConfiguration(ssid: ssid, passphrase: password, isWEP: false)
         configuration.joinOnce = false
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in

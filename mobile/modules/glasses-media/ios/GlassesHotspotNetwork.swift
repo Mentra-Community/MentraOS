@@ -42,7 +42,20 @@ public final class GlassesHotspotNetwork {
     public var onLost: ((String) -> Void)?
     /// Gets the system's answer that left the join waiting for Local Network access.
     public var onPermissionRequired: ((String) -> Void)?
-    public init() {}
+    public init() { _ = Self.startupCleanup }
+
+    /// iOS keeps every applied configuration and joins it again by itself whenever that hotspot is up.
+    /// A configuration left by a crash or a kill mid-session would let a phone near many pairs wander onto
+    /// one it is not using. This app's configurations are all glasses hotspots, so each join removes the
+    /// others, and this clears leftovers once per launch, unless a join already owns the network: that join clears them itself.
+    private static let startupCleanup: Void = {
+        guard !ProcessInfo.processInfo.isiOSAppOnMac else { return }
+        NEHotspotConfigurationManager.shared.getConfiguredSSIDs { saved in
+            guard !saved.isEmpty, let token = HotspotNetworkOwnership.shared.acquire() else { return }
+            saved.forEach { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: $0) }
+            HotspotNetworkOwnership.shared.release(token)
+        }
+    }()
 
     public func join(ssid: String, passphrase: String, gateway: String? = nil, purpose: HotspotAccessPurpose = .outgoingClient, completion: @escaping (Result<String, Error>) -> Void) {
         queue.async {
@@ -75,7 +88,14 @@ public final class GlassesHotspotNetwork {
             if ProcessInfo.processInfo.isiOSAppOnMac {
                 self.authorizeMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen, deadline: deadline)
             } else {
-                self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen)
+                NEHotspotConfigurationManager.shared.getConfiguredSSIDs { saved in
+                    self.queue.async {
+                        // A cancelled join's late answer must not remove the next pair's configuration.
+                        guard gen == self.generation, !self.cancelled else { return }
+                        for other in saved where other != ssid { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: other) }
+                        self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen)
+                    }
+                }
             }
             self.scheduleJoinDeadline(ssid: ssid, generation: gen)
         }
