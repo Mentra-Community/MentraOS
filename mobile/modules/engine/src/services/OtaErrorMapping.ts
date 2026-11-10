@@ -85,6 +85,8 @@ export function phoneOtaErrorCopyKey(error: unknown, os?: string): string {
       return "ota:errorGlassesHotspotStart"
     case "hotspot_join_failed":
       return os === "ios" ? "ota:errorPhoneHotspotJoinIos" : "ota:errorPhoneHotspotJoin"
+    case "hotspot_other_glasses":
+      return "ota:errorPhoneOtherGlasses"
     case "hotspot_server_failed":
       return "ota:errorPhoneShareUpdate"
     default:
@@ -144,6 +146,8 @@ export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
   "ota:errorGlassesHotspotStart":
     "Your glasses could not start the connection needed for the update. Please try again.",
   "ota:errorPhoneHotspotJoin": "Your phone could not connect to your glasses for the update. Please try again.",
+  "ota:errorPhoneOtherGlasses":
+    "Your phone reached another pair of glasses instead of yours. Move away from other glasses or turn them off, then try again.",
   "ota:errorPhoneHotspotJoinIos":
     "Your phone could not connect to your glasses for the update. Make sure your phone’s Wi-Fi is on, then try again.",
   "ota:errorPhoneShareUpdate": "Your phone could not send the update to your glasses. Please try again.",

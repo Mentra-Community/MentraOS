@@ -619,6 +619,8 @@ const en = {
     errorPhoneWifiOff: "Turn on your phone’s Wi-Fi so it can connect to your glasses, then try again.",
     errorGlassesHotspotStart: "Your glasses could not start the connection needed for the update. Please try again.",
     errorPhoneHotspotJoin: "Your phone could not connect to your glasses for the update. Please try again.",
+    errorPhoneOtherGlasses:
+      "Your phone reached another pair of glasses instead of yours. Move away from other glasses or turn them off, then try again.",
     errorPhoneHotspotJoinIos:
       "Your phone could not connect to your glasses for the update. Make sure your phone’s Wi-Fi is on, then try again.",
     errorPhoneShareUpdate: "Your phone could not send the update to your glasses. Please try again.",
