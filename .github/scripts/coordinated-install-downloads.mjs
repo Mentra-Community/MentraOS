@@ -9,9 +9,13 @@ import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex")
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
 
+// The backend each channel's app talks to (mobile/ci/coordinated-downloads.py).
+const BACKENDS = {dev: "dev", beta: "staging", production: "prod"}
+
 export function downloadNames(plan) {
-  if (!/^[0-9]+\.[0-9]+\.[0-9]+-(dev|beta)\.[1-9][0-9]*$/.test(plan.releaseIdentity))
-    throw new Error("Installable downloads require a dev or beta release identity")
+  const prerelease = plan.channel === "production" ? "" : `-${plan.channel}\\.[1-9][0-9]*`
+  if (!Object.hasOwn(BACKENDS, plan.channel) || !new RegExp(`^[0-9]+\\.[0-9]+\\.[0-9]+${prerelease}$`).test(plan.releaseIdentity))
+    throw new Error("Installable downloads require a dev, beta or production release identity")
   const prefix = `mentraos-${plan.releaseIdentity}`
   return {
     iphone: `${prefix}-iphone.ipa`,
@@ -34,8 +38,8 @@ export function validateDownloads(receipt, plan, otaUrl, {complete = true} = {})
     app.build !== String(plan.native.buildNumber) ||
     app.version !== plan.native.marketingVersion ||
     app.headSha !== plan.sourceCommit ||
-    app.backend !== (plan.channel === "dev" ? "dev" : "staging") ||
-    !["dev", "beta"].includes(plan.channel) ||
+    !Object.hasOwn(BACKENDS, plan.channel) ||
+    app.backend !== BACKENDS[plan.channel] ||
     app.otaManifestUrl !== otaUrl ||
     !otaUrl ||
     !/^[a-f0-9]{64}$/.test(app.executableSha256) ||
