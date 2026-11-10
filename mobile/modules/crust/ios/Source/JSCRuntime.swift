@@ -184,12 +184,11 @@ public final class JSCRuntime: NSObject {
         // "ready", []) flips the record's readyAcked flag (see
         // markReady). If we never see the ack, the timer logs a hung
         // context warning so observability picks it up.
-        armReadyNackTimer(record: record, timeoutSeconds: Self.coldStartNackTimeoutSeconds, cold: true)
-
         // All evaluation happens on `queue`. We `sync` for the bootstrap so
         // the caller knows whether spawn succeeded before returning.
         var success = true
         queue.sync {
+            self.armReadyNackTimer(record: record, timeoutSeconds: Self.coldStartNackTimeoutSeconds, cold: true)
             self.installNativeBridges(ctx: ctx, record: record)
             success = self.evaluateCatching(record: record, label: "polyfill", source: polyfillBundle)
             if success {
@@ -216,42 +215,48 @@ public final class JSCRuntime: NSObject {
         }
     }
 
-    /// Schedule (or re-schedule) a NACK timer for the next message
-    /// delivery. Resets every time the host pushes to the JSContext.
+    /// Schedule (or re-schedule) the NACK timer. Call on `record.queue`, the
+    /// only queue that touches `readyNackTimer`, right before the work it
+    /// guards, and cancel it there once that work returns.
+    ///
+    /// The timer fires on `watchdogScheduler`, not `record.queue`: a handler
+    /// on the context's own queue can't run while an evaluate blocks that
+    /// queue, so it could never report a slow one. It was also armed with
+    /// `record.queue.async` from a block already on that queue, which queued
+    /// the arming behind the delivery: the delivery's cancel ran first, and
+    /// every delivery then raised `ready_nack` 3s after it had finished.
     private func armReadyNackTimer(record: Context, timeoutSeconds: TimeInterval, cold: Bool) {
-        record.queue.async {
-            record.readyNackTimer?.cancel()
-            let timer = DispatchSource.makeTimerSource(queue: record.queue)
-            timer.schedule(deadline: .now() + timeoutSeconds)
-            timer.setEventHandler { [weak self, weak record] in
-                guard let self, let record else { return }
-                let phase = cold ? "cold-start" : "steady-state"
-                os_log("MentraJS NACK: %{public}@ %{public}@ ready signal not received in %.0fs",
-                       log: Self.log, type: .error,
-                       record.packageName, phase, timeoutSeconds)
-                // Surface to RN as a recoverable error frame so the
-                // crash controller (if wired) can decide whether to
-                // respawn. We don't auto-kill — the spec says "host
-                // dispatchToJs returns an error to its caller"; we
-                // emit a structured event instead.
-                self.lock.withLock { self._onOutbound }?(
-                    OutboundMessage(
-                        packageName: record.packageName,
-                        payload: [
-                            "packageName": record.packageName,
-                            "iface": "__error",
-                            "method": "ready_nack",
-                            "argsJson": JSCRuntime.jsonString(
-                                from: ["phase": phase, "timeoutSeconds": timeoutSeconds],
-                            ) ?? "{}",
-                        ],
-                    )
+        record.readyNackTimer?.cancel()
+        let packageName = record.packageName
+        let timer = DispatchSource.makeTimerSource(queue: Self.watchdogScheduler)
+        timer.schedule(deadline: .now() + timeoutSeconds)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let phase = cold ? "cold-start" : "steady-state"
+            os_log("MentraJS NACK: %{public}@ %{public}@ ready signal not received in %.0fs",
+                   log: Self.log, type: .error,
+                   packageName, phase, timeoutSeconds)
+            // Surface to RN as a recoverable error frame so the
+            // crash controller (if wired) can decide whether to
+            // respawn. We don't auto-kill — the spec says "host
+            // dispatchToJs returns an error to its caller"; we
+            // emit a structured event instead.
+            self.lock.withLock { self._onOutbound }?(
+                OutboundMessage(
+                    packageName: packageName,
+                    payload: [
+                        "packageName": packageName,
+                        "iface": "__error",
+                        "method": "ready_nack",
+                        "argsJson": JSCRuntime.jsonString(
+                            from: ["phase": phase, "timeoutSeconds": timeoutSeconds],
+                        ) ?? "{}",
+                    ],
                 )
-                record.readyNackTimer = nil
-            }
-            record.readyNackTimer = timer
-            timer.resume()
+            )
         }
+        record.readyNackTimer = timer
+        timer.resume()
     }
 
     /// Diagnostic: force a JSC garbage-collection cycle on the named
