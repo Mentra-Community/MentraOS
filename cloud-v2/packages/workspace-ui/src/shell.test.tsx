@@ -256,6 +256,10 @@ describe("the workspace switcher", () => {
     expect(markup.indexOf('role="separator"')).toBeLessThan(markup.indexOf("Manage workspace"));
   });
 
+  test("with no extra items and no invitations the menu ends at the workspaces, with no empty separator", () => {
+    expect(open()).not.toContain('role="separator"');
+  });
+
   test("pending invitations come last, with a count and the host's actions", () => {
     const markup = open({
       invitations: [{ key: "winv_1", label: "Join Contoso", detail: "Member · from olivia@acme.test", actions: <button type="button" role="menuitem">Accept</button> }],
