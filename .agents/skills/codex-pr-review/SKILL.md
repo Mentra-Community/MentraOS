@@ -23,7 +23,8 @@ high confidence in the change. For example:
   with small adjustments, such as a one-off job that runs a release workflow's reviewed steps.
 - **A follow-up:** a commit on a reviewed PR that fixes one of its findings or is simple by itself.
 - **Checked another way:** a dry run, a hardware run or tests exercise what a review would read,
-  and a failure would stop before doing harm.
+  and a failure would stop before doing harm. A lab run for the PR shows as its own comment and a
+  `lab / <routine>` check on the PR, which says what ran and whether it passed.
 
 Lean toward a review for new logic in release workflows, firmware, signing, permissions or data
 handling, and for a change across several areas, where a mistake is costly or hard to undo. The
