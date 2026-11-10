@@ -3,7 +3,7 @@
 import {createRequire} from "node:module"
 
 import TestRenderer, {act} from "react-test-renderer"
-import {beforeEach, describe, expect, mock, test} from "bun:test"
+import {beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 
 import type {OtaInstallSnapshot} from "../../services/OtaInstallCoordinator"
 import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckService"
@@ -407,6 +407,39 @@ describe("useMentraLiveOta", () => {
         glassesCode: "downgrade_handoff_failed",
       },
     })
+    await act(async () => renderer.unmount())
+  })
+
+  test("logs the glasses code the failure screen replaces with copy", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    const renderer = await renderProbe()
+    installSnapshot = {
+      ...installSnapshot,
+      displayState: "failed",
+      errorMsg: "",
+      otaStatus: {
+        sessionId: "s1",
+        totalSteps: 2,
+        currentStep: 2,
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "bes_not_started",
+      },
+    }
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+
+    expect(latestController.state).toMatchObject({
+      screen: "failed",
+      canRetry: true,
+      error: {glassesCode: "bes_not_started", copyKey: "ota:key:bes_not_started"},
+    })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("hides glasses code bes_not_started"))
+    warn.mockRestore()
     await act(async () => renderer.unmount())
   })
 

@@ -56,7 +56,8 @@ export interface ManagedRelay {
   cancel(): void
   stop(): Promise<void>
   owns(streamId: string): boolean
-  handleGlassesStatus(event: StreamStatusEvent): void
+  /** Returns true when the event belongs to the live attempt, so its narration can reach miniapps. */
+  handleGlassesStatus(event: StreamStatusEvent): boolean
 }
 
 /** One attempt at a time; video stays native. All retries unwind both peers, mic and hotspot. */
@@ -130,11 +131,12 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     return streamId.startsWith(`${this.options.streamId}-relay-`)
   }
 
-  handleGlassesStatus(event: StreamStatusEvent): void {
-    if (event.streamId !== this.attemptId || this.cancelled) return
+  handleGlassesStatus(event: StreamStatusEvent): boolean {
+    if (event.streamId !== this.attemptId || this.cancelled) return false
     if (event.status === "stopped" || event.terminal) {
       this.failed(new Error("Glasses publisher stopped"))
     }
+    return !this.attemptError
   }
 
   private checkpoint(): void {

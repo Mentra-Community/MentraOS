@@ -55,6 +55,9 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
   async isBetaBuild() {
     return false
   }
+  async isScreenCaptured() {
+    return false
+  }
   async mentraJsSpawn(_pkg: string, _polyfill: string, _miniappJs: string) {
     return false
   }

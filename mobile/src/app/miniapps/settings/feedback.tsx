@@ -21,9 +21,11 @@ import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import {logPermissionAlert} from "@/utils/permissionLog"
 import {useRegisterCapsule} from "@/stores/capsule"
+import {useFeedbackFormOpen} from "@/effects/ScreenshotFeedbackPrompt"
 import {deploymentStore} from "@/services/deployment"
 
 export default function FeedbackPage() {
+  useFeedbackFormOpen()
   const params = useLocalSearchParams<{
     triggerSource?: string
     triggerReason?: string

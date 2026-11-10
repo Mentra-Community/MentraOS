@@ -604,6 +604,7 @@ const en = {
     errorGlassesUnknown: "Something went wrong. Please try again.",
     errorGeneric: "Something went wrong. Please try again.",
     errorBesRestartRequired: "Restart your glasses to safely exit firmware update mode before trying again",
+    errorBesNotStarted: "Your glasses could not start the firmware update. Keep them nearby and try again.",
     errorPhoneInternet: "Your phone could not connect to the internet. Check its connection and try again.",
     errorPhoneConnection: "Your phone could not reach the update server. Check its connection and try again.",
     errorPhoneDownloadServer: "The update server could not provide the download. Please try again later.",

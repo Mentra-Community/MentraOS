@@ -168,7 +168,7 @@ describe("glasses-side producer coverage", () => {
   // scan the producers rather than only the codes already in the table. Producers: literal
   // codes passed to sendProgressToPhone(..., "FAILED", code), the downgrade watchdog codes,
   // classifyDownloadError's return values, FirmwareDownloadException's CODE_* constants, and
-  // AsgConstants' OTA_* codes.
+  // AsgConstants' OTA_* codes and BES_OTA_ERROR_NOT_STARTED.
   const asgJavaRoot = resolve(__dirname, "../../../../asg_client/app/src/main/java/com/mentra/asg_client")
   const otaHelper = readFileSync(resolve(asgJavaRoot, "io/ota/helpers/OtaHelper.java"), "utf8")
   const httpRequest = readFileSync(resolve(asgJavaRoot, "io/ota/utils/OtaHttpRequest.java"), "utf8")
@@ -190,6 +190,7 @@ describe("glasses-side producer coverage", () => {
     ),
     ...matchAll(downloadException, /CODE_[A-Z_]+\s*=\s*"([a-z_]+)"/g),
     ...matchAll(asgConstants, /\bOTA_INSUFFICIENT_STORAGE\s*=\s*"([a-z_]+)"/g),
+    ...matchAll(asgConstants, /\bBES_OTA_ERROR_NOT_STARTED\s*=\s*"([a-z_]+)"/g),
     ...matchAll(
       httpRequest.slice(
         httpRequest.indexOf("public static String classify("),
@@ -210,6 +211,7 @@ describe("glasses-side producer coverage", () => {
       "downgrade_status_unknown",
       "downgrade_recovery_unavailable",
       "apk_restart_guard_not_persisted",
+      "bes_not_started",
     ]) {
       expect(producedCodes.has(code)).toBe(true)
     }
@@ -263,6 +265,17 @@ describe("shouldRequireGlassesRebootForBesFailure", () => {
         "",
       ),
     ).toBe(false)
+  })
+
+  it("offers a retry, not a restart, when the glasses never started the BES install", () => {
+    const notStarted = baseOtaStatus({stepType: "bes", phase: "install", status: "failed", error: "bes_not_started"})
+    expect(shouldRequireGlassesRebootForBesFailure(notStarted, null, "")).toBe(false)
+    // The glasses' own report wins over a phone-side watchdog message.
+    expect(shouldRequireGlassesRebootForBesFailure(notStarted, null, "Update appears stalled")).toBe(false)
+    expect(otaErrorCopyKey("bes_not_started")).toBe("ota:errorBesNotStarted")
+    expect(getOtaErrorMessage("bes_not_started")).toBe(
+      "Your glasses could not start the firmware update. Keep them nearby and try again.",
+    )
   })
 
   it("does not require restart while BES install remains healthy", () => {

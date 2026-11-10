@@ -34,7 +34,7 @@ events fire, and the error shapes to expect.
 | `session.glasses` | [glasses.md](./glasses.md) | No manifest gate. |
 | `session.led` | [led.md](./led.md) | All methods are fire-and-forget despite `Promise<void>` signatures. |
 | `session.storage` | [storage.md](./storage.md) | No manifest gate. |
-| `session.stream` | [stream.md](./stream.md) | Wire path bridged but daemon side not live in v1. |
+| `session.stream` | [stream.md](./stream.md) | `startStream`, `onStatus`, `stop`, `preview`. WHIP relays through the phone. |
 | `session.system` | [system.md](./system.md) | Share / download helpers. |
 | `session.translation` | [translation.md](./translation.md) | Smallest module — 1 subscribe + `stop()` + permission getter. |
 | `session.transcription` | [transcription.md](./transcription.md) | MICROPHONE-gated but rejects async via session error event, not sync throw. |

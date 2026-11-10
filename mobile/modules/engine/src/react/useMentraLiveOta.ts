@@ -936,6 +936,17 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     deviceRevision,
   ])
 
+  // The failure screen shows copy, never the glasses' raw code; keep the code in the app log so
+  // reports can tell which glasses-side failure the person saw.
+  const failedGlassesCode = state.screen === "failed" ? (state.error?.glassesCode ?? null) : null
+  const failedCopyKey = state.screen === "failed" ? (state.error?.copyKey ?? null) : null
+  useEffect(() => {
+    if (!failedGlassesCode) return
+    console.warn(
+      `[OTA_PROGRESS] failure screen hides glasses code ${failedGlassesCode} (copy ${failedCopyKey ?? "none"})`,
+    )
+  }, [failedGlassesCode, failedCopyKey])
+
   return useMemo(
     () => ({state, check, retryCheck: check, install, retryInstall, finish, dismiss, discard, openWifiSetup}),
     [check, discard, dismiss, finish, install, openWifiSetup, retryInstall, state],

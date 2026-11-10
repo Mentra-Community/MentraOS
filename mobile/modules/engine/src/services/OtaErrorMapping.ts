@@ -36,11 +36,17 @@ export const OTA_GLASSES_ERROR_COPY_KEYS: Readonly<Record<string, string>> = {
   downgrade_handoff_refused: "ota:errorDowngradeHandoffRefused",
   downgrade_handoff_failed: "ota:errorDowngradeHandoffFailed",
   downgrade_transaction_stalled: "ota:errorDowngradeTransactionStalled",
+  bes_not_started: "ota:errorBesNotStarted",
 }
 
 export const OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY = "ota:errorGlassesUnknown"
 export const OTA_ERROR_GENERIC_COPY_KEY = "ota:errorGeneric"
 export const OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY = "ota:errorBesRestartRequired"
+/**
+ * The glasses could not start the BES install: mh_ota was never sent, so the BES stayed in normal
+ * mode and a retry is safe without restarting the glasses.
+ */
+export const OTA_BES_NOT_STARTED_ERROR = "bes_not_started"
 
 const PHONE_ARTIFACT_COPY_KEYS: Readonly<Record<string, string>> = {
   internet: "ota:errorPhoneInternet",
@@ -142,6 +148,7 @@ export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
     "Your phone could not connect to your glasses for the update. Make sure your phone’s Wi-Fi is on, then try again.",
   "ota:errorPhoneShareUpdate": "Your phone could not send the update to your glasses. Please try again.",
   "ota:errorBesRestartRequired": "Restart your glasses to safely exit firmware update mode before trying again",
+  "ota:errorBesNotStarted": "Your glasses could not start the firmware update. Keep them nearby and try again.",
   "ota:errorCode": "Error code: {{code}}",
 }
 
@@ -210,9 +217,10 @@ export function getOtaErrorMessage(error?: string | null): string {
 }
 
 /**
- * Once a BES install has started, any failure conservatively requires a glasses restart. This
- * avoids adding a BES-specific error code to the wire protocol and, more importantly, never offers
- * an unsafe retry when a generic failure or silence may mean BES entered its raw OTA parser.
+ * Once a BES install has started, any failure conservatively requires a glasses restart, since a
+ * generic failure or silence may mean BES entered its raw OTA parser. The one exception is the
+ * glasses reporting `bes_not_started`: they never asked the BES to enter OTA mode, so a retry is
+ * safe.
  */
 export function shouldRequireGlassesRebootForBesFailure(
   otaStatus: OtaStatus | null | undefined,
@@ -220,6 +228,9 @@ export function shouldRequireGlassesRebootForBesFailure(
   localErrorMessage: string,
 ): boolean {
   if (otaStatus?.stepType !== "bes" || otaStatus.phase !== "install") {
+    return false
+  }
+  if (otaStatus.status === "failed" && otaStatus.error === OTA_BES_NOT_STARTED_ERROR) {
     return false
   }
   return otaStatus.status === "failed" || Boolean(localErrorMessage)

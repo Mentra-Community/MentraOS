@@ -62,7 +62,8 @@ export default function SelectGlassesModelScreen() {
   const getDisplayName = (option: GlassesOption) => option.displayName ?? option.deviceModel
   const getImageSource = (option: GlassesOption) => option.imageSource ?? getGlassesImage(option.deviceModel)
 
-  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
+  // NIMO is no longer offered to customers; existing pairings keep working.
+  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX, DeviceTypes.NIMO])
 
   const ar99Options: GlassesOption[] = AR99_MODEL_OPTIONS.map((option) => ({
     key: option.key,

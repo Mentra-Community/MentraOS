@@ -8,7 +8,8 @@
  * to your own ingest URL with no relay.
  */
 
-import {MiniappRequestType, type PreviewErrorCode, type PreviewSource} from "../protocol"
+import {MiniappRequestType, MiniappStreamType, type PreviewErrorCode, type PreviewSource} from "../protocol"
+import type {UnsubscribeFn} from "./events"
 import {MiniappSession} from "../session"
 
 export interface StreamVideoConfig {
@@ -124,13 +125,42 @@ export interface StreamLiveStats {
   temperatureC?: number
 }
 
+/** Who reported a {@link StreamStatus}. */
+export type StreamStatusSource = "glasses" | "cloudflare" | "coordinator"
+
+/**
+ * One stream status update. Statuses you can act on:
+ *   - `source: "glasses"` — the glasses publisher: `streaming`, `reconnecting`,
+ *     `reconnected`, `error`, `stopped`, ... with `kind`, `attempt`/`maxAttempts`
+ *     on reconnects and `terminal: true` when the publisher gave up.
+ *   - `source: "cloudflare"` — what the managed ingest sees, polled every 5s:
+ *     `connected` / `disconnected`. Managed streams only.
+ *   - `source: "coordinator"` — the phone: `connected`, `reconnecting` and
+ *     `reconnected` for the WHIP phone relay (`transport: "softap_relay"`),
+ *     `suspended` / `resumed` while Bluetooth to the glasses is down,
+ *     `hls_ready` / `webrtc_ready` for playback, and `error` when the stream
+ *     has ended and must be started again.
+ */
 export interface StreamStatus {
   streamId: string
   status: string
+  source?: StreamStatusSource
+  /** Glasses status kind (`lifecycle`, `reconnect`, `error`, `snapshot`, ...). */
+  kind?: string
+  /** Human-readable cause, when the reporter gave one. */
+  reason?: string
   errorDetails?: string
+  /** The glasses publisher gave up; the stream will not recover by itself. */
+  terminal?: boolean
+  willRetry?: boolean
+  attempt?: number
+  maxAttempts?: number
+  /** `"softap_relay"` on WHIP relay statuses. */
+  transport?: string
   /** Negotiated encode config — forwarded once, on the first status ack. */
   resolvedConfig?: StreamResolvedConfig
   stats?: StreamLiveStats
+  [key: string]: unknown
 }
 
 export interface StreamPreviewOptions {
@@ -319,6 +349,19 @@ export class StreamModule {
       ingest: options.ingest,
       ...(typeof options.captureAudio === "boolean" ? {captureAudio: options.captureAudio} : {}),
     })
+  }
+
+  /**
+   * Listen for status updates on the stream this miniapp started or joined.
+   * Returns an unsubscribe function.
+   *
+   * A stream that is recovering on its own reports `reconnecting`, then
+   * `reconnected`, and keeps its `streamId` and playback URLs. A
+   * `source: "coordinator"` status of `error` means the stream has ended: call
+   * `startStream()` again, which returns new playback URLs.
+   */
+  onStatus(handler: (status: StreamStatus) => void): UnsubscribeFn {
+    return this.session._subscribe(MiniappStreamType.STREAM_STATUS, handler as (data: unknown) => void)
   }
 
   /** Stop the active stream, or a specific one by `streamId`. */
