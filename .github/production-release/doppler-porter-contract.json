@@ -21,6 +21,16 @@
       "groups": ["cloud-v2-dev-doppler"]
     },
     {
+      "name": "mentra-paperwork-miniapp-dev",
+      "cluster": 5783,
+      "groups": ["mentra-paperwork-dev-doppler"]
+    },
+    {
+      "name": "mentra-paperwork-staging",
+      "cluster": 5783,
+      "groups": ["mentra-paperwork-staging-doppler"]
+    },
+    {
       "name": "cloud-dev",
       "cluster": 5692,
       "groups": ["cloud-v2-dev-doppler"]
@@ -1318,6 +1328,52 @@
         "NODE_ENV",
         "PORT",
         "PUBLIC_BASE_URL"
+      ]
+    },
+    {
+      "name": "mentra-paperwork-dev-doppler",
+      "cluster": 5783,
+      "project": "mentra-paperwork",
+      "config": "dev",
+      "keys": [
+        "CEREBRAS_API_KEY",
+        "CLOUDFLARE_R2_ACCESS_KEY_ID",
+        "CLOUDFLARE_R2_BUCKET_NAME",
+        "CLOUDFLARE_R2_ENDPOINT",
+        "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "MEDIA_SIGNING_SECRET",
+        "MENTRA_CORE_URL",
+        "MONGODB_DB",
+        "MONGODB_URI",
+        "NODE_ENV",
+        "PORT",
+        "VEHICLE_DATABASES_API_KEY"
+      ]
+    },
+    {
+      "name": "mentra-paperwork-staging-doppler",
+      "cluster": 5783,
+      "project": "mentra-paperwork",
+      "config": "stg",
+      "keys": [
+        "CEREBRAS_API_KEY",
+        "CLOUDFLARE_R2_ACCESS_KEY_ID",
+        "CLOUDFLARE_R2_BUCKET_NAME",
+        "CLOUDFLARE_R2_ENDPOINT",
+        "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "MEDIA_SIGNING_SECRET",
+        "MENTRA_CORE_URL",
+        "MONGODB_DB",
+        "MONGODB_URI",
+        "NODE_ENV",
+        "PORT",
+        "VEHICLE_DATABASES_API_KEY"
       ]
     }
   ],
