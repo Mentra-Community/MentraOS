@@ -217,14 +217,15 @@ push("/settings/profile")
 
 - **Public token (`pk.…`)** — runtime map rendering. Lives in `.env` as
   `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`. Safe to ship in the app.
-- PR builds generate their `.env` from the repository's `MAPBOX_PUBLIC_TOKEN`
-  GitHub Actions secret; coordinated releases take it from the Doppler config
-  of their backend (`mentra-mobile-client` dev/stg/prd). A local `.env` edit
+- PR builds and coordinated releases take it from the Doppler config of their
+  backend (`mentra-mobile-client` dev, stg or prd). A local `.env` edit
   updates neither.
-- Mentra Maps also embeds a public token in its bundle. The miniapp deploy packs
-  it with the app's `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` (`PUBLIC_MAPBOX_TOKEN`
-  overrides it) before publishing it to the miniapp hosts. A host skips a
-  version it already has, so after rotating the token, bump the navigation
+- Mentra Maps also embeds a public token in its bundle. App builds and dev
+  miniapp deploys pack it with the app's `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`;
+  staging and prod miniapp deploys use the repository variable
+  `PUBLIC_MAPBOX_TOKEN`. A rotation updates all four: the three Doppler
+  configs and the variable. A miniapp host and a phone both keep a version
+  they already have, so after rotating the token, bump the navigation
   miniapp's `miniapp.json` version.
 - **Downloads token (`sk.…`, secret scope `Downloads:Read`)** — build time only,
   authenticates downloading Mapbox's binary SDKs. Never shipped. It must live in:
