@@ -201,6 +201,11 @@
       "groups": ["mentra-enterprise-dev-doppler"]
     },
     {
+      "name": "mentra-paperwork-miniapp-dev",
+      "cluster": 5783,
+      "groups": ["mentra-paperwork-dev-doppler"]
+    },
+    {
       "name": "cloud-v2",
       "cluster": 5690,
       "groups": ["cloud-v2-legacy-east-doppler"]
@@ -1572,6 +1577,24 @@
         "NODE_ENV",
         "OWNER_MANUAL_CACHE_DIR",
         "OWNER_MANUAL_INDEX_PATH",
+        "PORT",
+        "VEHICLE_DATABASES_API_KEY"
+      ]
+    },
+    {
+      "name": "mentra-paperwork-dev-doppler",
+      "cluster": 5783,
+      "project": "mentra-paperwork",
+      "config": "dev",
+      "keys": [
+        "CEREBRAS_API_KEY",
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "MENTRA_CORE_URL",
+        "MONGODB_DB",
+        "MONGODB_URI",
+        "NODE_ENV",
         "PORT",
         "VEHICLE_DATABASES_API_KEY"
       ]
