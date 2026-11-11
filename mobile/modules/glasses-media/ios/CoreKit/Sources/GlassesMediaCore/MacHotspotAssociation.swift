@@ -9,11 +9,17 @@ final class MacHotspotAssociation {
     /// glasses still hold the Mac's previous association (-3912). A later attempt in the same window succeeds.
     static let associationAttempts = 3
     static let associationRetryDelay: TimeInterval = 2
+    /// After leaving, macOS auto-join normally returns to the previous network within a few seconds.
+    static let autoJoinWait: TimeInterval = 15
+    /// Auto-join after a Wi-Fi power cycle: 2 s on lab air-1.
+    static let powerCycleWait: TimeInterval = 30
 
     private let condition = NSCondition()
     private var cancelled = false
     private var interface: MacWifiInterface?
     private var joinedSSID: String?
+    /// The Wi-Fi network the Mac was on before this join, which every leave returns it to.
+    private var previousSSID: String?
     private let deadline: TimeInterval
     private let now: () -> TimeInterval
     private let pause: ((TimeInterval) -> Void)?
@@ -38,6 +44,8 @@ final class MacHotspotAssociation {
         try checkCurrent()
         let interface = try makeInterface()
         self.interface = interface
+        let before = try readSSID(interface)
+        if before != ssid { previousSSID = before }
         for attempt in 1 ... Self.associationAttempts {
             guard try readSSID(interface) != ssid else { break }
             let network = try discoverNetwork(ssid: ssid, interface: interface)
@@ -73,17 +81,71 @@ final class MacHotspotAssociation {
 
     /// Run on the same worker as association, after its blocking call returns.
     /// A connection the user replaced must never be disconnected by our cleanup.
-    func leave() throws {
-        if let joinedSSID {
-            if let interface, try readSSID(interface) == joinedSSID {
+    ///
+    /// Once an association was requested, whether it succeeded, failed or timed out, the
+    /// Mac may have left its own network for it and macOS has saved the hotspot as a known
+    /// network. Leaving forgets the hotspot and gets the Mac back on the network it was on
+    /// before (lab air-1, 2026-11-11: a failed join left it with no network for 5 hours).
+    @discardableResult
+    func leave() throws -> MacHotspotLeaveReport {
+        var report = MacHotspotLeaveReport()
+        if let joinedSSID, let interface {
+            if try readSSID(interface) == joinedSSID {
                 interface.disassociate()
                 guard try readSSID(interface) != joinedSSID else {
                     throw LocalMediaError("Mac Wi-Fi has not released the glasses hotspot")
                 }
+                report.disassociated = true
             }
+            do { try interface.forget(ssid: joinedSSID); report.forgotHotspot = true }
+            catch { report.failures.append("forget: \(error.localizedDescription)") }
+            report.restore = restorePrevious(interface, report: &report)
         }
         interface = nil
         joinedSSID = nil
+        previousSSID = nil
+        return report
+    }
+
+    /// Never takes the Mac off a network it is on: only an interface left with no network is
+    /// power cycled. After a failed association air-1's Wi-Fi answered every auto-join scan with
+    /// EBUSY for hours; a power cycle starts auto-join over. An app cannot rejoin the previous
+    /// network itself: without the passphrase, CoreWLAN answers -3900 (tmpErr).
+    private func restorePrevious(_ interface: MacWifiInterface, report: inout MacHotspotLeaveReport) -> MacHotspotRestore {
+        guard let previous = previousSSID else { return .noPreviousNetwork }
+        if let outcome = settle(interface, previous: previous, within: Self.autoJoinWait, success: .autoJoined) { return outcome }
+        do {
+            try interface.setPower(false)
+            sleep(1)
+            try interface.setPower(true)
+        } catch {
+            report.failures.append("power cycle: \(error.localizedDescription)")
+            return .notRestored
+        }
+        return settle(interface, previous: previous, within: Self.powerCycleWait, success: .powerCycled) ?? .notRestored
+    }
+
+    /// Polls once a second until the Mac is on the previous network (success) or on
+    /// another one (left alone); nil while it is still on none when the time runs out.
+    private func settle(_ interface: MacWifiInterface, previous: String, within seconds: TimeInterval,
+                        success: MacHotspotRestore) -> MacHotspotRestore?
+    {
+        var waited: TimeInterval = 0
+        while true {
+            // An unreadable SSID (Location revoked) counts as no network: recovery never disconnects.
+            switch try? readSSID(interface) {
+            case previous?: return success
+            case .some: return .otherNetwork
+            case nil: break
+            }
+            guard waited < seconds else { return nil }
+            sleep(1); waited += 1
+        }
+    }
+
+    /// Cleanup pacing: unlike wait(_:), runs after cancel() and must not be cut short by it.
+    private func sleep(_ seconds: TimeInterval) {
+        if let pause { pause(seconds) } else { Thread.sleep(forTimeInterval: seconds) }
     }
 
     func currentSSID() throws -> String? {
@@ -145,6 +207,33 @@ protocol MacWifiInterface: AnyObject {
     func network(ssid: String) throws -> NSObject?
     func associate(network: NSObject, password: String) throws
     func disassociate()
+    /// Removes the network from the Mac's known networks, so auto-join never picks it.
+    func forget(ssid: String) throws
+    func setPower(_ on: Bool) throws
+}
+
+/// What leaving did to the Mac's Wi-Fi, for the hotspot log. Never holds an SSID.
+struct MacHotspotLeaveReport: Equatable {
+    var disassociated = false
+    var forgotHotspot = false
+    var restore: MacHotspotRestore = .notNeeded
+    var failures: [String] = []
+
+    var summary: String {
+        "disassociated=\(disassociated) forgot_hotspot=\(forgotHotspot) previous_network=\(restore.rawValue)" +
+            (failures.isEmpty ? "" : " failures=[\(failures.joined(separator: "; "))]")
+    }
+}
+
+enum MacHotspotRestore: String, Equatable {
+    /// No association was requested, so the Mac never left its network.
+    case notNeeded = "not_needed"
+    case noPreviousNetwork = "none_before"
+    case autoJoined = "auto_joined"
+    case powerCycled = "power_cycled"
+    /// The Mac is on a network other than the previous one, which recovery leaves alone.
+    case otherNetwork = "other_network"
+    case notRestored = "not_restored"
 }
 
 enum MacWifiInvocation {
@@ -152,6 +241,8 @@ enum MacWifiInvocation {
     // pointer storage would over-release errors when the native pool drains.
     typealias Scan = @convention(c) (AnyObject, Selector, NSData, AutoreleasingUnsafeMutablePointer<NSError?>) -> Unmanaged<NSSet>?
     typealias Associate = @convention(c) (AnyObject, Selector, AnyObject, NSString, AutoreleasingUnsafeMutablePointer<NSError?>) -> Bool
+    typealias Forget = @convention(c) (AnyObject, Selector, NSData, UInt64, AutoreleasingUnsafeMutablePointer<NSError?>) -> Bool
+    typealias SetPower = @convention(c) (AnyObject, Selector, Bool, AutoreleasingUnsafeMutablePointer<NSError?>) -> Bool
 }
 
 /// CoreWLAN is a public macOS framework. Foundation loads it only in the Mac
@@ -160,6 +251,7 @@ enum MacWifiInvocation {
 private final class PublicCoreWlanInterface: MacWifiInterface {
     private let bundle: Bundle
     private let interface: NSObject
+    private let client: NSObject
     private let authorizationFacts: MacHotspotAuthorizationFacts
     private let authorization: MacHotspotAuthorization?
     private typealias Disassociate = @convention(c) (AnyObject, Selector) -> Void
@@ -184,6 +276,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
             }
         }
         self.interface = interface
+        self.client = client
         self.bundle = bundle
     }
 
@@ -235,6 +328,24 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
         let invoke = unsafeBitCast(interface.method(for: selector), to: MacWifiInvocation.Associate.self)
         var error: NSError?
         guard invoke(interface, selector, network, password as NSString, &error) else { throw Self.failure("association", error) }
+    }
+
+    /// associateToNetwork saves the network as a known network, and CoreWLAN has no public way to
+    /// remove one without an administrator's authorization. CWWiFiClient's forget call needs none.
+    func forget(ssid: String) throws {
+        let selector = NSSelectorFromString("forgetWiFiProfileWithSSID:event:error:")
+        guard client.responds(to: selector) else { throw LocalMediaError("Mac Wi-Fi cannot forget networks") }
+        let invoke = unsafeBitCast(client.method(for: selector), to: MacWifiInvocation.Forget.self)
+        var error: NSError?
+        guard invoke(client, selector, NSData(data: Data(ssid.utf8)), 0, &error) else { throw Self.failure("forget", error) }
+    }
+
+    func setPower(_ on: Bool) throws {
+        let selector = NSSelectorFromString("setPower:error:")
+        guard interface.responds(to: selector) else { throw LocalMediaError("Mac Wi-Fi cannot change power") }
+        let invoke = unsafeBitCast(interface.method(for: selector), to: MacWifiInvocation.SetPower.self)
+        var error: NSError?
+        guard invoke(interface, selector, on, &error) else { throw Self.failure("power", error) }
     }
 
     func disassociate() {

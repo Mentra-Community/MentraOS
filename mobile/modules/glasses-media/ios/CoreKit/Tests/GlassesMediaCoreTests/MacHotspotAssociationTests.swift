@@ -15,12 +15,26 @@ final class MacHotspotAssociationTests: XCTestCase {
         var scanError: Error?
         var associationError: Error?
         var refusedJoins = 0
+        /// Known networks; associating saves the network, as CoreWLAN does.
+        var known: Set<String> = []
+        var forgets: [String] = []
+        var forgetError: Error?
+        /// What the interface does on its own after leaving: macOS auto-join, or auto-join after a power cycle.
+        var afterLeave: String?
+        var afterPowerCycle: String?
+        var powerCycles = 0
+        var pendingAutoJoinPolls = 0
+        private var polls = 0
         func name() throws -> String {
             "en1"
         }
 
         func currentSSID() throws -> String? {
             if unreadable { throw LocalMediaError("Location authorization was revoked") }
+            if ssid == nil, let afterLeave {
+                polls += 1
+                if polls > pendingAutoJoinPolls { ssid = afterLeave; self.afterLeave = nil }
+            }
             return ssid
         }
 
@@ -32,7 +46,8 @@ final class MacHotspotAssociationTests: XCTestCase {
 
         func associate(network _: NSObject, password _: String) throws {
             joins += 1; beforeJoin?()
-            if let associationError { throw associationError }
+            known.insert("glasses")
+            if let associationError { ssid = nil; throw associationError }
             if joins <= refusedJoins { throw NSError(domain: "com.apple.wifi.apple80211API.error", code: -3912) }
             ssid = "glasses"
         }
@@ -41,6 +56,131 @@ final class MacHotspotAssociationTests: XCTestCase {
             leaves += 1
             if releasesNetwork { ssid = nil }
         }
+
+        func forget(ssid: String) throws {
+            forgets.append(ssid)
+            if let forgetError { throw forgetError }
+            known.remove(ssid)
+        }
+
+        func setPower(_ on: Bool) throws {
+            if !on { powerCycles += 1; ssid = nil } else { ssid = afterPowerCycle }
+        }
+    }
+
+    private func joinFromHome(_ wifi: Wifi, error: Error? = nil) -> (MacHotspotAssociation, () -> TimeInterval) {
+        wifi.ssid = "home"; wifi.known = ["home"]
+        wifi.associationError = error
+        var now: TimeInterval = 0
+        let join = MacHotspotAssociation(deadline: 60, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
+        return (join, { now })
+    }
+
+    // MARK: Leaving restores the Mac's own network (lab air-1, 2026-11-11)
+
+    func testSuccessfulJoinForgetsHotspotAndWaitsForAutoJoinHome() throws {
+        let wifi = Wifi()
+        let (join, _) = joinFromHome(wifi)
+        _ = try join.associate(ssid: "glasses", password: "private")
+        wifi.afterLeave = "home"; wifi.pendingAutoJoinPolls = 3
+        let report = try join.leave()
+        XCTAssertEqual(report, MacHotspotLeaveReport(disassociated: true, forgotHotspot: true, restore: .autoJoined))
+        XCTAssertEqual(wifi.known, ["home"])
+        XCTAssertEqual(wifi.powerCycles, 0)
+    }
+
+    func testFailedAssociationThatDroppedHomeNetworkComesBackByAutoJoin() throws {
+        let wifi = Wifi()
+        let (join, _) = joinFromHome(wifi, error: NSError(domain: "com.apple.wifi.apple80211API.error", code: -3905))
+        XCTAssertThrowsError(try join.associate(ssid: "glasses", password: "private"))
+        XCTAssertNil(wifi.ssid, "macOS dropped the home network for the association request")
+        wifi.afterLeave = "home"; wifi.pendingAutoJoinPolls = 5
+        let report = try join.leave()
+        XCTAssertEqual(report, MacHotspotLeaveReport(disassociated: false, forgotHotspot: true, restore: .autoJoined))
+        XCTAssertEqual(wifi.known, ["home"])
+        XCTAssertEqual(wifi.powerCycles, 0)
+    }
+
+    func testStrandedMacIsPowerCycledSoAutoJoinStartsOver() throws {
+        let wifi = Wifi()
+        let (join, now) = joinFromHome(wifi, error: NSError(domain: "com.apple.wifi.apple80211API.error", code: -3905))
+        XCTAssertThrowsError(try join.associate(ssid: "glasses", password: "private"))
+        wifi.afterPowerCycle = "home"
+        let before = now()
+        let report = try join.leave()
+        XCTAssertEqual(report.restore, .powerCycled)
+        XCTAssertEqual(wifi.powerCycles, 1)
+        XCTAssertEqual(wifi.ssid, "home")
+        XCTAssertEqual(wifi.known, ["home"])
+        XCTAssertEqual(now() - before, MacHotspotAssociation.autoJoinWait + 1)
+    }
+
+    func testTimedOutJoinCancelledDuringAssociationStillRestoresHomeNetwork() throws {
+        let wifi = Wifi()
+        let (join, _) = joinFromHome(wifi)
+        // The join deadline cancels while macOS is mid-association and has already dropped home.
+        wifi.beforeJoin = { wifi.ssid = nil; join.cancel() }
+        wifi.associationError = NSError(domain: "com.apple.wifi.apple80211API.error", code: -3905)
+        XCTAssertThrowsError(try join.associate(ssid: "glasses", password: "private")) {
+            XCTAssertTrue($0 is CancellationError)
+        }
+        wifi.afterPowerCycle = "home"
+        let report = try join.leave()
+        XCTAssertEqual(report.restore, .powerCycled, "cancel() must not cut cleanup's pacing short")
+        XCTAssertEqual(wifi.known, ["home"])
+    }
+
+    func testRestoreGivesUpWithoutDisconnectingAnything() throws {
+        let wifi = Wifi()
+        let (join, _) = joinFromHome(wifi, error: NSError(domain: "com.apple.wifi", code: 9))
+        XCTAssertThrowsError(try join.associate(ssid: "glasses", password: "private"))
+        let report = try join.leave()
+        XCTAssertEqual(report.restore, .notRestored)
+        XCTAssertEqual(wifi.powerCycles, 1)
+        XCTAssertEqual(wifi.leaves, 0)
+    }
+
+    func testMacOnAnotherNetworkAfterLeaveIsLeftAlone() throws {
+        let wifi = Wifi()
+        let (join, _) = joinFromHome(wifi)
+        _ = try join.associate(ssid: "glasses", password: "private")
+        wifi.afterLeave = "phone-hotspot"
+        let report = try join.leave()
+        XCTAssertEqual(report.restore, .otherNetwork)
+        XCTAssertEqual(wifi.ssid, "phone-hotspot")
+        XCTAssertEqual(wifi.powerCycles, 0)
+    }
+
+    func testForgetFailureIsReportedButHomeIsStillRestored() throws {
+        let wifi = Wifi(); wifi.forgetError = LocalMediaError("denied")
+        let (join, _) = joinFromHome(wifi)
+        _ = try join.associate(ssid: "glasses", password: "private")
+        wifi.afterLeave = "home"
+        let report = try join.leave()
+        XCTAssertFalse(report.forgotHotspot)
+        XCTAssertEqual(report.restore, .autoJoined)
+        XCTAssertTrue(report.summary.contains("forget: denied"))
+        XCTAssertFalse(report.summary.contains("home"), "The log line never names a network")
+    }
+
+    func testMacWithoutPreviousWifiIsNotPowerCycled() throws {
+        let wifi = Wifi()
+        let join = MacHotspotAssociation(pause: { _ in }, makeInterface: { wifi })
+        XCTAssertThrowsError(try { wifi.associationError = NSError(domain: "x", code: 1); return try join.associate(ssid: "glasses", password: "private") }())
+        let report = try join.leave()
+        XCTAssertEqual(report.restore, .noPreviousNetwork)
+        XCTAssertEqual(wifi.powerCycles, 0)
+        XCTAssertEqual(wifi.forgets, ["glasses"])
+    }
+
+    func testJoinThatNeverAssociatedLeavesWifiUntouched() throws {
+        let wifi = Wifi(); wifi.missingScans = .max
+        let (join, _) = joinFromHome(wifi)
+        XCTAssertThrowsError(try join.associate(ssid: "glasses", password: "private"))
+        let report = try join.leave()
+        XCTAssertEqual(report, MacHotspotLeaveReport())
+        XCTAssertEqual(wifi.forgets, [])
+        XCTAssertEqual(wifi.ssid, "home")
     }
 
     func testAutomaticJoinUsesActualWifiInterfaceAndCleansOwnedAssociation() throws {

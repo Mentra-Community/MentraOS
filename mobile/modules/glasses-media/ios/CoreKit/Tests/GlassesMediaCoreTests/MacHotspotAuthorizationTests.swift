@@ -43,6 +43,9 @@ final class MacHotspotAuthorizationTests: XCTestCase {
         func disassociate() {
             leaves += 1; ssid = nil
         }
+
+        func forget(ssid _: String) throws {}
+        func setPower(_: Bool) throws {}
     }
 
     private func started(_ manager: Manager) -> MacHotspotAuthorization {
