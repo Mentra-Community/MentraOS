@@ -9,7 +9,6 @@ import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {roleLabel} from "@/effects/FleetSheets"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {refreshMyWorkspace, useMyWorkspaceStore} from "@/services/fleet/myWorkspace"
@@ -74,7 +73,6 @@ export default function MainSettingsPage() {
               <RouteButton
                 icon={<Icon name="building-2" size={24} color={theme.colors.secondary_foreground} />}
                 label={workspace.name}
-                subtitle={roleLabel(workspace.role)}
                 onPress={() => push("/miniapps/settings/workspace")}
               />
             </Group>

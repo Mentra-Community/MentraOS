@@ -74,6 +74,9 @@ as the stores deliver it, signed in to the lane's test account:
 - `open-close-miniapps-android`: Home with the glasses, and a miniapp.
 - `mentra-ai-android`: a Cloud miniapp, asked by voice through the glasses.
 - `glasses-version-android`: the glasses connected, with their version.
+- `first-pair-newer-glasses-android`: a fresh install pairing glasses already on
+  the beta's software, as new glasses arrive after the release, and taking the
+  version change it requires back to production's software, through to Home.
 
 And on the beta's own app, `ota-promotion-android`: glasses on production's
 software, updated by it through its normal offer and hotspot. That's how

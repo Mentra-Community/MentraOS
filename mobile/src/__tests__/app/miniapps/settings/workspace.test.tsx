@@ -180,14 +180,15 @@ beforeEach(() => {
 afterEach(() => setWorkspaceApi(null))
 
 describe("Settings: the Workspace row", () => {
-  it("shows the workspace name with the role below, under Workspace", async () => {
+  it("shows the workspace name alone, without the role, under Workspace", async () => {
     setWorkspaceApi(fakeCore(RIDGELINE).api)
     const screen = render(<MainSettingsPage />)
     await settle()
 
     expect(screen.getByText("Workspace")).toBeTruthy()
     expect(screen.getByText("Ridgeline Field Services")).toBeTruthy()
-    expect(screen.getByTestId("route.subtitle").props.children).toBe("Member")
+    expect(screen.queryByTestId("route.subtitle")).toBeNull()
+    expect(screen.queryByText("Member")).toBeNull()
     // One workspace row: the separate "Mentra Fleet Management" row is gone, managed or not.
     expect(screen.queryByText("Mentra Fleet Management")).toBeNull()
     act(() => setFleetManagementState(MANAGED))
@@ -225,16 +226,16 @@ describe("Settings: the Workspace row", () => {
     }
   })
 
-  it("reads the role again when the page gains focus", async () => {
+  it("reads the workspace again when the page gains focus", async () => {
     const core = fakeCore(RIDGELINE)
     setWorkspaceApi(core.api)
     const screen = render(<MainSettingsPage />)
     await settle()
-    expect(screen.getByTestId("route.subtitle").props.children).toBe("Member")
+    expect(screen.getByText("Ridgeline Field Services")).toBeTruthy()
 
-    core.state.mine = {...RIDGELINE, role: "admin"}
+    core.state.mine = {...RIDGELINE, name: "Ridgeline North"}
     await refocus()
-    expect(screen.getByTestId("route.subtitle").props.children).toBe("Admin")
+    expect(screen.getByText("Ridgeline North")).toBeTruthy()
     expect(core.api.mine).toHaveBeenCalledTimes(2)
   })
 })

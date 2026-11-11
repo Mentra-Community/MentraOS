@@ -5,6 +5,11 @@ import ObjectiveC
 /// Blocking public CoreWLAN calls are isolated here; the existing hotspot owner
 /// retains custody until they return, even after cancellation or a timeout.
 final class MacHotspotAssociation {
+    /// Rejoining the hotspot seconds after leaving it, as between an update's passes, can be refused while the
+    /// glasses still hold the Mac's previous association (-3912). A later attempt in the same window succeeds.
+    static let associationAttempts = 3
+    static let associationRetryDelay: TimeInterval = 2
+
     private let condition = NSCondition()
     private var cancelled = false
     private var interface: MacWifiInterface?
@@ -33,16 +38,26 @@ final class MacHotspotAssociation {
         try checkCurrent()
         let interface = try makeInterface()
         self.interface = interface
-        if try readSSID(interface) != ssid {
+        for attempt in 1 ... Self.associationAttempts {
+            guard try readSSID(interface) != ssid else { break }
             let network = try discoverNetwork(ssid: ssid, interface: interface)
             try checkDiscoveryCurrent()
-            if let network, try readSSID(interface) != ssid {
-                try checkDiscoveryCurrent()
-                try authorization?.requireCurrentAuthorization()
-                // Record the intended association before this blocking call. A late
-                // successful join still belongs to us and must be cleaned up.
-                joinedSSID = ssid
+            guard let network, try readSSID(interface) != ssid else { break }
+            try checkDiscoveryCurrent()
+            try authorization?.requireCurrentAuthorization()
+            // Record the intended association before this blocking call. A late
+            // successful join still belongs to us and must be cleaned up.
+            joinedSSID = ssid
+            do {
                 try interface.associate(network: network, password: password)
+                break
+            } catch {
+                // A refusal is retried with a fresh scan; cancellation, a lost Location
+                // authorization (rechecked by the next read) and the deadline end it.
+                if error is CancellationError || attempt == Self.associationAttempts { throw error }
+                try checkCurrent()
+                guard now() + Self.associationRetryDelay < deadline else { throw error }
+                wait(Self.associationRetryDelay)
             }
         }
         try checkCurrent()
@@ -98,15 +113,17 @@ final class MacHotspotAssociation {
             if try readSSID(interface) == ssid { return nil }
             if let network { return network }
             // Successful empty scans remain pending within this same join window.
-            // Native scan errors escape immediately; association is never retried.
-            let remaining = max(0, deadline - now())
-            if let pause { pause(min(1, remaining)) }
-            else {
-                condition.lock()
-                if !cancelled { _ = condition.wait(until: Date(timeIntervalSinceNow: min(1, remaining))) }
-                condition.unlock()
-            }
+            // Native scan errors escape immediately.
+            wait(min(1, max(0, deadline - now())))
         }
+    }
+
+    /// Pause on the association worker; cancellation wakes it.
+    private func wait(_ seconds: TimeInterval) {
+        if let pause { pause(seconds); return }
+        condition.lock()
+        if !cancelled { _ = condition.wait(until: Date(timeIntervalSinceNow: seconds)) }
+        condition.unlock()
     }
 
     private func checkDiscoveryCurrent() throws {

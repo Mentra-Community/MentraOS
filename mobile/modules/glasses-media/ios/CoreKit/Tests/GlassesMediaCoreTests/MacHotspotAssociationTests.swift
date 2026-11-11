@@ -14,6 +14,7 @@ final class MacHotspotAssociationTests: XCTestCase {
         var missingScans = 0
         var scanError: Error?
         var associationError: Error?
+        var refusedJoins = 0
         func name() throws -> String {
             "en1"
         }
@@ -32,6 +33,7 @@ final class MacHotspotAssociationTests: XCTestCase {
         func associate(network _: NSObject, password _: String) throws {
             joins += 1; beforeJoin?()
             if let associationError { throw associationError }
+            if joins <= refusedJoins { throw NSError(domain: "com.apple.wifi.apple80211API.error", code: -3912) }
             ssid = "glasses"
         }
 
@@ -202,13 +204,59 @@ final class MacHotspotAssociationTests: XCTestCase {
         XCTAssertEqual(wifi.joins, 0)
     }
 
-    func testAssociationFailureIsTerminalWithoutAnotherScanOrJoin() {
+    func testRefusedAssociationRescansAndJoinsAgain() throws {
+        let wifi = Wifi(); wifi.refusedJoins = 1
+        var now: TimeInterval = 0
+        let join = MacHotspotAssociation(deadline: 60, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
+        XCTAssertEqual(try join.associate(ssid: "glasses", password: "private"), "en1")
+        XCTAssertEqual(wifi.scans, 2)
+        XCTAssertEqual(wifi.joins, 2)
+        XCTAssertEqual(now, MacHotspotAssociation.associationRetryDelay)
+        try join.leave()
+        XCTAssertEqual(wifi.leaves, 1)
+    }
+
+    func testAssociationFailureEndsAfterItsLastAttempt() {
         let wifi = Wifi(); wifi.associationError = NSError(domain: "com.apple.wifi", code: 9)
-        let join = MacHotspotAssociation(makeInterface: { wifi })
+        var now: TimeInterval = 0
+        let join = MacHotspotAssociation(deadline: 60, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
         XCTAssertThrowsError(try join.associate(ssid: "glasses", password: "private")) {
             XCTAssertEqual(($0 as NSError).code, 9)
         }
-        XCTAssertEqual(wifi.scans, 1)
+        XCTAssertEqual(wifi.scans, MacHotspotAssociation.associationAttempts)
+        XCTAssertEqual(wifi.joins, MacHotspotAssociation.associationAttempts)
+    }
+
+    func testAssociationFailureIsNotRetriedPastTheDeadline() {
+        let wifi = Wifi(); wifi.associationError = NSError(domain: "com.apple.wifi", code: 9)
+        var now: TimeInterval = 0
+        wifi.beforeJoin = { now = 59 }
+        let join = MacHotspotAssociation(deadline: 60, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
+        XCTAssertThrowsError(try join.associate(ssid: "glasses", password: "private")) {
+            XCTAssertEqual(($0 as NSError).code, 9)
+        }
+        XCTAssertEqual(wifi.joins, 1)
+    }
+
+    func testPermissionLossAfterRefusedAssociationIsTerminal() {
+        let wifi = Wifi(); wifi.refusedJoins = 1
+        wifi.beforeJoin = { wifi.unreadable = true }
+        var now: TimeInterval = 0
+        let join = MacHotspotAssociation(deadline: 60, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
+        XCTAssertThrowsError(try join.associate(ssid: "glasses", password: "private")) {
+            XCTAssertTrue($0.localizedDescription.contains("Location"))
+        }
+        XCTAssertEqual(wifi.joins, 1)
+    }
+
+    func testCancelDuringRefusedAssociationPreventsAnotherJoin() {
+        let wifi = Wifi(); wifi.refusedJoins = 1
+        var join: MacHotspotAssociation!
+        wifi.beforeJoin = { join.cancel() }
+        join = MacHotspotAssociation(makeInterface: { wifi })
+        XCTAssertThrowsError(try join.associate(ssid: "glasses", password: "private")) {
+            XCTAssertTrue($0 is CancellationError)
+        }
         XCTAssertEqual(wifi.joins, 1)
     }
 

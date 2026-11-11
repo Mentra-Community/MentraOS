@@ -1,0 +1,73 @@
+diff --git a/Common/cpp/reanimated/RuntimeDecorators/RNRuntimeDecorator.cpp b/Common/cpp/reanimated/RuntimeDecorators/RNRuntimeDecorator.cpp
+index 634d638..0612e4e 100644
+--- a/Common/cpp/reanimated/RuntimeDecorators/RNRuntimeDecorator.cpp
++++ b/Common/cpp/reanimated/RuntimeDecorators/RNRuntimeDecorator.cpp
+@@ -33,6 +33,36 @@ void RNRuntimeDecorator::decorate(
+ 
+   rnRuntime.global().setProperty(
+       rnRuntime, "__reanimatedModuleProxy", jsi::Object::createFromHostObject(rnRuntime, reanimatedModuleProxy));
++
++  // Mentra patch: React Native rewrites `ShadowNodeWrapper::shadowNode` on the JS thread every time React clones the
++  // node (ShadowNode::updateRuntimeShadowNodeReference), while Reanimated copies the same shared_ptr on the UI thread
++  // every animation frame (AnimatedPropsRegistry::update and friends). The unsynchronized shared_ptr copy and write
++  // corrupt its reference count, and the node is later freed twice (SIGABRT in ~YogaLayoutableShadowNode, "Pointer tag
++  // ... was truncated"). Reanimated only needs the node's family and tag, so hand it its own wrapper, which React Native
++  // never writes to. The read below runs on the JS thread, the only thread that writes the original wrapper.
++  rnRuntime.global().setProperty(
++      rnRuntime,
++      "_reanimatedDetachShadowNodeWrapper",
++      jsi::Function::createFromHostFunction(
++          rnRuntime,
++          jsi::PropNameID::forAscii(rnRuntime, "_reanimatedDetachShadowNodeWrapper"),
++          1,
++          [](jsi::Runtime &rt, const jsi::Value &, const jsi::Value *args, size_t count) -> jsi::Value {
++            if (count < 1 || !args[0].isObject()) {
++              return count < 1 ? jsi::Value::undefined() : jsi::Value(rt, args[0]);
++            }
++            auto object = args[0].getObject(rt);
++            if (!object.hasNativeState(rt)) {
++              return jsi::Value(rt, args[0]);
++            }
++            auto wrapper = std::dynamic_pointer_cast<facebook::react::ShadowNodeWrapper>(object.getNativeState(rt));
++            if (wrapper == nullptr || wrapper->shadowNode == nullptr) {
++              return jsi::Value(rt, args[0]);
++            }
++            jsi::Object detached(rt);
++            detached.setNativeState(rt, std::make_shared<facebook::react::ShadowNodeWrapper>(wrapper->shadowNode));
++            return detached;
++          }));
+ }
+ 
+ #ifdef IS_REANIMATED_EXAMPLE_APP
+diff --git a/lib/module/fabricUtils.js b/lib/module/fabricUtils.js
+index a1950af..986a73f 100644
+--- a/lib/module/fabricUtils.js
++++ b/lib/module/fabricUtils.js
+@@ -14,6 +14,9 @@ export function getShadowNodeWrapperFromRef(ref, hostInstance) {
+       throw new ReanimatedError(`Failed to find host instance for a ref.}`);
+     }
+   }
+-  return resolvedInstance.stateNode.node;
++  const node = resolvedInstance.stateNode.node;
++  // Mentra patch: see _reanimatedDetachShadowNodeWrapper in RNRuntimeDecorator.cpp.
++  const detach = global._reanimatedDetachShadowNodeWrapper;
++  return detach ? detach(node) : node;
+ }
+ //# sourceMappingURL=fabricUtils.js.map
+\ No newline at end of file
+diff --git a/src/fabricUtils.ts b/src/fabricUtils.ts
+index 0b83e02..37df7fe 100644
+--- a/src/fabricUtils.ts
++++ b/src/fabricUtils.ts
+@@ -24,5 +24,10 @@ export function getShadowNodeWrapperFromRef(
+     }
+   }
+ 
+-  return resolvedInstance!.stateNode.node as ShadowNodeWrapper;
++  const node = resolvedInstance!.stateNode.node as ShadowNodeWrapper;
++  // Mentra patch: see _reanimatedDetachShadowNodeWrapper in RNRuntimeDecorator.cpp.
++  const detach = (global as any)._reanimatedDetachShadowNodeWrapper as
++    | ((wrapper: ShadowNodeWrapper) => ShadowNodeWrapper)
++    | undefined;
++  return detach ? detach(node) : node;
+ }

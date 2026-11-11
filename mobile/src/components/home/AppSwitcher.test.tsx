@@ -141,6 +141,47 @@ test.each([
   },
 )
 
+test.each([
+  {dismissed: "three", slides: true, gap: {index: 2, size: 0}},
+  {dismissed: "two", slides: false, gap: {index: 0, size: 0}},
+])("dismissing $dismissed with three centered slides the strip: $slides", async ({dismissed, slides, gap}) => {
+  const packages = ["one", "two", "three"]
+  mockApps = packages.map((packageName) => ({packageName, name: packageName}) as ClientApp)
+  mockStop.mockResolvedValue(undefined)
+  const withSpring = reanimated.withSpring
+  const springTargets: number[] = []
+  // The page dots spring without a config; only the strip's springs pass one.
+  reanimated.withSpring = (target: number, config?: object) => {
+    if (config) springTargets.push(target)
+    return target
+  }
+  try {
+    render(tray())
+    await act(async () => {})
+    const translateX = reanimated.useSharedValue.mock.results[0].value
+    const gapIndex = reanimated.useSharedValue.mock.results[6].value
+    const gapSize = reanimated.useSharedValue.mock.results[7].value
+    const [prepare, react] = openingReaction()
+    const previous = prepare()
+    act(() => react(previous, null))
+    const cardWidth = Dimensions.get("window").width * 0.67
+    expect(translateX.value).toBe(-cardWidth)
+    springTargets.length = 0
+
+    fireEvent(screen.getByTestId(cardId(dismissed)), "accessibilityAction", {nativeEvent: {actionName: "dismiss"}})
+    const [nextPrepare, nextReact] = openingReaction()
+    act(() => nextReact(nextPrepare(), previous))
+
+    // Dismissing the centered card animates its neighbor in; dismissing a
+    // card before it only re-bases the offset, which must not animate.
+    expect(springTargets.map((target) => target + 0)).toEqual(slides ? [0, 0] : [])
+    expect(translateX.value).toBeCloseTo(0)
+    expect({index: gapIndex.value, size: gapSize.value}).toEqual(gap)
+  } finally {
+    reanimated.withSpring = withSpring
+  }
+})
+
 test("X-button close hides the card while its runtime is still running", async () => {
   const view = render(tray())
   await act(async () => {})

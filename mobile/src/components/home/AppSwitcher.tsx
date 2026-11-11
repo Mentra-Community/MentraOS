@@ -56,6 +56,8 @@ interface AppCardItemProps {
   onSelect: (packageName: string) => void
   translateX: SharedValue<number>
   cardOrder: SharedValue<string[]>
+  gapIndex: SharedValue<number>
+  gapSize: SharedValue<number>
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable)
@@ -66,7 +68,7 @@ function useSwitcherMetrics() {
   return {SCREEN_WIDTH: width, SCREEN_HEIGHT: height, CARD_WIDTH: width * CARD_SCALE, CARD_HEIGHT: height * CARD_SCALE}
 }
 
-function AppCardItem({app, translateX, cardOrder, onDismiss, onSelect}: AppCardItemProps) {
+function AppCardItem({app, translateX, cardOrder, gapIndex, gapSize, onDismiss, onSelect}: AppCardItemProps) {
   const {SCREEN_WIDTH, SCREEN_HEIGHT, CARD_WIDTH, CARD_HEIGHT} = useSwitcherMetrics()
   const translateY = useSharedValue(0)
   const cardOpacity = useSharedValue(1)
@@ -140,7 +142,9 @@ function AppCardItem({app, translateX, cardOrder, onDismiss, onSelect}: AppCardI
     let stat = 0
 
     // let howFar = SCREEN_WIDTH / 4
-    let lin = translateX.value / cardWidth + animIndex
+    // A dismissed card leaves a slot behind that closes over time, so the
+    // cards after it slide in instead of jumping one slot.
+    let lin = translateX.value / cardWidth + animIndex + (animIndex >= gapIndex.value ? gapSize.value : 0)
     if (lin < 0) {
       lin = 0
     }
@@ -167,7 +171,9 @@ function AppCardItem({app, translateX, cardOrder, onDismiss, onSelect}: AppCardI
 
   const titleAnimatedStyle = useAnimatedStyle(() => {
     const animIndex = Math.max(0, cardOrder.value.indexOf(app.packageName))
-    let lin = translateX.value / cardWidth + animIndex
+    // A dismissed card leaves a slot behind that closes over time, so the
+    // cards after it slide in instead of jumping one slot.
+    let lin = translateX.value / cardWidth + animIndex + (animIndex >= gapIndex.value ? gapSize.value : 0)
     if (lin < 0) {
       lin = 0
     }
@@ -291,6 +297,8 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const prevTranslationX = useSharedValue(0)
   const openX = useSharedValue(-1)
   const cardOrder = useSharedValue<string[]>([])
+  const gapIndex = useSharedValue(0)
+  const gapSize = useSharedValue(0)
   const {push} = useNavigationStore.getState()
   const setForeground = useSetForeground()
   const insets = useSaferAreaInsets()
@@ -751,6 +759,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         targetIndex.value = lastTarget
         translateX.value = -lastTarget * (CARD_WIDTH + CARD_SPACING)
         offsetX.value = translateX.value
+        gapSize.value = 0
       } else if (packages.join("\n") !== cardOrder.value.join("\n")) {
         // Preserve the centered miniapp by identity when another card leaves.
         // If it was removed, choose the nearest surviving slot instead.
@@ -763,9 +772,30 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         const survivingIndex = packages.indexOf(centeredPackage)
         const nextIndex = survivingIndex >= 0 ? survivingIndex : Math.min(centeredIndex, appCount - 1)
         const nextTarget = Math.max(-1, nextIndex - 1)
+        const nextX = -nextTarget * (CARD_WIDTH + CARD_SPACING)
+        let removedIndex = 0
+        while (removedIndex < packages.length && packages[removedIndex] === previousOrder[removedIndex]) removedIndex++
+        const oneCardLeft =
+          packages.length === previousOrder.length - 1 &&
+          packages.slice(removedIndex).join("\n") === previousOrder.slice(removedIndex + 1).join("\n")
         targetIndex.value = nextTarget
-        translateX.value = -nextTarget * (CARD_WIDTH + CARD_SPACING)
-        offsetX.value = translateX.value
+        if (oneCardLeft && removedIndex >= centeredIndex) {
+          // The centered card, or one after it, was dismissed. Nothing has to
+          // jump: keep the freed slot open for this frame, then close it and
+          // slide the strip to the new centered card.
+          const spring = {damping: 200, stiffness: 800}
+          gapIndex.value = removedIndex
+          gapSize.value = 1
+          gapSize.value = withSpring(0, spring)
+          translateX.value = withSpring(nextX, spring)
+          offsetX.value = nextX
+        } else {
+          // A card before the centered one left (or the order changed): shift
+          // the offset in the same frame so the visible cards stay put.
+          gapSize.value = 0
+          translateX.value = nextX
+          offsetX.value = nextX
+        }
       }
       // Cards read this same UI-thread order rather than running independent
       // index springs, so reindexing and offset correction reach one frame.
@@ -872,6 +902,8 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
                   // activeIndex={activeIndex}
                   translateX={translateX}
                   cardOrder={cardOrder}
+                  gapIndex={gapIndex}
+                  gapSize={gapSize}
                 />
               ))}
             </Animated.View>
