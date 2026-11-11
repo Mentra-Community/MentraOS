@@ -2,10 +2,11 @@ import {act, render} from "@testing-library/react-native"
 import {Alert} from "react-native"
 
 import {OtaUpdateChecker} from "@/effects/OtaUpdateChecker"
-import showAlert from "@/utils/AlertUtils"
+import showAlert, {dismissAlert} from "@/utils/AlertUtils"
 import {hasAlertHost} from "@/contexts/ModalContext"
 
 type CheckResult = {
+  hasCheckCompleted?: boolean
   updateAvailable: boolean
   latestVersionInfo: unknown
   updates: string[]
@@ -51,7 +52,7 @@ jest.mock("@mentra/engine", () => ({
 }))
 jest.mock("@/hooks/useEngineSnapshot", () => ({useEngineSnapshot: (getSnapshot: () => unknown) => getSnapshot()}))
 jest.mock("expo-router", () => ({usePathname: () => "/home"}))
-jest.mock("@/utils/AlertUtils", () => ({__esModule: true, default: jest.fn()}))
+jest.mock("@/utils/AlertUtils", () => ({__esModule: true, default: jest.fn(), dismissAlert: jest.fn()}))
 jest.mock("@/contexts/ModalContext", () => ({hasAlertHost: jest.fn(() => true)}))
 jest.mock("@/i18n/translate", () => ({translate: (key: string) => key}))
 
@@ -59,6 +60,14 @@ const besUpdate: CheckResult = {
   updateAvailable: true,
   latestVersionInfo: {},
   updates: ["bes"],
+  isApkDowngrade: false,
+}
+
+const upToDate: CheckResult = {
+  hasCheckCompleted: true,
+  updateAvailable: false,
+  latestVersionInfo: null,
+  updates: [],
   isApkDowngrade: false,
 }
 
@@ -81,6 +90,7 @@ describe("OtaUpdateChecker on reconnect", () => {
     mockPendingChecks.length = 0
     mockTimers.length = 0
     jest.mocked(hasAlertHost).mockReturnValue(true)
+    mockSnapshot.connected = true
   })
 
   it("offers the update once when the app remounts while a check is in flight", async () => {
@@ -120,5 +130,45 @@ describe("OtaUpdateChecker on reconnect", () => {
     expect(showAlert).not.toHaveBeenCalled()
     expect(alertSpy).not.toHaveBeenCalled()
     alertSpy.mockRestore()
+  })
+
+  it("closes its offer when the glasses turn out to be up to date after they reconnect", async () => {
+    // As in disconnect-reconnect-android, nightly 2026-11-11: the BES version came late, the check
+    // assumed a BES update, and the offer stayed over Home after the next check found none.
+    const view = render(<OtaUpdateChecker />)
+    await runDueChecks()
+    await resolveCheck(0, besUpdate)
+    expect(showAlert).toHaveBeenCalledTimes(1)
+    const [title, message] = jest.mocked(showAlert).mock.calls[0]!
+
+    mockSnapshot.connected = false
+    view.rerender(<OtaUpdateChecker />)
+    mockSnapshot.connected = true
+    view.rerender(<OtaUpdateChecker />)
+    await runDueChecks()
+    await resolveCheck(1, upToDate)
+
+    expect(dismissAlert).toHaveBeenCalledWith(title, message)
+    expect(showAlert).toHaveBeenCalledTimes(1)
+  })
+
+  it("closes nothing when a check finds no update and it offered none", async () => {
+    render(<OtaUpdateChecker />)
+    await runDueChecks()
+    await resolveCheck(0, upToDate)
+    expect(dismissAlert).not.toHaveBeenCalled()
+  })
+
+  it("keeps its offer when the next check can't fetch the manifest", async () => {
+    const view = render(<OtaUpdateChecker />)
+    await runDueChecks()
+    await resolveCheck(0, besUpdate)
+    mockSnapshot.connected = false
+    view.rerender(<OtaUpdateChecker />)
+    mockSnapshot.connected = true
+    view.rerender(<OtaUpdateChecker />)
+    await runDueChecks()
+    await resolveCheck(1, {...upToDate, hasCheckCompleted: false})
+    expect(dismissAlert).not.toHaveBeenCalled()
   })
 })
