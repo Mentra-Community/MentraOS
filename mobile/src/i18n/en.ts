@@ -495,7 +495,6 @@ const en = {
     componentBes: "Bluetooth firmware",
     updateFile: "File {{current}} of {{total}} · {{component}}",
     updatePart: "Update {{current}} of {{total}} · {{component}}",
-    phoneFileProgress: "Each file downloads separately. Progress is for the current file.",
     checkingForUpdates: "Checking for updates",
     checkingForUpdatesMessage:
       "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings.",
@@ -504,7 +503,7 @@ const en = {
     updateAvailable: "{{deviceName}} Update Available",
     batteryRequiredTitle: "Charge {{deviceName}} to Update",
     batteryRequiredMessage:
-      "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
+      "{{deviceName}} is currently at {{batteryLevel}}% battery. Charge it to at least {{minimumBatteryLevel}}% before updating.",
     batteryRequiredLiveUpdate: "This screen will update automatically as the battery charges.",
     updateReadyToInstall: "Version {{version}} for {{deviceName}} is ready to install.",
     updateConnectWifi: "Connect your {{deviceName}} to Wi-Fi to install the update.",

@@ -195,11 +195,15 @@ describe("MentraLiveOtaFlow", () => {
 
     expect(prepare).not.toHaveBeenCalled()
     expect(getByText("Charge Mentra Live to Update")).toBeDefined()
-    expect(getByText("Mentra Live is currently at 12%. Charge it to at least 25% before updating.")).toBeDefined()
+    expect(
+      getByText("Mentra Live is currently at 12% battery. Charge it to at least 25% before updating."),
+    ).toBeDefined()
     expect(getByText("This screen will update automatically as the battery charges.")).toBeDefined()
 
     act(() => useGlassesStore.getState().setBatteryInfo(24, true, -1, false))
-    expect(getByText("Mentra Live is currently at 24%. Charge it to at least 25% before updating.")).toBeDefined()
+    expect(
+      getByText("Mentra Live is currently at 24% battery. Charge it to at least 25% before updating."),
+    ).toBeDefined()
 
     act(() => useGlassesStore.getState().setBatteryInfo(25, true, -1, false))
     await waitFor(() => expect(getByText("Mentra Live Update Available")).toBeDefined())

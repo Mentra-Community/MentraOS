@@ -86,7 +86,6 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:componentBes": "Bluetooth firmware",
   "ota:updateFile": "File {{current}} of {{total}} · {{component}}",
   "ota:updatePart": "Update {{current}} of {{total}} · {{component}}",
-  "ota:phoneFileProgress": "Each file downloads separately. Progress is for the current file.",
 
   "common:continue": "Continue",
   "common:done": "Done",
@@ -98,7 +97,7 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:updateAvailable": "{{deviceName}} Update Available",
   "ota:batteryRequiredTitle": "Charge {{deviceName}} to Update",
   "ota:batteryRequiredMessage":
-    "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
+    "{{deviceName}} is currently at {{batteryLevel}}% battery. Charge it to at least {{minimumBatteryLevel}}% before updating.",
   "ota:batteryRequiredLiveUpdate": "This screen will update automatically as the battery charges.",
   "ota:updateConnectWifi": "Connect your {{deviceName}} to Wi-Fi to install the update.",
   "ota:wifiRequiredTitle": "Wi-Fi Needed for Update",
@@ -503,9 +502,6 @@ function OtaFlowContent({
           <PercentText colors={colors} percent={state.hotspotArtifactPercent} />
         ) : null}
         <ActivityIndicator size="large" color={colors.foreground} />
-        {state.hotspotPhase === "downloading" ? (
-          <BodyText colors={colors}>{translate("ota:phoneFileProgress")}</BodyText>
-        ) : null}
         {/* iOS cannot read the Wi-Fi radio, and a join with Wi-Fi off can wait without failing. */}
         {state.hotspotPhase === "joining_hotspot" && Platform.OS === "ios" ? (
           <BodyText colors={colors}>{translate("ota:connectingPhoneWifiHint")}</BodyText>
@@ -829,12 +825,14 @@ function FlowButton({
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
+      // Android otherwise fades the border and the fill separately, so the border reads darker.
+      needsOffscreenAlphaCompositing={disabled}
       onPress={onPress}
       style={({pressed}) => [
         styles.button,
         {
           backgroundColor: secondary ? colors.background : colors.foreground,
-          borderColor: secondary ? colors.border : colors.foreground,
+          borderColor: secondary ? colors.border : disabled ? "transparent" : colors.foreground,
           opacity: disabled ? 0.45 : pressed ? 0.75 : 1,
         },
       ]}

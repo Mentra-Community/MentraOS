@@ -276,7 +276,7 @@ describe('custom OTA presentation', () => {
 
     expect(presentation).toMatchObject({
       detail: 'This screen will update automatically as the battery charges.',
-      message: 'Mentra Live is currently at 18%. Charge it to at least 25% before updating.',
+      message: 'Mentra Live is currently at 18% battery. Charge it to at least 25% before updating.',
       primary: {action: 'install', disabled: true, label: 'Update Now'},
       secondary: {action: 'finish', label: 'Later'},
       title: 'Charge Mentra Live to Update',
@@ -360,7 +360,7 @@ describe('OTA transport labels and reconnect parity', () => {
     );
     expect(p.progressLabel).toBe(`File ${index + 1} of 3 · ${label}`);
     expect(p.progress).toBe(42);
-    expect(p.detail).toBe('Each file downloads separately. Progress is for the current file.');
+    expect(p.detail).toBeUndefined();
   });
 
   test('does not invent file metadata or a percentage while the phone prepares', () => {

@@ -127,7 +127,7 @@ export function otaPresentation(
     case 'battery_required':
       return {
         detail: 'This screen will update automatically as the battery charges.',
-        message: `${deviceName} is currently at ${state.batteryLevel}%. Charge it to at least 25% before updating.`,
+        message: `${deviceName} is currently at ${state.batteryLevel}% battery. Charge it to at least 25% before updating.`,
         primary: {
           action: 'install',
           disabled: true,
@@ -214,10 +214,6 @@ export function otaPresentation(
       }[state.hotspotPhase];
       const artifact = state.hotspotPhase === 'downloading' ? state.hotspotArtifact : null;
       return {
-        detail:
-          state.hotspotPhase === 'downloading'
-            ? 'Each file downloads separately. Progress is for the current file.'
-            : undefined,
         indeterminate: true,
         message: 'Do not disconnect your glasses',
         progressLabel: artifact
