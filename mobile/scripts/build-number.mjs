@@ -10,7 +10,9 @@
 // CI, takes a sequence above every release of the family, derived from the HEAD
 // commit's committer time, so the app and the ASG client built from the same
 // commit share a number and a dev build always installs over a release of the
-// family. Same number for iOS CFBundleVersion and Android versionCode.
+// family. Same number for iOS CFBundleVersion and Android versionCode, except a
+// PR CI build of the Android app, which CI pins above the latest beta's borrowed
+// code (prepare-pr-mobile.mjs, see "Pull-request Android codes" in the spec).
 //
 // Pinning: release scripts set MENTRAOS_PINNED_BUILD_NUMBER before invoking
 // `bun expo prebuild`, so the value baked into the native projects matches

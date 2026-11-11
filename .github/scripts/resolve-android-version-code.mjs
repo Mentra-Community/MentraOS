@@ -5,9 +5,10 @@
 // code, and the family formula sits below the codes the `beta` and `internal`
 // tracks served before the formula existed (310000212 and 900000002; see
 // notes/superpowers/specs/2026-09-14-family-build-numbers.md). Until a family
-// passes those floors, a build for a testing track takes the next code above
-// both the track's floor and every code already reserved in the release
-// container; iOS and the ASG client keep the family number. Production keeps
+// passes those floors, a build for a testing track takes a code two above both
+// the track's floor and every code already reserved in the release container,
+// leaving the code in between to pull-request builds (prAndroidVersionCode
+// below); iOS and the ASG client keep the family number. Production keeps
 // the family number: preparation already requires it above the served
 // production release. Internal App Sharing has no floor.
 //
@@ -18,6 +19,15 @@
 import {mkdirSync, readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
+
+import {ANDROID_MAX_VERSION_CODE} from "./release-family.mjs"
+
+// Where every Android reservation marker lives: the shared ASG release of the
+// MentraOS ledger, whose public download index anyone can read.
+export const ANDROID_CODE_LEDGER = {repository: "Mentra-Community/MentraOS", tag: "mentra-coordinated-asg"}
+// The codes a borrowed testing-track code skips above the floor: one, the
+// code a pull-request build built after the latest reservation takes.
+const PR_BUILD_SLOT = 1
 
 const FAMILY_NUMBER_TRACKS = new Set(["production", "internal-app-sharing"])
 const MARKER_PATTERN = /^mentra-android-version-code-(\d+)-([a-z0-9][a-z0-9-]{0,120})\.json$/
@@ -67,11 +77,39 @@ export function resolveAndroidVersionCode({
   if (FAMILY_NUMBER_TRACKS.has(track)) return {versionCode: planBuildNumber, source: "family", reused: false}
   const floor = Math.max(0, ...codes, ...reservations.map((reservation) => reservation.code))
   if (floor < planBuildNumber) return {versionCode: planBuildNumber, source: "family", reused: false}
+  // Skip the code right above the floor: pull-request builds made since the
+  // latest reservation carry it (prAndroidVersionCode), so this build is
+  // strictly above them and installs over them, by sideload or from Play.
   // Play also refuses every code it has ever accepted, served or not (the
   // 3.1.0 betas left 310000213..227 behind the served 310000212).
-  let versionCode = floor + 1
+  let versionCode = floor + PR_BUILD_SLOT + 1
   while (used.has(versionCode)) versionCode += 1
   return {versionCode, source: "track-floor", floor, reused: false}
+}
+
+// The Android version code of a pull-request build of the Mentra App: its
+// family number (commit-derived, above every release of its family; see
+// mobile/scripts/build-number.mjs), or one above the latest reserved code when
+// that is higher. While betas borrow codes above a Play track's floor
+// (310,000,xxx through the 3.9 families), the latter wins, so a PR build
+// installs over every beta and dev build already out, and the next beta,
+// which skips that one code, installs over the PR build. PR builds made between
+// the same two betas share a code, and Android installs an equal code over
+// itself.
+export function prAndroidVersionCode({familyNumber, reservations = []}) {
+  if (!Number.isSafeInteger(familyNumber) || familyNumber < 1) {
+    throw new Error(`Invalid family build number ${JSON.stringify(familyNumber)}`)
+  }
+  const codes = reservations.map((reservation) => reservation.code)
+  if (codes.some((code) => !Number.isSafeInteger(code) || code < 1)) {
+    throw new Error("A reserved Android version code is invalid")
+  }
+  const reservedFloor = Math.max(0, ...codes)
+  const versionCode = Math.max(familyNumber, reservedFloor + PR_BUILD_SLOT)
+  if (versionCode > ANDROID_MAX_VERSION_CODE) {
+    throw new Error(`Android version code ${versionCode} is above Android's limit`)
+  }
+  return {versionCode, reservedFloor, source: versionCode === familyNumber ? "family" : "reserved-floor"}
 }
 
 export function androidCodeMarker({code, owner, planBuildNumber, track}) {

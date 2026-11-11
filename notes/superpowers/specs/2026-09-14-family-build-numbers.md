@@ -106,10 +106,11 @@ The pipeline therefore uses Play like this:
 
 - **Betas** publish to the open-testing track (`beta`), the track behind the
   public beta link. While that track serves a code above the family window,
-  the Android build takes **the next code above the track's floor and every
+  the Android build takes **the code two above the track's floor and every
   code already reserved, skipping every code Play ever accepted** (the 3.1.0
   betas left 310000213 to 310000227 behind the served 310000212) instead of
-  the family number
+  the family number; the code in between is the pull-request builds' (see
+  "Pull-request Android codes" below)
   (`resolve-android-version-code.mjs`, run in the Android job before the
   build); it reserves that code before building as an owner-bound marker
   `mentra-android-version-code-<code>-<owner>.json` in the shared ASG release
@@ -127,7 +128,7 @@ The pipeline therefore uses Play like this:
   takes over on its own. Testers on the open-testing track do not receive a
   production release whose code is lower; they leave the programme to move.
 - **Dev** on the dev branch keeps its Play upload paused (`googlePlayUpload`
-  in the plan); the same rule would give it `internal`'s floor plus one.
+  in the plan); the same rule would give it two above `internal`'s floor.
 - **Production candidates** upload straight to the `production` track as a
   draft release that nothing in the pipeline rolls out, with the family number:
   the prepare step's guard (candidate above the served production release) is
@@ -163,6 +164,61 @@ per-PR OTA manifest (`ota-pr-<number>-<sha>.json` on the `pr-builds` release)
 that the PR's app build pins, so a PR APK updates glasses to the PR's ASG
 client. The pull-request app builds pin the same commit-derived number.
 
+### Pull-request Android codes
+
+A PR build's family number sits in its family's window (3.4: 304,003,000 to
+304,009,999), below the borrowed beta codes (310,000,7xx in November 2026), and
+Android refuses to install a lower code over a higher one: a tester on a beta
+had to uninstall, which signs them out and wipes the app's data. So the
+Mentra App's Android PR builds (`prepare-pr-mobile.mjs android`, in both PR
+Android workflows) pin
+
+```
+versionCode = max(family number, latest reserved code + 1)
+```
+
+where the latest reserved code is the highest
+`mentra-android-version-code-<code>-<owner>.json` marker in
+`mentra-coordinated-asg`, read from its public download index (no
+credentials; a PR build that cannot read it fails rather than ship a code that
+does not install over the betas). Each beta that borrows a code skips that
+`+ 1`, so the codes interleave:
+
+| Build | Code |
+|---|---|
+| beta N | c |
+| every PR build made after beta N, from any branch | c + 1 |
+| beta N + 1 | c + 2 (or higher, past codes Play used) |
+
+- A PR build installs over every beta, and over every dev build (family
+  numbers, 305,000,xxx for 3.5, below the borrowed codes).
+- The next beta installs over the PR build, sideloaded or from Play's open
+  testing track, since its code is strictly higher.
+- PR builds made between the same two betas share c + 1, whichever PR or
+  branch; Android installs an equal code over itself, so they install over
+  each other in any order.
+- An unchanged push reuses an earlier push's APK only if that APK's code is
+  still above the latest reserved code (`pr-mobile-build-unchanged.mjs`);
+  otherwise it repackages at the new code.
+- Production keeps the family number (304,000,xxx for 3.4), below any of
+  these: going from a PR build to production still costs an uninstall, as it
+  did before. Dev-branch coordinated builds keep the family number too, so a
+  later dev build does not install over a PR build (nor over a beta), as
+  before.
+- iOS and the Bluetooth example keep the family number.
+
+This holds while betas borrow codes, that is, through the 3.9 families. Once a
+family's betas carry family numbers again (from 3.10 or 3.11, when the
+family's window passes the last borrowed code), the family number,
+commit-derived in the 3,000 to 9,999 band, is above every reserved code and
+wins again: a PR build installs over every release of its family, but a later
+beta (a release sequence, 1 to 2,999) does not install over it. That ordering
+cannot hold there without giving up the property that a PR build is above
+every release of its family, because release sequences are allocated
+consecutively from the family container (dev and beta runs alike) with no gap
+left for PR builds; extending the interleaving to the family band means
+leaving a gap there too, and is left for when it is needed.
+
 ## Where it lives
 
 - `.github/scripts/release-family.mjs`: prefix, window, `familyBuildNumber`,
@@ -171,6 +227,10 @@ client. The pull-request app builds pin the same commit-derived number.
   the family container (coordinated plan job).
 - `.github/scripts/allocate-asg-version.mjs`: ASG reuse or allocation at the
   run's number.
+- `.github/scripts/resolve-android-version-code.mjs`: the borrowed testing-track
+  codes (`resolveAndroidVersionCode`) and the PR builds' Android code
+  (`prAndroidVersionCode`), with `prepare-pr-mobile.mjs` reading the
+  reservations for the PR workflows.
 - `mobile/scripts/build-number.mjs`, `asg_client/app/build.gradle`: pinned by
   CI for releases; the commit-derived non-release band otherwise.
 - `.github/scripts/select-pr-asg.mjs`: pull-request ASG reuse or build at the

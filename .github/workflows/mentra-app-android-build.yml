@@ -26,7 +26,8 @@ on:
       - ".github/scripts/ensure-android-ndk*"
       - ".github/scripts/install-android-sdk*"
       - ".github/scripts/pr_mobile_config.py"
-      - ".github/scripts/prepare-pr-mobile.mjs"
+      - ".github/scripts/prepare-pr-mobile*"
+      - ".github/scripts/resolve-android-version-code*"
       - ".github/scripts/repackage-pr-apk*"
       - ".github/scripts/test_repackage_pr_apk.py"
       - ".github/scripts/notify-pr-builds*"
@@ -400,7 +401,7 @@ jobs:
 
       - name: Prepare PR mobile configuration
         if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
-        run: node .github/scripts/prepare-pr-mobile.mjs
+        run: node .github/scripts/prepare-pr-mobile.mjs android
 
       - name: Inject release signing key
         uses: ./.github/actions/inject-signing

@@ -452,8 +452,9 @@ jobs:
             > "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
 
       # The Android build carries the family build number unless its testing
-      # track already serves a higher code; then it takes the next code above
-      # that floor and every code reserved so far (resolve-android-version-code.mjs).
+      # track already serves a higher code; then it takes the code two above
+      # that floor and every code reserved so far, leaving the one in between
+      # to pull-request builds (resolve-android-version-code.mjs).
       # Borrowed codes span families, so reservations live in the shared ASG
       # release (mentra-coordinated-asg, the cross-family home of Android
       # numbering) as owner-bound markers published before the build: a run

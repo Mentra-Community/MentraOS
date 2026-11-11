@@ -125,6 +125,15 @@ test("any difference, or anything unreadable, falls back to packaging this head"
   }
 })
 
+test("android: an earlier APK at or below a code reserved since is repackaged at this head's code", async () => {
+  // The receipt's APK carries 305000100.
+  for (const [floor, reused] of [["305000099", true], ["305000100", false], ["310000776", false]]) {
+    const h = harness("android")
+    h.args.env = {...env, MENTRA_ANDROID_RESERVED_CODE_FLOOR: floor}
+    assert.equal(await findUnchangedBuild(h.args), reused ? androidName : undefined, floor)
+  }
+})
+
 test("iOS: a refreshed provisioning profile, such as one with a new device, repackages", async () => {
   const h = harness("ios", {profile: "99999999-2222-3333-4444-555555555555"})
   assert.equal(await findUnchangedBuild(h.args), undefined)

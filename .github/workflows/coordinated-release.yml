@@ -81,8 +81,8 @@ jobs:
               echo "backend_environment=staging" >> "$GITHUB_OUTPUT"
               # The open-testing track behind the public beta link. It serves
               # a pre-formula code above the family window, so the Android
-              # build takes the track's floor plus one until the family passes
-              # it (resolve-android-version-code.mjs). Keep release-family.mjs
+              # build takes the code two above the track's floor until the
+              # family passes it (resolve-android-version-code.mjs). Keep release-family.mjs
               # in step.
               echo "play_track=beta" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Staging Public" >> "$GITHUB_OUTPUT"
