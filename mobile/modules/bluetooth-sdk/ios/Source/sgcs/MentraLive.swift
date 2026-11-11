@@ -130,6 +130,38 @@ class BlePhotoUploadService {
         }
     }
 
+    /**
+     * Process image data and keep it on the phone as a JPEG file in `directory`.
+     * Nothing is uploaded; the caller owns the file from then on.
+     * - Parameters:
+     *   - imageData: Raw image data (AVIF or JPEG)
+     *   - requestId: Original request ID for tracking
+     *   - directory: Where the file goes; created when missing
+     */
+    static func processAndSavePhoto(
+        imageData: Data,
+        requestId: String,
+        directory: URL,
+        onSaved: @escaping (String, URL, Int) -> Void,
+        onError: @escaping (String, String) -> Void
+    ) {
+        Task {
+            do {
+                let jpegData = try convertToJpegPreservingExif(imageData: imageData)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let file = directory.appendingPathComponent("photo_\(UUID().uuidString).jpg")
+                try jpegData.write(to: file, options: .atomic)
+                Bridge.log(
+                    "\(TAG): Saved BLE photo on the phone for requestId: \(requestId) (\(jpegData.count) bytes)"
+                )
+                onSaved(requestId, file, jpegData.count)
+            } catch {
+                Bridge.log("\(TAG): Error saving BLE photo for requestId: \(requestId), error: \(error)")
+                onError(requestId, error.localizedDescription)
+            }
+        }
+    }
+
     private static func convertToJpegPreservingExif(imageData: Data) throws -> Data {
         logIncomingImageDiagnostics(imageData: imageData)
         if isJpeg(imageData) {
@@ -679,6 +711,8 @@ enum K900ProtocolUtils {
 
 private struct BlePhotoTransfer {
     var isThumbnail = false
+    /// The photo stays on the phone as a file instead of being uploaded.
+    var localFile = false
     let bleImgId: String
     let requestId: String
     let webhookUrl: String
@@ -2577,10 +2611,21 @@ class MentraLive: NSObject, SGCManager {
         let bleImgId =
             "I" + String(format: "%09d", Int(Date().timeIntervalSince1970 * 1000) % 100_000_000)
         json["bleImgId"] = bleImgId
-        json["transferMethod"] = request.transferMethod
+        json["transferMethod"] = request.localFile ? "ble" : request.transferMethod
         if request.presendThumbnail { json["presend_thumbnail"] = true }
 
-        if let webhookUrl = request.webhookUrl, !webhookUrl.isEmpty {
+        if request.localFile {
+            var transfer = BlePhotoTransfer(
+                bleImgId: bleImgId, requestId: request.requestId, webhookUrl: ""
+            )
+            transfer.localFile = true
+            blePhotoTransfers[bleImgId] = transfer
+            // A local photo has no upload target, but the glasses expect one: without it they
+            // route a save-to-gallery request to their gallery and transfer nothing, and reject
+            // a thumbnail request. So it names a stand-in, which the BLE transfer method never
+            // contacts.
+            json["webhookUrl"] = MentraLive.localPhotoTarget
+        } else if let webhookUrl = request.webhookUrl, !webhookUrl.isEmpty {
             json["webhookUrl"] = webhookUrl
 
             var transfer = BlePhotoTransfer(
@@ -2596,7 +2641,7 @@ class MentraLive: NSObject, SGCManager {
         }
 
         // Add authToken to JSON if provided
-        if let authToken = request.authToken, !authToken.isEmpty {
+        if !request.localFile, let authToken = request.authToken, !authToken.isEmpty {
             json["authToken"] = authToken
         }
 
@@ -2620,7 +2665,7 @@ class MentraLive: NSObject, SGCManager {
         request.appendScanFields(to: &json)
 
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=\(request.transferMethod)"
+            "LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=\(request.localFile ? "ble (local file)" : request.transferMethod)"
         )
         Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
 
@@ -5883,6 +5928,10 @@ class MentraLive: NSObject, SGCManager {
             ])
             return
         }
+        if transfer.localFile {
+            saveBlePhotoOnPhone(transfer, imageData: imageData)
+            return
+        }
         Bridge.log("LIVE: Processing BLE photo for upload. RequestId: \(transfer.requestId)")
 
         BlePhotoUploadService.processAndUploadPhoto(
@@ -5899,6 +5948,38 @@ class MentraLive: NSObject, SGCManager {
                 requestId: requestId,
                 errorCode: "PHONE_UPLOAD_FAILED",
                 errorMessage: "BLE photo upload failed: \(error)"
+            )
+        }
+    }
+
+    /// Stand-in upload target the glasses are given for a local photo. Never contacted.
+    private static let localPhotoTarget = "phone://local-photo"
+
+    /// Keep a BLE photo on the phone as a JPEG file and answer the request with its file URL.
+    private func saveBlePhotoOnPhone(_ transfer: BlePhotoTransfer, imageData: Data) {
+        Bridge.log("LIVE: Saving BLE photo on the phone. RequestId: \(transfer.requestId)")
+        // The caller moves each file out of this cache folder.
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("mentra_local_photos", isDirectory: true)
+        BlePhotoUploadService.processAndSavePhoto(
+            imageData: imageData, requestId: transfer.requestId, directory: directory
+        ) { requestId, file, byteCount in
+            Bridge.sendPhotoResponse([
+                "type": "photo_response",
+                "state": "success",
+                "success": true,
+                "requestId": requestId,
+                "uploadUrl": "",
+                "photoUrl": file.absoluteString,
+                "contentType": "image/jpeg",
+                "fileSizeBytes": byteCount,
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            ])
+        } onError: { requestId, error in
+            Bridge.sendPhotoError(
+                requestId: requestId,
+                errorCode: "PHONE_SAVE_FAILED",
+                errorMessage: "Could not save the photo on the phone: \(error)"
             )
         }
     }

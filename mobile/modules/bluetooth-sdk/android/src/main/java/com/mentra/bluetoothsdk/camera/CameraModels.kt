@@ -225,6 +225,12 @@ data class PhotoRequest @JvmOverloads constructor(
     /** `direct` disables BLE fallback; `ble` skips direct upload; `auto` tries both. */
     val transferMethod: String = "auto",
     val presendThumbnail: Boolean = false,
+    /**
+     * Keep the photo on the phone: it comes over BLE, is saved as a JPEG file, and the
+     * success response carries that file's URI as `photoUrl`. Nothing is uploaded, and
+     * `webhookUrl` and `transferMethod` are ignored.
+     */
+    val localFile: Boolean = false,
 ) {
     companion object {
         private fun transferMethodFromValue(value: Any?): String {
@@ -277,6 +283,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 mode = PhotoMode.fromValue(stringValue(values, "mode")),
                 transferMethod = transferMethodFromValue(values["transferMethod"]),
                 presendThumbnail = boolValue(values, "presend_thumbnail") ?: false,
+                localFile = boolValue(values, "localFile") ?: false,
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
                 aeExposureDivisor = aeDivisor,

@@ -19,6 +19,15 @@ describe("photoRequestParamsForNative", () => {
     })
     expect(photoRequestParamsForNative({...baseParams, presend_thumbnail: true, transferMethod: "direct"}).transferMethod).toBe("direct")
   })
+  it("asks native to keep the photo on the phone only when opted in", () => {
+    expect(photoRequestParamsForNative(baseParams)).not.toHaveProperty("localFile")
+    expect(photoRequestParamsForNative({...baseParams, localFile: false})).not.toHaveProperty("localFile")
+    expect(photoRequestParamsForNative({...baseParams, webhookUrl: null, localFile: true})).toEqual({
+      ...photoRequestParamsForNative(baseParams),
+      webhookUrl: "",
+      localFile: true,
+    })
+  })
   it("produces only supported native payload keys", () => {
     const payload = photoRequestParamsForNative(baseParams)
     expect(Object.keys(payload).sort()).toEqual(

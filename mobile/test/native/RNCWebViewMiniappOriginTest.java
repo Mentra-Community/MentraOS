@@ -160,6 +160,65 @@ public class RNCWebViewMiniappOriginTest {
       check(beyond.statusCode == 416 && "bytes */1000".equals(beyond.headers.get("Content-Range")), "416 a range past the end");
       check(get(origin, "/media.bin", "GET", "bytes=0-1,5-6").statusCode == 200, "ignore several ranges");
       check(get(origin, "/media.bin", "GET", "items=0-1").statusCode == 200, "ignore other range units");
+
+      // The package's own files, under /.mentra/files/
+      byte[] photo = {(byte) 0xFF, (byte) 0xD8, 1, 2, 3, (byte) 0xFF, (byte) 0xD9};
+      Files.createDirectories(base.resolve("files/alpha/nested"));
+      Files.write(base.resolve("files/alpha/photo-1.jpg"), photo);
+      write(base.resolve("files/alpha/nested/inner.jpg"), "nested");
+      write(base.resolve("files/beta/photo-2.jpg"), "another package's photo");
+      Files.createSymbolicLink(base.resolve("files/alpha/link-out.jpg"), base.resolve("secret.txt"));
+      Files.createSymbolicLink(base.resolve("files/alpha/link-other.jpg"), base.resolve("files/beta/photo-2.jpg"));
+      Files.createSymbolicLink(base.resolve("files/alpha/link-in.jpg"), Path.of("photo-1.jpg"));
+      write(base.resolve("alpha/.mentra/files/photo-1.jpg"), "the bundle's own file of that name");
+      write(base.resolve("alpha/.mentra/files/bundled.jpg"), "a bundled file under the reserved path");
+      write(base.resolve("alpha/.mentra/other/page.html"), "the bundle's own page");
+      String filesDir = base.resolve("files/alpha").toString();
+      File canonicalFiles = new File(filesDir).getCanonicalFile();
+      MiniappOrigin withFiles = new MiniappOrigin("com.test.alpha", root, filesDir);
+
+      check(new File(canonicalFiles, "photo-1.jpg").equals(withFiles.resolve("https", withFiles.host, -1, null, "/.mentra/files/photo-1.jpg")),
+          "serve one of the package's own files");
+      MiniappOrigin.Response served = get(withFiles, "/.mentra/files/photo-1.jpg", "GET", null);
+      check(served.statusCode == 200 && "image/jpeg".equals(served.mimeType) && served.encoding == null
+          && Arrays.equals(read(served.body), photo) && "no-store".equals(served.headers.get("Cache-Control")),
+          "serve the photo's own bytes as a JPEG, never cached");
+      check(Arrays.equals(read(get(withFiles, "/.mentra/files/photo-1.jpg", "GET", "bytes=0-1").body), new byte[] {(byte) 0xFF, (byte) 0xD8}),
+          "serve a byte range of a file");
+      check(withFiles.resolve("https", withFiles.host, -1, null, "/.mentra/files/link-in.jpg").getName().equals("photo-1.jpg"),
+          "follow a symlink that stays inside the files directory");
+      check(new MiniappOrigin("com.test.alpha", root, canonicalFiles.toURI().toString())
+              .resolve("https", withFiles.host, -1, null, "/.mentra/files/photo-1.jpg") != null,
+          "accept the files directory as a file:// URL");
+      check(withFiles.resolve("https", withFiles.host, -1, null, "/index.html") != null, "still serve the bundle");
+      check(withFiles.resolve("https", withFiles.host, -1, null, "/.mentra/other/page.html") != null,
+          "only /.mentra/files/ is reserved");
+      String[] refusedFiles = {
+        "/.mentra/files", "/.mentra/files/", "/.mentra/files/missing.jpg", "/.mentra/files/nested", "/.mentra/files/nested/inner.jpg",
+        "/.mentra/files/../index.html", "/.mentra/files/%2e%2e/secret.txt", "/.mentra/files/..%2Fbeta%2Fphoto-2.jpg",
+        "/.mentra/files/link-out.jpg", "/.mentra/files/link-other.jpg", "/.mentra/files/photo-1.jpg/x",
+        "/.mentra/files/bundled.jpg", "/%2ementra/files/bundled.jpg", "/.mentra/%66iles/bundled.jpg", "/.mentra//files/bundled.jpg",
+      };
+      for (String path : refusedFiles) {
+        check(withFiles.resolve("https", withFiles.host, -1, null, path) == null, "refuse " + path);
+      }
+      check(withFiles.resolve("https", withFiles.host, -1, null, "/%2ementra/files/photo-1.jpg").getParentFile().equals(canonicalFiles),
+          "an encoded spelling of the reserved path names the same file");
+      check(withFiles.resolve("https", "com.test.beta.miniapp.invalid", -1, null, "/.mentra/files/photo-1.jpg") == null,
+          "refuse another package's host for a file");
+      String[] bundledReserved = {"/.mentra/files/photo-1.jpg", "/.mentra/files/bundled.jpg", "/%2ementra/files/bundled.jpg"};
+      for (String path : bundledReserved) {
+        check(origin.resolve("https", origin.host, -1, null, path) == null, "without a files directory, refuse " + path);
+      }
+      check(origin.resolve("https", origin.host, -1, null, "/.mentra/other/page.html") != null,
+          "without a files directory, the rest of the bundle is served as before");
+      check(new MiniappOrigin("com.test.alpha", root, base.resolve("files/missing").toString())
+              .resolve("https", withFiles.host, -1, null, "/.mentra/files/photo-1.jpg") == null,
+          "refuse files when the files directory is missing");
+      check(new MiniappOrigin("com.test.alpha", root, "files/alpha").resolve("https", withFiles.host, -1, null, "/.mentra/files/photo-1.jpg") == null,
+          "refuse a relative files directory");
+      Files.delete(base.resolve("files/alpha/photo-1.jpg"));
+      check(get(withFiles, "/.mentra/files/photo-1.jpg", "GET", null).statusCode == 404, "404 a file once it is deleted");
     } finally {
       try (Stream<Path> paths = Files.walk(base)) {
         paths.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());

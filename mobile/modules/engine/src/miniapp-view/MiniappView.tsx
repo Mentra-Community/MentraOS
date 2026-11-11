@@ -23,6 +23,7 @@ import {fleetEvents} from "../services/fleet/fleetEvents"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
 import {buildMentraUiShim} from "../services/mentraUiShim"
 import {miniappLauncher} from "../services/MiniappLauncher"
+import {recordMiniappScreenOrigin} from "../services/miniappScreenOrigin"
 import {getMiniappEngine} from "../services/MiniappEngine"
 import {buildMiniappGlobalsScript, type MiniappColorScheme, type MiniappSafeArea} from "../utils/miniappGlobals"
 import {BgTimer} from "../utils/timers"
@@ -45,6 +46,11 @@ export interface MiniappScreen {
   /** The installed bundle the origin serves, under `uiOriginName`; null for a development server. */
   uiRootDir: string | null
   uiOriginName: string | null
+  /**
+   * The miniapp's own files directory (its blobs, such as its photos), which the same origin serves under
+   * /.mentra/files/. Null or absent when the origin serves none.
+   */
+  uiFilesDir?: string | null
   /** A development build: a live development server or a development snapshot. */
   devBuild: boolean
 }
@@ -278,9 +284,22 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
       // across UI close) but don't touch UI state for a view we no longer show.
       checkpoint()
       setUiReleased(!getMiniappEngine()?.uiRouter.isUiHeld(packageName))
-      const next = result.uiUri && result.uiOrigin ? {...result, uiUri: result.uiUri, uiOrigin: result.uiOrigin} : null
+      const next: MiniappScreen | null =
+        result.uiUri && result.uiOrigin
+          ? {
+              ...result,
+              uiUri: result.uiUri,
+              uiOrigin: result.uiOrigin,
+              // Asked once the context is registered: its build kind decides which data partition holds its files.
+              uiFilesDir: result.uiRootDir ? localMiniappRuntime.ownFilesDirectoryUri(packageName) : null,
+            }
+          : null
       if (next) await callbacks.current.prepareScreen?.(next, checkpoint)
       checkpoint()
+      // The screen about to load decides where the miniapp's own files get their URLs. A miniapp that keeps
+      // running can reopen on another one: a development build moves between its server and its snapshot as the
+      // server comes and goes. The launcher's record from the spawn stands until a screen opens.
+      if (next) recordMiniappScreenOrigin(packageName, next.uiRootDir ? next.uiOrigin : null)
       // Set unconditionally: clearing a screen the launcher no longer resolves
       // keeps the WebView from showing a stale URL.
       setScreen(next)
@@ -515,7 +534,13 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
       // development origin for a development snapshot. A live development
       // build loads from its server.
       miniappOrigin={
-        screen.uiRootDir ? {packageName: screen.uiOriginName ?? packageName, rootDir: screen.uiRootDir} : undefined
+        screen.uiRootDir
+          ? {
+              packageName: screen.uiOriginName ?? packageName,
+              rootDir: screen.uiRootDir,
+              ...(screen.uiFilesDir ? {filesDir: screen.uiFilesDir} : {}),
+            }
+          : undefined
       }
       originWhitelist={miniappOriginWhitelist(screen.uiOrigin, getConfigValues().hostLinkPatterns)}
       onShouldStartLoadWithRequest={handleShouldStartLoad}

@@ -5,10 +5,9 @@
 
 import {useEffect, useRef, useState} from "react"
 import {useNavigate} from "react-router-dom"
-import type {DownloadResult} from "@mentra/miniapp"
 import {MiniappHeader} from "@mentra/miniapp/ui"
 
-import type {TesterEventPayload} from "../../shared/types"
+import type {TesterEventPayload} from "../../../shared/types"
 import {useChannel} from "../../hooks/useChannel"
 import {useTester} from "../../hooks/useTester"
 import {Shell} from "../Shell"
@@ -32,23 +31,22 @@ import {
   type TakePhotoConfig,
 } from "./cameraPageModel"
 
-function imageExtension(mimeType?: string): string {
-  switch (mimeType?.toLowerCase()) {
-    case "image/avif":
-      return "avif"
-    case "image/png":
-      return "png"
-    case "image/webp":
-      return "webp"
-    default:
-      return "jpg"
-  }
+/** What a tester shares after a photo: the OS share sheet's answer for one of the miniapp's files. */
+interface ShareResult {
+  success: boolean
+  cancelled?: boolean
+}
+
+/** A photo small enough can come back as a `data:` URL, which is far too long to show in a table. */
+function describePhotoUrl(url?: string): string {
+  if (!url) return "—"
+  return url.startsWith("data:") ? `${url.slice(0, url.indexOf(",") + 1)}…` : url
 }
 
 export default function CameraPage() {
   const navigate = useNavigate()
   const {invoke, lastError} = useTester("camera")
-  const {invoke: invokeSystem} = useTester("system")
+  const {invoke: invokeBlob} = useTester("blob")
   // Subscribing to the input tester keeps session.input.onButtonPress open
   // only while this page is mounted.
   const {latest: latestInputEvent} = useTester("input")
@@ -126,33 +124,28 @@ export default function CameraPage() {
   }
 
   const sharePhoto = () => {
-    if (!result?.photoUrl || sharingRef.current) return
+    if (!result?.key || sharingRef.current) return
     sharingRef.current = true
     setIsSharing(true)
     setShareError(null)
-    invokeSystem("download", [
-      {
-        url: result.photoUrl,
-        mimeType: result.mimeType ?? "image/jpeg",
-        filename: `mentra-photo-${result.requestId ?? Date.now()}.${imageExtension(result.mimeType)}`,
-      },
-    ])
+    // The photo is one of the miniapp's own files: the share sheet gets the file itself, with no download.
+    invokeBlob("share", [result.key])
       .then((response) => {
-        const downloadResult = response as DownloadResult
-        if (!downloadResult?.success) {
+        const shared = response as ShareResult
+        if (!shared?.success && !shared?.cancelled) {
           setShareError({
-            iface: "system",
+            iface: "blob",
             kind: "error",
-            payload: {method: "download", message: "The image could not be shared."},
+            payload: {method: "share", message: "The image could not be shared."},
           })
         }
       })
       .catch((error) => {
         setShareError({
-          iface: "system",
+          iface: "blob",
           kind: "error",
           payload: {
-            method: "download",
+            method: "share",
             message: error instanceof Error ? error.message : String(error),
           },
         })
@@ -297,18 +290,22 @@ export default function CameraPage() {
             result
               ? {
                   requestId: result.requestId ?? "—",
-                  photoUrl: result.photoUrl ?? "—",
+                  key: result.key ?? "—",
+                  url: describePhotoUrl(result.url),
                   mimeType: result.mimeType ?? "—",
                   size: formatByteSize(result.size),
+                  expiresAt: result.expiresAt ? new Date(result.expiresAt).toLocaleTimeString() : "—",
                 }
               : null
           }
         />
-        {result?.photoUrl && (
+        {result?.url && (
+          <div className="mt-2 overflow-hidden rounded-xl border border-border">
+            <img src={result.url} alt="Photo captured by the glasses camera" className="w-full" />
+          </div>
+        )}
+        {result?.key && (
           <>
-            <div className="mt-2 overflow-hidden rounded-xl border border-border">
-              <img src={result.photoUrl} alt="Photo captured by the glasses camera" className="w-full" />
-            </div>
             <Button variant="outline" className="mt-2 w-full" disabled={busy} onClick={sharePhoto}>
               {isSharing ? "Opening share sheet…" : "Share image"}
             </Button>

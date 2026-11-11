@@ -48,6 +48,14 @@ const LOG_TAG = "LocalMiniappRuntime"
 
 /** Per-app blob quota: 1 GB. */
 export const BLOB_QUOTA_BYTES = 1024 * 1024 * 1024
+/**
+ * Expiring blobs are files the host stores for a miniapp, such as the photos it takes. They
+ * outlive their request only briefly, so they sit outside the quota under their own limits:
+ * each is deleted after its lifetime, and an app keeps the newest few.
+ */
+export const EXPIRING_BLOB_TTL_MS = 30 * 60 * 1000
+export const EXPIRING_BLOB_MAX_COUNT = 20
+export const EXPIRING_BLOB_MAX_BYTES = 50 * 1024 * 1024
 const ROOT_DIR_NAME = "mentra_blobs"
 /** Cache dir root holding short-lived, properly-named copies handed to the OS share sheet (one subdir per stored blob). */
 const SHARE_DIR_NAME = "mentra_blob_share"
@@ -90,6 +98,8 @@ interface StoredBlobMeta {
   updatedAt: number
   md5?: string
   meta?: Record<string, string | number | boolean>
+  /** Set on an expiring blob: when the host deletes it. Such a blob is outside the quota. */
+  expiresAt?: number
 }
 
 interface ActiveUpload {
@@ -113,6 +123,10 @@ interface ActiveReader {
   remaining: number
 }
 
+function isExpired(meta: StoredBlobMeta, now = Date.now()): boolean {
+  return typeof meta.expiresAt === "number" && meta.expiresAt <= now
+}
+
 export class BlobStore {
   private readonly uploads = new Map<string, ActiveUpload>() // key: `${pkg} ${key}`
   private readonly activeShareDirs = new Map<string, number>()
@@ -120,6 +134,7 @@ export class BlobStore {
   /** user + package → committed usage bytes, cached; invalidated on commit/delete/clear. */
   private readonly usageCache = new Map<string, number>()
   private readonly migrated = new Set<string>()
+  private sweptEveryApp = false
 
   constructor(private readonly hooks: BlobStoreHooks) {}
 
@@ -210,7 +225,12 @@ export class BlobStore {
 
   private readMeta(packageName: string, key: string): StoredBlobMeta | null {
     const r = mmkvStorage.load<StoredBlobMeta>(this.metaKey(packageName, key))
-    return r.is_ok() ? r.value : null
+    const meta = r.is_ok() ? r.value : null
+    if (meta && isExpired(meta)) {
+      this.dropMeta(packageName, meta)
+      return null
+    }
+    return meta
   }
 
   private writeMeta(packageName: string, meta: StoredBlobMeta): void {
@@ -223,7 +243,9 @@ export class BlobStore {
     for (const k of mmkvStorage.getAllKeys()) {
       if (!k.startsWith(prefix)) continue
       const r = mmkvStorage.load<StoredBlobMeta>(k)
-      if (r.is_ok() && r.value) out.push(r.value)
+      if (!r.is_ok() || !r.value) continue
+      if (isExpired(r.value)) this.dropMeta(packageName, r.value)
+      else out.push(r.value)
     }
     return out
   }
@@ -244,6 +266,7 @@ export class BlobStore {
       md5: m.md5,
       uri: this.fileFor(packageName, m.fileName).uri,
       meta: m.meta,
+      ...(m.expiresAt ? {expiresAt: m.expiresAt} : {}),
     }
   }
 
@@ -252,7 +275,7 @@ export class BlobStore {
     const cached = this.usageCache.get(scope)
     if (cached !== undefined) return cached
     let total = 0
-    for (const m of this.allMeta(packageName)) total += m.bytes || 0
+    for (const m of this.allMeta(packageName)) if (!m.expiresAt) total += m.bytes || 0
     this.usageCache.set(scope, total)
     return total
   }
@@ -280,8 +303,13 @@ export class BlobStore {
 
   /** Would storing `incoming` bytes under `key` exceed the per-app quota? */
   private overQuota(packageName: string, key: string, incoming: number): boolean {
-    const priorBytes = this.readMeta(packageName, key)?.bytes ?? 0
-    return this.committedUsage(packageName) - priorBytes + incoming > BLOB_QUOTA_BYTES
+    return this.committedUsage(packageName) - this.quotaBytesOf(packageName, key) + incoming > BLOB_QUOTA_BYTES
+  }
+
+  /** The bytes the blob now under `key` counts toward the quota: none when absent or expiring. */
+  private quotaBytesOf(packageName: string, key: string): number {
+    const prior = this.readMeta(packageName, key)
+    return prior && !prior.expiresAt ? prior.bytes || 0 : 0
   }
 
   /** Publish a file already sitting at `fileName` as the blob for `key`; returns its public meta. */
@@ -292,6 +320,7 @@ export class BlobStore {
     mimeType: string,
     name: string | undefined,
     extraMeta: Record<string, string | number | boolean> | undefined,
+    expiresAt?: number,
   ) {
     // Attach a mime-derived extension to the on-disk name. Consumers that key
     // format off the path — iOS AVPlayer under `session.speaker.play` — cannot
@@ -308,7 +337,7 @@ export class BlobStore {
     const prior = this.readMeta(packageName, key)
     if (prior && prior.fileName !== fileName) {
       this.deleteFileQuiet(packageName, prior.fileName)
-      this.bumpUsage(packageName, -(prior.bytes || 0))
+      if (!prior.expiresAt) this.bumpUsage(packageName, -(prior.bytes || 0))
     }
     const finalFile = this.fileFor(packageName, fileName)
     const bytes = finalFile.size ?? 0
@@ -323,10 +352,110 @@ export class BlobStore {
       updatedAt: now,
       md5: this.safeMd5(finalFile, bytes),
       meta: extraMeta,
+      ...(expiresAt ? {expiresAt} : {}),
     }
     this.writeMeta(packageName, meta)
-    this.bumpUsage(packageName, bytes)
+    if (!expiresAt) this.bumpUsage(packageName, bytes)
     return this.toBlobMeta(packageName, meta)
+  }
+
+  // ---- expiring blobs (host-stored; outside the quota) ----------------------
+
+  /**
+   * Take a file the host produced for this miniapp (`sourceUri`, moved, not copied) and publish
+   * it as the expiring blob for `key`. The miniapp reads it like any blob until it expires;
+   * to keep it, the miniapp copies it under a key of its own.
+   */
+  storeExpiringFile(
+    packageName: string,
+    key: string,
+    sourceUri: string,
+    mimeType: string,
+    ttlMs: number = EXPIRING_BLOB_TTL_MS,
+  ) {
+    this.sweepEveryAppOnce()
+    const fileName = this.makeId()
+    new File(sourceUri).move(this.fileFor(packageName, fileName))
+    const meta = this.commitFile(packageName, key, fileName, mimeType, undefined, undefined, Date.now() + ttlMs)
+    this.trimExpiring(packageName)
+    return meta
+  }
+
+  /**
+   * The blob under `key` as a `data:` URL, or null when it is missing or larger than `maxBytes`:
+   * a URL for a screen the app doesn't serve, where no origin can serve the file.
+   */
+  async dataUrlOf(packageName: string, key: string, maxBytes: number): Promise<string | null> {
+    const meta = this.readMeta(packageName, key)
+    if (!meta || meta.bytes > maxBytes) return null
+    try {
+      return `data:${meta.mimeType};base64,${await this.fileFor(packageName, meta.fileName).base64()}`
+    } catch {
+      return null
+    }
+  }
+
+  /** Delete a host-produced file that could not be stored. */
+  discardFile(uri: string): void {
+    try {
+      const file = new File(uri)
+      if (file.exists) file.delete()
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Keep an app's newest expiring blobs within the count and size limits. */
+  private trimExpiring(packageName: string): void {
+    const expiring = this.allMeta(packageName)
+      .filter((m) => m.expiresAt)
+      .sort((a, b) => b.createdAt - a.createdAt)
+    let count = 0
+    let bytes = 0
+    for (const m of expiring) {
+      count++
+      bytes += m.bytes || 0
+      // The newest one always stays, whatever its size.
+      if (count > 1 && (count > EXPIRING_BLOB_MAX_COUNT || bytes > EXPIRING_BLOB_MAX_BYTES)) {
+        this.dropMeta(packageName, m)
+      }
+    }
+  }
+
+  /**
+   * Delete every app's expired blobs, in every data partition: an app that is never opened
+   * again, or was uninstalled, would otherwise keep its last ones. Runs once per host run,
+   * before the first expiring blob is stored.
+   */
+  private sweepEveryAppOnce(): void {
+    if (this.sweptEveryApp) return
+    this.sweptEveryApp = true
+    try {
+      for (const k of mmkvStorage.getAllKeys()) {
+        if (!k.startsWith(META_KEY_ROOT)) continue
+        const r = mmkvStorage.load<StoredBlobMeta>(k)
+        if (!r.is_ok() || !r.value || !isExpired(r.value)) continue
+        // mentraos_blobmeta/{partitionId}/{packageName}/{key}
+        const [partitionId, packageName] = k.slice(META_KEY_ROOT.length).split("/")
+        if (partitionId && packageName) {
+          try {
+            const file = new File(
+              Paths.document,
+              ROOT_DIR_NAME,
+              partitionId,
+              sanitizeSegment(packageName),
+              r.value.fileName,
+            )
+            if (file.exists) file.delete()
+          } catch {
+            /* ignore */
+          }
+        }
+        mmkvStorage.remove(k)
+      }
+    } catch (err) {
+      console.warn(`${LOG_TAG}: expired blob sweep failed:`, err)
+    }
   }
 
   // ---- streaming write -----------------------------------------------------
@@ -350,7 +479,7 @@ export class BlobStore {
         partFile,
         handle,
         bytes: 0,
-        priorBytes: this.readMeta(packageName, key)?.bytes ?? 0,
+        priorBytes: this.quotaBytesOf(packageName, key),
         name: typeof payload.name === "string" ? payload.name : undefined,
         mimeType: typeof payload.mimeType === "string" ? payload.mimeType : "application/octet-stream",
         meta: (payload.meta as Record<string, string | number | boolean>) ?? undefined,
@@ -572,7 +701,8 @@ export class BlobStore {
   }
 
   handleUsage(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
-    const metas = this.allMeta(packageName)
+    // Usage is what counts toward the quota, so expiring blobs are left out.
+    const metas = this.allMeta(packageName).filter((m) => !m.expiresAt)
     this.hooks.sendResult(packageName, requestId, true, {
       bytes: metas.reduce((s, m) => s + (m.bytes || 0), 0),
       count: metas.length,
@@ -838,7 +968,7 @@ export class BlobStore {
   private dropMeta(packageName: string, meta: StoredBlobMeta): void {
     this.deleteFileQuiet(packageName, meta.fileName)
     mmkvStorage.remove(this.metaKey(packageName, meta.key))
-    this.bumpUsage(packageName, -(meta.bytes || 0))
+    if (!meta.expiresAt) this.bumpUsage(packageName, -(meta.bytes || 0))
   }
 
   private deleteFileQuiet(packageName: string, fileName: string): void {

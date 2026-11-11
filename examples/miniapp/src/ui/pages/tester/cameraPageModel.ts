@@ -5,11 +5,17 @@ export const DEFAULT_WARMUP_DURATION_MS = 15_000
 
 export const CANONICAL_PHOTO_SIZES = ["low", "medium", "high", "max"] as const satisfies readonly PhotoSize[]
 
+/** What `session.camera.takePhoto()` resolves to: a photo kept on the phone as one of the miniapp's own files. */
 export interface PhotoTakenResult {
   requestId?: string
-  photoUrl?: string
+  /** The photo's key in `session.blob`. */
+  key?: string
+  /** Loads in this miniapp's own screen until the phone deletes the photo. */
+  url?: string
   mimeType?: string
   size?: number
+  /** When the phone deletes the photo (Unix ms). */
+  expiresAt?: number
 }
 
 export interface TakePhotoConfig {

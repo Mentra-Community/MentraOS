@@ -7,12 +7,14 @@ import {DEFAULT_WARMUP_DURATION_MS} from "./cameraPageModel"
 
 const photoResult = {
   requestId: "photo-1",
-  photoUrl: "https://example.com/photo.jpg",
+  key: "photo/photo-1",
+  url: "miniapp://com.mentra.example/.mentra/files/photo-1.jpg",
   mimeType: "image/jpeg",
   size: 2048,
+  expiresAt: 1_800_000_000_000,
 }
 const cameraInvokeMock = mock(async () => photoResult)
-const systemInvokeMock = mock(async () => ({success: true}))
+const blobInvokeMock = mock(async (): Promise<{success: boolean; cancelled?: boolean}> => ({success: true}))
 
 // Tiny external store so tests can push tester:event payloads (button
 // presses) into the mocked useTester("input") the same way the real hook
@@ -35,7 +37,7 @@ mock.module("../../hooks/useTester", () => ({
       () => (iface === "input" ? latestInputEvent : null),
     )
     return {
-      invoke: iface === "system" ? systemInvokeMock : cameraInvokeMock,
+      invoke: iface === "blob" ? blobInvokeMock : cameraInvokeMock,
       latest,
       latestByKind: () => null,
       lastError: null,
@@ -60,8 +62,8 @@ describe("CameraPage", () => {
       if (method === "warmUp") return undefined
       return photoResult
     })
-    systemInvokeMock.mockClear()
-    systemInvokeMock.mockImplementation(async () => ({success: true}))
+    blobInvokeMock.mockClear()
+    blobInvokeMock.mockImplementation(async () => ({success: true}))
     latestInputEvent = null
   })
 
@@ -214,7 +216,21 @@ describe("CameraPage", () => {
     expect(cameraInvokeMock).not.toHaveBeenCalled()
   })
 
-  test("shares the latest photo through session.system.download", async () => {
+  test("shows the photo from the URL the phone serves it at", async () => {
+    render(
+      <MemoryRouter>
+        <CameraPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
+
+    const image = await screen.findByAltText("Photo captured by the glasses camera")
+    expect(image.getAttribute("src")).toBe(photoResult.url)
+    expect(screen.getByText(photoResult.key)).toBeTruthy()
+  })
+
+  test("shares the latest photo from the miniapp's own files, by its key", async () => {
     render(
       <MemoryRouter>
         <CameraPage />
@@ -225,18 +241,41 @@ describe("CameraPage", () => {
     fireEvent.click(await screen.findByRole("button", {name: "Share image"}))
 
     await waitFor(() => {
-      expect(systemInvokeMock).toHaveBeenCalledWith("download", [
-        {
-          url: photoResult.photoUrl,
-          mimeType: photoResult.mimeType,
-          filename: "mentra-photo-photo-1.jpg",
-        },
-      ])
+      expect(blobInvokeMock).toHaveBeenCalledWith("share", [photoResult.key])
     })
   })
 
-  test("surfaces a resolved download failure", async () => {
-    systemInvokeMock.mockImplementationOnce(async () => ({success: false}))
+  test("a photo with no URL can still be shared", async () => {
+    cameraInvokeMock.mockImplementation(async () => ({...photoResult, url: undefined}))
+    render(
+      <MemoryRouter>
+        <CameraPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
+
+    expect(await screen.findByRole("button", {name: "Share image"})).toBeTruthy()
+    expect(screen.queryByAltText("Photo captured by the glasses camera")).toBeNull()
+  })
+
+  test("closing the share sheet is not an error", async () => {
+    blobInvokeMock.mockImplementationOnce(async () => ({success: false, cancelled: true}))
+    render(
+      <MemoryRouter>
+        <CameraPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
+    fireEvent.click(await screen.findByRole("button", {name: "Share image"}))
+
+    await waitFor(() => expect(blobInvokeMock).toHaveBeenCalled())
+    expect(screen.queryByText(/The image could not be shared\./)).toBeNull()
+  })
+
+  test("surfaces a share that failed", async () => {
+    blobInvokeMock.mockImplementationOnce(async () => ({success: false}))
     render(
       <MemoryRouter>
         <CameraPage />

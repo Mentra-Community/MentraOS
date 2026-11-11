@@ -280,7 +280,9 @@ export type PhotoResponseEvent =
       type: "photo_response"
       state: "success"
       requestId: string
+      /** Where the photo was uploaded; empty for a `localFile` request. */
       uploadUrl: string
+      /** The upload target's own URL for the photo, or the saved file's `file://` URI for a `localFile` request. */
       photoUrl?: string
       statusUrl?: string
       contentType?: string
@@ -800,6 +802,13 @@ export type PhotoRequestParams = {
   transferMethod?: PhotoTransferMethod
   webhookUrl: string | null
   authToken: string | null
+  /**
+   * Keep the photo on the phone: it comes over BLE, is saved as a JPEG file, and the success
+   * response carries that file's `file://` URI as `photoUrl`, with `fileSizeBytes`. Nothing is
+   * uploaded, and `webhookUrl`, `authToken` and `transferMethod` are ignored. The file is in the
+   * app's cache folder and is the caller's to move or delete. Default false.
+   */
+  localFile?: boolean
   compress?: PhotoCompression
   save?: boolean
   sound: boolean

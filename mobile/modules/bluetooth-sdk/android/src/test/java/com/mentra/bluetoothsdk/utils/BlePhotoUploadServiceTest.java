@@ -25,6 +25,38 @@ public class BlePhotoUploadServiceTest {
     @Rule public TemporaryFolder tempFolder = new TemporaryFolder();
 
     @Test
+    public void processAndSavePhoto_keepsAJpegOnThePhoneUnchanged() throws Exception {
+        byte[] jpeg = {(byte) 0xFF, (byte) 0xD8, 1, 2, 3, (byte) 0xFF, (byte) 0xD9};
+        File directory = new File(tempFolder.getRoot(), "photos/local");
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        File[] saved = new File[1];
+        String[] failure = new String[1];
+        BlePhotoUploadService.processAndSavePhoto(
+                jpeg,
+                "0001",
+                directory,
+                new BlePhotoUploadService.SaveCallback() {
+                    @Override
+                    public void onSaved(String requestId, File file) {
+                        assertThat(requestId).isEqualTo("0001");
+                        saved[0] = file;
+                        done.countDown();
+                    }
+
+                    @Override
+                    public void onError(String requestId, String error) {
+                        failure[0] = error;
+                        done.countDown();
+                    }
+                });
+        assertThat(done.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(failure[0]).isNull();
+        assertThat(saved[0].getParentFile()).isEqualTo(directory);
+        assertThat(saved[0].getName()).endsWith(".jpg");
+        assertThat(java.nio.file.Files.readAllBytes(saved[0].toPath())).isEqualTo(jpeg);
+    }
+
+    @Test
     public void describeContainer_detectsJpegAndAvifBrands() {
         byte[] jpegHeader = {(byte) 0xFF, (byte) 0xD8, 0x00};
         assertThat(BlePhotoUploadService.describeContainer(jpegHeader)).isEqualTo("jpeg");

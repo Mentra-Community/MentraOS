@@ -23,6 +23,13 @@ import type {Transport, TransportDisconnectHandler, TransportMessageHandler} fro
 
 const LOG_PREFIX = "[mock-transport]"
 
+/** The one photo the mock ever takes: a 1×1 transparent PNG, so consumers that render it don't 404. */
+const MOCK_PHOTO_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+const MOCK_PHOTO_KEY = "photo/mock-photo"
+const MOCK_PHOTO_HANDLE = "mock-photo-read"
+const MOCK_PHOTO_BYTES = 68
+const MOCK_PHOTO_TTL_MS = 30 * 60 * 1000
+
 /**
  * Returns true if the current environment requested the mock transport
  * explicitly. Checks `?mentra=mock` query param and `localStorage.MENTRA_MOCK`.
@@ -215,13 +222,39 @@ function syntheticDataFor(requestId: string, requestType: string, requestPayload
       }
     }
 
-    case MiniappRequestType.PHOTO:
-      // 1×1 transparent PNG so consumers that try to render don't 404.
+    case MiniappRequestType.PHOTO: {
+      const dataUrl = `data:image/png;base64,${MOCK_PHOTO_BASE64}`
+      // `takePhoto()` asks for the photo on the phone; `takeCloudPhoto()` still expects a download URL.
+      if (requestPayload.delivery !== "local") return {photoUrl: dataUrl, requestId: "mock-photo"}
       return {
-        photoUrl:
-          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=",
         requestId: "mock-photo",
+        key: MOCK_PHOTO_KEY,
+        url: dataUrl,
+        mimeType: "image/png",
+        size: MOCK_PHOTO_BYTES,
+        expiresAt: Date.now() + MOCK_PHOTO_TTL_MS,
       }
+    }
+
+    // Enough of `session.blob` to read the mock photo back: `session.blob.bytes(photo.key)`.
+    case MiniappRequestType.BLOB_OPEN_READ: {
+      if (requestPayload.key !== MOCK_PHOTO_KEY) return null
+      const now = Date.now()
+      return {
+        handle: MOCK_PHOTO_HANDLE,
+        meta: {
+          key: MOCK_PHOTO_KEY,
+          mimeType: "image/png",
+          bytes: MOCK_PHOTO_BYTES,
+          createdAt: now,
+          updatedAt: now,
+          uri: `data:image/png;base64,${MOCK_PHOTO_BASE64}`,
+        },
+      }
+    }
+
+    case MiniappRequestType.BLOB_READ:
+      return requestPayload.handle === MOCK_PHOTO_HANDLE ? {base64: MOCK_PHOTO_BASE64, done: true} : null
 
     case MiniappRequestType.RGB_LED:
       return {type: "rgb_led_control_response", state: "success", requestId}

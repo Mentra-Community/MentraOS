@@ -451,6 +451,36 @@ describe("MiniappLauncher", () => {
     expect(miniappLauncher.isRunning("com.x")).toBe(true)
   })
 
+  test("a launch records where the screen loads from, so the package's own files get URLs on that origin", async () => {
+    const {miniappFileUrl} = await import("../miniappScreenOrigin")
+    await miniappLauncher.ensureRunning("com.x")
+    expect(miniappFileUrl("com.x", "photo-1.jpg")).toBe("https://com.x.miniapp.invalid/.mentra/files/photo-1.jpg")
+
+    // A development snapshot's screen is on its development origin, and so are its files.
+    await miniappLauncher.stop("com.x")
+    selectedSnapshot = "dev-1234-a"
+    await miniappLauncher.ensureRunning("com.x")
+    expect(miniappFileUrl("com.x", "photo-1.jpg")).toBe(
+      "https://invalid.dev.com.x.miniapp.invalid/.mentra/files/photo-1.jpg",
+    )
+  })
+
+  test("a live development build's screen is on its server, which serves none of the package's files", async () => {
+    const {miniappFileUrl, recordMiniappScreenOrigin} = await import("../miniappScreenOrigin")
+    recordMiniappScreenOrigin("com.mentra.notes", "miniapp://com.mentra.notes")
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async (url: string) =>
+      url.endsWith("/miniapp.json")
+        ? new Response(JSON.stringify({packageName: "com.mentra.notes", entry: {background: "bg.js", ui: "ui.html"}}))
+        : new Response("DEV SOURCE")) as typeof fetch
+    try {
+      await miniappLauncher.ensureRunning("com.mentra.notes", {devUrl: "http://localhost:8081"})
+      expect(miniappFileUrl("com.mentra.notes", "photo-1.jpg")).toBeNull()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test("loads an installed screen from the package's own origin on iOS", async () => {
     ;(reactNative.Platform as {OS: string}).OS = "ios"
     const result = await miniappLauncher.ensureRunning("com.mentra.notes")

@@ -9,8 +9,9 @@ import BetaNote from '/snippets/beta-note.mdx'
 <BetaNote />
 
 `session.camera.takePhoto` captures a still on glasses that have a camera, like
-Mentra Live. It resolves after the photo is captured and uploaded, and hands you
-back a download URL.
+Mentra Live. It resolves once the photo is on the phone, as one of your
+miniapp's own files. Nothing is uploaded: your miniapp decides where the photo
+goes.
 
 ```typescript src/background/index.ts
 import { registerMiniapp } from "@mentra/miniapp/background";
@@ -19,7 +20,13 @@ registerMiniapp((session) => {
   session.input.onButtonPress(async () => {
     if (!session.capabilities?.hasCamera) return;
     const photo = await session.camera.takePhoto();
-    session.display.render([{type: "image", id: "photo", box: {x: 144, y: 44, w: 288, h: 200}, data: photo.photoUrl}]);
+    const bytes = await session.blob.bytes(photo.key);
+    if (!bytes) return; // the photo expired
+    await fetch("https://example.com/photos", {
+      method: "POST",
+      headers: { "Content-Type": photo.mimeType },
+      body: bytes,
+    });
   });
 });
 ```
@@ -32,39 +39,66 @@ before calling so you don't fire a request the glasses can't satisfy.
 
 ## Take a photo
 
-`takePhoto` sends the request, waits while the glasses capture and the phone
-uploads, then resolves with the photo metadata. The returned `photoUrl` is a
-signed download URL with a short TTL (about 30 minutes), so fetch or display it
-soon after.
+`takePhoto` sends the request, waits while the glasses capture and send the
+photo to the phone over Bluetooth, then resolves with where your miniapp finds
+it. The photo works without an internet connection.
 
 ```typescript
 const photo = await session.camera.takePhoto({ size: "high", sound: false });
-// photo.photoUrl  – signed URL, ~30 min TTL
-// photo.mimeType  – e.g. "image/jpeg"
-// photo.size      – bytes
+// photo.key        – the photo's key in session.blob
+// photo.url        – loads in your miniapp's screen, e.g. <img src={photo.url}>
+// photo.mimeType   – e.g. "image/jpeg"
+// photo.size       – bytes
+// photo.expiresAt  – when the phone deletes it (Unix ms), 30 minutes after capture
 ```
+
+A larger `size` takes longer to arrive: Bluetooth carries the whole photo.
 
 All options are optional. The defaults are listed below.
 
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `size` | `"low" \| "medium" \| "high" \| "max"` | `"medium"` | Capture resolution. |
-| `transferMethod` | `"auto" \| "direct" \| "ble"` | `"auto"` | Use `"direct"` for webhook upload without BLE fallback, or `"ble"` to always relay through the phone. |
-| `compress` | `"none" \| "low" \| "medium" \| "high"` | `"none"` | JPEG compression applied before upload. |
+| `compress` | `"none" \| "low" \| "medium" \| "high"` | `"none"` | JPEG compression applied on the glasses. |
 | `sound` | `boolean` | `true` | Play a shutter sound on the glasses. |
 | `saveToGallery` | `boolean` | `false` | Keep a copy in the glasses gallery. |
 | `exposureTimeNs` | `number` | auto | Manual shutter time in nanoseconds. Honored only on cameras with manual exposure; ignored otherwise. Omit to auto-expose. |
-
-Unknown runtime `transferMethod` values are rejected instead of being treated as `"auto"`.
 
 The result is a `PhotoTaken`:
 
 | Field | Type | Description |
 |---|---|---|
-| `requestId` | `string` | Correlates the request with ASG status and upload logs. |
-| `photoUrl` | `string` | Signed download URL for the captured image (~30 min TTL). |
+| `requestId` | `string` | Correlates the request with glasses status and phone logs. |
+| `key` | `string` | The photo's key in [`session.blob`](/app-devs/core-concepts/blob). |
+| `url` | `string \| undefined` | A URL your miniapp's own screen can load until the photo is deleted. |
 | `mimeType` | `string` | MIME type of the image, e.g. `"image/jpeg"`. |
 | `size` | `number` | Image size in bytes. |
+| `expiresAt` | `number` | When the phone deletes the photo, as a Unix time in milliseconds. |
+
+## Use the photo
+
+The photo is an ordinary `session.blob` entry that the phone deletes after 30
+minutes. It doesn't count toward your miniapp's storage limit.
+
+- **Send it somewhere.** Read the bytes in your background script and upload
+  them yourself: `await session.blob.bytes(photo.key)`.
+- **Show it.** Pass `photo.url` to your screen and use it as an image source.
+  The URL loads only in your miniapp's own screen. It is absent when your screen
+  loads from a development server and the photo is larger than 1 MB; read the
+  bytes there.
+- **Share it.** `await session.blob.share(photo.key)` opens the share sheet.
+- **Keep it.** Store a copy under a key of your own before it expires:
+  `await session.blob.set("saved/" + photo.requestId, bytes)`.
+
+### Updating from uploaded photos
+
+`takePhoto` used to upload the photo to Mentra's cloud and return a `photoUrl`.
+It now needs Mentra App 3.5.0 or later, so set `"minHostVersion": "3.5.0"` in
+your [manifest](/app-devs/core-concepts/miniapp-manifest). On an older Mentra
+App the call rejects and asks the user to update. Replace reads of `photoUrl`
+with `photo.url` on screen, or the bytes from `session.blob` everywhere else.
+The `transferMethod` option is gone: a photo for the phone always comes over
+Bluetooth.
 
 ## Field of view
 
@@ -109,12 +143,12 @@ Wrap calls in `try`/`catch` and read `code`.
 |---|---|
 | `PERMISSION_NOT_DECLARED` | The miniapp didn't declare the `CAMERA` permission. |
 | `REQUEST_ABORTED` | The request timed out, or the session was torn down before it completed. |
-| `INTERNAL` | The phone-side handler threw. The glasses have no camera, capture or upload failed, or another device error occurred. Read `message`. |
+| `INTERNAL` | The phone-side handler threw. The glasses have no camera, capture or transfer failed, or another device error occurred. Read `message`. |
 
 ```typescript
 try {
   const photo = await session.camera.takePhoto();
-  session.display.render([{type: "image", id: "photo", box: {x: 144, y: 44, w: 288, h: 200}, data: photo.photoUrl}]);
+  session.ui.send("photo", { url: photo.url });
 } catch (err) {
   if (err.code === "PERMISSION_NOT_DECLARED") {
     session.display.render([
@@ -137,8 +171,7 @@ The default is `none` everywhere. Glasses encode these as JPEG Q95, Q88, Q78,
 and Q60 respectively; `size` controls dimensions separately. `none` still uses
 lossy JPEG encoding. Unknown values are rejected.
 
-Cloud only allocates upload/download URLs: it takes no photo options and ignores
-any request body. Photo compression is handled by the phone and glasses.
+Photo compression is handled by the phone and glasses.
 
 The former `heavy` spelling is removed; callers must use `high`. Android's native
 default changes from `medium` to `none`. Existing miniapps may therefore produce

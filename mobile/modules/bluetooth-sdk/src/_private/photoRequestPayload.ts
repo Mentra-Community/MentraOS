@@ -49,6 +49,9 @@ export function photoRequestParamsForNative(params: PhotoRequestParams): Record<
   if (params.presend_thumbnail === true) {
     payload.presend_thumbnail = true
   }
+  if (params.localFile === true) {
+    payload.localFile = true
+  }
   if (requestId != null) {
     payload.requestId = requestId
   }

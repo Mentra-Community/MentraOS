@@ -728,6 +728,15 @@ console.log("photo delivered", photo.photoUrl ?? photo.uploadUrl, photo.fileSize
 
 `requestPhoto(...)` resolves only after the full photo action reaches terminal success: capture completed and the photo was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. If you omit `requestId`, the SDK generates one and the terminal response includes it. It rejects if the ASG reports `state: "error"`, if phone-side fallback upload fails, if the SDK cannot send the command, or if no terminal `photo_response` arrives within 30 seconds (110 seconds when `presend_thumbnail` is enabled). Photo requests use this longer operation-specific deadline because max-quality BLE fallback can legitimately exceed the 15-second deadline used by ordinary commands. Use `photo_status` for intermediate stages such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_status` is progress, while `photo_response` is terminal success/error. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
+To keep the photo on the phone and upload nothing, pass `localFile: true` and no `webhookUrl`:
+
+```ts
+const photo = await BluetoothSdk.requestPhoto({size: "medium", webhookUrl: null, authToken: null, sound: true, localFile: true})
+console.log("photo saved", photo.photoUrl, photo.fileSizeBytes) // file:///.../photo_<id>.jpg
+```
+
+The glasses send the photo over Bluetooth, whatever `transferMethod` says, and the SDK saves it as a JPEG in the app's cache folder. `photoUrl` is that file's `file://` URI and `uploadUrl` is empty. The file is yours to move or delete. It needs no internet connection. A save failure rejects with `PHONE_SAVE_FAILED`.
+
 Set `presend_thumbnail: true` to receive a JPEG preview over Bluetooth before the
 full photo (default: `false`). Listen for `photo_status` with
 `status: "thumbnail_received"`; `thumbnailUrl` is a JPEG data URI and

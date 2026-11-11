@@ -79,6 +79,44 @@ public class BlePhotoUploadService {
         }).start();
     }
 
+    public interface SaveCallback {
+        void onSaved(String requestId, File file);
+        void onError(String requestId, String error);
+    }
+
+    /**
+     * Process image data and keep it on the phone as a JPEG file in {@code directory}.
+     * Nothing is uploaded; the caller owns the file from then on.
+     * @param imageData Raw image data (AVIF or JPEG)
+     * @param requestId Original request ID for tracking
+     * @param directory Where the file goes; created when missing
+     * @param callback Callback with the saved file, or the error
+     */
+    public static void processAndSavePhoto(byte[] imageData, String requestId,
+                                           File directory, SaveCallback callback) {
+        new Thread(() -> {
+            try {
+                byte[] jpegData = convertToJpegPreservingExif(imageData);
+                if (!directory.isDirectory() && !directory.mkdirs()) {
+                    throw new IOException("Could not create " + directory.getAbsolutePath());
+                }
+                File file = File.createTempFile("photo_", ".jpg", directory);
+                try (FileOutputStream fos = new FileOutputStream(file)) {
+                    fos.write(jpegData);
+                } catch (IOException e) {
+                    file.delete();
+                    throw e;
+                }
+                NativeLog.d(TAG, "Saved BLE photo on the phone for requestId: " + requestId
+                        + " (" + jpegData.length + " bytes)");
+                callback.onSaved(requestId, file);
+            } catch (Exception e) {
+                NativeLog.e(TAG, "Error saving BLE photo for requestId: " + requestId, e);
+                callback.onError(requestId, e.getMessage());
+            }
+        }).start();
+    }
+
     /**
      * Decode incoming AVIF/JPEG, re-encode as JPEG, and re-attach IMU EXIF when present.
      */

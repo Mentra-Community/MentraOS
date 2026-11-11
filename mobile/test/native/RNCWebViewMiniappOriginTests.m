@@ -109,6 +109,89 @@ static void verifyResolution(NSString *base) {
         @"refuse everything for an invalid package name");
 }
 
+// The package's own files, under /.mentra/files/
+static void verifyOwnFiles(NSString *base) {
+  NSFileManager *files = [NSFileManager defaultManager];
+  NSString *root = [base stringByAppendingPathComponent:@"alpha"];
+  NSString *filesDir = [base stringByAppendingPathComponent:@"files/alpha"];
+  const uint8_t photoBytes[] = {0xFF, 0xD8, 1, 2, 3, 0xFF, 0xD9};
+  NSData *photo = [NSData dataWithBytes:photoBytes length:sizeof(photoBytes)];
+  [files createDirectoryAtPath:[filesDir stringByAppendingPathComponent:@"nested"] withIntermediateDirectories:YES attributes:nil error:nil];
+  [photo writeToFile:[filesDir stringByAppendingPathComponent:@"photo-1.jpg"] atomically:YES];
+  writeFile([filesDir stringByAppendingPathComponent:@"nested/inner.jpg"], @"nested");
+  writeFile([base stringByAppendingPathComponent:@"files/beta/photo-2.jpg"], @"another package's photo");
+  [files createSymbolicLinkAtPath:[filesDir stringByAppendingPathComponent:@"link-out.jpg"]
+              withDestinationPath:[base stringByAppendingPathComponent:@"secret.txt"] error:nil];
+  [files createSymbolicLinkAtPath:[filesDir stringByAppendingPathComponent:@"link-other.jpg"]
+              withDestinationPath:[base stringByAppendingPathComponent:@"files/beta/photo-2.jpg"] error:nil];
+  [files createSymbolicLinkAtPath:[filesDir stringByAppendingPathComponent:@"link-in.jpg"] withDestinationPath:@"photo-1.jpg" error:nil];
+  writeFile([root stringByAppendingPathComponent:@".mentra/files/photo-1.jpg"], @"the bundle's own file of that name");
+  writeFile([root stringByAppendingPathComponent:@".mentra/files/bundled.jpg"], @"a bundled file under the reserved path");
+  writeFile([root stringByAppendingPathComponent:@".mentra/other/page.html"], @"the bundle's own page");
+  NSString *resolvedFiles = realPath(filesDir);
+
+  NSString * (^resolve)(NSString *) = ^NSString *(NSString *string) {
+    return [RNCMiniappSchemeHandler resolveFileForURL:url(string) packageName:@"com.test.alpha" rootDir:root filesDir:filesDir];
+  };
+  NSString * (^resolveWithoutFiles)(NSString *) = ^NSString *(NSString *string) {
+    return [RNCMiniappSchemeHandler resolveFileForURL:url(string) packageName:@"com.test.alpha" rootDir:root];
+  };
+  check([resolve(@"miniapp://com.test.alpha/.mentra/files/photo-1.jpg")
+            isEqualToString:[resolvedFiles stringByAppendingPathComponent:@"photo-1.jpg"]],
+        @"serve one of the package's own files");
+  check([resolve(@"miniapp://com.test.alpha/.mentra/files/link-in.jpg") hasSuffix:@"/files/alpha/photo-1.jpg"],
+        @"follow a symlink that stays inside the files directory");
+  check([[RNCMiniappSchemeHandler resolveFileForURL:url(@"miniapp://com.test.alpha/.mentra/files/photo-1.jpg")
+                                        packageName:@"com.test.alpha"
+                                            rootDir:root
+                                           filesDir:[NSURL fileURLWithPath:filesDir].absoluteString]
+            hasSuffix:@"/files/alpha/photo-1.jpg"],
+        @"accept the files directory as a file:// URL");
+  check(resolve(@"miniapp://com.test.alpha/index.html") != nil, @"still serve the bundle");
+  check(resolve(@"miniapp://com.test.alpha/.mentra/other/page.html") != nil, @"only /.mentra/files/ is reserved");
+  check([resolve(@"miniapp://com.test.alpha/%2ementra/files/photo-1.jpg")
+            isEqualToString:[resolvedFiles stringByAppendingPathComponent:@"photo-1.jpg"]],
+        @"an encoded spelling of the reserved path names the same file");
+  for (NSString *path in @[
+         @"/.mentra/files", @"/.mentra/files/", @"/.mentra/files/missing.jpg", @"/.mentra/files/nested",
+         @"/.mentra/files/nested/inner.jpg", @"/.mentra/files/../index.html", @"/.mentra/files/%2e%2e/secret.txt",
+         @"/.mentra/files/..%2Fbeta%2Fphoto-2.jpg", @"/.mentra/files/link-out.jpg", @"/.mentra/files/link-other.jpg",
+         @"/.mentra/files/photo-1.jpg/x", @"/.mentra/files/bundled.jpg", @"/%2ementra/files/bundled.jpg",
+         @"/.mentra/%66iles/bundled.jpg", @"/.mentra//files/bundled.jpg"
+       ]) {
+    check(resolve([@"miniapp://com.test.alpha" stringByAppendingString:path]) == nil, [NSString stringWithFormat:@"refuse %@", path]);
+  }
+  check([RNCMiniappSchemeHandler resolveFileForURL:url(@"miniapp://com.test.beta/.mentra/files/photo-1.jpg")
+                                       packageName:@"com.test.alpha"
+                                           rootDir:root
+                                          filesDir:filesDir] == nil,
+        @"refuse another package's host for a file");
+  for (NSString *path in @[ @"/.mentra/files/photo-1.jpg", @"/.mentra/files/bundled.jpg", @"/%2ementra/files/bundled.jpg" ]) {
+    check(resolveWithoutFiles([@"miniapp://com.test.alpha" stringByAppendingString:path]) == nil,
+          [NSString stringWithFormat:@"without a files directory, refuse %@", path]);
+  }
+  check(resolveWithoutFiles(@"miniapp://com.test.alpha/.mentra/other/page.html") != nil,
+        @"without a files directory, the rest of the bundle is served as before");
+  check([RNCMiniappSchemeHandler resolveFileForURL:url(@"miniapp://com.test.alpha/.mentra/files/photo-1.jpg")
+                                       packageName:@"com.test.alpha"
+                                           rootDir:root
+                                          filesDir:[base stringByAppendingPathComponent:@"files/missing"]] == nil,
+        @"refuse files when the files directory is missing");
+  check([RNCMiniappSchemeHandler resolveFileForURL:url(@"miniapp://com.test.alpha/.mentra/files/photo-1.jpg")
+                                       packageName:@"com.test.alpha"
+                                           rootDir:root
+                                          filesDir:@"files/alpha"] == nil,
+        @"refuse a relative files directory");
+
+  NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url(@"miniapp://com.test.alpha/.mentra/files/photo-1.jpg")];
+  RNCMiniappResponse *served = [RNCMiniappSchemeHandler responseForRequest:request packageName:@"com.test.alpha" rootDir:root filesDir:filesDir];
+  check(served.statusCode == 200 && [served.body isEqualToData:photo] && [served.headers[@"Content-Type"] isEqualToString:@"image/jpeg"] &&
+            [served.headers[@"Cache-Control"] isEqualToString:@"no-store"],
+        @"serve the photo's own bytes as a JPEG, never cached");
+  check([RNCMiniappSchemeHandler responseForRequest:request packageName:@"com.test.alpha" rootDir:root].statusCode == 404,
+        @"404 a file when the handler has no files directory");
+}
+
 static void verifyResponses(NSString *base) {
   NSString *pkg = @"com.test.alpha";
   NSString *root = [base stringByAppendingPathComponent:@"alpha"];
@@ -192,10 +275,16 @@ static BOOL spinUntil(BOOL (^condition)(void), NSTimeInterval timeout) {
   return condition();
 }
 
+static WKWebView *openPageWithFiles(NSString *pkg, NSString *root, NSString *filesDir, WKWebsiteDataStore *store, PageLoader *loader);
+
 static WKWebView *openPage(NSString *pkg, NSString *root, WKWebsiteDataStore *store, PageLoader *loader) {
+  return openPageWithFiles(pkg, root, nil, store, loader);
+}
+
+static WKWebView *openPageWithFiles(NSString *pkg, NSString *root, NSString *filesDir, WKWebsiteDataStore *store, PageLoader *loader) {
   WKWebViewConfiguration *config = [WKWebViewConfiguration new];
   config.websiteDataStore = store;
-  [config setURLSchemeHandler:[[RNCMiniappSchemeHandler alloc] initWithPackageName:pkg rootDir:root]
+  [config setURLSchemeHandler:[[RNCMiniappSchemeHandler alloc] initWithPackageName:pkg rootDir:root filesDir:filesDir]
                  forURLScheme:RNCMiniappOriginScheme];
   WKWebView *webView = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 320, 480) configuration:config];
   webView.navigationDelegate = loader;
@@ -289,6 +378,25 @@ static void verifyWebKit(NSString *base) {
   check([run(alpha, @"return localStorage.getItem('shared-key')") isEqual:@"alpha"], @"its localStorage is its own");
   check([run(beta, @"const r = await fetch('/ui/data.json'); return (await r.json()).who") isEqual:@"beta"],
         @"each package reads only its own files");
+
+  // The package's own files, on the same origin as its page.
+  PageLoader *filesLoader = [PageLoader new];
+  WKWebView *withFiles = openPageWithFiles(@"com.test.alpha", [base stringByAppendingPathComponent:@"alpha"],
+                                           [base stringByAppendingPathComponent:@"files/alpha"], store, filesLoader);
+  check([run(withFiles, @"const r = await fetch('/.mentra/files/photo-1.jpg'); "
+                        @"return r.status + ':' + r.headers.get('content-type') + ':' + (await r.arrayBuffer()).byteLength")
+            isEqual:@"200:image/jpeg:7"],
+        @"the page fetches one of its own files");
+  check([run(withFiles, @"const r = await fetch('/.mentra/files/link-out.jpg'); return r.status") isEqual:@404],
+        @"a symlink out of the files directory is 404");
+  check([run(withFiles, @"const r = await fetch('/.mentra/files/bundled.jpg'); return r.status") isEqual:@404],
+        @"the bundle's own folder of that name is never served");
+  check([run(alpha, @"const r = await fetch('/.mentra/files/photo-1.jpg'); return r.status") isEqual:@404],
+        @"a page whose origin has no files directory gets 404");
+  NSString *otherFile = run(beta, @"try { const r = await fetch('miniapp://com.test.alpha/.mentra/files/photo-1.jpg'); "
+                                  @"return 'read ' + r.status } catch (e) { return 'blocked' }");
+  check([otherFile isEqual:@"read 404"] || [otherFile isEqual:@"blocked"],
+        [NSString stringWithFormat:@"another package can't read its files (%@)", otherFile]);
 }
 
 int main(void) {
@@ -314,6 +422,7 @@ int main(void) {
 
     verifyPackageNames();
     verifyResolution(base);
+    verifyOwnFiles(base);
     verifyResponses(base);
     const char *skipWebKit = getenv("MINIAPP_ORIGIN_SKIP_WEBKIT");
     if (skipWebKit == NULL || skipWebKit[0] == '\0') {

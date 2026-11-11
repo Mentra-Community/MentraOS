@@ -16,6 +16,11 @@
  * `activeRequests` lets MantleManager's gated `photo_response` listener
  * short-circuit our long-poll with a typed error (CAMERA_BUSY, BATTERY_LOW,
  * etc.) instead of waiting 30s for cloud's timeout.
+ *
+ * takeLocalPhoto() is the same capture without the cloud: the photo comes over
+ * BLE, native saves it as a file, and the caller gets that file. It is where
+ * photos are going (design_docs: platform/media/local-photos); takePhoto()'s
+ * managed path stays for miniapps built before it.
  */
 
 import {parsePhotoCompression, type PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
@@ -77,9 +82,17 @@ export interface PhotoTaken {
   requestId: string
 }
 
+/** A photo kept on the phone. The file is in the app's cache folder and is the caller's to move. */
+export interface LocalPhotoTaken {
+  fileUri: string
+  mimeType: string
+  size: number
+  requestId: string
+}
+
 /** Pipeline stage a photo request failed at — surfaced to the miniapp so a dev
  *  sees exactly where it broke, not just a flattened message. */
-export type PhotoStage = "presign" | "command" | "capture" | "upload" | "push"
+export type PhotoStage = "presign" | "command" | "capture" | "upload" | "push" | "save"
 /** Transport in play at the point of failure. */
 export type PhotoTransport = "cloud-rest" | "ble" | "wifi" | "ws"
 
@@ -131,6 +144,32 @@ let bleRequestCounter = 0
 function mintBleRequestId(): string {
   bleRequestCounter = (bleRequestCounter + 1) & 0xffff
   return bleRequestCounter.toString(16).padStart(4, "0")
+}
+
+/** A local photo has no cloud request to name it, so the phone does. */
+function mintLocalRequestId(): string {
+  return `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+}
+
+/** The capture settings of a native take_photo request, shared by both delivery paths. */
+function captureParams(opts: PhotoOpts, compress: PhotoCompression) {
+  return {
+    size: normalizePhotoSize(opts.size ?? "medium"),
+    mode: opts.mode ?? "photo",
+    compress,
+    save: opts.saveToGallery ?? false,
+    sound: opts.sound ?? true,
+    exposureTimeNs: opts.exposureTimeNs ?? null,
+    iso: opts.iso,
+    aeExposureDivisor: opts.aeExposureDivisor,
+    isoCap: opts.isoCap,
+    noiseReduction: opts.noiseReduction,
+    edgeEnhancement: opts.edgeEnhancement,
+    ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
+    ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
+    ispDigitalGain: opts.ispDigitalGain,
+    ispAnalogGain: opts.ispAnalogGain,
+  }
 }
 
 export class PhonePhotoCoordinator {
@@ -258,24 +297,10 @@ export class PhonePhotoCoordinator {
       void BluetoothSdk.requestPhoto({
         requestId: bleRequestId,
         appId: packageName,
-        size: normalizePhotoSize(captureSize),
-        mode: opts.mode ?? "photo",
+        ...captureParams(opts, compress),
         webhookUrl: uploadUrl,
         authToken: null,
         ...(isLoopbackUpload ? {transferMethod: "ble" as const} : transferMethod ? {transferMethod} : {}),
-        compress,
-        save: opts.saveToGallery ?? false,
-        sound: opts.sound ?? true,
-        exposureTimeNs: opts.exposureTimeNs ?? null,
-        iso: opts.iso,
-        aeExposureDivisor: opts.aeExposureDivisor,
-        isoCap: opts.isoCap,
-        noiseReduction: opts.noiseReduction,
-        edgeEnhancement: opts.edgeEnhancement,
-        ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
-        ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
-        ispDigitalGain: opts.ispDigitalGain,
-        ispAnalogGain: opts.ispAnalogGain,
       }).then((response) => {
         // Native success is emitted only after the direct/phone-relayed upload
         // completes. It is an independent completion signal when photo.ready
@@ -334,6 +359,103 @@ export class PhonePhotoCoordinator {
     } catch (err) {
       // Every way this photo can fail lands here: the glasses' error, the watchdog, a dead push channel. It was
       // requested and never captured.
+      fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
+      throw err
+    } finally {
+      this.activeRequests.delete(requestId)
+      this.bleIdToCloud.delete(bleRequestId)
+    }
+  }
+
+  /**
+   * Take a photo that stays on the phone: no cloud request and no upload. The glasses send it
+   * over BLE (the only route to the phone), native saves it as a JPEG file, and that file is
+   * the result. It works with no internet connection.
+   */
+  async takeLocalPhoto(packageName: string, opts: PhotoOpts): Promise<LocalPhotoTaken> {
+    const compress = parsePhotoCompression(opts.compress)
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+      throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
+    }
+
+    const flowStarted = performance.now()
+    const requestId = mintLocalRequestId()
+    const bleRequestId = mintBleRequestId()
+    this.bleIdToCloud.set(bleRequestId, requestId)
+    const abort = new AbortController()
+    // Wired before the request is sent, as in takePhoto(): a fast glasses error must find its slot.
+    const outcome = new Promise<PhotoResult>((resolve, reject) => {
+      this.activeRequests.set(requestId, {packageName, abort, resolve, reject})
+    })
+    const captureWatchdog = setTimeout(() => {
+      const e = this.activeRequests.get(requestId)
+      if (!e) return
+      e.abort.abort()
+      e.reject(
+        new PhotoError(
+          "CAPTURE_TIMEOUT",
+          "Photo capture did not complete. The take_photo command, media processing or BLE transfer may have stalled.",
+          "capture",
+          "ble",
+        ),
+      )
+    }, CAPTURE_PIPELINE_TIMEOUT_MS)
+    const clearWatchdog = () => clearTimeout(captureWatchdog)
+    void outcome.then(clearWatchdog, clearWatchdog)
+
+    fleetEvents.photo({operationId: requestId, stage: "requested"})
+
+    try {
+      void BluetoothSdk.requestPhoto({
+        requestId: bleRequestId,
+        appId: packageName,
+        ...captureParams(opts, compress),
+        webhookUrl: null,
+        authToken: null,
+        localFile: true,
+      })
+        .then((response) => {
+          const e = this.activeRequests.get(requestId)
+          if (!e || e.abort.signal.aborted) return
+          // Native answers a local request once, when the file is saved. Anything else means
+          // this native build cannot keep photos on the phone; don't wait out the watchdog.
+          const saved = response?.state === "success" && response.requestId === bleRequestId ? response : undefined
+          const fileUri = saved?.photoUrl
+          if (!saved || !fileUri?.startsWith("file://")) {
+            e.reject(new PhotoError("LOCAL_PHOTO_UNAVAILABLE", "The photo was not saved on the phone", "save", "ble"))
+            return
+          }
+          e.resolve({
+            photoUrl: fileUri,
+            mimeType: saved.contentType || "image/jpeg",
+            size: saved.fileSizeBytes ?? -1,
+          })
+        })
+        .catch((err) => {
+          const e = this.activeRequests.get(requestId)
+          if (!e) return
+          e.abort.abort()
+          e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
+        })
+    } catch (err) {
+      this.activeRequests.delete(requestId)
+      this.bleIdToCloud.delete(bleRequestId)
+      fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
+      throw this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble")
+    }
+
+    try {
+      const result = await outcome
+      fleetEvents.photo({operationId: requestId, stage: "captured"})
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.debug(
+          `[PhonePhotoCoordinator] takeLocalPhoto complete ${Math.round(
+            performance.now() - flowStarted,
+          )}ms requestId=${requestId}`,
+        )
+      }
+      return {fileUri: result.photoUrl, mimeType: result.mimeType, size: result.size, requestId}
+    } catch (err) {
       fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
       throw err
     } finally {

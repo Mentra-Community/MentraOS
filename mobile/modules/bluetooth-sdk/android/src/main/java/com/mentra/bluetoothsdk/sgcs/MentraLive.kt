@@ -536,6 +536,10 @@ class MentraLive : SGCManager() {
 
         // File transfer management
         private const val FILE_SAVE_DIR = "MentraLive_Images"
+        /** Cache folder for photos kept on the phone (`PhotoRequest.localFile`); the caller moves each file out. */
+        private const val LOCAL_PHOTO_DIR = "mentra_local_photos"
+        /** Stand-in upload target the glasses are given for a local photo. Never contacted. */
+        private const val LOCAL_PHOTO_TARGET = "phone://local-photo"
 
         // Glasses media volume (K900 cs_getvol / cs_vol, sr_getvol / sr_vol)
         private const val GLASSES_MEDIA_VOLUME_TIMEOUT_MS = 2000
@@ -861,6 +865,8 @@ class MentraLive : SGCManager() {
             var webhookUrl: String?
     ) {
         var isThumbnail: Boolean = false
+        /** The photo stays on the phone as a file instead of being uploaded. */
+        var localFile: Boolean = false
         var authToken: String? = null
         var session: FileTransferSession? = null
         var phoneStartTime: Long = System.currentTimeMillis() // When phone received the request
@@ -7460,8 +7466,14 @@ class MentraLive : SGCManager() {
         val requestId = request.requestId
         val size = request.size.value
         val mode = request.mode.value
-        val webhookUrl = request.webhookUrl
-        val authToken = request.authToken
+        val localFile = request.localFile
+        // A local photo has no upload target, but the glasses expect one: without it they
+        // route a save-to-gallery request to their gallery and transfer nothing, and reject
+        // a thumbnail request. So it names a stand-in, which the BLE transfer method never
+        // contacts.
+        val webhookUrl = if (localFile) LOCAL_PHOTO_TARGET else request.webhookUrl
+        val transferMethod = if (localFile) "ble" else request.transferMethod
+        val authToken = if (localFile) null else request.authToken
         val compress = request.compress.value
         val save = request.save
         val sound = request.sound
@@ -7539,17 +7551,21 @@ class MentraLive : SGCManager() {
 
             // Miniapps may explicitly skip direct Wi-Fi upload and force the
             // phone-relayed BLE path. Auto remains the default.
-            json.put("transferMethod", request.transferMethod)
+            json.put("transferMethod", transferMethod)
 
             // Always prepare for potential BLE transfer
-            if (webhookUrl != null && !webhookUrl.isEmpty()) {
+            if (localFile) {
+                val transfer = BlePhotoTransfer(bleImgId, requestId, null)
+                transfer.localFile = true
+                blePhotoTransfers[bleImgId] = transfer
+            } else if (webhookUrl != null && !webhookUrl.isEmpty()) {
                 // Store the transfer info for BLE route - include authToken
                 val transfer = BlePhotoTransfer(bleImgId, requestId, webhookUrl)
                 transfer.authToken = authToken // Store authToken for BLE transfer
                 blePhotoTransfers[bleImgId] = transfer
             }
 
-            Bridge.log("LIVE: Using " + request.transferMethod + " transfer mode with BLE fallback ID: " + bleImgId)
+            Bridge.log("LIVE: Using " + transferMethod + " transfer mode with BLE fallback ID: " + bleImgId)
             Bridge.log(
                     "LIVE: PHOTO PIPELINE [5b/6] JSON ready mode=" +
                             mode +
@@ -11953,6 +11969,10 @@ class MentraLive : SGCManager() {
             ))
             return
         }
+        if (transfer.localFile) {
+            saveBlePhotoOnPhone(transfer, imageData)
+            return
+        }
         Bridge.log("LIVE: Processing BLE photo for upload. RequestId: " + transfer.requestId)
         val uploadStartTime = System.currentTimeMillis()
 
@@ -12013,6 +12033,49 @@ class MentraLive : SGCManager() {
                                 requestId,
                                 "PHONE_UPLOAD_FAILED",
                                 "BLE photo upload failed: " + error
+                        )
+                    }
+                }
+        )
+    }
+
+    /** Keep a BLE photo on the phone as a JPEG file and answer the request with its file URI. */
+    private fun saveBlePhotoOnPhone(transfer: BlePhotoTransfer, imageData: ByteArray) {
+        Bridge.log("LIVE: Saving BLE photo on the phone. RequestId: " + transfer.requestId)
+        val ctx = context
+        if (ctx == null) {
+            Bridge.sendPhotoError(transfer.requestId, "PHONE_SAVE_FAILED", "No app context to save the photo")
+            return
+        }
+        BlePhotoUploadService.processAndSavePhoto(
+                imageData,
+                transfer.requestId,
+                File(ctx.cacheDir, LOCAL_PHOTO_DIR),
+                object : BlePhotoUploadService.SaveCallback {
+                    override fun onSaved(requestId: String, file: File) {
+                        Bridge.log(
+                                "LIVE: ⏱️ Local photo end-to-end duration: " +
+                                        (System.currentTimeMillis() - transfer.phoneStartTime) +
+                                        "ms"
+                        )
+                        val event = HashMap<String, Any>()
+                        event["type"] = "photo_response"
+                        event["state"] = "success"
+                        event["success"] = true
+                        event["requestId"] = requestId
+                        event["uploadUrl"] = ""
+                        event["photoUrl"] = android.net.Uri.fromFile(file).toString()
+                        event["contentType"] = "image/jpeg"
+                        event["fileSizeBytes"] = file.length()
+                        event["timestamp"] = System.currentTimeMillis()
+                        Bridge.sendPhotoResponse(event)
+                    }
+
+                    override fun onError(requestId: String, error: String?) {
+                        Bridge.sendPhotoError(
+                                requestId,
+                                "PHONE_SAVE_FAILED",
+                                "Could not save the photo on the phone: " + error
                         )
                     }
                 }

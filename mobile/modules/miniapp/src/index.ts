@@ -114,10 +114,12 @@ export type {
   CameraFovRequest,
   CameraFovResult,
   CameraRoiPosition,
+  CloudPhotoTaken,
   PhotoTaken,
   SetCameraFovOptions,
   StartVideoRecordingOptions,
   StopVideoRecordingOptions,
+  TakeCloudPhotoOptions,
   TakePhotoOptions,
   VideoRecordingStarted,
 } from "./modules/camera"

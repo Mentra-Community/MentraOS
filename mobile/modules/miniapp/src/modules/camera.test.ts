@@ -4,7 +4,7 @@ import {describe, expect, test} from "bun:test"
 
 import {MiniappRequestType} from "../protocol"
 import type {MiniappSession} from "../session"
-import {CameraModule, type CameraFovResult, type PhotoTaken} from "./camera"
+import {CameraModule, type CameraFovResult, type CloudPhotoTaken, type PhotoTaken} from "./camera"
 
 function mockSession<T>(result: T) {
   const requestCalls: object[] = []
@@ -22,6 +22,15 @@ function mockSession<T>(result: T) {
   } as unknown as MiniappSession
 
   return {session, requestCalls, requestOptions}
+}
+
+/** What a Mentra App with local photos answers. */
+const PHOTO: PhotoTaken = {
+  requestId: "p1abc",
+  key: "photo/p1abc",
+  mimeType: "image/jpeg",
+  size: 1234,
+  expiresAt: 1_800_000_000_000,
 }
 
 describe("CameraModule", () => {
@@ -45,12 +54,14 @@ describe("CameraModule", () => {
     ])
   })
 
-  test("takePhoto returns delivered photo metadata with requestId", async () => {
+  test("takePhoto asks for the photo on the phone and returns where the miniapp finds it", async () => {
     const result: PhotoTaken = {
-      requestId: "photo-1",
-      photoUrl: "https://example.com/photo.jpg",
+      requestId: "p1abc",
+      key: "photo/p1abc",
+      url: "miniapp://com.example.app/.mentra/files/mywpiww0-abc.jpg",
       mimeType: "image/jpeg",
       size: 1234,
+      expiresAt: 1_800_000_000_000,
     }
     const {session, requestCalls} = mockSession(result)
     const camera = new CameraModule(session)
@@ -67,12 +78,43 @@ describe("CameraModule", () => {
         exposureTimeNs: undefined,
         zsl: undefined,
         mfnr: undefined,
+        delivery: "local",
       },
     ])
   })
 
+  test("takeCloudPhoto keeps the cloud upload: no local delivery, and the transfer method it names", async () => {
+    const result: CloudPhotoTaken = {
+      requestId: "rq-1",
+      photoUrl: "https://example.com/photo.jpg",
+      mimeType: "image/jpeg",
+      size: -1,
+    }
+    const {session, requestCalls, requestOptions} = mockSession(result)
+    const camera = new CameraModule(session)
+
+    await expect(camera.takeCloudPhoto({size: "max", sound: false, timeoutMs: 60_000})).resolves.toEqual(result)
+    expect("delivery" in requestCalls[0]!).toBe(false)
+    expect("transferMethod" in requestCalls[0]!).toBe(false)
+    expect(requestCalls[0]).toMatchObject({type: MiniappRequestType.PHOTO, size: "max", sound: false})
+    expect(requestOptions).toEqual([{timeoutMs: 60_000}])
+
+    await camera.takeCloudPhoto({transferMethod: "ble"})
+    expect(requestCalls[1]).toMatchObject({transferMethod: "ble"})
+  })
+
+  test("takePhoto rejects the cloud URL of a Mentra App from before local photos", async () => {
+    const {session} = mockSession({
+      requestId: "rq-1",
+      photoUrl: "https://example.com/p.jpg",
+      mimeType: "image/jpeg",
+      size: -1,
+    })
+    await expect(new CameraModule(session).takePhoto()).rejects.toThrow("Update the Mentra App")
+  })
+
   test("takePhoto forwards text mode", async () => {
-    const {session, requestCalls} = mockSession({})
+    const {session, requestCalls} = mockSession(PHOTO)
     const camera = new CameraModule(session)
 
     await camera.takePhoto({mode: "text"})
@@ -80,44 +122,17 @@ describe("CameraModule", () => {
     expect(requestCalls[0]).toMatchObject({mode: "text"})
   })
 
-  test("takePhoto forwards a forced BLE transfer", async () => {
-    const {session, requestCalls} = mockSession({})
+  test("takePhoto names no transfer method: a photo for the phone always comes over Bluetooth", async () => {
+    const {session, requestCalls} = mockSession(PHOTO)
     const camera = new CameraModule(session)
 
-    await camera.takePhoto({transferMethod: "ble"})
+    await camera.takePhoto({transferMethod: "direct"} as any)
 
-    expect(requestCalls[0]).toMatchObject({transferMethod: "ble"})
-  })
-
-  test("takePhoto forwards a direct transfer without BLE fallback", async () => {
-    const {session, requestCalls} = mockSession({})
-    const camera = new CameraModule(session)
-
-    await camera.takePhoto({transferMethod: "direct"})
-
-    expect(requestCalls[0]).toMatchObject({transferMethod: "direct"})
-  })
-
-  test("takePhoto preserves a runtime null transfer method for host validation", async () => {
-    const {session, requestCalls} = mockSession({})
-    const camera = new CameraModule(session)
-
-    await camera.takePhoto({transferMethod: null} as any)
-
-    expect(requestCalls[0]).toMatchObject({transferMethod: null})
-  })
-
-  test("takePhoto preserves a runtime empty transfer method for host validation", async () => {
-    const {session, requestCalls} = mockSession({})
-    const camera = new CameraModule(session)
-
-    await camera.takePhoto({transferMethod: ""} as any)
-
-    expect(requestCalls[0]).toMatchObject({transferMethod: ""})
+    expect("transferMethod" in requestCalls[0]!).toBe(false)
   })
 
   test("takePhoto forwards zsl and mfnr", async () => {
-    const {session, requestCalls} = mockSession({})
+    const {session, requestCalls} = mockSession(PHOTO)
     const camera = new CameraModule(session)
 
     await camera.takePhoto({zsl: true, mfnr: false})
@@ -126,7 +141,7 @@ describe("CameraModule", () => {
   })
 
   test("takePhoto forwards timeoutMs as the sendRequest options argument", async () => {
-    const {session, requestOptions} = mockSession({})
+    const {session, requestOptions} = mockSession(PHOTO)
     const camera = new CameraModule(session)
 
     await camera.takePhoto({timeoutMs: 1_200})
@@ -135,7 +150,7 @@ describe("CameraModule", () => {
   })
 
   test("takePhoto omits the options argument when timeoutMs is unset", async () => {
-    const {session, requestOptions} = mockSession({})
+    const {session, requestOptions} = mockSession(PHOTO)
     const camera = new CameraModule(session)
 
     await camera.takePhoto({})
@@ -180,7 +195,7 @@ describe("CameraModule", () => {
 })
 
 test("takePhoto preserves compression and rejects invalid values before dispatch", async () => {
-  const {session, requestCalls} = mockSession({})
+  const {session, requestCalls} = mockSession(PHOTO)
   const camera = new CameraModule(session)
   for (const compress of ["none", "low", "medium", "high"] as const) {
     await camera.takePhoto({compress})

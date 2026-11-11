@@ -65,7 +65,33 @@ describe("MockTransport", () => {
     expect(payload.data).toEqual({lat: 37.7956, lng: -122.3933, accuracy: 0, timestamp: expect.any(Number)})
   })
 
-  test("PHOTO returns a placeholder data: URL", async () => {
+  test("a photo for the phone comes back as a blob the mock can read", async () => {
+    const t = new MockTransport({silent: true})
+    const received: string[] = []
+    t.onMessage((raw) => received.push(raw))
+    await t.open()
+    const reply = async (payload: object, requestId: string) => {
+      t.send(envelope(payload, requestId))
+      await new Promise((r) => queueMicrotask(() => r(null)))
+      return (parseEnvelope(received.at(-1)!)!.payload as {data: any}).data
+    }
+
+    const photo = await reply({type: MiniappRequestType.PHOTO, delivery: "local"}, "rid-1")
+    expect(photo).toMatchObject({key: "photo/mock-photo", mimeType: "image/png", size: 68})
+    expect(photo.url.startsWith("data:image/png;base64,")).toBe(true)
+    expect(photo.expiresAt).toBeGreaterThan(Date.now())
+    expect("photoUrl" in photo).toBe(false)
+
+    const opened = await reply({type: MiniappRequestType.BLOB_OPEN_READ, key: photo.key}, "rid-2")
+    expect(opened.meta).toMatchObject({key: photo.key, bytes: 68})
+    const chunk = await reply({type: MiniappRequestType.BLOB_READ, handle: opened.handle}, "rid-3")
+    expect(chunk.done).toBe(true)
+    expect(atob(chunk.base64).length).toBe(photo.size)
+
+    expect(await reply({type: MiniappRequestType.BLOB_OPEN_READ, key: "other"}, "rid-4")).toBeNull()
+  })
+
+  test("a cloud photo request still gets a placeholder data: URL", async () => {
     const t = new MockTransport({silent: true})
     const received: string[] = []
     t.onMessage((raw) => received.push(raw))

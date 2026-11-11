@@ -57,6 +57,7 @@ import {checkManifestVersions} from "./manifestVersionGate"
 import type {MentraJSRouter} from "./MentraJSRouter"
 import {checkMiniappAge, type AgeGateVerdict, type AgeRatedMiniapp} from "./miniappAgeGate"
 import {developmentOriginName, miniappOrigin, miniappOriginUrl, type MiniappOriginPlatform} from "./miniappOrigin"
+import {recordMiniappScreenOrigin} from "./miniappScreenOrigin"
 import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
 import {honoredMiniappVariant} from "./miniappVariant"
 
@@ -691,6 +692,10 @@ class MiniappLauncher {
       if (projectRunning) this.reportLaunch(packageName, "started", runtimeOptions, resolved.installedManifest)
     }
 
+    // Where this launch's screen would load from, for the URLs of the package's own files: only an installed
+    // bundle's origin is served by the app. A screen that opens records its own (MiniappView), which is why the
+    // already-running path of ensureRunning doesn't: a headless caller resolves with other hints than the screen.
+    recordMiniappScreenOrigin(packageName, resolved.uiRootDir ? resolved.uiOrigin : null)
     return launchResultOf(resolved)
   }
 

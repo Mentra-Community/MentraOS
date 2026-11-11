@@ -34,11 +34,6 @@ export interface TakePhotoOptions {
   size?: "low" | "medium" | "high" | "max"
   /** Capture at maximum source quality and optimize BLE delivery for readable text. */
   mode?: "photo" | "text"
-  /**
-   * Image delivery path. `auto` tries direct Wi-Fi upload and falls back to
-   * BLE; `direct` disables BLE fallback; `ble` always relays through the phone.
-   */
-  transferMethod?: "auto" | "direct" | "ble"
   compress?: PhotoCompression
   sound?: boolean
   saveToGallery?: boolean
@@ -82,12 +77,48 @@ export interface TakePhotoOptions {
   timeoutMs?: number
 }
 
+/**
+ * A photo from the glasses, kept on the phone as one of the miniapp's own files. Nothing is uploaded:
+ * the miniapp decides where the photo goes.
+ */
 export interface PhotoTaken {
-  /** Request id that correlates ASG status, upload, and phone/cloud logs. */
+  /** Request id that correlates glasses status and phone logs. */
   requestId: string
+  /**
+   * The photo's key in `session.blob`. Read it with `session.blob.bytes(key)`, for example to send to a
+   * backend with `fetch`. The photo is deleted at `expiresAt`; to keep it, store a copy under a key of
+   * your own (`session.blob.set(myKey, bytes)`).
+   */
+  key: string
+  /**
+   * A URL the miniapp's own screen can load, for example `<img src={url}>`: pass it to the UI as it is.
+   * It works only in this miniapp's screen, and only until the photo is deleted. Absent when the screen
+   * loads from a development server and the photo is larger than 1 MB; read the bytes there.
+   */
+  url?: string
+  mimeType: string
+  /** The photo's size in bytes. */
+  size: number
+  /** When the phone deletes the photo, as a Unix time in milliseconds: 30 minutes after capture. */
+  expiresAt: number
+}
+
+/** What {@link CameraModule.takeCloudPhoto} resolves to: a photo uploaded to Mentra's cloud. */
+export interface CloudPhotoTaken {
+  /** Request id that correlates glasses status, upload, and phone/cloud logs. */
+  requestId: string
+  /** A short-lived (~30 minute) signed download URL. */
   photoUrl: string
   mimeType: string
   size: number
+}
+
+export interface TakeCloudPhotoOptions extends TakePhotoOptions {
+  /**
+   * Image delivery path. `auto` tries direct Wi-Fi upload from the glasses and falls back to
+   * BLE; `direct` disables BLE fallback; `ble` always relays through the phone.
+   */
+  transferMethod?: "auto" | "direct" | "ble"
 }
 
 export interface WarmUpCameraOptions {
@@ -159,37 +190,69 @@ export class CameraModule {
   }
 
   /**
-   * Take a photo via the glasses camera. Returns a URL to the captured image.
-   * Requires CAMERA permission declared in miniapp.json.
+   * Take a photo with the glasses camera. Requires CAMERA permission declared in miniapp.json.
    *
-   * The photo is uploaded to cloud storage; the returned URL is a short-TTL
-   * (~30 minute) signed download URL. If the glasses don't have a camera,
-   * the phone-side handler rejects with an error. Check
+   * The glasses send the photo to the phone over Bluetooth, and it stays there as one of the miniapp's
+   * own files: no internet connection is needed and nothing is uploaded. Read it with
+   * `session.blob.bytes(photo.key)`, show it in the miniapp's screen from `photo.url`, and send it
+   * wherever the miniapp needs it. The phone deletes it after 30 minutes.
+   *
+   * If the glasses don't have a camera, the phone-side handler rejects with an error. Check
    * `session.capabilities.hasCamera` before calling.
    */
   async takePhoto(options: TakePhotoOptions = {}): Promise<PhotoTaken> {
-    return this.session.sendRequest<PhotoTaken>(
+    const photo = await this.session.sendRequest<PhotoTaken>(
+      // `delivery` asks the Mentra App to keep the photo on the phone. One that predates local photos ignores it.
+      {...this.photoRequest(options), delivery: "local"},
+      options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined,
+    )
+    // A Mentra App from before local photos answers with a cloud URL and no key. A miniapp built with this
+    // SDK declares the first version that has them as its minHostVersion, so this is a development build
+    // that is behind.
+    if (typeof photo?.key !== "string" || !photo.key) {
+      throw new Error("This Mentra App can't keep photos on the phone yet. Update the Mentra App.")
+    }
+    return photo
+  }
+
+  /**
+   * Take a photo and upload it to Mentra's cloud, resolving to a short-lived signed URL.
+   *
+   * @deprecated Use {@link takePhoto}, which keeps the photo on the phone. This remains for one
+   * case: a full-size photo that must reach a server quickly. The glasses can upload it over their
+   * own Wi-Fi, which is much faster than sending it to the phone over Bluetooth. It needs an
+   * internet connection, and it goes away once the glasses can send large photos to the phone.
+   */
+  async takeCloudPhoto(options: TakeCloudPhotoOptions = {}): Promise<CloudPhotoTaken> {
+    return this.session.sendRequest<CloudPhotoTaken>(
       {
-        type: MiniappRequestType.PHOTO,
-        size: options.size ?? "medium",
-        mode: options.mode ?? "photo",
+        ...this.photoRequest(options),
         ...(options.transferMethod !== undefined ? {transferMethod: options.transferMethod} : {}),
-        compress: parsePhotoCompression(options.compress),
-        sound: options.sound ?? true,
-        saveToGallery: options.saveToGallery ?? false,
-        exposureTimeNs: options.exposureTimeNs,
-        iso: options.iso,
-        aeExposureDivisor: options.aeExposureDivisor,
-        isoCap: options.isoCap,
-        noiseReduction: options.noiseReduction,
-        edgeEnhancement: options.edgeEnhancement,
-        zsl: options.zsl,
-        mfnr: options.mfnr,
-        ispDigitalGain: options.ispDigitalGain,
-        ispAnalogGain: options.ispAnalogGain,
       },
       options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined,
     )
+  }
+
+  /** The capture settings of a photo request, shared by both delivery paths. */
+  private photoRequest(options: TakePhotoOptions) {
+    return {
+      type: MiniappRequestType.PHOTO,
+      size: options.size ?? "medium",
+      mode: options.mode ?? "photo",
+      compress: parsePhotoCompression(options.compress),
+      sound: options.sound ?? true,
+      saveToGallery: options.saveToGallery ?? false,
+      exposureTimeNs: options.exposureTimeNs,
+      iso: options.iso,
+      aeExposureDivisor: options.aeExposureDivisor,
+      isoCap: options.isoCap,
+      noiseReduction: options.noiseReduction,
+      edgeEnhancement: options.edgeEnhancement,
+      zsl: options.zsl,
+      mfnr: options.mfnr,
+      ispDigitalGain: options.ispDigitalGain,
+      ispAnalogGain: options.ispAnalogGain,
+    }
   }
 
   /**

@@ -1,13 +1,13 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.example",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Mentra Example",
   "description": "Reference miniapp for the @mentra/miniapp SDK. Demonstrates transcription, text wall display, TTS, button events, and the full per-iface SDK Tester surface.",
   "icon": "icon.png",
   "type": "standard",
   "sdkVersion": "0.3.0",
-  "minHostVersion": "2.13.0",
+  "minHostVersion": "3.5.0",
   "entry": {
     "background": "background/index.js",
     "ui": "ui/index.html"

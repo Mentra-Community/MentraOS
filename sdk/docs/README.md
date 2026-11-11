@@ -29,7 +29,7 @@ events fire, and the error shapes to expect.
 | `session.imu` | [imu.md](./imu.md) | Minimal — one subscribe. Accel/orientation flagged future work. |
 | `session.mic` | [mic.md](./mic.md) | Has `stop()` aggregate teardown + permission getter. |
 | `session.speaker` | [speaker.md](./speaker.md) | Full state machine + normalized TTS error codes. |
-| `session.camera` | [camera.md](./camera.md) | `hasPermission`, `setFov`, `takePhoto`. No sync permission throw. |
+| `session.camera` | [camera.md](./camera.md) | `hasPermission`, `setFov`, `takePhoto` (the photo stays on the phone, in `session.blob`). No sync permission throw. |
 | `session.dashboard` | [dashboard.md](./dashboard.md) | Deferred in v1 — `setContent` is a noop+warn. |
 | `session.glasses` | [glasses.md](./glasses.md) | No manifest gate. |
 | `session.led` | [led.md](./led.md) | All methods are fire-and-forget despite `Promise<void>` signatures. |

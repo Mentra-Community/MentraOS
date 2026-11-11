@@ -23,6 +23,7 @@ type WebViewComponent = ComponentType<Record<string, unknown>>
 const origin: NonNullable<WebViewProps["miniappOrigin"]> = {
   packageName: "com.example.notes",
   rootDir: "/data/lmas/com.example.notes/1.0.0",
+  filesDir: "/data/mentra_blobs/user.p/com.example.notes",
 }
 
 function nativeProps(WebView: WebViewComponent, props: Record<string, unknown>) {
@@ -66,6 +67,8 @@ describe("WebView miniappOrigin", () => {
       join(__dirname, "../../../../node_modules/react-native-webview/src/RNCWebViewNativeComponent.ts"),
       "utf8",
     )
-    expect(spec).toMatch(/miniappOrigin\?: Readonly<\{\s*packageName: string;\s*rootDir: string;\s*\}>/)
+    expect(spec).toMatch(
+      /miniappOrigin\?: Readonly<\{\s*packageName: string;\s*rootDir: string;\s*filesDir\?: string;\s*\}>/,
+    )
   })
 })

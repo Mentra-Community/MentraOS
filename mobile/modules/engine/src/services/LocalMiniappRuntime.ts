@@ -50,12 +50,12 @@ import {wakeWordService} from "./WakeWordService"
 import micSessionManager, {MIC_SOURCE_CONFLICT, type MicSession} from "./MicSessionManager"
 import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, isVoiceCallPackage, type MicUseCase} from "./micPolicy"
 import {variantConfiguration, type MiniappVariant} from "./miniappVariant"
-import {BlobStore} from "./BlobStore"
+import {BlobStore, EXPIRING_BLOB_TTL_MS} from "./BlobStore"
 import {MiniappSystemActions} from "./MiniappSystemActions"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {fleetEvents} from "./fleet/fleetEvents"
-import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
+import {PhotoError, phonePhotoCoordinator, type PhotoOpts} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
@@ -125,6 +125,7 @@ import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./Minia
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import {isLocalBuildContext} from "./miniappBuildKind"
+import {miniappFileUrl} from "./miniappScreenOrigin"
 import {configureMiniappDataPartitions, miniappDataSessionOf, resolveMiniappDataPartition} from "./miniappDataPartition"
 import {sameCoreUrl} from "./fleet/coreUrl"
 import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
@@ -297,6 +298,8 @@ function speechProcessingDisabled(processing: SpeechProcessing): string | null {
 }
 
 const LOG_TAG = "LOCAL_MINIAPP"
+/** The largest photo sent to a development server's screen as a data: URL; a larger one has no `url`. */
+const PHOTO_DATA_URL_MAX_BYTES = 1024 * 1024
 
 /**
  * Cloud speech arrives as raw 24 kHz 16-bit mono PCM and streams into the
@@ -3885,6 +3888,58 @@ class LocalMiniappRuntime {
     return false
   }
 
+  /**
+   * The directory holding `packageName`'s own files (its blobs), as a file:// URI: what its screen's origin serves
+   * under /.mentra/files/. Null while no account is known.
+   */
+  public ownFilesDirectoryUri(packageName: string): string | null {
+    try {
+      return this.blobStore.ownFilesDirectory(packageName).uri
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Take a photo that stays on the phone and hand it to the miniapp as an expiring blob:
+   * it reads the bytes with `session.blob` under `key` until `expiresAt`, and its screen shows it from `url`.
+   */
+  private async takeLocalPhoto(
+    packageName: string,
+    opts: PhotoOpts,
+  ): Promise<{requestId: string; key: string; url?: string; mimeType: string; size: number; expiresAt: number}> {
+    const photo = await phonePhotoCoordinator.takeLocalPhoto(packageName, opts)
+    try {
+      const blob = this.blobStore.storeExpiringFile(
+        packageName,
+        `photo/${photo.requestId}`,
+        photo.fileUri,
+        photo.mimeType,
+      )
+      // The screen's own origin serves the file. A live development build's screen loads from its server, which
+      // can't, so there the photo travels in the URL itself while it is small enough to.
+      const url =
+        miniappFileUrl(packageName, blob.uri.slice(blob.uri.lastIndexOf("/") + 1)) ??
+        (await this.blobStore.dataUrlOf(packageName, blob.key, PHOTO_DATA_URL_MAX_BYTES))
+      return {
+        requestId: photo.requestId,
+        key: blob.key,
+        ...(url ? {url} : {}),
+        mimeType: blob.mimeType,
+        size: blob.bytes,
+        expiresAt: blob.expiresAt ?? Date.now() + EXPIRING_BLOB_TTL_MS,
+      }
+    } catch (err) {
+      // The photo was taken but can't reach the miniapp; don't leave it in the cache folder.
+      this.blobStore.discardFile(photo.fileUri)
+      throw new PhotoError(
+        "PHOTO_STORE_FAILED",
+        `Could not store the photo for the miniapp: ${err instanceof Error ? err.message : String(err)}`,
+        "save",
+      )
+    }
+  }
+
   private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     // Manifest CAMERA permission gate.
     const app = this.connectedApps.get(packageName)
@@ -3901,7 +3956,7 @@ class LocalMiniappRuntime {
     }
 
     try {
-      const result = await phonePhotoCoordinator.takePhoto(packageName, {
+      const opts: PhotoOpts = {
         size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
         mode: payload.mode as "photo" | "text" | undefined,
         transferMethod: payload.transferMethod as "auto" | "direct" | "ble" | undefined,
@@ -3918,7 +3973,13 @@ class LocalMiniappRuntime {
         mfnr: payload.mfnr as boolean | undefined,
         ispDigitalGain: payload.ispDigitalGain as number | undefined,
         ispAnalogGain: payload.ispAnalogGain as string | undefined,
-      })
+      }
+      // A request for local delivery gets the photo as one of the miniapp's own files and never
+      // touches the cloud. Miniapps built before local delivery don't ask, and keep the cloud URL.
+      const result =
+        payload.delivery === "local"
+          ? await this.takeLocalPhoto(packageName, opts)
+          : await phonePhotoCoordinator.takePhoto(packageName, opts)
       this.sendResult(packageName, requestId, true, result)
       // The photo reached the miniapp. A call with no request ID has nobody to answer, so nothing was delivered.
       if (requestId) fleetEvents.photo({operationId: result.requestId, stage: "delivered"})

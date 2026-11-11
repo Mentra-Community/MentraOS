@@ -232,7 +232,7 @@ index 80c6803..5fa57ac 100644
  
      public void setInjectedJavaScriptObject(String obj) {
 diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
-index 0287e1c..5c78d82 100644
+index 0287e1c..e29eed5 100644
 --- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
 +++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
 @@ -2,6 +2,7 @@ package com.reactnativecommunity.webview;
@@ -243,7 +243,7 @@ index 0287e1c..5c78d82 100644
  import android.net.http.SslError;
  import android.os.Build;
  import android.os.SystemClock;
-@@ -35,7 +36,22 @@ import com.reactnativecommunity.webview.events.TopShouldStartLoadWithRequestEven
+@@ -35,7 +36,24 @@ import com.reactnativecommunity.webview.events.TopShouldStartLoadWithRequestEven
  import android.webkit.CookieManager;
  import android.webkit.CookieSyncManager;
  
@@ -256,9 +256,11 @@ index 0287e1c..5c78d82 100644
 +import java.io.InputStream;
 +import java.net.URI;
 +import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
 +import java.util.Collections;
 +import java.util.HashMap;
 +import java.util.LinkedHashMap;
++import java.util.List;
 +import java.util.Locale;
 +import java.util.Map;
  import java.util.concurrent.atomic.AtomicReference;
@@ -266,7 +268,7 @@ index 0287e1c..5c78d82 100644
  
  public class RNCWebViewClient extends WebViewClient {
      private static String TAG = "RNCWebViewClient";
-@@ -90,9 +106,47 @@ public class RNCWebViewClient extends WebViewClient {
+@@ -90,9 +108,47 @@ public class RNCWebViewClient extends WebViewClient {
        reactWebView.callInjectedJavaScriptBeforeContentLoaded();
      }
  
@@ -314,7 +316,7 @@ index 0287e1c..5c78d82 100644
          final boolean isJsDebugging = rncWebView.getReactApplicationContext().getJavaScriptContextHolder().get() == 0;
  
          if (!isJsDebugging && rncWebView.mMessagingJSModule != null) {
-@@ -102,6 +156,9 @@ public class RNCWebViewClient extends WebViewClient {
+@@ -102,6 +158,9 @@ public class RNCWebViewClient extends WebViewClient {
  
              final WritableMap event = createWebViewEvent(view, url);
              event.putDouble("lockIdentifier", lockIdentifier);
@@ -324,7 +326,7 @@ index 0287e1c..5c78d82 100644
              rncWebView.dispatchDirectShouldStartLoadWithRequest(event);
  
              try {
-@@ -132,9 +189,13 @@ public class RNCWebViewClient extends WebViewClient {
+@@ -132,9 +191,13 @@ public class RNCWebViewClient extends WebViewClient {
              progressChangedFilter.setWaitingForCommandLoadUrl(true);
  
              int reactTag = RNCWebViewWrapper.getReactTagFromWebView(view);
@@ -339,7 +341,7 @@ index 0287e1c..5c78d82 100644
              return true;
          }
      }
-@@ -143,7 +204,12 @@ public class RNCWebViewClient extends WebViewClient {
+@@ -143,7 +206,12 @@ public class RNCWebViewClient extends WebViewClient {
      @Override
      public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
          final String url = request.getUrl().toString();
@@ -353,7 +355,7 @@ index 0287e1c..5c78d82 100644
      }
  
      @Override
-@@ -327,4 +393,403 @@ public class RNCWebViewClient extends WebViewClient {
+@@ -327,4 +395,436 @@ public class RNCWebViewClient extends WebViewClient {
      public void setProgressChangedFilter(RNCWebView.ProgressChangedFilter filter) {
          progressChangedFilter = filter;
      }
@@ -372,6 +374,11 @@ index 0287e1c..5c78d82 100644
 +     * "." or ".." segments, encoded separators, and any path that resolves outside
 +     * the root once symlinks are followed.
 +     *
++     * One path is not the bundle's: /.mentra/files/&lt;name&gt; is the file &lt;name&gt;
++     * directly inside the package's own files directory (the files the host
++     * stores for it, such as its photos), when the origin has one. The same
++     * rules apply there, and a bundle's own .mentra/files folder is never served.
++     *
 +     * Plain Java with no Android types, so it is tested on the JVM
 +     * (mobile/scripts/test-webview-miniapp-origin-android.sh extracts it). It is
 +     * nested here because bun 1.3 cannot apply a patch that adds a file this deep
@@ -379,6 +386,8 @@ index 0287e1c..5c78d82 100644
 +     */
 +    public static final class MiniappOrigin {
 +        public static final String HOST_SUFFIX = ".miniapp.invalid";
++        /** The path the package's own files are served under; never the bundle's. */
++        public static final String FILES_PATH = "/.mentra/files/";
 +
 +        private static final Pattern PACKAGE_NAME = Pattern.compile("^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$");
 +        private static final int MAX_LABEL = 63;
@@ -429,15 +438,27 @@ index 0287e1c..5c78d82 100644
 +        /** This package's host, or null when the package name can't have one (it then serves nothing). */
 +        public final String host;
 +        private final String rootDir;
++        private final String filesDir;
 +
 +        /**
 +         * @param packageName the miniapp's package name
 +         * @param rootDir the active version's bundle root: an absolute path or a file:// URL
 +         */
 +        public MiniappOrigin(String packageName, String rootDir) {
++            this(packageName, rootDir, null);
++        }
++
++        /**
++         * @param packageName the miniapp's package name
++         * @param rootDir the active version's bundle root: an absolute path or a file:// URL
++         * @param filesDir the package's own files directory, served under {@link #FILES_PATH}:
++         *     an absolute path or a file:// URL, or null to serve none
++         */
++        public MiniappOrigin(String packageName, String rootDir, String filesDir) {
 +            this.packageName = packageName;
 +            this.host = hostForPackage(packageName);
 +            this.rootDir = rootDir;
++            this.filesDir = filesDir;
 +        }
 +
 +        /** The host for a package, or null when the name is invalid or the host would break DNS limits. */
@@ -475,8 +496,9 @@ index 0287e1c..5c78d82 100644
 +        }
 +
 +        /**
-+         * The file a request names inside the root, with symlinks resolved, or null
-+         * when this package doesn't serve it.
++         * The file a request names inside the root (or, under {@link #FILES_PATH}, the
++         * files directory), with symlinks resolved, or null when this package doesn't
++         * serve it.
 +         */
 +        public File resolve(String scheme, String requestHost, int port, String userInfo, String encodedPath) {
 +            if (host == null || scheme == null || !scheme.equalsIgnoreCase("https") || requestHost == null
@@ -490,11 +512,7 @@ index 0287e1c..5c78d82 100644
 +            if (lowerPath.contains("%2f") || lowerPath.contains("%5c") || lowerPath.contains("%00") || encodedPath.indexOf('\\') >= 0) {
 +                return null;
 +            }
-+            File root = canonicalRoot();
-+            if (root == null) {
-+                return null;
-+            }
-+            File file = root;
++            List<String> segments = new ArrayList<>();
 +            for (String segment : encodedPath.split("/", -1)) {
 +                if (segment.isEmpty()) {
 +                    continue;
@@ -504,7 +522,24 @@ index 0287e1c..5c78d82 100644
 +                        || decoded.indexOf('/') >= 0 || decoded.indexOf('\\') >= 0 || decoded.indexOf('\0') >= 0) {
 +                    return null;
 +                }
-+                file = new File(file, decoded);
++                segments.add(decoded);
++            }
++            // Decided on the decoded segments, so no spelling of the path reaches the bundle's folder of that name.
++            boolean ownFiles = segments.size() >= 2 && segments.get(0).equals(".mentra") && segments.get(1).equals("files");
++            if (ownFiles) {
++                // The files directory is flat: exactly one name.
++                if (segments.size() != 3) {
++                    return null;
++                }
++                segments = segments.subList(2, 3);
++            }
++            File root = canonicalDirectory(ownFiles ? filesDir : rootDir);
++            if (root == null) {
++                return null;
++            }
++            File file = root;
++            for (String segment : segments) {
++                file = new File(file, segment);
 +            }
 +            if (file == root) {
 +                return null;
@@ -644,14 +679,14 @@ index 0287e1c..5c78d82 100644
 +            return true;
 +        }
 +
-+        private File canonicalRoot() {
-+            if (rootDir == null || rootDir.isEmpty()) {
++        private static File canonicalDirectory(String directory) {
++            if (directory == null || directory.isEmpty()) {
 +                return null;
 +            }
-+            String path = rootDir;
-+            if (rootDir.regionMatches(true, 0, "file:", 0, 5)) {
++            String path = directory;
++            if (directory.regionMatches(true, 0, "file:", 0, 5)) {
 +                try {
-+                    path = new URI(rootDir).getPath();
++                    path = new URI(directory).getPath();
 +                } catch (Exception e) {
 +                    return null;
 +                }
@@ -760,7 +795,7 @@ index 0287e1c..5c78d82 100644
 +    // END MiniappOrigin
 +}
 diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
-index f83033b..bf89436 100644
+index f83033b..f9ab4e2 100644
 --- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 +++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 @@ -269,6 +269,9 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
@@ -773,7 +808,7 @@ index f83033b..bf89436 100644
          mPendingSource?.let { source ->
              loadSource(viewWrapper, source)
          }
-@@ -366,7 +369,24 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+@@ -366,7 +369,25 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
      }
  
      fun setAllowUniversalAccessFromFileURLs(viewWrapper: RNCWebViewWrapper, allow: Boolean) {
@@ -791,15 +826,16 @@ index f83033b..bf89436 100644
 +        val view = viewWrapper.webView
 +        val packageName = if (value != null && value.hasKey("packageName")) value.getString("packageName") else null
 +        val rootDir = if (value != null && value.hasKey("rootDir")) value.getString("rootDir") else null
++        val filesDir = if (value != null && value.hasKey("filesDir")) value.getString("filesDir") else null
 +        if (packageName.isNullOrEmpty()) {
 +            view.setMiniappOrigin(null)
 +        } else {
-+            view.setMiniappOrigin(RNCWebViewClient.MiniappOrigin(packageName, rootDir))
++            view.setMiniappOrigin(RNCWebViewClient.MiniappOrigin(packageName, rootDir, filesDir?.takeIf { it.isNotEmpty() }))
 +        }
      }
  
      private fun getDownloadingMessageOrDefault(): String? {
-@@ -387,7 +407,11 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+@@ -387,7 +408,11 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
          if (source != null) {
              if (source.hasKey("html")) {
                  val html = source.getString("html")
@@ -812,7 +848,7 @@ index f83033b..bf89436 100644
                  view.loadDataWithBaseURL(
                      baseUrl,
                      html!!,
-@@ -403,6 +427,12 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+@@ -403,6 +428,12 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
                  if (previousUrl != null && previousUrl == url) {
                      return
                  }
@@ -825,7 +861,7 @@ index f83033b..bf89436 100644
                  if (source.hasKey("method")) {
                      val method = source.getString("method")
                      if (method.equals(HTTP_METHOD_POST, ignoreCase = true)) {
-@@ -494,7 +524,11 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+@@ -494,7 +525,11 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
  
      fun setInjectedJavaScriptBeforeContentLoaded(viewWrapper: RNCWebViewWrapper, value: String?) {
          val view = viewWrapper.webView
@@ -838,7 +874,7 @@ index f83033b..bf89436 100644
      }
  
      fun setInjectedJavaScriptForMainFrameOnly(viewWrapper: RNCWebViewWrapper, value: Boolean) {
-@@ -549,12 +583,14 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+@@ -549,12 +584,14 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
  
      fun setAllowFileAccess(viewWrapper: RNCWebViewWrapper, allowFileAccess: Boolean) {
          val view = viewWrapper.webView
@@ -892,10 +928,10 @@ index 974337f..986d674 100644
          mRNCWebViewManagerImpl.setCacheEnabled(view, value);
 diff --git a/apple/RNCMiniappSchemeHandler.h b/apple/RNCMiniappSchemeHandler.h
 new file mode 100644
-index 0000000..25bd566
+index 0000000..fc42158
 --- /dev/null
 +++ b/apple/RNCMiniappSchemeHandler.h
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,75 @@
 +/**
 + * MentraOS patch: serves one miniapp package's files to its WebView.
 + *
@@ -904,6 +940,11 @@ index 0000000..25bd566
 + * package's host, "." or ".." segments, encoded separators, and any path that
 + * resolves outside rootDir once symlinks are followed. Responses carry a
 + * content type from the file extension and Cache-Control: no-store.
++ *
++ * One path is not the bundle's: /.mentra/files/<name> is the file <name>
++ * directly inside filesDir, the package's own files directory (the files the
++ * host stores for it, such as its photos), when the handler has one. The same
++ * rules apply there, and a bundle's own .mentra/files folder is never served.
 + */
 +
 +#import <Foundation/Foundation.h>
@@ -923,20 +964,30 @@ index 0000000..25bd566
 +
 +@interface RNCMiniappSchemeHandler : NSObject <WKURLSchemeHandler>
 +
-+- (instancetype)initWithPackageName:(NSString *)packageName rootDir:(nullable NSString *)rootDir NS_DESIGNATED_INITIALIZER;
++- (instancetype)initWithPackageName:(NSString *)packageName
++                            rootDir:(nullable NSString *)rootDir
++                           filesDir:(nullable NSString *)filesDir NS_DESIGNATED_INITIALIZER;
++- (instancetype)initWithPackageName:(NSString *)packageName rootDir:(nullable NSString *)rootDir;
 +- (instancetype)init NS_UNAVAILABLE;
 +
 +@property (atomic, copy, readonly) NSString *packageName;
 +/** The active version's bundle root: an absolute path or a file:// URL. Updated in place when the version changes. */
 +@property (atomic, copy, nullable) NSString *rootDir;
++/** The package's own files directory, served under /.mentra/files/: an absolute path or a file:// URL, or nil to serve none. */
++@property (atomic, copy, nullable) NSString *filesDir;
 +
 +/** Package names follow the miniapp rule: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ */
 ++ (BOOL)isValidPackageName:(nullable NSString *)packageName;
 +
 +/**
-+ * The regular file `url` names inside `rootDir`, with symlinks resolved, or
-+ * nil when this package doesn't serve it.
++ * The regular file `url` names inside `rootDir` (or, under /.mentra/files/,
++ * directly inside `filesDir`), with symlinks resolved, or nil when this
++ * package doesn't serve it.
 + */
+++ (nullable NSString *)resolveFileForURL:(nullable NSURL *)url
++                             packageName:(nullable NSString *)packageName
++                                 rootDir:(nullable NSString *)rootDir
++                                filesDir:(nullable NSString *)filesDir;
 ++ (nullable NSString *)resolveFileForURL:(nullable NSURL *)url
 +                             packageName:(nullable NSString *)packageName
 +                                 rootDir:(nullable NSString *)rootDir;
@@ -947,6 +998,10 @@ index 0000000..25bd566
 +/** The full response to `request`, read from disk. Safe to call off the main thread. */
 ++ (RNCMiniappResponse *)responseForRequest:(NSURLRequest *)request
 +                               packageName:(nullable NSString *)packageName
++                                   rootDir:(nullable NSString *)rootDir
++                                  filesDir:(nullable NSString *)filesDir;
+++ (RNCMiniappResponse *)responseForRequest:(NSURLRequest *)request
++                               packageName:(nullable NSString *)packageName
 +                                   rootDir:(nullable NSString *)rootDir;
 +
 +@end
@@ -954,10 +1009,10 @@ index 0000000..25bd566
 +NS_ASSUME_NONNULL_END
 diff --git a/apple/RNCMiniappSchemeHandler.m b/apple/RNCMiniappSchemeHandler.m
 new file mode 100644
-index 0000000..263bbbb
+index 0000000..0e9a1c6
 --- /dev/null
 +++ b/apple/RNCMiniappSchemeHandler.m
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,407 @@
 +/**
 + * MentraOS patch: serves one miniapp package's files to its WebView.
 + * See RNCMiniappSchemeHandler.h.
@@ -1030,9 +1085,15 @@ index 0000000..263bbbb
 +
 +- (instancetype)initWithPackageName:(NSString *)packageName rootDir:(NSString *)rootDir
 +{
++  return [self initWithPackageName:packageName rootDir:rootDir filesDir:nil];
++}
++
++- (instancetype)initWithPackageName:(NSString *)packageName rootDir:(NSString *)rootDir filesDir:(NSString *)filesDir
++{
 +  if ((self = [super init])) {
 +    _packageName = [packageName copy];
 +    _rootDir = [rootDir copy];
++    _filesDir = [filesDir copy];
 +    _activeTasks = [NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory | NSPointerFunctionsObjectPointerPersonality];
 +    _ioQueue = dispatch_queue_create("com.reactnativecommunity.webview.miniapp-origin", DISPATCH_QUEUE_SERIAL);
 +  }
@@ -1053,6 +1114,14 @@ index 0000000..263bbbb
 +}
 +
 ++ (NSString *)resolveFileForURL:(NSURL *)url packageName:(NSString *)packageName rootDir:(NSString *)rootDir
++{
++  return [self resolveFileForURL:url packageName:packageName rootDir:rootDir filesDir:nil];
++}
++
+++ (NSString *)resolveFileForURL:(NSURL *)url
++                    packageName:(NSString *)packageName
++                        rootDir:(NSString *)rootDir
++                       filesDir:(NSString *)filesDir
 +{
 +  if (url == nil || ![self isValidPackageName:packageName]) {
 +    return nil;
@@ -1076,11 +1145,7 @@ index 0000000..263bbbb
 +    return nil;
 +  }
 +
-+  NSString *rootPath = RNCMiniappRealPath(RNCMiniappRootPath(rootDir));
-+  if (rootPath == nil) {
-+    return nil;
-+  }
-+  NSMutableArray<NSString *> *pathParts = [NSMutableArray arrayWithObject:rootPath];
++  NSMutableArray<NSString *> *segments = [NSMutableArray array];
 +  for (NSString *segment in [rawPath componentsSeparatedByString:@"/"]) {
 +    if (segment.length == 0) {
 +      continue;
@@ -1091,11 +1156,23 @@ index 0000000..263bbbb
 +        [decoded rangeOfString:@"\0"].location != NSNotFound) {
 +      return nil;
 +    }
-+    [pathParts addObject:decoded];
++    [segments addObject:decoded];
 +  }
-+  if (pathParts.count < 2) {
++  // Decided on the decoded segments, so no spelling of the path reaches the bundle's folder of that name.
++  BOOL ownFiles = segments.count >= 2 && [segments[0] isEqualToString:@".mentra"] && [segments[1] isEqualToString:@"files"];
++  if (ownFiles) {
++    // The files directory is flat: exactly one name.
++    if (segments.count != 3) {
++      return nil;
++    }
++    [segments removeObjectsInRange:NSMakeRange(0, 2)];
++  }
++  NSString *rootPath = RNCMiniappRealPath(RNCMiniappRootPath(ownFiles ? filesDir : rootDir));
++  if (rootPath == nil || segments.count == 0) {
 +    return nil;
 +  }
++  NSMutableArray<NSString *> *pathParts = [NSMutableArray arrayWithObject:rootPath];
++  [pathParts addObjectsFromArray:segments];
 +
 +  NSString *filePath = RNCMiniappRealPath([NSString pathWithComponents:pathParts]);
 +  NSString *rootPrefix = [rootPath hasSuffix:@"/"] ? rootPath : [rootPath stringByAppendingString:@"/"];
@@ -1232,12 +1309,20 @@ index 0000000..263bbbb
 +
 ++ (RNCMiniappResponse *)responseForRequest:(NSURLRequest *)request packageName:(NSString *)packageName rootDir:(NSString *)rootDir
 +{
++  return [self responseForRequest:request packageName:packageName rootDir:rootDir filesDir:nil];
++}
++
+++ (RNCMiniappResponse *)responseForRequest:(NSURLRequest *)request
++                               packageName:(NSString *)packageName
++                                   rootDir:(NSString *)rootDir
++                                  filesDir:(NSString *)filesDir
++{
 +  NSString *method = request.HTTPMethod.uppercaseString ?: @"GET";
 +  BOOL head = [method isEqualToString:@"HEAD"];
 +  if (!head && ![method isEqualToString:@"GET"]) {
 +    return [self errorResponse:405 extraHeaders:@{@"Allow" : @"GET, HEAD"}];
 +  }
-+  NSString *filePath = [self resolveFileForURL:request.URL packageName:packageName rootDir:rootDir];
++  NSString *filePath = [self resolveFileForURL:request.URL packageName:packageName rootDir:rootDir filesDir:filesDir];
 +  if (filePath == nil) {
 +    return [self errorResponse:404 extraHeaders:nil];
 +  }
@@ -1300,10 +1385,11 @@ index 0000000..263bbbb
 +  NSURLRequest *request = urlSchemeTask.request;
 +  NSString *packageName = self.packageName;
 +  NSString *rootDir = self.rootDir;
++  NSString *filesDir = self.filesDir;
 +  [_activeTasks addObject:urlSchemeTask];
 +  __weak RNCMiniappSchemeHandler *weakSelf = self;
 +  dispatch_async(_ioQueue, ^{
-+    RNCMiniappResponse *response = [RNCMiniappSchemeHandler responseForRequest:request packageName:packageName rootDir:rootDir];
++    RNCMiniappResponse *response = [RNCMiniappSchemeHandler responseForRequest:request packageName:packageName rootDir:rootDir filesDir:filesDir];
 +    dispatch_async(dispatch_get_main_queue(), ^{
 +      RNCMiniappSchemeHandler *strongSelf = weakSelf;
 +      // WebKit throws if a stopped task is answered.
@@ -1335,22 +1421,23 @@ index 0000000..263bbbb
 +
 +@end
 diff --git a/apple/RNCWebView.mm b/apple/RNCWebView.mm
-index 95c0fcc..9d985c7 100644
+index 95c0fcc..336af88 100644
 --- a/apple/RNCWebView.mm
 +++ b/apple/RNCWebView.mm
-@@ -359,6 +359,19 @@ - (void)updateProps:(Props::Shared const &)props oldProps:(Props::Shared const &
+@@ -359,6 +359,20 @@ auto stringToOnLoadingFinishNavigationTypeEnum(std::string value) {
          [_view setContentInset: edgesInsets];
      }
  
 +    // MentraOS patch: applied before the source below, so a new origin is in
 +    // place before its page loads.
-+    if (oldViewProps.miniappOrigin.packageName != newViewProps.miniappOrigin.packageName || oldViewProps.miniappOrigin.rootDir != newViewProps.miniappOrigin.rootDir) {
++    if (oldViewProps.miniappOrigin.packageName != newViewProps.miniappOrigin.packageName || oldViewProps.miniappOrigin.rootDir != newViewProps.miniappOrigin.rootDir || oldViewProps.miniappOrigin.filesDir != newViewProps.miniappOrigin.filesDir) {
 +        if (newViewProps.miniappOrigin.packageName.empty()) {
 +            [_view setMiniappOrigin:nil];
 +        } else {
 +            [_view setMiniappOrigin:@{
 +                @"packageName": RCTNSStringFromString(newViewProps.miniappOrigin.packageName),
-+                @"rootDir": RCTNSStringFromString(newViewProps.miniappOrigin.rootDir)
++                @"rootDir": RCTNSStringFromString(newViewProps.miniappOrigin.rootDir),
++                @"filesDir": RCTNSStringFromString(newViewProps.miniappOrigin.filesDir)
 +            }];
 +        }
 +    }
@@ -1377,7 +1464,7 @@ index 1f6bbfd..0d73e17 100644
  @property (nonatomic, assign) BOOL pullToRefreshEnabled;
  @property (nonatomic, assign) BOOL refreshControlLightMode;
 diff --git a/apple/RNCWebViewImpl.m b/apple/RNCWebViewImpl.m
-index 7f5c24d..aba891f 100644
+index 7f5c24d..56efeb7 100644
 --- a/apple/RNCWebViewImpl.m
 +++ b/apple/RNCWebViewImpl.m
 @@ -9,6 +9,7 @@
@@ -1388,18 +1475,19 @@ index 7f5c24d..aba891f 100644
  #if !TARGET_OS_OSX
  #import <UIKit/UIKit.h>
  #else
-@@ -152,6 +153,10 @@ @implementation RNCWebViewImpl
+@@ -152,6 +153,11 @@ RCTAutoInsetsProtocol>
  #if defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 130000 /* __IPHONE_13_0 */
    BOOL _savedAutomaticallyAdjustsScrollIndicatorInsets;
  #endif
 +  // MentraOS patch: the miniapp origin this WebView serves (see miniappOrigin).
 +  NSString *_miniappPackageName;
 +  NSString *_miniappRootDir;
++  NSString *_miniappFilesDir;
 +  RNCMiniappSchemeHandler *_miniappSchemeHandler;
  }
  
  - (instancetype)initWithFrame:(CGRect)frame
-@@ -437,12 +442,20 @@ - (WKWebViewConfiguration *)setUpWkWebViewConfig
+@@ -437,12 +443,20 @@ RCTAutoInsetsProtocol>
      }
    }
  #endif
@@ -1413,7 +1501,7 @@ index 7f5c24d..aba891f 100644
 +  // file-access props say, and its files come only from its scheme handler.
 +  _miniappSchemeHandler = nil;
 +  if (_miniappPackageName != nil) {
-+    _miniappSchemeHandler = [[RNCMiniappSchemeHandler alloc] initWithPackageName:_miniappPackageName rootDir:_miniappRootDir];
++    _miniappSchemeHandler = [[RNCMiniappSchemeHandler alloc] initWithPackageName:_miniappPackageName rootDir:_miniappRootDir filesDir:_miniappFilesDir];
 +    [wkWebViewConfig setURLSchemeHandler:_miniappSchemeHandler forURLScheme:RNCMiniappOriginScheme];
 +  } else {
 +    if (_allowUniversalAccessFromFileURLs) {
@@ -1426,7 +1514,7 @@ index 7f5c24d..aba891f 100644
    }
    if (_javaScriptCanOpenWindowsAutomatically) {
      [prefs setValue:@TRUE forKey:@"javaScriptCanOpenWindowsAutomatically"];
-@@ -813,6 +826,66 @@ - (void)setAllowingReadAccessToURL:(NSString *)allowingReadAccessToURL
+@@ -813,6 +827,72 @@ RCTAutoInsetsProtocol>
    }
  }
  
@@ -1442,14 +1530,19 @@ index 7f5c24d..aba891f 100644
 +{
 +  NSString *packageName = [RCTConvert NSString:miniappOrigin[@"packageName"]];
 +  NSString *rootDir = [RCTConvert NSString:miniappOrigin[@"rootDir"]];
++  NSString *filesDir = [RCTConvert NSString:miniappOrigin[@"filesDir"]];
 +  if (packageName.length == 0) {
 +    packageName = nil;
 +    rootDir = nil;
 +  }
-+  _miniappOrigin = packageName ? @{@"packageName": packageName, @"rootDir": rootDir ?: @""} : nil;
++  if (packageName == nil || filesDir.length == 0) {
++    filesDir = nil;
++  }
++  _miniappOrigin = packageName ? @{@"packageName": packageName, @"rootDir": rootDir ?: @"", @"filesDir": filesDir ?: @""} : nil;
 +  BOOL packageChanged = !(packageName == _miniappPackageName || [packageName isEqualToString:_miniappPackageName]);
 +  _miniappPackageName = [packageName copy];
 +  _miniappRootDir = [rootDir copy];
++  _miniappFilesDir = [filesDir copy];
 +  if (_webView == nil) {
 +    return;
 +  }
@@ -1457,6 +1550,7 @@ index 7f5c24d..aba891f 100644
 +    [self rebuildWebViewForMiniappOrigin];
 +  } else {
 +    _miniappSchemeHandler.rootDir = _miniappRootDir;
++    _miniappSchemeHandler.filesDir = _miniappFilesDir;
 +  }
 +}
 +
@@ -1493,7 +1587,7 @@ index 7f5c24d..aba891f 100644
  - (void)setContentInset:(UIEdgeInsets)contentInset
  {
  #if !TARGET_OS_OSX
-@@ -839,7 +912,7 @@ - (void)visitSource
+@@ -839,7 +919,7 @@ RCTAutoInsetsProtocol>
    NSString *html = [RCTConvert NSString:_source[@"html"]];
    if (html) {
      NSURL *baseURL = [RCTConvert NSURL:_source[@"baseUrl"]];
@@ -1502,7 +1596,7 @@ index 7f5c24d..aba891f 100644
        baseURL = [NSURL URLWithString:@"about:blank"];
      }
      [_webView loadHTMLString:html baseURL:baseURL];
-@@ -857,6 +930,12 @@ - (void)visitSource
+@@ -857,6 +937,12 @@ RCTAutoInsetsProtocol>
    NSURLRequest *request = [self requestForSource:_source];
    __weak WKWebView *webView = _webView;
    NSString *allowingReadAccessToURL = _allowingReadAccessToURL;
@@ -1515,7 +1609,7 @@ index 7f5c24d..aba891f 100644
  
    [self syncCookiesToWebView:^{
      // Add observer to sync cookies from webview to sharedHTTPCookieStorage
-@@ -1348,6 +1427,12 @@ - (void)                  webView:(WKWebView *)webView
+@@ -1348,6 +1434,12 @@ RCTAutoInsetsProtocol>
      BOOL isTopFrame = [request.URL isEqual:request.mainDocumentURL];
      BOOL hasTargetFrame = navigationAction.targetFrame != nil;
  
@@ -1528,7 +1622,7 @@ index 7f5c24d..aba891f 100644
      if (_onOpenWindow && !hasTargetFrame) {
        // When OnOpenWindow should be called, we want to prevent the navigation
        // If not prevented, the `decisionHandler` is called first and after that `createWebViewWithConfiguration` is called
-@@ -1615,6 +1700,9 @@ - (void)reload
+@@ -1615,6 +1707,9 @@ didFinishNavigation:(WKNavigation *)navigation
     */
    NSURLRequest *request = [self requestForSource:self.source];
  
@@ -1542,7 +1636,7 @@ diff --git a/apple/RNCWebViewManager.mm b/apple/RNCWebViewManager.mm
 index f8f375f..3439fad 100644
 --- a/apple/RNCWebViewManager.mm
 +++ b/apple/RNCWebViewManager.mm
-@@ -78,6 +78,8 @@ - (RNCView *)view
+@@ -78,6 +78,8 @@ RCT_EXPORT_VIEW_PROPERTY(applicationNameForUserAgent, NSString)
  RCT_EXPORT_VIEW_PROPERTY(cacheEnabled, BOOL)
  RCT_EXPORT_VIEW_PROPERTY(allowsLinkPreview, BOOL)
  RCT_EXPORT_VIEW_PROPERTY(allowingReadAccessToURL, NSString)
@@ -1552,10 +1646,10 @@ index f8f375f..3439fad 100644
  
  #if defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000 /* __IPHONE_11_0 */
 diff --git a/lib/WebViewTypes.d.ts b/lib/WebViewTypes.d.ts
-index 998cc88..6d1a598 100644
+index 998cc88..9b44604 100644
 --- a/lib/WebViewTypes.d.ts
 +++ b/lib/WebViewTypes.d.ts
-@@ -180,6 +180,12 @@ export interface BasicAuthCredential {
+@@ -180,6 +180,18 @@ export interface BasicAuthCredential {
       */
      password: string;
  }
@@ -1564,11 +1658,17 @@ index 998cc88..6d1a598 100644
 +    packageName: string;
 +    /** The active version's bundle root: an absolute path or a file:// URL. */
 +    rootDir: string;
++    /**
++     * The miniapp's own files directory (an absolute path or a file:// URL). A
++     * file directly inside it is served at `/.mentra/files/<name>`, a path the
++     * bundle never serves. Omit it to serve none.
++     */
++    filesDir?: string;
 +}
  export interface CommonNativeWebViewProps extends ViewProps {
      cacheEnabled?: boolean;
      incognito?: boolean;
-@@ -209,6 +215,7 @@ export interface CommonNativeWebViewProps extends ViewProps {
+@@ -209,6 +221,7 @@ export interface CommonNativeWebViewProps extends ViewProps {
       */
      applicationNameForUserAgent?: string;
      basicAuthCredential?: BasicAuthCredential;
@@ -1576,7 +1676,7 @@ index 998cc88..6d1a598 100644
  }
  export declare type ContentInsetAdjustmentBehavior = 'automatic' | 'scrollableAxes' | 'never' | 'always';
  export declare type MediaCapturePermissionGrantType = 'grantIfSameHostElsePrompt' | 'grantIfSameHostElseDeny' | 'deny' | 'grant' | 'prompt';
-@@ -966,6 +973,18 @@ export interface WebViewSharedProps extends ViewProps {
+@@ -966,6 +979,18 @@ export interface WebViewSharedProps extends ViewProps {
       * Loads static html or a uri (with optional headers) in the WebView.
       */
      source?: WebViewSource;
@@ -1596,10 +1696,10 @@ index 998cc88..6d1a598 100644
       * Boolean value to enable JavaScript in the `WebView`. Used on Android only
       * as JavaScript is enabled by default on iOS. The default value is `true`.
 diff --git a/src/RNCWebViewNativeComponent.ts b/src/RNCWebViewNativeComponent.ts
-index 7f4e6c4..d9b5702 100644
+index 7f4e6c4..53c7a1d 100644
 --- a/src/RNCWebViewNativeComponent.ts
 +++ b/src/RNCWebViewNativeComponent.ts
-@@ -255,6 +255,11 @@ export interface NativeProps extends ViewProps {
+@@ -255,6 +255,12 @@ export interface NativeProps extends ViewProps {
      username: string;
      password: string;
    }>;
@@ -1607,15 +1707,16 @@ index 7f4e6c4..d9b5702 100644
 +  miniappOrigin?: Readonly<{
 +    packageName: string;
 +    rootDir: string;
++    filesDir?: string;
 +  }>;
    cacheEnabled?: WithDefault<boolean, true>;
    incognito?: boolean;
    injectedJavaScript?: string;
 diff --git a/src/WebViewTypes.ts b/src/WebViewTypes.ts
-index eca8141..c0a039d 100644
+index eca8141..e7a8b07 100644
 --- a/src/WebViewTypes.ts
 +++ b/src/WebViewTypes.ts
-@@ -287,6 +287,13 @@ export interface BasicAuthCredential {
+@@ -287,6 +287,19 @@ export interface BasicAuthCredential {
    password: string;
  }
  
@@ -1624,12 +1725,18 @@ index eca8141..c0a039d 100644
 +  packageName: string;
 +  /** The active version's bundle root: an absolute path or a file:// URL. */
 +  rootDir: string;
++  /**
++   * The miniapp's own files directory (an absolute path or a file:// URL). A
++   * file directly inside it is served at `/.mentra/files/<name>`, a path the
++   * bundle never serves. Omit it to serve none.
++   */
++  filesDir?: string;
 +}
 +
  export interface CommonNativeWebViewProps extends ViewProps {
    cacheEnabled?: boolean;
    incognito?: boolean;
-@@ -318,6 +325,7 @@ export interface CommonNativeWebViewProps extends ViewProps {
+@@ -318,6 +331,7 @@ export interface CommonNativeWebViewProps extends ViewProps {
     */
    applicationNameForUserAgent?: string;
    basicAuthCredential?: BasicAuthCredential;
@@ -1637,7 +1744,7 @@ index eca8141..c0a039d 100644
  }
  
  export declare type ContentInsetAdjustmentBehavior =
-@@ -1176,6 +1184,19 @@ export interface WebViewSharedProps extends ViewProps {
+@@ -1176,6 +1190,19 @@ export interface WebViewSharedProps extends ViewProps {
     */
    source?: WebViewSource;
  
