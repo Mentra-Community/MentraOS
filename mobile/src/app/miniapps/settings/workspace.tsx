@@ -49,7 +49,7 @@ export default function WorkspaceScreen() {
   return (
     <Screen preset="fixed">
       <Header title={translate("fleet:pageTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
-      <ScrollView className="px-6 pt-4" contentContainerClassName="gap-6 pb-16">
+      <ScrollView className="-mx-6 px-6 pt-4" contentContainerClassName="gap-6 pb-16">
         <View className="flex-row items-center gap-4" testID="workspace.header">
           <WorkspaceTile name={workspace.name} />
           <View className="flex-1">
