@@ -88,14 +88,21 @@ export function otaArtifactFailure(
       /\b(?:ENETDOWN|NSURLErrorNotConnectedToInternet)\b|Network is down|not connected to the Internet/i.test(text)
     )
       category = "internet"
-    else if (/\b(?:ETIMEDOUT|SocketTimeoutException)\b|timed? out/i.test(text)) category = "timeout"
+    else if (
+      /\b(?:ETIMEDOUT|SocketTimeoutException)\b|timed? out/i.test(text) ||
+      // RNFS on Android forwards a SocketTimeoutException as its bare message.
+      nativeErrors.some((entry) => /^timeout$/i.test(entry.message ?? ""))
+    )
+      category = "timeout"
     else if (/\b(?:SSLHandshakeException|SSLPeerUnverifiedException|CERTIFICATE_VERIFY_FAILED)\b/i.test(text))
       category = "secure_connection"
     else if (
-      /\b(?:ENETUNREACH|ECONNRESET|ECONNABORTED|EPIPE|UnknownHostException|EAI_NODATA|EAI_AGAIN)\b|Software caused connection abort|Connection reset|Unable to resolve host/i.test(
+      nativeErrors.some((entry) => entry.domain === "NSURLErrorDomain" && entry.code === "-1005") ||
+      /\b(?:ENETUNREACH|ECONNRESET|ECONNABORTED|EPIPE|UnknownHostException|EAI_NODATA|EAI_AGAIN)\b|Software caused connection abort|Connection reset|Unable to resolve host|unexpected end of stream|network connection was lost/i.test(
         text,
       )
     )
+      // "unexpected end of stream" is OkHttp's word for a server or CDN closing the body early.
       category = "connection"
   }
   return {...context, httpStatus, category, nativeErrors}

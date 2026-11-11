@@ -258,6 +258,7 @@ export async function prepareArtifacts(
   return prepared
 }
 
+const RESUMABLE = new Set<OtaArtifactFailure["category"]>(["connection", "internet", "timeout"])
 /** Resumes after a dropped connection, such as Android moving the default network to Wi-Fi. */
 const MAX_DOWNLOAD_RESUMES = 3
 const APPEND_CHUNK_BYTES = 4 * 1024 * 1024
@@ -316,8 +317,9 @@ async function downloadResumable(
         bytesWritten: written,
         contentLength: 0,
       })
-      // While Android switches networks, sockets abort and there can briefly be no route at all.
-      if (resumes >= MAX_DOWNLOAD_RESUMES || written === 0 || (category !== "connection" && category !== "internet")) {
+      // While Android switches networks, sockets abort and there can briefly be no route at all. On a slow
+      // link the server can also close the body early, or the read can stall past its timeout.
+      if (resumes >= MAX_DOWNLOAD_RESUMES || written === 0 || !RESUMABLE.has(category)) {
         throw error
       }
       console.warn(`[OTA_PROGRESS] artifact download dropped at ${written} bytes, resuming (${resumes + 1})`)
