@@ -1,0 +1,2 @@
+# The USB updater sources these from Git Bash. CRLF makes Bash stop on the first line.
+*.sh text eol=lf

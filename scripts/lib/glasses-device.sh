@@ -7,6 +7,18 @@ PKG_PROD="com.mentra.asg_client"
 PKG_THIRDPARTY="com.mentra.asg_client.thirdparty"
 MEDIA_ROOT_CURRENT="/storage/emulated/0/asg_media"
 
+# Git Bash (MSYS) rewrites arguments that look like POSIX paths into Windows
+# paths before handing them to native adb.exe, so an on-glasses path such as
+# /sys/block/mmcblk0/device/cid becomes C:/Program Files/Git/sys/... and the
+# read fails. Exclude the Android filesystem roots so device paths pass through
+# unchanged; host artifact paths (the firmware cache, APKs) still convert as adb
+# needs them to.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    export MSYS2_ARG_CONV_EXCL="${MSYS2_ARG_CONV_EXCL:+$MSYS2_ARG_CONV_EXCL;}/sys;/proc;/data;/storage;/sdcard;/mnt;/dev;/system;/vendor;/product;/metadata;/cache;/acct"
+    ;;
+esac
+
 # List serials that are in "device" state (one per line).
 list_ready_serials() {
   adb devices -l | awk 'NR>1 && $2=="device" {print $1}'
