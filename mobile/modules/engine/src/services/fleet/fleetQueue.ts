@@ -153,6 +153,11 @@ interface PartitionState {
   /** The partition's record keys in queue order. */
   keys: string[]
   nextSeq: number
+  /**
+   * True once `trimToCapacity` has gone through these keys: telemetry is inside its share and the whole inside its
+   * limit. It stays true because nothing but `enqueue` adds a key.
+   */
+  withinCapacity?: boolean
 }
 
 type LossKind = "dropped" | "expired"
@@ -421,15 +426,21 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
    * Keeps the partition inside its places: telemetry inside its share, and the whole inside 10,000, the oldest
    * telemetry going first. Only a queue full of other records drops the oldest record of all, as a coverage gap.
    */
-  function trimToCapacity(partition: string, state: PartitionState): void {
+  function trimToCapacity(partition: string, state: PartitionState, added: string): void {
+    // A partition already inside its places is still inside them when the record just added is not telemetry and
+    // did not take it past 10,000: there is nothing to evict. Going through every key to find that out on each
+    // enqueue made filling a queue quadratic in its length.
+    if (state.withinCapacity && state.keys.length <= FLEET_LIMITS.phoneQueueMaxRecords && !isTelemetryKey(partition, added)) return
     const telemetry = state.keys.filter((key) => isTelemetryKey(partition, key))
     while (telemetry.length > FLEET_TELEMETRY_LIMITS.queueShare) evictTelemetry(partition, state, telemetry.shift()!, "evicted")
     while (state.keys.length > FLEET_LIMITS.phoneQueueMaxRecords && telemetry.length > 0) evictTelemetry(partition, state, telemetry.shift()!, "evicted")
     const excess = state.keys.length - FLEET_LIMITS.phoneQueueMaxRecords
-    if (excess <= 0) return
-    const observedAts = state.keys.slice(0, excess).map((key) => readEntry(key)?.record.observedAt)
-    noteLosses(partition, "dropped", observedAts)
-    removeOldest(state, excess)
+    if (excess > 0) {
+      const observedAts = state.keys.slice(0, excess).map((key) => readEntry(key)?.record.observedAt)
+      noteLosses(partition, "dropped", observedAts)
+      removeOldest(state, excess)
+    }
+    state.withinCapacity = true
   }
 
   function readTelemetryLosses(partition: string): (FleetTelemetryLosses & {updatedAt: number}) | null {
@@ -511,9 +522,10 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
   return {
     enqueue(partition, record) {
       let state: PartitionState
+      let key: string
       try {
         state = load(partition)
-        const key = recordKey(partition, state.nextSeq, record.recordId)
+        key = recordKey(partition, state.nextSeq, record.recordId)
         store.set(key, JSON.stringify({enqueuedAt: now(), record}))
         state.keys.push(key)
         state.nextSeq += 1
@@ -524,7 +536,7 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
         else noteLosses(partition, "dropped", [record?.observedAt])
         return
       }
-      trimToCapacity(partition, state)
+      trimToCapacity(partition, state, key)
       persistIndex(partition, state)
     },
 
