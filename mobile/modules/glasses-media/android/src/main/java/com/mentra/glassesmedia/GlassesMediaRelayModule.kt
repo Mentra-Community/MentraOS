@@ -8,6 +8,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Base64
+import com.mentra.glassesmedia.grab.StreamFrameGrab
 import com.mentra.glassesmedia.trace.MediaLog
 import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.network.*
@@ -96,6 +97,29 @@ class GlassesMediaRelayModule : Module() {
     Function("pushOutgoingPcm") { attemptId: String, base64: String, sampleRate: Int, channels: Int ->
       val bytes = try { Base64.decode(base64, Base64.DEFAULT) } catch (_: IllegalArgumentException) { null }
       bytes != null && pcmInput.push(attemptId, bytes, sampleRate, channels)
+    }
+
+    // Milliseconds since this phone last decoded a glasses frame, or -1. Covers ACS calls too:
+    // they decode through the same receivers.
+    Function("streamFrameAgeMs") { -> StreamFrameGrab.frameAgeMs().toDouble() }
+
+    AsyncFunction("grabStreamFrame") { options: Map<String, Any?>, promise: Promise ->
+      val quality = ((options["quality"] as? Number)?.toInt() ?: 90).coerceIn(1, 100)
+      val timeoutMs = ((options["timeoutMs"] as? Number)?.toLong() ?: 1_500L).coerceIn(100L, 5_000L)
+      StreamFrameGrab.grab(quality, timeoutMs) { frame, reason ->
+        if (frame == null) {
+          promise.reject("STREAM_FRAME_UNAVAILABLE", reason ?: "unknown", null)
+        } else {
+          promise.resolve(
+            mapOf(
+              "base64" to Base64.encodeToString(frame.jpeg, Base64.NO_WRAP),
+              "width" to frame.width,
+              "height" to frame.height,
+              "bytes" to frame.jpeg.size,
+            ),
+          )
+        }
+      }
     }
 
     AsyncFunction("stop") { attemptId: String, promise: Promise ->

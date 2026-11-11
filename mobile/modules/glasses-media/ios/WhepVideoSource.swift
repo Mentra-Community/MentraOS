@@ -309,6 +309,8 @@ extension WhepVideoSource: RTCVideoRenderer {
       frameCount = 0
       lastFpsLog = now
     }
+    // Where a photo taken during this stream gets its frame.
+    StreamFrameGrab.shared.offer(buffer.pixelBuffer)
     onFrame?(buffer.pixelBuffer)
   }
 }

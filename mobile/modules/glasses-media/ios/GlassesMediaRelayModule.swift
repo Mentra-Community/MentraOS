@@ -89,6 +89,30 @@ public final class GlassesMediaRelayModule: Module {
             }
         }
 
+        // Milliseconds since this phone last decoded a glasses frame, or -1. Covers ACS calls
+        // too: they decode through the same receivers.
+        Function("streamFrameAgeMs") { () -> Double in
+            StreamFrameGrab.shared.frameAgeMs()
+        }
+
+        AsyncFunction("grabStreamFrame") { (options: [String: Any], promise: Promise) in
+            let quality = min(max((options["quality"] as? NSNumber)?.doubleValue ?? 90, 1), 100)
+            let timeoutMs = min(max((options["timeoutMs"] as? NSNumber)?.intValue ?? 1500, 100), 5000)
+            StreamFrameGrab.shared.grab(quality: quality / 100, timeoutMs: timeoutMs) { result in
+                switch result {
+                case let .success(frame):
+                    promise.resolve([
+                        "base64": frame.jpeg.base64EncodedString(),
+                        "width": frame.width,
+                        "height": frame.height,
+                        "bytes": frame.jpeg.count,
+                    ])
+                case let .failure(error):
+                    promise.reject("STREAM_FRAME_UNAVAILABLE", error.reason)
+                }
+            }
+        }
+
         AsyncFunction("stop") { (id: String, promise: Promise) in
             self.queue.async {
                 guard let session = self.session, session.id == id else { promise.resolve(nil); return }

@@ -1279,6 +1279,11 @@ class AcsMeetingService {
     this.photoPauseId = pauseId
   }
 
+  /** The call's owner paused the glasses stream to give the camera to a full-size photo. */
+  photoPauseHeld(): boolean {
+    return this.photoPauseId !== null
+  }
+
   clearPhotoPause(pauseId: string): void {
     if (this.photoPauseId === pauseId) this.photoPauseId = null
   }

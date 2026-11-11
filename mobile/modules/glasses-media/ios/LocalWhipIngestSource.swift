@@ -334,6 +334,8 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
             guard gen == generation, peer != nil, !stopping else { return }
             firstFrameSeen = true
             transition(.live, "first_frame")
+            // Where a photo taken during this stream gets its frame.
+            StreamFrameGrab.shared.offer(buffer)
             onFrame?(buffer)
         }
     }

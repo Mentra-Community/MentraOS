@@ -3973,6 +3973,8 @@ class LocalMiniappRuntime {
         mfnr: payload.mfnr as boolean | undefined,
         ispDigitalGain: payload.ispDigitalGain as number | undefined,
         ispAnalogGain: payload.ispAnalogGain as string | undefined,
+        // Call pauses its stream to take a full-size photo; a stream frame must not replace it.
+        streamFrame: !acsMeetingService.photoPauseHeld(),
       }
       // A request for local delivery gets the photo as one of the miniapp's own files and never
       // touches the cloud. Miniapps built before local delivery don't ask, and keep the cloud URL.
@@ -4020,6 +4022,7 @@ class LocalMiniappRuntime {
         durationMs: payload.durationMs as number | undefined,
         zsl: payload.zsl as boolean | undefined,
         mfnr: payload.mfnr as boolean | undefined,
+        streamFrame: !acsMeetingService.photoPauseHeld(),
       })
       this.sendResult(packageName, requestId, true)
     } catch (err) {

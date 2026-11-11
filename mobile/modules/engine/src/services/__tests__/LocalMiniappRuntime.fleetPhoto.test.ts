@@ -27,13 +27,14 @@ interface Taken {
 /** Events and results in the order they happened, so a test can say which came first. */
 const log: string[] = []
 
-function fixture(opts: {camera?: boolean; takePhoto?: () => Promise<Taken>} = {}) {
+function fixture(opts: {camera?: boolean; takePhoto?: () => Promise<Taken>; photoPauseHeld?: boolean} = {}) {
   const takePhoto = mock(
     opts.takePhoto ??
       (async () => ({photoUrl: "https://r2.test/p.jpg", mimeType: "image/jpeg", size: -1, requestId: "rq-77"})),
   )
   const Host = new Function(
     "phonePhotoCoordinator",
+    "acsMeetingService",
     "fleetEvents",
     "parsePhotoCompression",
     "logPermissionNotDeclared",
@@ -42,6 +43,7 @@ function fixture(opts: {camera?: boolean; takePhoto?: () => Promise<Taken>} = {}
     `${compiled}; return Host`,
   )(
     {takePhoto},
+    {photoPauseHeld: () => opts.photoPauseHeld === true},
     fleetEvents,
     (value: unknown) => value ?? "none",
     () => {},
@@ -126,5 +128,15 @@ describe("handlePhoto and Fleet", () => {
     } finally {
       console.warn = warn
     }
+  })
+
+  test("a photo during a stream may be a frame of it, unless the caller paused the stream for the camera", async () => {
+    const live = fixture()
+    await live.host.handlePhoto(PACKAGE, {}, "req-1")
+    expect(live.takePhoto.mock.calls[0]?.[1]).toMatchObject({streamFrame: true})
+
+    const paused = fixture({photoPauseHeld: true})
+    await paused.host.handlePhoto(PACKAGE, {}, "req-2")
+    expect(paused.takePhoto.mock.calls[0]?.[1]).toMatchObject({streamFrame: false})
   })
 })

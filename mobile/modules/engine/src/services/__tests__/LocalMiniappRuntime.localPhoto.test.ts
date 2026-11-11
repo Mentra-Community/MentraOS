@@ -23,7 +23,7 @@ class PhotoError extends Error {
   }
 }
 
-function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null} = {}) {
+function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; photoPauseHeld?: boolean} = {}) {
   const takePhoto = mock(async () => ({
     photoUrl: "https://r2.test/p.jpg",
     mimeType: "image/jpeg",
@@ -66,6 +66,7 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null} = {}
     "EXPIRING_BLOB_TTL_MS",
     "miniappFileUrl",
     "PHOTO_DATA_URL_MAX_BYTES",
+    "acsMeetingService",
     `${compiled}; return Host`,
   )(
     {takePhoto, takeLocalPhoto},
@@ -78,6 +79,7 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null} = {}
     30 * 60 * 1000,
     miniappFileUrl,
     1024 * 1024,
+    {photoPauseHeld: () => opts.photoPauseHeld === true},
   )
   const host = new Host()
   const results: Array<{ok: boolean; data?: unknown; error?: {code?: string; stage?: string}}> = []
@@ -90,6 +92,16 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null} = {}
 }
 
 describe("handlePhoto with local delivery", () => {
+  test("a photo for the phone may come from a relayed stream, unless Call paused the stream for it", async () => {
+    const f = fixture()
+    await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
+    expect(f.takeLocalPhoto).toHaveBeenCalledWith(PACKAGE, expect.objectContaining({streamFrame: true}))
+
+    const paused = fixture({photoPauseHeld: true})
+    await paused.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-2")
+    expect(paused.takeLocalPhoto).toHaveBeenCalledWith(PACKAGE, expect.objectContaining({streamFrame: false}))
+  })
+
   test("a request for local delivery gets an expiring blob, and no cloud photo is requested", async () => {
     const f = fixture()
     await f.host.handlePhoto(PACKAGE, {delivery: "local", size: "low", saveToGallery: true}, "req-1")

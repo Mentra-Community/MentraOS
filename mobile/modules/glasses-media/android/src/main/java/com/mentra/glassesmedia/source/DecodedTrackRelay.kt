@@ -1,5 +1,6 @@
 package com.mentra.glassesmedia.source
 
+import com.mentra.glassesmedia.grab.StreamFrameGrab
 import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.telemetry.PipelineStats
 import com.mentra.glassesmedia.video.FrameGeometry
@@ -60,6 +61,9 @@ class DecodedTrackRelay(
     }
     val buffer = frame.buffer
     stats.onFrameBuffer(classifyBuffer(buffer))
+    // Every phone-decoded glasses stream passes here, so this is where a photo taken during a
+    // stream gets its frame. One volatile write and one volatile read unless a photo is waiting.
+    StreamFrameGrab.offer(buffer, frame.rotation)
     val geometry = FrameGeometry.packSize(buffer.width, buffer.height, frame.rotation)
     if (geometry.rotationNonZero) {
       stats.onRotation()

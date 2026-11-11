@@ -780,3 +780,185 @@ describe("Fleet photo events", () => {
     }
   })
 })
+
+describe("a photo during a stream this phone relays", () => {
+  const FRAME = {base64: Buffer.from([0xff, 0xd8, 0x01, 0x02, 0xff, 0xd9]).toString("base64"), width: 1280, height: 720, bytes: 6}
+
+  function streaming(frame: typeof FRAME | null = FRAME) {
+    const grab = mock(async () => frame)
+    const upload = mock(async (_url: string, _jpeg: Uint8Array): Promise<void> => undefined)
+    const coord = new PhonePhotoCoordinator({isLive: () => true, grab}, upload)
+    return {coord, grab, upload}
+  }
+
+  test("the stream's next frame is the photo, and the glasses are never asked", async () => {
+    const {coord, upload} = streaming()
+    const result = await coord.takePhoto("com.a", {size: "max"})
+
+    expect(result).toEqual({photoUrl: PRESIGN.readUrl, mimeType: "image/jpeg", size: 6, requestId: "rq-test-1"})
+    expect(requestPhotoNative).not.toHaveBeenCalled()
+    expect(awaitManagedPhotoReady).not.toHaveBeenCalled()
+    expect(upload).toHaveBeenCalledTimes(1)
+    const [url, jpeg] = upload.mock.calls[0]!
+    expect(url).toBe(PRESIGN.uploadUrl)
+    expect([...jpeg]).toEqual([0xff, 0xd8, 0x01, 0x02, 0xff, 0xd9])
+  })
+
+  test("with no relayed stream the glasses take the photo as before", async () => {
+    const grab = mock(async () => FRAME)
+    const upload = mock(async (): Promise<void> => undefined)
+    const coord = new PhonePhotoCoordinator({isLive: () => false, grab}, upload)
+    const result = await coord.takePhoto("com.a", {})
+
+    expect(result.photoUrl).toBe("https://r2.test/signed")
+    expect(grab).not.toHaveBeenCalled()
+    expect(upload).not.toHaveBeenCalled()
+    expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+  })
+
+  test("a stream that stops before its next frame leaves the photo to the glasses", async () => {
+    const {coord, upload} = streaming(null)
+    await coord.takePhoto("com.a", {})
+
+    expect(upload).not.toHaveBeenCalled()
+    expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+  })
+
+  test("a caller that paused the stream for the camera gets the camera, not a frame", async () => {
+    const {coord, grab, upload} = streaming()
+    const result = await coord.takePhoto("com.a", {streamFrame: false})
+
+    expect(result.photoUrl).toBe("https://r2.test/signed")
+    expect(grab).not.toHaveBeenCalled()
+    expect(upload).not.toHaveBeenCalled()
+    expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+  })
+
+  test("a frame the store refuses fails the photo at upload, without falling back to the glasses", async () => {
+    const {coord, upload} = streaming()
+    upload.mockRejectedValueOnce(new Error("upload returned 403"))
+    const err = await expectPhotoError(coord.takePhoto("com.a", {}))
+
+    expect(err.code).toBe("PHONE_UPLOAD_FAILED")
+    expect(err.stage).toBe("upload")
+    expect(err.message).toContain("upload returned 403")
+    expect(requestPhotoNative).not.toHaveBeenCalled()
+  })
+
+  test("a presign failure is reported as one, frame or not", async () => {
+    const {coord, upload} = streaming()
+    startManagedPhoto.mockRejectedValueOnce(new Error("cloud down"))
+    const err = await expectPhotoError(coord.takePhoto("com.a", {}))
+
+    expect(err.code).toBe("PHOTO_REQUEST_FAILED")
+    expect(err.stage).toBe("presign")
+    expect(upload).not.toHaveBeenCalled()
+  })
+
+  test("disconnected glasses are refused before any frame is taken", async () => {
+    glassesState = {connection: {state: "disconnected"}}
+    const {coord, grab} = streaming()
+    const err = await expectPhotoError(coord.takePhoto("com.a", {}))
+
+    expect(err.code).toBe("GLASSES_NOT_CONNECTED")
+    expect(grab).not.toHaveBeenCalled()
+  })
+
+  test("fleet counts a stream photo as requested then captured, or failed", async () => {
+    const events: Array<Parameters<typeof fleetEvents.photo>[0]> = []
+    const stop = fleetEvents.subscribe({photo: (event) => events.push(event)})
+    try {
+      const {coord, upload} = streaming()
+      await coord.takePhoto("com.a", {})
+      expect(events.map((event) => event.stage)).toEqual(["requested", "captured"])
+
+      events.length = 0
+      upload.mockRejectedValueOnce(new Error("offline"))
+      await expectPhotoError(coord.takePhoto("com.a", {}))
+      expect(events.map((event) => event.stage)).toEqual(["requested", "failed"])
+    } finally {
+      stop()
+    }
+  })
+
+  describe("kept on the phone", () => {
+    function streamingLocally(frame: typeof FRAME | null = FRAME) {
+      const grab = mock(async () => frame)
+      const upload = mock(async (_url: string, _jpeg: Uint8Array): Promise<void> => undefined)
+      const save = mock((requestId: string, _jpeg: Uint8Array) => `file:///cache/stream-photo-${requestId}.jpg`)
+      const coord = new PhonePhotoCoordinator({isLive: () => true, grab}, upload, save)
+      return {coord, grab, upload, save}
+    }
+
+    test("the stream's next frame is saved as the photo, with no glasses or cloud request", async () => {
+      const {coord, upload, save} = streamingLocally()
+      const result = await coord.takeLocalPhoto("com.a", {size: "max"})
+
+      expect(save).toHaveBeenCalledTimes(1)
+      const [requestId, jpeg] = save.mock.calls[0]!
+      expect([...jpeg]).toEqual([0xff, 0xd8, 0x01, 0x02, 0xff, 0xd9])
+      expect(result).toEqual({
+        fileUri: `file:///cache/stream-photo-${requestId}.jpg`,
+        mimeType: "image/jpeg",
+        size: 6,
+        requestId,
+      })
+      expect(requestPhotoNative).not.toHaveBeenCalled()
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(upload).not.toHaveBeenCalled()
+      expect(coord.owns(result.requestId)).toBe(false)
+    })
+
+    test("a stream that stops before its next frame leaves the photo to the glasses", async () => {
+      const {coord, save} = streamingLocally(null)
+      requestPhotoNative.mockImplementation(async (req) => ({
+        type: "photo_response",
+        state: "success",
+        requestId: (req as {requestId: string}).requestId,
+        uploadUrl: "",
+        photoUrl: "file:///cache/mentra_local_photos/photo_1.jpg",
+        contentType: "image/jpeg",
+        fileSizeBytes: 61234,
+        timestamp: 1,
+      }))
+      const result = await coord.takeLocalPhoto("com.a", {})
+      expect(result.fileUri).toBe("file:///cache/mentra_local_photos/photo_1.jpg")
+      expect(save).not.toHaveBeenCalled()
+    })
+
+    test("a caller that paused the stream for the camera gets the camera, not a frame", async () => {
+      const {coord, grab, save} = streamingLocally()
+      requestPhotoNative.mockImplementation(async () => {
+        throw new Error("sent")
+      })
+      await expectPhotoError(coord.takeLocalPhoto("com.a", {streamFrame: false}))
+      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+      expect(grab).not.toHaveBeenCalled()
+      expect(save).not.toHaveBeenCalled()
+    })
+
+    test("a frame that can't be saved fails the photo at the save stage", async () => {
+      const {coord, save} = streamingLocally()
+      save.mockImplementation(() => {
+        throw new Error("disk full")
+      })
+      const err = await expectPhotoError(coord.takeLocalPhoto("com.a", {}))
+      expect(err.code).toBe("LOCAL_PHOTO_UNAVAILABLE")
+      expect(err.stage).toBe("save")
+      expect(err.message).toContain("disk full")
+      expect(requestPhotoNative).not.toHaveBeenCalled()
+    })
+  })
+
+  test("a warm-up is a no-op: the stream already has the camera open", async () => {
+    const {coord} = streaming()
+    await coord.warmUpCamera("com.a", {})
+    expect(warmUpCameraNative).not.toHaveBeenCalled()
+  })
+
+  test("a caller that paused the stream still warms the camera", async () => {
+    const {coord} = streaming()
+    await coord.warmUpCamera("com.a", {streamFrame: false})
+    expect(warmUpCameraNative).toHaveBeenCalledTimes(1)
+  })
+})

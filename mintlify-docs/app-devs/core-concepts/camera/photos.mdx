@@ -100,6 +100,24 @@ with `photo.url` on screen, or the bytes from `session.blob` everywhere else.
 The `transferMethod` option is gone: a photo for the phone always comes over
 Bluetooth.
 
+## Photos during a stream
+
+While the glasses stream video, their camera can't also take a photo. When the
+stream passes through the phone (a Teams call in Mentra Call, or a managed
+stream started with `ingest: "whip"`), `takePhoto()` returns the stream's next
+video frame instead. The stream doesn't pause, and any miniapp can do this, not
+only the one that started the stream.
+
+The frame differs from a camera photo:
+
+- It has the stream's resolution and exposure (720p for a Teams call). `size`,
+  `mode`, `compress` and the exposure options don't apply.
+- The glasses play no shutter sound and save nothing to their gallery.
+- `warmUp()` returns at once: the camera is already open.
+
+Any other stream (SRT, RTMP, or a `direct` stream, which the glasses send
+straight to the internet) still rejects `takePhoto()` with `CAMERA_BUSY`.
+
 ## Field of view
 
 `setFov` applies a temporary FOV/ROI override owned by the calling miniapp and
@@ -143,6 +161,7 @@ Wrap calls in `try`/`catch` and read `code`.
 |---|---|
 | `PERMISSION_NOT_DECLARED` | The miniapp didn't declare the `CAMERA` permission. |
 | `REQUEST_ABORTED` | The request timed out, or the session was torn down before it completed. |
+| `CAMERA_BUSY` | The glasses are streaming in a way the phone can't take a frame from, or another photo is in progress. See [Photos during a stream](#photos-during-a-stream). |
 | `INTERNAL` | The phone-side handler threw. The glasses have no camera, capture or transfer failed, or another device error occurred. Read `message`. |
 
 ```typescript

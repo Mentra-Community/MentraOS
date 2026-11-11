@@ -57,6 +57,29 @@ An attempt-specific ID isolates late callbacks and glasses status. Reconnect tea
 
 Device qualification for this outgoing pipeline must include Android and iPhone: audio/video playback on the provisioned WHEP URL, mute/video-only capture, last-subscriber stop, cancellation at each setup step, cellular/hotspot/BLE loss and recovery, repeated starts, screen-off/background operation and a sustained thermal/audio-sync run. Unit tests and platform compilation cover lifecycle/format contracts; they do not establish those hardware results.
 
+## Photos from a stream
+
+The glasses camera cannot take a photo while it streams. `StreamFrameGrab` (Android `grab/`,
+iOS `StreamFrameGrab.swift`) turns the next decoded frame of any stream this library receives
+into a JPEG, so a miniapp's `takePhoto()` keeps working during an ACS call or a managed WebRTC
+relay without pausing either.
+
+- The tap is where every receiver hands over a decoded frame: `DecodedTrackRelay` on Android,
+  before scaling, so the photo has the stream's resolution and not the size ACS negotiated down
+  to; `LocalWhipIngestSource` and `WhepVideoSource` on iOS.
+- Nothing is stored between photos. A request waits for the next frame, retains it, and encodes
+  on its own thread. With no request waiting, a frame costs one volatile write and one volatile
+  read on Android, and one uncontended lock on iOS.
+- `streamFrameAgeMs()` is how the host knows a stream is passing through the phone at all. With
+  no frame in the last second, the host sends the ordinary photo command, and glasses that are
+  streaming some other way (SRT, RTMP) answer `CAMERA_BUSY`.
+- Android applies the frame's rotation to the JPEG. iOS does not: its receivers drop rotation
+  before the frame reaches this library, as the relay's own publisher does.
+
+The host side is `PhonePhotoCoordinator` and `StreamFrameSource` in `@mentra/engine`. A caller
+that paused the stream to take a full-size photo (Mentra Call's photo pause) is given the camera,
+not a frame.
+
 ### Incoming OTA server and outgoing media clients
 
 Hotspot association verifies the glasses SSID and the Wi-Fi interface/address for

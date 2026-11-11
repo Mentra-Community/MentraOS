@@ -21,14 +21,22 @@
  * BLE, native saves it as a file, and the caller gets that file. It is where
  * photos are going (design_docs: platform/media/local-photos); takePhoto()'s
  * managed path stays for miniapps built before it.
+ *
+ * While this phone relays a glasses stream (a Teams call, a managed WebRTC
+ * stream) the glasses camera is taken, so on either path the photo is the
+ * stream's next decoded frame instead: no BLE command, and the phone uploads
+ * or saves the JPEG itself. See StreamFrameSource. Any other stream still gets
+ * the glasses' CAMERA_BUSY.
  */
 
 import {parsePhotoCompression, type PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
+import {Buffer} from "buffer"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {PhotoSize, PhotoTransferMethod} from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"
 import {fleetEvents} from "./fleet/fleetEvents"
 import {isGlassesConnected} from "./GlassesReadiness"
+import {nativeStreamFrames, type StreamFrame, type StreamFrameSource} from "./StreamFrameSource"
 import {useGlassesStore} from "../stores/glasses"
 
 interface PhotoResult {
@@ -73,6 +81,11 @@ export interface PhotoOpts {
   mfnr?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
+  /**
+   * False when the caller paused the stream to give the camera to this photo, so a frame from
+   * that stream must not stand in for it. Default true.
+   */
+  streamFrame?: boolean
 }
 
 export interface PhotoTaken {
@@ -136,6 +149,41 @@ interface ActiveRequest {
 export const CAPTURE_PIPELINE_TIMEOUT_MS = 45_000
 export const CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000
 export const CAMERA_WARM_UP_MAX_DURATION_MS = 300_000
+/** A stream frame is a few hundred kilobytes; a PUT slower than this has stalled. */
+export const STREAM_FRAME_UPLOAD_TIMEOUT_MS = 20_000
+
+/** PUT the JPEG to the managed-photo upload URL. Throws unless the store accepted it. */
+export type StreamFrameUpload = (uploadUrl: string, jpeg: Uint8Array) => Promise<void>
+
+const putStreamFrame: StreamFrameUpload = async (uploadUrl, jpeg) => {
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), STREAM_FRAME_UPLOAD_TIMEOUT_MS)
+  try {
+    // The content type is part of what the upload URL was signed for.
+    const response = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: {"Content-Type": "image/jpeg"},
+      // An exact-length copy: the view may sit inside a larger pooled buffer.
+      body: new Uint8Array(jpeg).buffer,
+      signal: abort.signal,
+    })
+    if (!response.ok) throw new Error(`upload returned ${response.status}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Write the JPEG to a file in the app's cache folder, named after the request, and return its URI. */
+export type StreamFrameSave = (requestId: string, jpeg: Uint8Array) => string
+
+const saveStreamFrameFile: StreamFrameSave = (requestId, jpeg) => {
+  // Loaded here, not at the top: only a stream-frame photo for local delivery writes a file.
+  const {File, Paths} = require("expo-file-system") as typeof import("expo-file-system")
+  const file = new File(Paths.cache, `stream-photo-${requestId}.jpg`)
+  file.create({overwrite: true})
+  file.write(new Uint8Array(jpeg))
+  return file.uri
+}
 
 let bleRequestCounter = 0
 
@@ -184,6 +232,17 @@ export class PhonePhotoCoordinator {
     {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>}
   >()
 
+  constructor(
+    private readonly streamFrames: StreamFrameSource = nativeStreamFrames,
+    private readonly uploadStreamFrame: StreamFrameUpload = putStreamFrame,
+    private readonly saveStreamFrame: StreamFrameSave = saveStreamFrameFile,
+  ) {}
+
+  /** The relayed stream's next frame, or null when no stream passes through this phone. */
+  private async grabStreamFrame(opts: PhotoOpts): Promise<StreamFrame | null> {
+    return opts.streamFrame !== false && this.streamFrames.isLive() ? this.streamFrames.grab() : null
+  }
+
   /** Report-safe camera ownership snapshot for incident diagnostics. */
   getDiagnosticSnapshot(): Record<string, unknown> {
     return {
@@ -211,6 +270,11 @@ export class PhonePhotoCoordinator {
     if (!isGlassesConnected(useGlassesStore.getState().connection)) {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
+
+    // A stream this phone relays holds the glasses camera, so the photo is that stream's next
+    // frame. Null when there is no such stream or it just stopped; the glasses then decide,
+    // and answer CAMERA_BUSY if they are still streaming some other way.
+    const streamFrame = await this.grabStreamFrame(opts)
 
     // Text-mode sensor resolution is owned by ASG constants; the glasses ignore the public
     // size when mode=text.
@@ -241,6 +305,8 @@ export class PhonePhotoCoordinator {
     } catch (err) {
       throw this.toPhotoError(err, "PHOTO_REQUEST_FAILED", "presign", "cloud-rest")
     }
+
+    if (streamFrame) return this.deliverStreamFrame(requestId, uploadUrl, readUrl, streamFrame)
 
     // 2) Build the outcome Promise FIRST so both resolve+reject handles
     //    are wired into activeRequests BEFORE any code path can produce
@@ -368,6 +434,56 @@ export class PhonePhotoCoordinator {
   }
 
   /**
+   * Upload a frame taken from the stream as this request's photo. The capture options do not
+   * apply: the frame has the stream's resolution and exposure, and the glasses play no shutter
+   * sound because they were never asked.
+   */
+  private async deliverStreamFrame(
+    requestId: string,
+    uploadUrl: string,
+    readUrl: string,
+    frame: StreamFrame,
+  ): Promise<PhotoTaken> {
+    fleetEvents.photo({operationId: requestId, stage: "requested"})
+    try {
+      await this.uploadStreamFrame(uploadUrl, Buffer.from(frame.base64, "base64"))
+    } catch (err) {
+      fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
+      const detail = err instanceof Error ? err.message : String(err)
+      throw new PhotoError(
+        "PHONE_UPLOAD_FAILED",
+        `Could not upload the photo taken from the stream: ${detail}`,
+        "upload",
+        "cloud-rest",
+      )
+    }
+    fleetEvents.photo({operationId: requestId, stage: "captured"})
+    return {photoUrl: readUrl, mimeType: "image/jpeg", size: frame.bytes, requestId}
+  }
+
+  /**
+   * Save a frame taken from the stream as this request's photo, for takeLocalPhoto(). Like any
+   * local photo it never touches the cloud.
+   */
+  private saveStreamFramePhoto(requestId: string, frame: StreamFrame): LocalPhotoTaken {
+    fleetEvents.photo({operationId: requestId, stage: "requested"})
+    let fileUri: string
+    try {
+      fileUri = this.saveStreamFrame(requestId, Buffer.from(frame.base64, "base64"))
+    } catch (err) {
+      fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
+      const detail = err instanceof Error ? err.message : String(err)
+      throw new PhotoError(
+        "LOCAL_PHOTO_UNAVAILABLE",
+        `Could not save the photo taken from the stream: ${detail}`,
+        "save",
+      )
+    }
+    fleetEvents.photo({operationId: requestId, stage: "captured"})
+    return {fileUri, mimeType: "image/jpeg", size: frame.bytes, requestId}
+  }
+
+  /**
    * Take a photo that stays on the phone: no cloud request and no upload. The glasses send it
    * over BLE (the only route to the phone), native saves it as a JPEG file, and that file is
    * the result. It works with no internet connection.
@@ -380,6 +496,11 @@ export class PhonePhotoCoordinator {
 
     const flowStarted = performance.now()
     const requestId = mintLocalRequestId()
+    // As in takePhoto(): a stream this phone relays holds the glasses camera, and its next frame
+    // is the photo.
+    const streamFrame = await this.grabStreamFrame(opts)
+    if (streamFrame) return this.saveStreamFramePhoto(requestId, streamFrame)
+
     const bleRequestId = mintBleRequestId()
     this.bleIdToCloud.set(bleRequestId, requestId)
     const abort = new AbortController()
@@ -485,6 +606,8 @@ export class PhonePhotoCoordinator {
       durationMs?: number
       zsl?: boolean
       mfnr?: boolean
+      /** False when the caller paused the stream to give the camera to its photo. Default true. */
+      streamFrame?: boolean
     },
   ): Promise<void> {
     // Pre-check: if glasses aren't connected, the BLE warm-up command would be
@@ -492,6 +615,10 @@ export class PhonePhotoCoordinator {
     if (!isGlassesConnected(useGlassesStore.getState().connection)) {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
+
+    // The stream already has the camera open, and the next photo comes from its frames. The
+    // glasses would refuse a warm-up while they stream.
+    if (opts.streamFrame !== false && this.streamFrames.isLive()) return
 
     let lease: {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>} | undefined
     try {
