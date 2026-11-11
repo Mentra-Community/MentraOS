@@ -30,7 +30,7 @@ export function contentSecurityPolicy(supabaseUrl: string | undefined): string {
 }
 
 /** The sign-in routes: never cached. */
-export const NO_STORE_ROUTES = ["/login", "/consent", "/signup", "/reset", "/signout"] as const;
+export const NO_STORE_ROUTES = ["/login", "/consent", "/connections", "/signup", "/reset", "/signout"] as const;
 
 /**
  * Cloudflare Pages `_headers` file for the sign-in site's own pages. The

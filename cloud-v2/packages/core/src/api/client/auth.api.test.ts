@@ -14,7 +14,7 @@ const SIGNING_ENV = ["MENTRA_MINIAPP_JWT_PRIVATE_KEY", "MENTRA_MINIAPP_JWT_PUBLI
 const savedEnv = Object.fromEntries(SIGNING_ENV.map((key) => [key, process.env[key]]))
 const mocks: Array<{mockRestore(): void}> = []
 let featuresFor: ReturnType<typeof spyOn<typeof featuresService, "featuresFor">>
-let assigningWorkspace: ReturnType<typeof spyOn<typeof assignedPackages, "assigningWorkspace">>
+let assigningWorkspace: ReturnType<typeof spyOn<typeof assignedPackages, "assigningMembership">>
 
 beforeEach(() => {
   const {privateKey, publicKey} = crypto.generateKeyPairSync("ed25519")
@@ -25,7 +25,7 @@ beforeEach(() => {
   featuresFor = spyOn(featuresService, "featuresFor").mockResolvedValue([])
   mocks.push(featuresFor)
   // A person whose workspace assigned nothing, unless a test says otherwise.
-  assigningWorkspace = spyOn(assignedPackages, "assigningWorkspace").mockResolvedValue(null)
+  assigningWorkspace = spyOn(assignedPackages, "assigningMembership").mockResolvedValue(null)
   mocks.push(assigningWorkspace)
   mocks.push(
     spyOn(session, "verifyAccessToken").mockResolvedValue({
@@ -258,7 +258,7 @@ describe("POST /miniapp-token workspace and local-build claims", () => {
 
   test("names the workspace that assigned the package, as the lookup answers it for this person and package", async () => {
     assigningWorkspace.mockImplementation(async (mentraUserId, packageName) =>
-      mentraUserId === "mu_01TEST" && packageName === "com.acme.tools" ? "ws_acme" : null,
+      mentraUserId === "mu_01TEST" && packageName === "com.acme.tools" ? {workspaceId: "ws_acme", role: "admin"} : null,
     )
 
     expect(await verifiedClaims(await mint("com.acme.tools"), "com.acme.tools")).toMatchObject({
@@ -266,8 +266,12 @@ describe("POST /miniapp-token workspace and local-build claims", () => {
       aud: "com.acme.tools",
       tenantId: "mentra",
       workspaceId: "ws_acme",
+      // The person's role there, from the same lookup.
+      workspaceRole: "admin",
     })
-    expect("workspaceId" in (await verifiedClaims(await mint("com.example.notes"), "com.example.notes"))).toBe(false)
+    const unassigned = await verifiedClaims(await mint("com.example.notes"), "com.example.notes")
+    expect("workspaceId" in unassigned).toBe(false)
+    expect("workspaceRole" in unassigned).toBe(false)
     expect(assigningWorkspace.mock.calls).toEqual([
       ["mu_01TEST", "com.acme.tools"],
       ["mu_01TEST", "com.example.notes"],
@@ -280,7 +284,7 @@ describe("POST /miniapp-token workspace and local-build claims", () => {
   })
 
   test("marks a local build's token and never looks up, or names, a workspace", async () => {
-    assigningWorkspace.mockResolvedValue("ws_acme")
+    assigningWorkspace.mockResolvedValue({workspaceId: "ws_acme", role: "admin"})
     featuresFor.mockResolvedValue(["tools.pro"])
 
     const response = await postMiniappToken({packageName: "com.acme.tools", localBuild: true})
@@ -288,11 +292,12 @@ describe("POST /miniapp-token workspace and local-build claims", () => {
     const claims = await verifiedClaims(((await response.json()) as {token: string}).token, "com.acme.tools")
     expect(claims).toMatchObject({sub: "mu_01TEST", aud: "com.acme.tools", localBuild: true, features: ["tools.pro"]})
     expect("workspaceId" in claims).toBe(false)
+    expect("workspaceRole" in claims).toBe(false)
     expect(assigningWorkspace).not.toHaveBeenCalled()
   })
 
   test("localBuild false is an installed miniapp's token", async () => {
-    assigningWorkspace.mockResolvedValue("ws_acme")
+    assigningWorkspace.mockResolvedValue({workspaceId: "ws_acme", role: "admin"})
 
     const response = await postMiniappToken({packageName: "com.acme.tools", localBuild: false})
     expect(response.status).toBe(200)
@@ -354,7 +359,7 @@ describe("POST /miniapp-token workspace and local-build claims", () => {
     let workspaceAsked = false
     assigningWorkspace.mockImplementation(async () => {
       workspaceAsked = true
-      return "ws_acme"
+      return {workspaceId: "ws_acme", role: "member" as const}
     })
 
     const pending = postMiniappToken({packageName: "com.acme.tools"})

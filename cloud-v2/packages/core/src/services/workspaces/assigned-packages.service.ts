@@ -24,6 +24,7 @@
  * out of the person's next token.
  */
 
+import type {WorkspaceRole} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
 import {withTransaction} from "../../connections/mongo.connection"
 import {WorkspaceAssignedPackagesModel} from "../../models/workspace-assigned-packages.model"
@@ -133,21 +134,28 @@ export async function clearAssignedPackages(session: ClientSession, workspaceId:
   await WorkspaceAssignedPackagesModel.deleteOne({workspaceId}, {session})
 }
 
+/** The workspace a miniapp token names for a person, and the role they hold in it. */
+export interface AssigningMembership {
+  workspaceId: string
+  role: WorkspaceRole
+}
+
 /**
- * The workspace a miniapp token for `packageName` names for this person: the workspace they are an active
- * member of whose assigned set holds the package, or null. With several such memberships, the one managing
- * their device when it is among them, else the one that started first. A person in no workspace costs one
- * query; asking which workspace manages them costs two more, only when several assign the package.
+ * The workspace a miniapp token for `packageName` names for this person, with their role there: the
+ * workspace they are an active member of whose assigned set holds the package, or null. With several such
+ * memberships, the one managing their device when it is among them, else the one that started first. A
+ * person in no workspace costs one query; asking which workspace manages them costs two more, only when
+ * several assign the package.
  */
-export async function assigningWorkspace(mentraUserId: string, packageName: string): Promise<string | null> {
+export async function assigningMembership(mentraUserId: string, packageName: string): Promise<AssigningMembership | null> {
   // A missing id or package must not become a `null` filter.
   if (typeof mentraUserId !== "string" || !mentraUserId || typeof packageName !== "string" || !packageName) return null
   // Sorted here, not by the query: a person has at most a few, and Azure Cosmos DB for MongoDB refuses a
   // sort no index serves, which would refuse every token.
   const memberships = (
     await WorkspaceMembershipModel.find({mentraUserId, status: "active"})
-      .select({_id: 0, workspaceId: 1, membershipId: 1, startedAt: 1})
-      .lean<Array<{workspaceId: string; membershipId: string; startedAt?: Date | null}>>()
+      .select({_id: 0, workspaceId: 1, membershipId: 1, startedAt: 1, role: 1})
+      .lean<Array<{workspaceId: string; membershipId: string; startedAt?: Date | null; role: WorkspaceRole}>>()
   ).sort(
     (a, b) =>
       startedAtMs(a) - startedAtMs(b) || (a.membershipId < b.membershipId ? -1 : a.membershipId > b.membershipId ? 1 : 0),
@@ -161,11 +169,19 @@ export async function assigningWorkspace(mentraUserId: string, packageName: stri
     .lean<Array<{workspaceId: string}>>()
   if (assigned.length === 0) return null
   const assigning = new Set(assigned.map(set => set.workspaceId))
+  let chosen = memberships.find(membership => assigning.has(membership.workspaceId))
   if (assigning.size > 1) {
     const managing = await managingWorkspaceOf(mentraUserId)
-    if (managing && assigning.has(managing.workspace.workspaceId)) return managing.workspace.workspaceId
+    if (managing && assigning.has(managing.workspace.workspaceId)) {
+      chosen = memberships.find(membership => membership.workspaceId === managing.workspace.workspaceId) ?? chosen
+    }
   }
-  return memberships.find(membership => assigning.has(membership.workspaceId))?.workspaceId ?? null
+  return chosen ? {workspaceId: chosen.workspaceId, role: chosen.role} : null
+}
+
+/** The workspace alone: see {@link assigningMembership}. */
+export async function assigningWorkspace(mentraUserId: string, packageName: string): Promise<string | null> {
+  return (await assigningMembership(mentraUserId, packageName))?.workspaceId ?? null
 }
 
 function startedAtMs(membership: {startedAt?: Date | null}): number {

@@ -24,5 +24,9 @@ export const MESSAGES = {
   invalidCode: "That code is not valid or has expired. Request a new one.",
   passwordUpdated: "Your password is updated. Sign in with your new password.",
   emailVerified: "Your email has been verified. Open the Mentra app to continue.",
+  noConnections: "No sites are connected to your Mentra account.",
+  connectionsFailed: "We could not load your connected apps. Reload the page to try again.",
+  connectionsSignInFailed: "We could not sign you in to show your connected apps.",
+  revokeFailed: "That site could not be revoked. Try again.",
   emailLinkFailed: "This link is invalid or has expired. Open the Mentra app to request a new one.",
 } as const;

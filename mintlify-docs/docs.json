@@ -117,6 +117,7 @@
               "app-devs/core-concepts/storage",
               "app-devs/core-concepts/blob",
               "app-devs/core-concepts/auth",
+              "app-devs/core-concepts/sign-in-with-mentra",
               "app-devs/core-concepts/cloud",
               "app-devs/core-concepts/telemetry"
             ]

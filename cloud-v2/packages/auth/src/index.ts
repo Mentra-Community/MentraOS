@@ -27,6 +27,10 @@ const SIGN_IN_REALM = "mentra";
 /** Package names the challenge can carry as a quoted string without escaping. */
 const CHALLENGE_PACKAGE_NAME = /^[A-Za-z0-9._-]+$/;
 
+/** The roles a person can hold in a workspace, least to most privileged. */
+export const MENTRA_WORKSPACE_ROLES = ["member", "developer", "admin", "owner"] as const;
+export type MentraWorkspaceRole = (typeof MENTRA_WORKSPACE_ROLES)[number];
+
 export interface VerifiedMentraAuth {
   mentraUserId: string;
   tenantId?: string;
@@ -67,6 +71,14 @@ export interface VerifiedMentraAuth {
    */
   workspaceId: string | null;
   /**
+   * The person's role in {@link workspaceId}, from the token's `workspaceRole`
+   * claim: `member`, `developer`, `admin` or `owner`. A company's miniapp can
+   * show an admin what a member doesn't see. `null` whenever `workspaceId` is,
+   * for a role this library doesn't know, and for tokens from a Core that
+   * doesn't name roles yet: treat `null` as the least privilege.
+   */
+  workspaceRole: MentraWorkspaceRole | null;
+  /**
    * True when Core minted the token for a local-network build of this miniapp
    * (the `localBuild` claim). A local build can claim any package name, so its
    * tokens are refused unless the backend allows local builds
@@ -74,6 +86,15 @@ export interface VerifiedMentraAuth {
    * build only on a backend that allows them.
    */
   localBuild: boolean;
+  /**
+   * The website the person signed in to, from the token's `client_id` claim:
+   * set when Core issued the token to a registered website of this miniapp
+   * (Sign in with Mentra), `null` when the Mentra App minted it for the
+   * miniapp running on the phone. The token is the same person's either way;
+   * use this to tell the two apart, for example to keep a route for the phone
+   * only.
+   */
+  clientId: string | null;
   claims: jose.JWTPayload;
 }
 
@@ -253,6 +274,9 @@ export class MentraAuth {
 
     const features = featuresClaim(payload.features);
     const granted = new Set(features);
+    // Core never names a workspace in a local build's token; should one
+    // arrive anyway, a local build still gets none.
+    const workspaceId = localBuild ? null : stringClaim(payload.workspaceId) ?? null;
 
     return {
       mentraUserId: subject,
@@ -264,10 +288,11 @@ export class MentraAuth {
       issuedAt: typeof payload.iat === "number" ? payload.iat : undefined,
       features,
       hasFeature: (feature) => granted.has(feature),
-      // Core never names a workspace in a local build's token; should one
-      // arrive anyway, a local build still gets none.
-      workspaceId: localBuild ? null : stringClaim(payload.workspaceId) ?? null,
+      workspaceId,
+      // A role means nothing without the workspace it is held in.
+      workspaceRole: workspaceId ? workspaceRoleClaim(payload.workspaceRole) : null,
       localBuild,
+      clientId: stringClaim(payload.client_id) ?? null,
       claims: payload,
     };
   }
@@ -540,6 +565,13 @@ function featuresClaim(value: unknown): string[] {
  * leaves it out otherwise; any value but absent or `false` is read as a local
  * build, so a malformed claim never passes as an ordinary token.
  */
+/** The `workspaceRole` claim: one of the roles this library knows, else null. */
+function workspaceRoleClaim(value: unknown): MentraWorkspaceRole | null {
+  return typeof value === "string" && (MENTRA_WORKSPACE_ROLES as readonly string[]).includes(value)
+    ? (value as MentraWorkspaceRole)
+    : null;
+}
+
 function localBuildClaim(value: unknown): boolean {
   return value !== undefined && value !== false;
 }

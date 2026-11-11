@@ -1,9 +1,10 @@
-export type RouteName = "home" | "login" | "consent" | "signup" | "reset" | "signout" | "not-found";
+export type RouteName = "home" | "login" | "consent" | "connections" | "signup" | "reset" | "signout" | "not-found";
 
 const ROUTES: Readonly<Record<string, RouteName>> = {
   "/": "home",
   "/login": "login",
   "/consent": "consent",
+  "/connections": "connections",
   "/signup": "signup",
   "/reset": "reset",
   "/signout": "signout",

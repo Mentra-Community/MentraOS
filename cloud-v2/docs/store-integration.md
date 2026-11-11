@@ -80,6 +80,41 @@ The license routes, for the Store only, sit beside these at `/api/internal/licen
 Authorization decisions use current state. Display data (workspace names) may
 be cached for up to five minutes; a cached answer never authorizes a write.
 
+## Miniapp websites
+
+The Developer Console's **Websites** page lets a developer register their
+miniapp's website for Sign in with Mentra
+([Miniapp websites](signin.md#miniapp-websites)). The Store relays each call to
+`/api/internal/website-clients`, for the Store only, with `token`, the acting
+person's Core access token. The Store decides nothing: Core verifies the token,
+checks the package against its registry and every redirect URI against the
+package's own domain, and lets a person see and change only the websites they
+registered. The Store's signature alone registers nothing.
+
+| Route | Takes | Answers |
+| --- | --- | --- |
+| `POST /list` | `{token}` | `{clients, max}` |
+| `POST /create` | `{token, client}` | `201 {client, secret}` |
+| `POST /update` | `{token, clientId, changes}` | `{client}` |
+| `POST /regenerate-secret` | `{token, clientId}` | `{client, secret}` |
+| `POST /delete` | `{token, clientId}` | `{deleted: true}` |
+
+- `client` is `{packageName, type, environment, redirectUris}`: the miniapp's
+  package name, `browser` or `server`, `production` or `development`, and exact
+  redirect URIs. `changes` is any of `{redirectUris, status}`. The website's
+  name is the miniapp's own, from the registry.
+- A `server` client's `secret` is in the answer that creates or regenerates it
+  and nowhere else afterwards. Show it once.
+- Refusals the person can act on come back as `{error, error_description}` for
+  the Console to show: `422 not_in_registry` (nobody has installed the miniapp
+  yet), `422 archived`, `422 domain_mismatch` (a redirect URI off the package's
+  domain), `422 too_many_websites`, `404 not_found` (not theirs), `400
+  invalid_request`, `403 forbidden` with a `reason` (`email_unverified`, or a
+  key in place of a person), `401 invalid_token`.
+- `createCoreWorkspaceClient(...).websiteClients(token, call)` in
+  `@mentra/workspace-contract` makes these calls. It returns Core's answer for
+  the caller to relay, and throws only for an answer the Store can't trust.
+
 ## Deletion holds
 
 Core does not know which miniapps a workspace owns, so the Store tells it. While

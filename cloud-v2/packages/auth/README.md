@@ -31,6 +31,19 @@ miniapp never learns which workspace someone belongs to unless the workspace
 chose it. A company's miniapp can use it to admit exactly its own workspace's
 members.
 
+`session.workspaceRole` is the person's role in that workspace: `member`,
+`developer`, `admin` or `owner`. Use it to show an admin what a member doesn't
+see, such as everyone's records instead of their own. It is `null` whenever
+`workspaceId` is, and for tokens from a Core that doesn't name roles yet, so
+treat `null` as the least privilege.
+
+`session.clientId` is set when the token came from a website the person signed
+in to with their Mentra account (Sign in with Mentra), and `null` when it came
+from the Mentra App. It is the same person and the same `mentraUserId` either
+way, so both reach the same records. Use it to decide what a website may do:
+for example, answer `403` on a route that only the miniapp on the phone should
+call.
+
 Defaults:
 
 - `packageName`: required, or set `MENTRA_PACKAGE_NAME`, `MINIAPP_PACKAGE_NAME`, or `PACKAGE_NAME`.

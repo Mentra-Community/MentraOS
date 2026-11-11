@@ -1,6 +1,6 @@
 import {LoadingIndicator} from "./components/loading-indicator";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Boxes, Bug, FileText, History, KeyRound, RefreshCcw, ShieldCheck, Ticket, Users, X } from "lucide-react";
+import { AlertCircle, Boxes, Bug, FileText, Globe, History, KeyRound, RefreshCcw, ShieldCheck, Ticket, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./li
 import { api, ApiError } from "./lib/api";
 import { LicensesPage } from "./pages/licenses";
 import { OperatorKeysPage } from "./pages/operator-keys";
+import { WebsitesPage } from "./pages/websites";
 import { RegistryPage } from "./pages/registry";
 import { WorkspacesPage } from "./pages/workspaces";
 import { loginHref, signOut as signOutEverywhere } from "./lib/session";
@@ -94,6 +95,7 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "workspaces", label: "Workspaces", icon: Users },
   { key: "licenses", label: "Licenses", icon: Ticket },
   { key: "registry", label: "Miniapp registry", icon: Boxes },
+  { key: "websites", label: "Miniapp websites", icon: Globe },
   { key: "operator-keys", label: "Operator keys", icon: KeyRound },
   { key: "audit", label: "Audit log", icon: History },
 ];
@@ -175,6 +177,7 @@ function AdminPage() {
     workspaces: { title: "Workspaces", body: "Every workspace in this organization: members, invitations, keys, settings, audit, and ownership recovery." },
     licenses: { title: "Licenses", body: "Every product bought in this organization's workspaces: which workspace holds it, how many licenses are assigned and what it is paid through." },
     registry: { title: "Miniapp registry", body: "Every miniapp URL installed in the Mentra App. Archive a URL, a package, a domain or everything one account registered, and register URLs yourself." },
+    websites: { title: "Miniapp websites", body: "The websites registered to sign people in with Mentra, each for one miniapp." },
     "operator-keys": { title: "Operator keys", body: "Organization keys for incident, support-profile and test-run tooling." },
     audit: { title: "Audit log", body: "Admin actions recorded by Core, such as support-profile lookups." },
   };
@@ -222,6 +225,7 @@ function AdminPage() {
       {active === "workspaces" ? <WorkspacesPage fleetInstalled={principal.fleet?.installed === true} resetEnabled={ENVIRONMENT === "staging" || ENVIRONMENT === "dev"} /> : null}
       {active === "licenses" ? <LicensesPage /> : null}
       {active === "registry" ? <RegistryPage /> : null}
+      {active === "websites" ? <WebsitesPage /> : null}
       {active === "operator-keys" ? <OperatorKeysPage /> : null}
       {active === "audit" ? <AuditPage /> : null}
     </AppShell>

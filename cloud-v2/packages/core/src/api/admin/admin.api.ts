@@ -19,6 +19,8 @@
  *    standing in that workspace (an Organization Admin acts as its owner);
  *  - `/organization`: the organization API (every workspace, ownership
  *    recovery, operator keys), for people holding the organization capability;
+ *  - `/website-clients`: the miniapp websites that sign people in with Mentra; an Organization Admin who is a
+ *    person;
  *  - `/audit-log`: an Organization Admin who is a person;
  *  - `/fleet`: forwarded to the optional Fleet service, for a person holding
  *    `organization.fleet.administer` (an Organization Admin). The forwarder carries its own gates.
@@ -48,6 +50,7 @@ import workspaceLicenseResets from "./workspace-license-resets.api"
 import registry from "./registry.api"
 import reports from "./reports.api"
 import supportProfiles from "./support-profiles.api"
+import websiteClients from "./website-clients.api"
 
 /** What `GET /api/admin/me` answers. */
 export interface AdminMeResponse {
@@ -146,6 +149,7 @@ app.route("/reports", reports)
 app.route("/support-profiles", supportProfiles)
 app.route("/licenses", licenses)
 app.route("/registry", registry)
+app.route("/website-clients", websiteClients)
 app.route("/", auditLog)
 
 export default app
