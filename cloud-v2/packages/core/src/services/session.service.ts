@@ -480,18 +480,29 @@ export async function issueMiniappToken(args: {
   email?: string | null
   features?: string[]
   workspaceId?: string | null
+  /** The person's role in `workspaceId`. Ignored without a workspace. */
+  workspaceRole?: string | null
   localBuild?: boolean
+  /** The miniapp website the token is issued to; a phone's token carries none. */
+  websiteClientId?: string | null
+  /** Overrides the configured lifetime, for a website's short-lived token. */
+  ttlSec?: number
 }): Promise<{token: string; expiresAt: number}> {
   const {privateKey} = await getMiniappKeys()
-  const ttlSec = miniappTokenTtlSec()
+  const ttlSec = args.ttlSec ?? miniappTokenTtlSec()
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSec
 
   const token = await new jose.SignJWT({
     tenantId: args.tenantId,
+    ...(args.websiteClientId ? {client_id: args.websiteClientId} : {}),
     ...(args.email ? {email: args.email, email_verified: true} : {}),
     ...(args.features?.length ? {features: args.features} : {}),
     // A local build claims a package name no domain vouches for, so its token never names a workspace.
-    ...(args.localBuild ? {localBuild: true} : args.workspaceId ? {workspaceId: args.workspaceId} : {}),
+    ...(args.localBuild
+      ? {localBuild: true}
+      : args.workspaceId
+        ? {workspaceId: args.workspaceId, ...(args.workspaceRole ? {workspaceRole: args.workspaceRole} : {})}
+        : {}),
   })
     // The `kid` points the developer backend at the miniapp-token public key.
     .setProtectedHeader({alg: MENTRA_ALG, kid: MINIAPP_TOKEN_KID})

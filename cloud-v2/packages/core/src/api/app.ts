@@ -82,6 +82,7 @@ import portalEnterprise from "./portal/enterprise.api";
 import internalFleet from "./internal/fleet.api";
 import internalLicenses from "./internal/licenses.api";
 import internalRegistry from "./internal/registry.api";
+import internalWebsiteClients from "./internal/website-clients.api";
 import internalWorkspaces from "./internal/workspaces.api";
 import { createOrganizationApi } from "./organization/organization.api";
 import { createWorkspacesApi } from "./workspaces/workspaces.api";
@@ -181,6 +182,14 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
     }),
   );
   app.route("/api/internal/registry", internalRegistry);
+  app.use(
+    "/api/internal/website-clients/*",
+    bodyLimit({
+      maxSize: INTERNAL_WORKSPACES_BODY_LIMIT_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+  );
+  app.route("/api/internal/website-clients", internalWebsiteClients);
   // LEGACY: released Mentra App versions install their preinstalled miniapps
   // from here until supported versions install only from the Store's backend.
   app.route("/api/client/miniapps", clientMiniapps);

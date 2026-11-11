@@ -207,7 +207,13 @@ describe("hosted Core: the sign-in page's hand-off", () => {
     expect(response.headers.get("location")).toBe(`${OIDC_ISSUER}/login?interaction=${signIn.uid}`)
     expect(response.headers.get("cache-control")).toBe("no-store")
     const details = await signIn.browser.request(`${OIDC_ISSUER}/interaction/${signIn.uid}/details`)
-    expect(await details.json()).toEqual({prompt: "login", client: {name: "Mentra admin portal"}, scopes: ["openid", "email", "profile"]})
+    expect(await details.json()).toEqual({
+      prompt: "login",
+      // A first-party client reaches no miniapp's data.
+      client: {name: "Mentra admin portal", packageName: null},
+      redirectUri: ADMIN_CALLBACK,
+      scopes: ["openid", "email", "profile"],
+    })
   })
 
   test("a hand-off signs in the Mentra App's Core user, ends that Supabase session, and redirects only to the provider's continuation (L01, L13, Review Focus 1)", async () => {

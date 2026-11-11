@@ -85,6 +85,56 @@ export async function revokeGrantEverywhere(grantId: string): Promise<void> {
   ])
 }
 
+/** An authorization code or refresh token a token request presented, by its value. */
+export interface SpentCredential {
+  model: "AuthorizationCode" | "RefreshToken"
+  value: string
+}
+
+/**
+ * Undo a token exchange whose answer Core could not deliver: the refresh token it issued is removed, and the
+ * code or refresh token it spent is usable again. Only for an exchange the provider accepted and Core then
+ * failed to finish (`api/oidc/oidc.api.ts`): there is never a moment with two working refresh tokens, since
+ * the new one is removed first.
+ */
+export async function undoTokenExchange(spent: SpentCredential, issuedRefreshToken: string | null): Promise<void> {
+  if (issuedRefreshToken) await collection("RefreshToken").deleteOne({_id: storageKey("RefreshToken", issuedRefreshToken)})
+  await collection(spent.model).updateOne({_id: storageKey(spent.model, spent.value)}, {$unset: {consumedAt: ""}})
+}
+
+/** A person's grant to a client, as remembered consent and Connected apps read it. */
+export interface StoredGrant {
+  grantId: string
+  clientId: string
+  scopes: string[]
+  grantedAt: Date | null
+}
+
+/** A person's unexpired grants, oldest first; with `clientId`, only that client's. */
+export async function listGrants(accountId: string, clientId?: string): Promise<StoredGrant[]> {
+  const filter: Record<string, unknown> = {accountId, expiresAt: {$gt: new Date()}}
+  if (clientId !== undefined) filter["payload.clientId"] = clientId
+  const documents = await collection("Grant").find(filter).toArray()
+  return documents
+    .map(document => {
+      const payload = document.payload as {clientId?: unknown; iat?: unknown; openid?: {scope?: unknown}}
+      return {
+        grantId: document._id,
+        clientId: typeof payload.clientId === "string" ? payload.clientId : "",
+        scopes: typeof payload.openid?.scope === "string" ? payload.openid.scope.split(" ").filter(Boolean) : [],
+        grantedAt: typeof payload.iat === "number" ? new Date(payload.iat * 1000) : null,
+      }
+    })
+    .sort((a, b) => (a.grantedAt?.getTime() ?? 0) - (b.grantedAt?.getTime() ?? 0))
+}
+
+/** End every grant a person gave one client: its codes and tokens with them. Returns how many grants ended. */
+export async function revokeGrantsOfClient(accountId: string, clientId: string): Promise<number> {
+  const grants = await listGrants(accountId, clientId)
+  await Promise.all(grants.map(grant => revokeGrantEverywhere(grant.grantId)))
+  return grants.length
+}
+
 /**
  * End every provider session and grant of a person: the sign-in site asks for
  * credentials again, and every client's next refresh fails.

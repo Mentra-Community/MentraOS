@@ -6,6 +6,7 @@ export function HomeRoute() {
     <Page title="Mentra account">
       <p className="muted">To sign in, start from the Mentra site or app you want to use.</p>
       <nav className="links" aria-label="Account">
+        <a href="/connections">Connected apps</a>
         <a href="/signout">Sign out of Mentra on this browser</a>
       </nav>
     </Page>

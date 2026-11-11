@@ -39,7 +39,7 @@ import {loadAccount} from "./account"
 import {findClient} from "./clients"
 import {CORE_API_RESOURCE, OIDC_ROUTES, OIDC_SCOPES} from "./config"
 import {OIDC_TOKEN_ALG, oidcSigningJwk} from "./keys"
-import {MongoAdapter} from "./mongo-adapter"
+import {listGrants, MongoAdapter} from "./mongo-adapter"
 import {cspOrigin, renderPage} from "./pages"
 
 const logger = createLogger("core").child({service: "oidc-provider"})
@@ -104,11 +104,15 @@ export function logoutPage(ctx: KoaContextWithOIDC, form: string) {
 const GRANTABLE_SCOPES = new Set(["openid", "email", "profile"])
 
 /**
- * The grant for this authorization. A grant the person already has is reused.
- * A first-party client is granted the scopes it asked for without a consent
- * screen; any other client gets no implicit grant, so the consent prompt runs.
+ * The grant for this authorization.
+ *  - A grant this browser's session already holds for the client is reused.
+ *  - A first-party client is granted the scopes it asked for without a consent screen.
+ *  - A miniapp website is granted them without a screen only when the person has already allowed that
+ *    website everything it asks for now, in any browser: consent is the person's, not the browser's. Each
+ *    sign-in gets a grant of its own, so one ending (a replayed refresh token) leaves the others.
+ *  - Otherwise there is no grant, and the consent prompt runs.
  */
-export async function firstPartyGrant(ctx: KoaContextWithOIDC) {
+export async function grantForAuthorization(ctx: KoaContextWithOIDC) {
   const {oidc} = ctx
   const clientId = oidc.client!.clientId
   const existingId = (oidc.result?.consent as {grantId?: string} | undefined)?.grantId || oidc.session!.grantIdFor(clientId)
@@ -116,16 +120,20 @@ export async function firstPartyGrant(ctx: KoaContextWithOIDC) {
     const existing = await oidc.provider.Grant.find(existingId)
     if (existing) return existing
   }
+  const accountId = oidc.session?.accountId
   const client = await findClient(clientId)
-  if (!client?.firstParty || !oidc.session?.accountId) return undefined
+  if (!client || !accountId) return undefined
   const requested = String(oidc.params?.scope ?? "")
     .split(" ")
     .filter(scope => GRANTABLE_SCOPES.has(scope))
-    .join(" ")
-  const grant = new oidc.provider.Grant({accountId: oidc.session.accountId, clientId})
-  if (requested) {
-    grant.addOIDCScope(requested)
-    grant.addResourceScope(CORE_API_RESOURCE, requested)
+  if (!client.firstParty) {
+    const allowed = new Set((await listGrants(accountId, clientId)).flatMap(grant => grant.scopes))
+    if (allowed.size === 0 || !requested.every(scope => allowed.has(scope))) return undefined
+  }
+  const grant = new oidc.provider.Grant({accountId, clientId})
+  if (requested.length) {
+    grant.addOIDCScope(requested.join(" "))
+    grant.addResourceScope(CORE_API_RESOURCE, requested.join(" "))
   }
   await grant.save()
   return grant
@@ -218,7 +226,7 @@ export async function providerConfiguration(settings: ProviderSettings) {
         },
       },
     },
-    loadExistingGrant: firstPartyGrant,
+    loadExistingGrant: grantForAuthorization,
     rotateRefreshToken: true,
     issueRefreshToken: async (_ctx: unknown, client: {grantTypeAllowed(type: string): boolean}) => client.grantTypeAllowed("refresh_token"),
     // Refresh tokens outlive the sign-in site's session: signing out there leaves every site and the CLI signed in.

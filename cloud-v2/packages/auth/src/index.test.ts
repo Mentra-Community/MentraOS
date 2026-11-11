@@ -612,6 +612,55 @@ describe("workspace and local-build claims", () => {
     expect(verified.localBuild).toBe(false);
   });
 
+  test.each(["member", "developer", "admin", "owner"] as const)("surfaces the %s role beside the workspace", async (role) => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl });
+
+    const verified = await auth.verifyToken(
+      await mintMiniappToken(TEST_PACKAGE, { claims: { workspaceId: "ws_123", workspaceRole: role } }),
+    );
+
+    expect(verified.workspaceId).toBe("ws_123");
+    expect(verified.workspaceRole).toBe(role);
+  });
+
+  test.each([
+    ["no role claim (an older Core)", { workspaceId: "ws_123" }],
+    ["a role this library doesn't know", { workspaceId: "ws_123", workspaceRole: "superuser" }],
+    ["a role that is not a string", { workspaceId: "ws_123", workspaceRole: ["owner"] }],
+    ["a role without a workspace", { workspaceRole: "owner" }],
+  ] as const)("a token with %s gives no role", async (_name, claims) => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl });
+
+    const verified = await auth.verifyToken(await mintMiniappToken(TEST_PACKAGE, { claims }));
+
+    expect(verified.workspaceRole).toBeNull();
+  });
+
+  test("a website's token names the website; the phone's names none", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl });
+
+    const fromWebsite = await auth.verifyToken(await mintMiniappToken(TEST_PACKAGE, { claims: { client_id: "mwc_01hzy3v8n0f2e9gq4t6kxh5rd0" } }));
+    expect(fromWebsite.clientId).toBe("mwc_01hzy3v8n0f2e9gq4t6kxh5rd0");
+
+    const fromPhone = await auth.verifyToken(await mintMiniappToken(TEST_PACKAGE));
+    expect(fromPhone.clientId).toBeNull();
+    // Anything but a non-empty string is no website.
+    for (const client_id of ["", 7, ["mwc_x"], null]) {
+      expect((await auth.verifyToken(await mintMiniappToken(TEST_PACKAGE, { claims: { client_id } }))).clientId).toBeNull();
+    }
+  });
+
+  test("a local build never holds a role, even if its token carries one", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl, allowLocalBuilds: true });
+
+    const verified = await auth.verifyToken(
+      await mintMiniappToken(TEST_PACKAGE, { claims: { localBuild: true, workspaceId: "ws_123", workspaceRole: "owner" } }),
+    );
+
+    expect(verified.workspaceId).toBeNull();
+    expect(verified.workspaceRole).toBeNull();
+  });
+
   test.each([
     ["no claim", undefined],
     ["an empty string", ""],

@@ -313,6 +313,44 @@ a:hover,
   font-size: 13px;
 }
 
+.connections {
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.connections li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+
+.connections li:last-child {
+  border-bottom: 1px solid var(--border);
+}
+
+.connections li > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.connections strong {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.connections .button {
+  flex: none;
+  width: auto;
+  padding-inline: 18px;
+}
+
 .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -19,6 +19,7 @@ import {ReportAssetModel, reconcileReportAssetIndexes} from '../models/report-as
 import { AccessCredentialModel } from "../models/access-credential.model";
 import { LicenseSeatModel } from "../models/license-seat.model";
 import { LicenseModel } from "../models/license.model";
+import { WebsiteClientModel } from "../models/website-client.model";
 import { WorkspaceAssignedPackagesModel } from "../models/workspace-assigned-packages.model";
 import { MiniappRegistryArchiveRuleModel, MiniappRegistryEntryModel } from "../models/miniapp-registry.model";
 import { WorkspaceAuditCounterModel } from "../models/workspace-audit-counter.model";
@@ -97,6 +98,8 @@ export async function runStartupMigrations(): Promise<void> {
       LicenseModel,
       LicenseSeatModel,
       WorkspaceAssignedPackagesModel,
+      // Miniapp websites: one row per client ID (unique), looked up at every sign-in and refresh.
+      WebsiteClientModel,
     ].map(
       async (model) => {
         try {

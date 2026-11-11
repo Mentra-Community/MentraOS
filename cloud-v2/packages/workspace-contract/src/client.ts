@@ -9,6 +9,7 @@ import {isWorkspaceDeletionHold} from "./deletion-holds"
 import {OWNER_NOT_FOUND_ERROR, STALE_REVISION_ERROR} from "./licenses"
 import type {LicensesResponse, LicenseView, LicenseWrite, LicenseWriteResponse} from "./licenses"
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
+import type {WebsiteClientsAnswer, WebsiteClientsCall} from "./website-clients"
 import {
   INVALID_TOKEN_ERROR,
   REGISTRY_CHECK_STATUSES,
@@ -44,6 +45,7 @@ import type {
 const API_PREFIX = "/api/internal/workspaces"
 const LICENSES_PREFIX = "/api/internal/licenses"
 const REGISTRY_PREFIX = "/api/internal/registry"
+const WEBSITE_CLIENTS_PREFIX = "/api/internal/website-clients"
 const REGISTRY_RULE_KINDS: readonly RegistryArchiveRuleKind[] = ["url", "package", "domain", "account"]
 const AGE_RATINGS = ["4+", "9+", "13+", "16+", "18+"]
 /** A feed cursor: a `seq` as a decimal string, with no sign, leading zero or fraction. */
@@ -181,6 +183,13 @@ export interface CoreWorkspaceClient {
    * entry is `bad_request`.
    */
   archiveRegistry(input: RegistryArchiveRequest): Promise<RegistryArchiveResponse>
+  /**
+   * A developer's own miniapp websites (the Store only): list, register, change, re-key or remove, as the
+   * person whose Core access token is `token`. Core's answer comes back as it gave it, a refusal the person
+   * can act on included (400, 401, 403, 404, 422), for the caller to relay; only an answer the Store cannot
+   * trust throws (Core unreachable, a 5xx, a refused service signature, a body that is not a JSON object).
+   */
+  websiteClients(token: string, call: WebsiteClientsCall): Promise<WebsiteClientsAnswer>
 }
 
 export interface CoreWorkspaceClientOptions {
@@ -417,6 +426,25 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     nullOn?: (status: number, error: string | undefined) => boolean,
     callTimeoutMs: number = timeoutMs,
   ): Promise<unknown> {
+    const {status, text} = await send(method, pathWithQuery, payload, callTimeoutMs)
+    if (status < 200 || status >= 300) {
+      if (nullOn?.(status, errorCode(text))) return null
+      throw httpError(pathWithQuery, status, text)
+    }
+    try {
+      return JSON.parse(text)
+    } catch {
+      throw badResponse(pathWithQuery, "body is not JSON")
+    }
+  }
+
+  /** One signed request to Core, answered or not: throws only when Core could not be reached. */
+  async function send(
+    method: "GET" | "POST" | "PUT" | "DELETE",
+    pathWithQuery: string,
+    payload: unknown,
+    callTimeoutMs: number,
+  ): Promise<{status: number; text: string}> {
     const body = payload === undefined ? "" : JSON.stringify(payload)
     const timestampMs = Date.now()
     const headers: Record<string, string> = {
@@ -450,15 +478,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       throw new CoreWorkspaceClientError("core_unavailable", `Core ${pathWithQuery} is unreachable: ${reason}`)
     }
 
-    if (status < 200 || status >= 300) {
-      if (nullOn?.(status, errorCode(text))) return null
-      throw httpError(pathWithQuery, status, text)
-    }
-    try {
-      return JSON.parse(text)
-    } catch {
-      throw badResponse(pathWithQuery, "body is not JSON")
-    }
+    return {status, text}
   }
 
   /** The `error` string of a JSON error body, if there is one. */
@@ -711,6 +731,29 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       )
       if (raw === null) return null
       return checkRegistryEntry(path, checkRecord(path, raw, "the entry response").entry)
+    },
+
+    async websiteClients(token, request) {
+      const {route, ...rest} = request
+      const path = `${WEBSITE_CLIENTS_PREFIX}/${route}`
+      const {status, text} = await send("POST", path, {token, ...rest}, timeoutMs)
+      let parsed: unknown = null
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        // Judged below: an answer that is not JSON is never relayed.
+      }
+      const body = isRecord(parsed) ? parsed : null
+      // What a person can act on is relayed. A 401 or 403 is theirs only when Core says so (their token, or
+      // a reason about them); any other is this service being refused, which nobody signed in can fix.
+      const relayed =
+        (status >= 200 && status < 300) ||
+        [400, 404, 422].includes(status) ||
+        (status === 401 && body?.error === INVALID_TOKEN_ERROR) ||
+        (status === 403 && typeof body?.reason === "string")
+      if (!relayed) throw httpError(path, status, text)
+      if (!body) throw badResponse(path, "body is not a JSON object")
+      return {status, body}
     },
 
     async archiveRegistry(input) {

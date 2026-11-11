@@ -6,6 +6,7 @@ export type AdminPageKey =
   | "workspaces"
   | "licenses"
   | "registry"
+  | "websites"
   | "operator-keys"
   | "audit";
 
@@ -35,6 +36,7 @@ export const PAGE_ORDER: readonly AdminPageKey[] = [
   "workspaces",
   "licenses",
   "registry",
+  "websites",
   "operator-keys",
   "audit",
 ];
@@ -50,7 +52,7 @@ const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
 
 /**
  * The pages this principal may open. There is no blanket admin gate: each page needs its own capability,
- * the audit log needs an Organization Admin who is a person, and the Licenses page also needs billing or a license
+ * the audit log and Miniapp websites need an Organization Admin who is a person, and the Licenses page also needs billing or a license
  * on this Core. There is no Fleet page: Fleet Management is opened in the workspace portal from Workspaces. Core
  * checks every request anyway;
  * this only keeps the portal from offering what would be refused or empty.
@@ -58,8 +60,8 @@ const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
 export function visiblePages(me: Pick<AdminMe, "organization" | "user" | "licenses">): AdminPageKey[] {
   const held = new Set<OrganizationCapability>(me.organization.capabilities);
   return PAGE_ORDER.filter(page => {
-    // No capability opens the audit log, so no operator key sees it.
-    if (page === "audit") return me.user?.isOrganizationAdmin === true;
+    // No capability opens the audit log or the websites that sign in with Mentra, so no operator key sees them.
+    if (page === "audit" || page === "websites") return me.user?.isOrganizationAdmin === true;
     // With no billing and no license on this Core there is nothing to list.
     if (page === "licenses" && me.licenses?.available !== true) return false;
     const needed = PAGE_CAPABILITY[page];

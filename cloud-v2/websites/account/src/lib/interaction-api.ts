@@ -7,7 +7,16 @@ import { isProviderContinuation } from "./links";
  * provider's interaction cookie.
  */
 export type DetailsResult =
-  | { kind: "ok"; prompt: string; clientName: string; scopes: string[] }
+  | {
+      kind: "ok";
+      prompt: string;
+      clientName: string;
+      scopes: string[];
+      /** Where the client sends the person back to; empty when Core named none. */
+      redirectUri: string;
+      /** The miniapp whose data a miniapp website reaches; null for any other client. */
+      packageName: string | null;
+    }
   | { kind: "expired" }
   | { kind: "error" };
 
@@ -66,7 +75,8 @@ export function createInteractionApi(origin: string, fetchImpl: Fetch = (input, 
       if (!response.ok) return { kind: "error" };
       const body = (await response.json().catch(() => null)) as {
         prompt?: unknown;
-        client?: { name?: unknown };
+        client?: { name?: unknown; packageName?: unknown };
+        redirectUri?: unknown;
         scopes?: unknown;
       } | null;
       if (!body || typeof body.prompt !== "string") return { kind: "error" };
@@ -75,6 +85,8 @@ export function createInteractionApi(origin: string, fetchImpl: Fetch = (input, 
         prompt: body.prompt,
         clientName: typeof body.client?.name === "string" ? body.client.name : "",
         scopes: Array.isArray(body.scopes) ? body.scopes.filter((scope): scope is string => typeof scope === "string") : [],
+        redirectUri: typeof body.redirectUri === "string" ? body.redirectUri : "",
+        packageName: typeof body.client?.packageName === "string" && body.client.packageName ? body.client.packageName : null,
       };
     },
     handOff(interactionId, accessToken) {

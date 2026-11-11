@@ -18,7 +18,7 @@ function me(
 
 describe("the admin portal's pages follow capabilities", () => {
   test("an Organization Admin sees exactly the operations pages and then the audit log, and opens on incidents", () => {
-    const pages: AdminPageKey[] = ["incidents", "workspaces", "registry", "operator-keys", "audit"];
+    const pages: AdminPageKey[] = ["incidents", "workspaces", "registry", "websites", "operator-keys", "audit"];
     const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true));
     expect(visible).toEqual(pages);
     expect(resolvePage(null, visible)).toBe("incidents");
@@ -26,7 +26,7 @@ describe("the admin portal's pages follow capabilities", () => {
 
   test("there is no Fleet page: Fleet Management opens in the workspace portal, from Workspaces", () => {
     expect([...PAGE_ORDER]).toEqual([
-      "incidents", "workspaces", "licenses", "registry", "operator-keys", "audit",
+      "incidents", "workspaces", "licenses", "registry", "websites", "operator-keys", "audit",
     ]);
     expect([...PAGE_ORDER] as string[]).not.toContain("fleet");
     // Installed or not, and whatever the principal holds, no page is offered for it.
@@ -42,7 +42,7 @@ describe("the admin portal's pages follow capabilities", () => {
   test("an Organization Admin sees the Licenses page, right after Workspaces, once licenses are available", () => {
     const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true, undefined, { available: true }));
     expect(visible).toEqual([
-      "incidents", "workspaces", "licenses", "registry", "operator-keys", "audit",
+      "incidents", "workspaces", "licenses", "registry", "websites", "operator-keys", "audit",
     ]);
     expect(resolvePage("licenses", visible)).toBe("licenses");
   });
@@ -74,9 +74,10 @@ describe("the admin portal's pages follow capabilities", () => {
     expect(visiblePages(me([]))).toEqual([]);
   });
 
-  test("the audit log needs an Organization Admin who is a person, whatever capabilities are held", () => {
+  test("the audit log and Miniapp websites need an Organization Admin who is a person, whatever capabilities are held", () => {
     expect(visiblePages(me(ORGANIZATION_CAPABILITIES))).not.toContain("audit");
-    expect(visiblePages(me([], true))).toEqual(["audit"]);
+    expect(visiblePages(me(ORGANIZATION_CAPABILITIES))).not.toContain("websites");
+    expect(visiblePages(me([], true))).toEqual(["websites", "audit"]);
   });
 
   test("an operator key sees the pages its scopes open, never workspaces, operator keys or the audit log", () => {

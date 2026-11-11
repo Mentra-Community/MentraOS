@@ -14,6 +14,9 @@
  *    admits only its workspace would turn its own members away. While a workspace is assigning a package
  *    (Fleet's registry check), the caller names that workspace itself (`assigningWorkspaceId`), and nothing
  *    is looked up.
+ *  - `workspaceRole`: the person's role in that workspace (member, developer, admin or owner), from the same
+ *    lookup, so a company's miniapp can show an admin what a member doesn't see. Only beside `workspaceId`,
+ *    and absent while a workspace is assigning the package: that check needs no role.
  *  - `localBuild: true`: the token is for a local or development build. Such a token never names a
  *    workspace, so no workspace is looked up for it.
  *
@@ -25,7 +28,7 @@ import {createLogger} from "@mentra/cloud-shared"
 import {trustedAccountEmail} from "./account/trusted-email.service"
 import {featuresFor} from "./licenses/features.service"
 import {issueMiniappToken} from "./session.service"
-import {assigningWorkspace} from "./workspaces/assigned-packages.service"
+import {assigningMembership, type AssigningMembership} from "./workspaces/assigned-packages.service"
 
 /** How long each lookup a miniapp token waits for may take. */
 export const MINIAPP_LOOKUP_DEADLINE_MS = 1_500
@@ -56,19 +59,21 @@ export async function mintMiniappTokenFor(args: {
   packageName: string
   localBuild?: boolean
   assigningWorkspaceId?: string
+  /** A miniapp website's token: it names the website (`client_id`) and lives `ttlSec`. */
+  website?: {clientId: string; ttlSec: number}
 }): Promise<{token: string; expiresAt: number}> {
   const {mentraUserId, packageName} = args
   const localBuild = args.localBuild === true
   // The email lookup never rejects, so abandoning it when a required lookup fails is safe.
   const emailLookup = miniappTokenEmail(mentraUserId)
-  const workspaceLookup = (): Promise<string | null> | string | null => {
+  const workspaceLookup = (): Promise<AssigningMembership | null> | {workspaceId: string; role?: undefined} | null => {
     if (localBuild) return null
-    if (args.assigningWorkspaceId) return args.assigningWorkspaceId
+    if (args.assigningWorkspaceId) return {workspaceId: args.assigningWorkspaceId}
     return required("workspace_unavailable", "assigned workspace lookup", {mentraUserId, packageName}, () =>
-      assigningWorkspace(mentraUserId, packageName),
+      assigningMembership(mentraUserId, packageName),
     )
   }
-  const [features, workspaceId] = await Promise.all([
+  const [features, workspace] = await Promise.all([
     required("features_unavailable", "licensed features lookup", {mentraUserId, packageName}, () =>
       featuresFor({mentraUserId, packageName, now: new Date()}),
     ),
@@ -80,8 +85,10 @@ export async function mintMiniappTokenFor(args: {
     packageName,
     email: await emailLookup,
     features,
-    workspaceId,
+    workspaceId: workspace?.workspaceId ?? null,
+    workspaceRole: workspace?.role ?? null,
     localBuild,
+    ...(args.website ? {websiteClientId: args.website.clientId, ttlSec: args.website.ttlSec} : {}),
   })
 }
 

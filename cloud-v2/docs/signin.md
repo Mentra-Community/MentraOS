@@ -133,9 +133,10 @@ After every sign-in, the hooks registered with `registerAfterSignInHook` run.
 
 ## Clients
 
-Clients are registered in each Core's `CLOUD_CORE_OIDC_CLIENTS`; there is no
-dynamic registration. Every configured client is first-party: it never sees a
-consent screen.
+Mentra's own clients are registered in each Core's `CLOUD_CORE_OIDC_CLIENTS`;
+there is no dynamic registration. Every configured client is first-party: it
+never sees a consent screen. Miniapp websites are registered separately
+([Miniapp websites](#miniapp-websites)).
 
 ```json
 [
@@ -168,6 +169,84 @@ consent screen.
   (`https://portal.mentraglass.com/` for the callback above), which is where a
   portal returns after sign-out, so no environment needs to set it. A
   configured list, empty included, is used as it is. The CLI registers none.
+
+### Miniapp websites
+
+A miniapp's website can offer Sign in with Mentra. It is registered in Core as a
+client of its own, bound to one package, and is never first-party: the person is
+asked to allow it. Websites are stored in Core's database (`website_clients`),
+not in `CLOUD_CORE_OIDC_CLIENTS`, and take effect at once.
+
+| Type | Authentication | For |
+| --- | --- | --- |
+| `server` | `client_secret_post` | A site whose server runs the code flow and keeps the tokens |
+| `browser` | Public (`none`) | A single-page site with no server session |
+
+- **Who registers one.**
+  - *A developer, for their own miniapp*, on the Developer Console's
+    **Websites** page (through Core's service API; see
+    [Store integration](store-integration.md#miniapp-websites)). A package name
+    belongs to the domain it is served from ([the registry's domain rule](registry.md)),
+    and a website's redirect URIs say where a sign-in is delivered, so a
+    developer's website must redirect to the package's own domain:
+    `com.example.notes` signs people in only at `*.example.com`, and
+    `com.mentra.*` only at `*.mentraglass.com`. Whoever controls that domain
+    already serves the miniapp and receives the same tokens on the phone. The
+    package must be in the registry and not archived, and the name on the
+    consent screen is the one Core read from its `miniapp.json`, never one the
+    developer typed. A development client redirects to the developer's own
+    computer and signs in only them. One account holds at most 20.
+  - *An Organization Admin*, on the admin portal's **Miniapp websites** page
+    (`/api/admin/website-clients`): any package, any HTTPS address, the name
+    they give, and optionally only for members of listed workspaces. Admins
+    also see and can switch off every developer's website.
+- **Client and secret.** Core allocates the client ID (`mwc_…`) and, for a
+  `server` site, its secret (`mws_…`), which is shown once; Core stores only
+  its SHA-256.
+- **Redirect URIs** match exactly, port included. A `production` client takes
+  HTTPS only; a `development` client takes loopback HTTP with a fixed port.
+- **Archiving a miniapp stops its websites.** A package the registry has
+  archived gets no token, at the code exchange or at refresh.
+- **Consent.** The sign-in page's `/consent` shows the site's name, the address
+  it sends the person back to, what it will see, and that it reaches their data
+  in that miniapp. Deny returns `access_denied` and issues no code. Once
+  allowed, later sign-ins to that site show no screen, in any browser, until
+  the person revokes it.
+- **Tokens.** The site runs the usual code flow with S256 PKCE, `state` and
+  `nonce`, scopes `openid email profile`. The token endpoint answers an ID
+  token for the client, a rotating refresh token, and an access token that is
+  the person's **miniapp token** for the bound package: the same token the
+  Mentra App gives the miniapp on the phone, with `client_id` set to the
+  website, living 5 minutes. `@mentra/auth` verifies it with the phone's
+  configuration and returns `clientId`. It names the person's workspace and
+  role when their workspace assigned the package, as the phone's does.
+- **Access.** A `private` website admits only active members, with
+  `miniapps.access`, of the workspaces on its list. Core checks at every code
+  exchange and refresh, and answers `400 access_denied` with no tokens.
+- **Isolation.** Nothing a website receives opens Core: its access token is not
+  a Core access token, and Core's principal, account and phone routes refuse
+  it. A website never sees a Supabase token.
+- **Disabling or removing** a website stops new sign-ins and refreshes at once;
+  miniapp tokens already issued expire within 5 minutes.
+
+A site signs the person out of itself and revokes its refresh token at
+`/oidc/token/revocation`.
+
+### Connected apps
+
+The sign-in site's `/connections` page lists the miniapp websites the person
+has allowed, with what each can see and when it was allowed, and a **Revoke**
+button. Revoking ends every grant the person gave that website with its refresh
+tokens: its next refresh fails, and its next sign-in asks again. First-party
+clients are not listed.
+
+The page knows the person by the sign-in server's session cookie and holds no
+token. Its calls run in Core: `GET /oidc/connections`,
+`POST /oidc/connections/revoke` (same-origin only) and
+`GET /oidc/connections/sign-in`, which sends a browser with no session through
+sign-in and back as the sign-in site's own client, `mentra-account`. That
+client needs no configuration, redirects only to `/connections`, and no token
+issued to it is accepted anywhere.
 
 ### The CLI
 
@@ -318,7 +397,7 @@ Times are read strictly: a token issued in the revocation's own second counts as
 before it.
 
 The revocation endpoint (`/oidc/token/revocation`) revokes refresh tokens: the
-Developer Console and the CLI revoke theirs when they sign out. A Core access
+Developer Console, the CLI and miniapp websites revoke theirs when they sign out. A Core access
 token is a signed JWT that Core verifies without a lookup, so revoking one there
 has no effect; it lives out its hour unless the person's sign-ins are revoked
 (above), or its client or sign-in source is removed.

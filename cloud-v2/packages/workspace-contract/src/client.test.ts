@@ -961,3 +961,56 @@ describe("construction", () => {
     }
   })
 })
+
+describe("a developer's own websites", () => {
+  const view = {clientId: "mwc_1", name: "Notes", packageName: "com.example.notes"}
+
+  test("each call is a signed POST carrying the person's token, and Core's answer comes back as it gave it", async () => {
+    const {client, calls} = clientFor(() => json({client: view, secret: "mws_s"}, 201))
+    const answer = await client.websiteClients("person-token", {
+      route: "create",
+      client: {packageName: "com.example.notes", type: "server", environment: "production", redirectUris: ["https://notes.example.com/cb"]},
+    })
+    expect(answer).toEqual({status: 201, body: {client: view, secret: "mws_s"}})
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.method).toBe("POST")
+    expect(calls[0]!.url).toBe(`${BASE}/api/internal/website-clients/create`)
+    expect(JSON.parse(calls[0]!.body!)).toEqual({
+      token: "person-token",
+      client: {packageName: "com.example.notes", type: "server", environment: "production", redirectUris: ["https://notes.example.com/cb"]},
+    })
+
+    const routes = clientFor(() => json({clients: [], max: 20}))
+    await routes.client.websiteClients("t", {route: "list"})
+    await routes.client.websiteClients("t", {route: "update", clientId: "mwc_1", changes: {status: "disabled"}})
+    await routes.client.websiteClients("t", {route: "regenerate-secret", clientId: "mwc_1"})
+    await routes.client.websiteClients("t", {route: "delete", clientId: "mwc_1"})
+    expect(routes.calls.map((call) => [call.url.split("/").pop(), JSON.parse(call.body!)])).toEqual([
+      ["list", {token: "t"}],
+      ["update", {token: "t", clientId: "mwc_1", changes: {status: "disabled"}}],
+      ["regenerate-secret", {token: "t", clientId: "mwc_1"}],
+      ["delete", {token: "t", clientId: "mwc_1"}],
+    ])
+  })
+
+  test.each([
+    [422, {error: "domain_mismatch", error_description: "not on the package's domain"}],
+    [422, {error: "not_in_registry", error_description: "install it once"}],
+    [404, {error: "not_found", error_description: "no such website"}],
+    [400, {error: "invalid_request", error_description: "redirectUris must be a non-empty list of URLs"}],
+    [401, {error: INVALID_TOKEN_ERROR}],
+    [403, {error: "forbidden", reason: "email_unverified", error_description: "verify your email address first"}],
+  ])("a refusal the person can act on (%i) is relayed, not thrown", async (status, body) => {
+    const {client} = clientFor(() => json(body, status))
+    expect(await client.websiteClients("t", {route: "list"})).toEqual({status, body})
+  })
+
+  test("an answer the Store cannot trust throws: its own signature refused, a 5xx, or a body that is not an object", async () => {
+    await expectClientError(clientFor(() => json({error: SERVICE_UNAUTHORIZED_ERROR}, 401)).client.websiteClients("t", {route: "list"}), "service_unauthorized")
+    // Core refusing the Store itself (another service's route) is not about the person.
+    await expectClientError(clientFor(() => json({error: "forbidden"}, 403)).client.websiteClients("t", {route: "list"}), "forbidden")
+    await expectClientError(clientFor(() => json({error: "temporarily_unavailable"}, 503)).client.websiteClients("t", {route: "list"}), "core_unavailable")
+    await expectClientError(clientFor(() => new Response("[]", {status: 200})).client.websiteClients("t", {route: "list"}), "bad_response")
+    await expectClientError(clientFor(() => new Response("<html>", {status: 422})).client.websiteClients("t", {route: "list"}), "bad_response")
+  })
+})
