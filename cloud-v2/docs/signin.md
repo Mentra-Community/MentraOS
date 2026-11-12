@@ -230,7 +230,10 @@ not in `CLOUD_CORE_OIDC_CLIENTS`, and take effect at once.
   miniapp tokens already issued expire within 5 minutes.
 
 A site signs the person out of itself and revokes its refresh token at
-`/oidc/token/revocation`.
+`/oidc/token/revocation`. That ends the sign-in, not the consent: every token
+issued under the grant ends, and the grant itself is kept as the record of what
+they allowed, so signing in again shows no consent screen. It goes when they
+revoke the site under Connected apps, or expires.
 
 ### Connected apps
 

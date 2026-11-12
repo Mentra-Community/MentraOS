@@ -5,6 +5,7 @@ import type {ReactNode} from "react"
 
 import {GlassesStatus} from "./DeviceStatus"
 import {useNavigationStore} from "@/stores/navigation"
+import {cancelPairingModeConnect} from "@/stores/pairingModeConnect"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import en from "@/i18n/en"
@@ -67,6 +68,7 @@ describe("Mentra Live pairing state on Home", () => {
   beforeEach(async () => {
     jest.clearAllMocks()
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({push, clearHistoryAndGoHome})
+    cancelPairingModeConnect()
     engine.pairing.onScanning = jest.fn(() => () => {})
     ;(engine.pairing.scanning as jest.Mock).mockReturnValue(false)
     setStatus({state: "pairing_rejected"})
@@ -144,6 +146,83 @@ describe("Mentra Live pairing state on Home", () => {
       fireEvent.press(screen.getByLabelText("home:connectGlasses"))
       await waitFor(() => expect(engine.glasses.connectInPairingMode).toHaveBeenCalledTimes(1))
       expect(engine.glasses.connectDefault).not.toHaveBeenCalled()
+    })
+
+    describe("while the link is connecting", () => {
+      const realReadiness = (engine.pairing.readiness as jest.Mock).getMockImplementation()
+      const pressConnectInPairingMode = () => {
+        setStatus({state: "pairing_mode", windowId: 4, endsAtMs: Date.now() + 120_000})
+        ;(checkConnectivityRequirementsUI as jest.Mock).mockResolvedValue(true)
+        ;(engine.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
+        const screen = render(<GlassesStatus />)
+        fireEvent.press(screen.getByLabelText("home:connectGlasses"))
+        return screen
+      }
+
+      beforeEach(() => {
+        ;(engine.pairing.readiness as jest.Mock).mockReturnValue({connected: false, nativeLinkBusy: true})
+        ;(engine.glasses.connectInPairingMode as jest.Mock).mockClear().mockResolvedValue(undefined)
+      })
+      afterEach(() => {
+        ;(engine.pairing.readiness as jest.Mock).mockImplementation(realReadiness)
+      })
+
+      it("still offers Connect glasses in pairing mode: only the person's press connects", () => {
+        setStatus({state: "pairing_mode", windowId: 4, endsAtMs: Date.now() + 120_000})
+        const screen = render(<GlassesStatus />)
+        expect(screen.getByLabelText("home:connectGlasses")).toBeTruthy()
+        expect(screen.queryByText("common:cancel")).toBeNull()
+      })
+
+      it("keeps Cancel, and never offers Connect glasses again, while the person's attempt connects", async () => {
+        const screen = pressConnectInPairingMode()
+        await waitFor(() => expect(engine.glasses.connectInPairingMode).toHaveBeenCalledTimes(1))
+        // The scan has stopped and the link is connecting, with the glasses still in pairing mode.
+        await waitFor(() => expect(screen.getByText("common:cancel")).toBeTruthy())
+        expect(screen.queryByLabelText("home:connectGlasses")).toBeNull()
+      })
+
+      it("shows Cancel as soon as Connect glasses is pressed, before the SDK reports anything", async () => {
+        ;(engine.pairing.readiness as jest.Mock).mockReturnValue({connected: false, nativeLinkBusy: false})
+        let connected = () => {}
+        ;(engine.glasses.connectInPairingMode as jest.Mock).mockReturnValue(
+          new Promise<void>((resolve) => {
+            connected = resolve
+          }),
+        )
+        const screen = pressConnectInPairingMode()
+        await waitFor(() => expect(screen.getByText("common:cancel")).toBeTruthy())
+        expect(screen.queryByLabelText("home:connectGlasses")).toBeNull()
+
+        // The call returned and nothing is connecting: the attempt is over.
+        await act(async () => connected())
+        expect(screen.getByLabelText("home:connectGlasses")).toBeTruthy()
+      })
+
+      it("Cancel ends the attempt and offers Connect glasses again for the same window", async () => {
+        const screen = pressConnectInPairingMode()
+        await waitFor(() => expect(screen.getByText("common:cancel")).toBeTruthy())
+        fireEvent.press(screen.getByText("common:cancel"))
+        await waitFor(() => expect(engine.glasses.disconnect).toHaveBeenCalledTimes(1))
+        expect(screen.getByLabelText("home:connectGlasses")).toBeTruthy()
+        expect(screen.queryByText("common:cancel")).toBeNull()
+      })
+
+      it("a new pairing window starts with Connect glasses, whatever happened in the last one", async () => {
+        let notify = () => {}
+        ;(engine.glasses.onStatus as jest.Mock).mockImplementation((listener) => {
+          notify = listener
+          return () => {}
+        })
+        const screen = pressConnectInPairingMode()
+        await waitFor(() => expect(screen.getByText("common:cancel")).toBeTruthy())
+        act(() => {
+          setStatus({state: "pairing_mode", windowId: 5, endsAtMs: Date.now() + 120_000})
+          notify()
+        })
+        expect(screen.getByLabelText("home:connectGlasses")).toBeTruthy()
+        expect(screen.queryByText("common:cancel")).toBeNull()
+      })
     })
 
     it("keeps the reconnecting card when pairing mode ends, until the reconnect has had time to start", () => {

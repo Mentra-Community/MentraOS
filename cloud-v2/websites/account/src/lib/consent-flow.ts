@@ -9,25 +9,6 @@ import { readInteractionId } from "./links";
 export interface ConsentDetails {
   clientName: string;
   scopes: string[];
-  /** The address the site sends the person back to, as text to show; null when it is not a web address. */
-  returnsTo: string | null;
-  /** Set for a miniapp website: the site reaches the person's data in this miniapp. */
-  packageName: string | null;
-}
-
-/**
- * A redirect URI as the consent screen shows it: the full address without its query, so the person sees
- * the site's real host. Anything that is not an http(s) URL is not shown.
- */
-export function shownRedirect(redirectUri: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(redirectUri);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  return `${url.origin}${url.pathname}`;
 }
 
 export type ConsentState =
@@ -62,8 +43,6 @@ export async function startConsent(deps: ConsentDeps, search: string): Promise<C
     consent: {
       clientName: details.clientName || "This app",
       scopes: details.scopes,
-      returnsTo: shownRedirect(details.redirectUri),
-      packageName: details.packageName,
     },
   };
 }

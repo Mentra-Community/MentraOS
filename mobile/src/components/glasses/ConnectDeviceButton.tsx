@@ -6,6 +6,7 @@ import {Button} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
+import {cancelPairingModeConnect, connectInPairingMode, usePairingModeConnect} from "@/stores/pairingModeConnect"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
 import {usePairingReconnectHold} from "@/hooks/usePairingReconnectHold"
@@ -36,8 +37,13 @@ export const ConnectDeviceButton = () => {
     rejected: pairingRejected,
     linkBusy: isSearching || pairingReadiness.nativeLinkBusy,
   })
-  // In pairing mode nothing connects by itself: Connect glasses takes the glasses back from their window.
-  const busy = isSearching || (pairingReadiness.nativeLinkBusy && !inPairingMode) || holdReconnectAfterPairing
+  // In pairing mode nothing connects by itself: Connect glasses takes the glasses back from their
+  // window, and that attempt, on this screen or on Home, shows as connecting until it ends.
+  const pairingState = glassesStatus.pairingState
+  const pairingWindowId = pairingState?.state === "pairing_mode" ? pairingState.windowId : undefined
+  const takeBack = usePairingModeConnect(inPairingMode ? pairingWindowId : undefined)
+  const linkBusy = pairingReadiness.nativeLinkBusy && (!inPairingMode || takeBack.requested)
+  const busy = isSearching || takeBack.starting || linkBusy || holdReconnectAfterPairing
 
   if (glassesConnected) {
     return null
@@ -71,7 +77,7 @@ export const ConnectDeviceButton = () => {
         return
       }
 
-      if (inPairingMode) await engine.glasses.connectInPairingMode()
+      if (inPairingMode && pairingWindowId !== undefined) await connectInPairingMode(pairingWindowId)
       else await engine.glasses.connectDefault()
     } catch (err) {
       console.error("connect to glasses error:", err)
@@ -83,6 +89,7 @@ export const ConnectDeviceButton = () => {
   const handleConnectOrDisconnect = async () => {
     const action = decideConnectButtonAction({hasDefaultWearable: !!pairedModel, busy})
     if (action === "cancel") {
+      cancelPairingModeConnect()
       await engine.glasses.disconnect()
     } else {
       await connectGlasses()

@@ -2,6 +2,7 @@
  * @fileoverview ElevenLabs streaming TTS provider.
  */
 import { createLogger } from "@mentra/cloud-shared";
+import { pcmSpeechLoudness } from "../pcm-loudness";
 import { DEFAULT_TTS_AUDIO_FORMAT, TTS_AUDIO_FORMATS, type TtsAudioFormat } from "../tts-formats";
 import type { TtsProvider, TtsProviderSpeakRequest } from "../tts.service";
 
@@ -123,8 +124,11 @@ export class ElevenLabsTtsProvider implements TtsProvider {
     }
 
     // ElevenLabs relays PCM as it is synthesized; the body is raw samples with
-    // no container, so the content type carries the sample format.
-    return new Response(response.body, {
+    // no container, so the content type carries the sample format. PCM speech
+    // is raised to a podcast's loudness on the way (pcm-loudness.ts). MP3 stays
+    // as ElevenLabs sends it, for the older hosts that ask for it.
+    const body = format === "pcm_24000" ? response.body.pipeThrough(pcmSpeechLoudness()) : response.body;
+    return new Response(body, {
       headers: {
         "Content-Type": TTS_AUDIO_FORMATS[format].contentType,
         "Cache-Control": "no-cache",

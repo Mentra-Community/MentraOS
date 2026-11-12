@@ -43,7 +43,7 @@ import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-me
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {oidcBridge, stopOidcBridge} from "../packages/core/src/services/oidc/bridge"
 import {verifyCoreAccessToken} from "../packages/core/src/services/oidc/core-access-token"
-import {ensureOidcCollections} from "../packages/core/src/services/oidc/mongo-adapter"
+import {ensureOidcCollections, listGrants} from "../packages/core/src/services/oidc/mongo-adapter"
 import {
   createWebsiteClient,
   deleteWebsiteClient,
@@ -731,6 +731,76 @@ describe("W08: revocation", () => {
     await client.tokenRevocation(mine.flow.config, stillGood.refresh_token!)
     await expect(client.refreshTokenGrant(mine.flow.config, stillGood.refresh_token!)).rejects.toThrow()
     expect((await client.refreshTokenGrant(theirs.flow.config, theirs.tokens.refresh_token!)).access_token).toBeString()
+  })
+
+  test("signing out of a site is not taking consent back: the next sign-in shows no screen, until Revoke", async () => {
+    const who = await person()
+    const site = await register()
+    const browser = new Browser(app)
+    const first = await signIn(site, who, browser)
+    expect(first.flow.kind === "code" && first.flow.consented).toBe(true)
+    // The site's Sign out: it revokes its refresh token, the only one this person has for it.
+    await client.tokenRevocation(first.flow.config, first.tokens.refresh_token!)
+    await expect(client.refreshTokenGrant(first.flow.config, first.tokens.refresh_token!)).rejects.toThrow()
+    // What they allowed is still on record, and still listed under Connected apps.
+    expect((await listGrants(who, site.client.clientId)).length).toBe(1)
+    const listed = (await (await browser.request(`${OIDC_ISSUER}/oidc/connections`)).json()) as {connections: Array<{clientId: string}>}
+    expect(listed.connections.map(connection => connection.clientId)).toEqual([site.client.clientId])
+
+    // Signing in again, in that browser or a new one, asks nothing.
+    const again = await signIn(site, who, browser)
+    expect(again.flow.kind === "code" && again.flow.consented).toBe(false)
+    const elsewhere = await signIn(site, who)
+    expect(elsewhere.flow.kind === "code" && elsewhere.flow.consented).toBe(false)
+    // The first browser signed in again on the grant it already had: two browsers, two grants, one entry.
+    expect((await listGrants(who, site.client.clientId)).length).toBe(2)
+    // Signing out of one of two ends that one's tokens and nobody else's.
+    await client.tokenRevocation(again.flow.config, again.tokens.refresh_token!)
+    await expect(client.refreshTokenGrant(again.flow.config, again.tokens.refresh_token!)).rejects.toThrow()
+    expect((await client.refreshTokenGrant(elsewhere.flow.config, elsewhere.tokens.refresh_token!)).access_token).toBeString()
+    const still = (await (await browser.request(`${OIDC_ISSUER}/oidc/connections`)).json()) as {connections: Array<{clientId: string}>}
+    expect(still.connections.map(connection => connection.clientId)).toEqual([site.client.clientId])
+
+    // Revoke under Connected apps is what takes it back: every sign-in ends and the next one asks.
+    const revoked = await browser.request(`${OIDC_ISSUER}/oidc/connections/revoke`, {
+      method: "POST",
+      headers: {"content-type": "application/json", "origin": OIDC_ISSUER},
+      body: JSON.stringify({clientId: site.client.clientId}),
+    })
+    expect(await revoked.json()).toEqual({revoked: true})
+    expect((await listGrants(who, site.client.clientId)).length).toBe(0)
+    const after = await signIn(site, who, browser)
+    expect(after.flow.kind === "code" && after.flow.consented).toBe(true)
+  })
+
+  test("two browsers signing out of a site at the same moment leave the consent on record", async () => {
+    const who = await person()
+    const site = await register()
+    for (let round = 0; round < 3; round++) {
+      const one = await signIn(site, who)
+      const two = await signIn(site, who)
+      expect(two.flow.kind === "code" && two.flow.consented).toBe(false)
+      await Promise.all([
+        client.tokenRevocation(one.flow.config, one.tokens.refresh_token!),
+        client.tokenRevocation(two.flow.config, two.tokens.refresh_token!),
+      ])
+      await expect(client.refreshTokenGrant(one.flow.config, one.tokens.refresh_token!)).rejects.toThrow()
+      await expect(client.refreshTokenGrant(two.flow.config, two.tokens.refresh_token!)).rejects.toThrow()
+      // Asked once, in the first round, and never again.
+      const next = await authorize(site, who)
+      expect(next).toMatchObject({kind: "code", consented: false})
+    }
+  })
+
+  test("a replayed refresh token still ends its sign-in, grant and all", async () => {
+    const who = await person()
+    const site = await register()
+    const {tokens, flow} = await signIn(site, who)
+    const next = await client.refreshTokenGrant(flow.config, tokens.refresh_token!)
+    // The spent token, presented again: the provider ends that sign-in's grant, with the token it issued since.
+    await expect(client.refreshTokenGrant(flow.config, tokens.refresh_token!)).rejects.toThrow()
+    await expect(client.refreshTokenGrant(flow.config, next.refresh_token!)).rejects.toThrow()
+    expect((await listGrants(who, site.client.clientId)).length).toBe(0)
   })
 })
 

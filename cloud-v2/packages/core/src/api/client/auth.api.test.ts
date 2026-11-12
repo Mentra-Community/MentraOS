@@ -15,6 +15,7 @@ const savedEnv = Object.fromEntries(SIGNING_ENV.map((key) => [key, process.env[k
 const mocks: Array<{mockRestore(): void}> = []
 let featuresFor: ReturnType<typeof spyOn<typeof featuresService, "featuresFor">>
 let assigningWorkspace: ReturnType<typeof spyOn<typeof assignedPackages, "assigningMembership">>
+let workspaceName: ReturnType<typeof spyOn<typeof assignedPackages, "workspaceNameOf">>
 
 beforeEach(() => {
   const {privateKey, publicKey} = crypto.generateKeyPairSync("ed25519")
@@ -27,6 +28,9 @@ beforeEach(() => {
   // A person whose workspace assigned nothing, unless a test says otherwise.
   assigningWorkspace = spyOn(assignedPackages, "assigningMembership").mockResolvedValue(null)
   mocks.push(assigningWorkspace)
+  // A workspace with no name to read, unless a test says otherwise.
+  workspaceName = spyOn(assignedPackages, "workspaceNameOf").mockResolvedValue(null)
+  mocks.push(workspaceName)
   mocks.push(
     spyOn(session, "verifyAccessToken").mockResolvedValue({
       mentraUserId: "mu_01TEST",
@@ -260,6 +264,7 @@ describe("POST /miniapp-token workspace and local-build claims", () => {
     assigningWorkspace.mockImplementation(async (mentraUserId, packageName) =>
       mentraUserId === "mu_01TEST" && packageName === "com.acme.tools" ? {workspaceId: "ws_acme", role: "admin"} : null,
     )
+    workspaceName.mockImplementation(async (workspaceId) => (workspaceId === "ws_acme" ? "Acme Fleet" : null))
 
     expect(await verifiedClaims(await mint("com.acme.tools"), "com.acme.tools")).toMatchObject({
       sub: "mu_01TEST",
@@ -268,14 +273,27 @@ describe("POST /miniapp-token workspace and local-build claims", () => {
       workspaceId: "ws_acme",
       // The person's role there, from the same lookup.
       workspaceRole: "admin",
+      // And the workspace's name, for the miniapp to show.
+      workspaceName: "Acme Fleet",
     })
     const unassigned = await verifiedClaims(await mint("com.example.notes"), "com.example.notes")
     expect("workspaceId" in unassigned).toBe(false)
     expect("workspaceRole" in unassigned).toBe(false)
+    expect("workspaceName" in unassigned).toBe(false)
+    expect(workspaceName.mock.calls).toEqual([["ws_acme"]])
     expect(assigningWorkspace.mock.calls).toEqual([
       ["mu_01TEST", "com.acme.tools"],
       ["mu_01TEST", "com.example.notes"],
     ])
+  })
+
+  test("a workspace name that can't be read leaves the token without it, never without the token", async () => {
+    assigningWorkspace.mockResolvedValue({workspaceId: "ws_acme", role: "owner"})
+    workspaceName.mockRejectedValue(new Error("Mongo timed out"))
+
+    const claims = await verifiedClaims(await mint("com.acme.tools"), "com.acme.tools")
+    expect(claims).toMatchObject({workspaceId: "ws_acme", workspaceRole: "owner"})
+    expect("workspaceName" in claims).toBe(false)
   })
 
   test("an unassigned, installed miniapp's token has exactly the claims it always had", async () => {
@@ -293,7 +311,9 @@ describe("POST /miniapp-token workspace and local-build claims", () => {
     expect(claims).toMatchObject({sub: "mu_01TEST", aud: "com.acme.tools", localBuild: true, features: ["tools.pro"]})
     expect("workspaceId" in claims).toBe(false)
     expect("workspaceRole" in claims).toBe(false)
+    expect("workspaceName" in claims).toBe(false)
     expect(assigningWorkspace).not.toHaveBeenCalled()
+    expect(workspaceName).not.toHaveBeenCalled()
   })
 
   test("localBuild false is an installed miniapp's token", async () => {

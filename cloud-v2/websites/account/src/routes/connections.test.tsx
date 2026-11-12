@@ -25,7 +25,8 @@ describe("Connected apps", () => {
   test("lists each site with what it can see and when it was allowed, and a Revoke button", () => {
     const html = renderToStaticMarkup(<ConnectionsView connections={[NOTES, PAPERWORK]} notice="none" busy={null} onRevoke={() => undefined} />);
     expect(html).toContain("Notes");
-    expect(html).toContain("See your Mentra account ID · See your email address");
+    expect(html).toContain("Read basic information");
+    expect(html).not.toContain(" · ");
     expect(html).toContain("Allowed Nov 11, 2026");
     expect(html).toContain('aria-label="Revoke Notes"');
     expect(html).toContain('aria-label="Revoke Paperwork"');

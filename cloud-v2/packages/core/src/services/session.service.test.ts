@@ -125,7 +125,12 @@ describe("issueMiniappToken features", () => {
 })
 
 describe("issueMiniappToken workspace and local-build claims", () => {
-  const issue = async (extra: {workspaceId?: string | null; workspaceRole?: string | null; localBuild?: boolean}) => {
+  const issue = async (extra: {
+    workspaceId?: string | null
+    workspaceRole?: string | null
+    workspaceName?: string | null
+    localBuild?: boolean
+  }) => {
     setSigningEnv()
     const {token} = await issueMiniappToken({
       mentraUserId: "mu_01TEST",
@@ -147,6 +152,13 @@ describe("issueMiniappToken workspace and local-build claims", () => {
     expect("workspaceRole" in (await issue({workspaceId: "ws_acme"}))).toBe(false)
     expect("workspaceRole" in (await issue({workspaceRole: "owner"}))).toBe(false)
     expect("workspaceRole" in (await issue({workspaceId: "ws_acme", workspaceRole: "owner", localBuild: true}))).toBe(false)
+  })
+
+  test("names the workspace's name beside the workspace, and never without one", async () => {
+    expect(await issue({workspaceId: "ws_acme", workspaceName: "Acme Fleet"})).toMatchObject({workspaceId: "ws_acme", workspaceName: "Acme Fleet"})
+    expect("workspaceName" in (await issue({workspaceId: "ws_acme"}))).toBe(false)
+    expect("workspaceName" in (await issue({workspaceName: "Acme Fleet"}))).toBe(false)
+    expect("workspaceName" in (await issue({workspaceId: "ws_acme", workspaceName: "Acme Fleet", localBuild: true}))).toBe(false)
   })
 
   test("marks a local build, and never names a workspace in its token", async () => {

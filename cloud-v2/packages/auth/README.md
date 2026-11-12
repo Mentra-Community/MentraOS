@@ -37,6 +37,11 @@ see, such as everyone's records instead of their own. It is `null` whenever
 `workspaceId` is, and for tokens from a Core that doesn't name roles yet, so
 treat `null` as the least privilege.
 
+`session.workspaceName` is that workspace's name, for showing the person which
+workspace they are in. It is `null` whenever `workspaceId` is, and when Core
+couldn't read it in time or doesn't send it yet, so show something else then and
+never decide anything by it.
+
 `session.clientId` is set when the token came from a website the person signed
 in to with their Mentra account (Sign in with Mentra), and `null` when it came
 from the Mentra App. It is the same person and the same `mentraUserId` either

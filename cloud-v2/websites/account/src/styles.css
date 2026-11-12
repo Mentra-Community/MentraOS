@@ -305,14 +305,6 @@ a:hover,
   margin-top: 4px;
 }
 
-.uri {
-  display: block;
-  margin-top: 4px;
-  overflow-wrap: anywhere;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-}
-
 .connections {
   margin: 0 0 16px;
   padding: 0;
