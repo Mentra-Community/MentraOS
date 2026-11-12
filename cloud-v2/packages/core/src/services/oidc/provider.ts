@@ -139,6 +139,30 @@ export async function grantForAuthorization(ctx: KoaContextWithOIDC) {
   return grant
 }
 
+/**
+ * Whether ending a token ends its grant as well.
+ *
+ * A website's grants are also the record of what the person allowed it (`grantForAuthorization` reads them
+ * to skip the consent screen). A site that revokes its refresh token is signing the person out, not taking
+ * their consent back, so the grant is kept: the provider still ends every token issued under it, and the
+ * grant stays until the person revokes the site under Connected apps or it expires.
+ *
+ * It is kept whatever other grants exist. Keeping only the last one would mean deciding from a count that two
+ * sign-outs at the same moment could both read before either had removed anything, and then both would go.
+ * A browser that signs in again reuses its grant, so what is left behind is one small record for each
+ * browser the person used, for the grant's lifetime.
+ *
+ * Everything else is the provider's default: a replayed refresh token or a signed-out session ends the grant,
+ * revoking an access token never does, and first-party clients, which need no consent, are unchanged.
+ */
+export async function revokeGrantWithToken(ctx: KoaContextWithOIDC): Promise<boolean> {
+  if (ctx.oidc.route !== "revocation") return true
+  if (ctx.oidc.entities.AccessToken) return false
+  const clientId = ctx.oidc.client?.clientId
+  const client = clientId ? await findClient(clientId) : undefined
+  return !client || client.firstParty
+}
+
 /** The provider's configuration (exported for tests that inspect it). */
 export async function providerConfiguration(settings: ProviderSettings) {
   const policy = interactionPolicy.base()
@@ -227,6 +251,7 @@ export async function providerConfiguration(settings: ProviderSettings) {
       },
     },
     loadExistingGrant: grantForAuthorization,
+    revokeGrantPolicy: revokeGrantWithToken,
     rotateRefreshToken: true,
     issueRefreshToken: async (_ctx: unknown, client: {grantTypeAllowed(type: string): boolean}) => client.grantTypeAllowed("refresh_token"),
     // Refresh tokens outlive the sign-in site's session: signing out there leaves every site and the CLI signed in.
