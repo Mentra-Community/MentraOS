@@ -41,6 +41,7 @@ describe("runtime TTS formats", () => {
     expect(speech.headers.get("content-type")).toBe("audio/mpeg");
     expect(requestedUrls).toHaveLength(1);
     expect(requestedUrls[0]).not.toContain("output_format");
+    expect(new Uint8Array(await speech.arrayBuffer())).toEqual(new Uint8Array([1, 0, 2, 0]));
   });
 
   test("pcm_24000 asks ElevenLabs for raw PCM and labels its sample format", async () => {
@@ -52,7 +53,8 @@ describe("runtime TTS formats", () => {
     const speech = await app().request("/api/tts/speak?text=Hi&format=pcm_24000");
     expect(speech.headers.get("content-type")).toBe(PCM_CONTENT_TYPE);
     expect(requestedUrls[0]).toEndWith("/stream?output_format=pcm_24000");
-    expect(new Uint8Array(await speech.arrayBuffer())).toEqual(new Uint8Array([1, 0, 2, 0]));
+    // Samples 1 and 2, raised 10.8 dB (pcm-loudness.ts).
+    expect(new Uint8Array(await speech.arrayBuffer())).toEqual(new Uint8Array([3, 0, 7, 0]));
   });
 
   test("rejects an unknown format before synthesizing", async () => {
