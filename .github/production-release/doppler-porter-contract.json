@@ -1377,6 +1377,11 @@
         "MONGODB_DB",
         "MONGODB_URI",
         "NODE_ENV",
+        "PAPERWORK_WEB_CLIENT_ID",
+        "PAPERWORK_WEB_CLIENT_SECRET",
+        "PAPERWORK_WEB_ISSUER",
+        "PAPERWORK_WEB_SESSION_SECRET",
+        "PAPERWORK_WEB_URL",
         "PORT",
         "VEHICLE_DATABASES_API_KEY"
       ]
