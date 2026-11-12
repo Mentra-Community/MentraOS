@@ -2,7 +2,7 @@
 
 import {createHash} from "node:crypto"
 import {afterEach, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
-import {FLEET_LIMITS, type FleetRecord} from "@mentra/cloud-protocol"
+import {FLEET_LIMITS, FLEET_TELEMETRY_LIMITS, type FleetRecord} from "@mentra/cloud-protocol"
 import {createMMKVCalls, DEFAULT_MMKV_ID, fakeCreateMMKV, mmkvInstances, resetFakeMmkv} from "./fakeMmkv"
 import {MemoryFleetStore} from "./memoryFleetStore"
 
@@ -971,6 +971,43 @@ describe("FleetQueue telemetry share (Phase 12)", () => {
     expect(ids(full.nextBatch(B, 1, 1_000_000))).toEqual(["g0"])
     expect(full.takeLosses(B, clock).dropped).toBe(0)
     expect(full.takeTelemetryLosses(B, clock)?.packages["com.mentra.call"]?.evicted).toBe(1)
+  })
+
+  test("a queue an earlier run left over its places is brought back inside them by the next record of any kind", () => {
+    // What a run that kept 2,003 telemetry records (a larger share, or one stopped before it trimmed) leaves behind.
+    const left = new Map<string, string>()
+    for (let n = 0; n < FLEET_TELEMETRY_LIMITS.queueShare + 3; n += 1) {
+      left.set(`q:${A}:${String(n).padStart(16, "0")}:tel.${n}`, JSON.stringify({enqueuedAt: clock, record: telemetry(n)}))
+    }
+    const queue = newQueue(new MemoryFleetStore(left))
+    queue.enqueue(A, gap("usage"))
+    expect(queue.size(A)).toBe(FLEET_TELEMETRY_LIMITS.queueShare + 1)
+    expect(ids(queue.nextBatch(A, 1, 1_000_000))).toEqual(["tel.3"])
+    expect(queue.takeLosses(A, clock)).toEqual({dropped: 0, expired: 0, from: null, to: null})
+    expect(queue.takeTelemetryLosses(A, clock)?.packages["com.mentra.call"]?.evicted).toBe(3)
+
+    // From then on a record that is not telemetry has nothing to evict, and telemetry still keeps to its share.
+    queue.enqueue(A, gap("more"))
+    expect(queue.size(A)).toBe(FLEET_TELEMETRY_LIMITS.queueShare + 2)
+    expect(queue.takeTelemetryLosses(A, clock)).toBeNull()
+    queue.enqueue(A, telemetry(9_000))
+    expect(queue.size(A)).toBe(FLEET_TELEMETRY_LIMITS.queueShare + 2)
+    expect(ids(queue.nextBatch(A, 1, 1_000_000))).toEqual(["tel.4"])
+    expect(queue.takeTelemetryLosses(A, clock)?.packages["com.mentra.call"]?.evicted).toBe(1)
+  })
+
+  test("a record removed from a full queue makes room: the next one evicts nothing", () => {
+    const queue = newQueue()
+    for (let index = 0; index < FLEET_LIMITS.phoneQueueMaxRecords; index += 1) queue.enqueue(A, gap(`r${index}`))
+    queue.enqueue(A, gap("over"))
+    expect(queue.takeLosses(A, clock).dropped).toBe(1)
+    queue.remove(A, ["r1"])
+    queue.enqueue(A, gap("fits"))
+    expect(queue.size(A)).toBe(FLEET_LIMITS.phoneQueueMaxRecords)
+    expect(queue.takeLosses(A, clock).dropped).toBe(0)
+    queue.enqueue(A, gap("over again"))
+    expect(queue.size(A)).toBe(FLEET_LIMITS.phoneQueueMaxRecords)
+    expect(queue.takeLosses(A, clock).dropped).toBe(1)
   })
 
   test("an unreadable telemetry record is never a coverage gap", () => {

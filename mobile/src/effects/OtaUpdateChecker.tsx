@@ -3,7 +3,7 @@ import {useEffect, useRef, useState} from "react"
 import {useNavigationStore} from "@/stores/navigation"
 import {Capabilities, getModelCapabilities, SETTINGS, useSetting} from "@mentra/engine"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
-import showAlert, {type AlertButton} from "@/utils/AlertUtils"
+import showAlert, {type AlertButton, dismissAlert} from "@/utils/AlertUtils"
 import {hasAlertHost} from "@/contexts/ModalContext"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
@@ -109,6 +109,14 @@ export function OtaUpdateChecker() {
       mountedRef.current = false
     }
   }, [])
+  // The offer this checker put on the sheet. A later check can find nothing to install, as when the
+  // glasses reported their BES version only after the first check assumed an update: then it closes.
+  const shownOfferRef = useRef<{title: string; message: string} | null>(null)
+  const offer = (title: string, message: string, buttons: AlertButton[]) => {
+    const offered = offerUpdateOnSheet(mountedRef.current, title, message, buttons)
+    if (offered) shownOfferRef.current = {title, message}
+    return offered
+  }
 
   // Bumped when the OTA manifest changes server-side; re-arms the main check
   // effect the same way a fresh glasses connection does.
@@ -276,8 +284,7 @@ export function OtaUpdateChecker() {
     if (promptAction === "wifi_setup") {
       if (hasPromptedOtaWifiSetup.current) return
       console.log("OTA: User returned home with a pending update but no glasses WiFi - prompting WiFi setup")
-      const offered = offerUpdateOnSheet(
-        mountedRef.current,
+      const offered = offer(
         translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
         `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`,
         [
@@ -298,8 +305,7 @@ export function OtaUpdateChecker() {
     }
 
     console.log("OTA: User returned to home with pending update - showing install alert")
-    const offered = offerUpdateOnSheet(
-      mountedRef.current,
+    const offered = offer(
       translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
       updateMessage,
       [
@@ -383,7 +389,16 @@ export function OtaUpdateChecker() {
           refreshVersionInfo: false,
         })
         .then(
-          ({updateAvailable, latestVersionInfo, updates, isApkDowngrade, skippedReason, manifestUrl, manifestBody}) => {
+          ({
+            updateAvailable,
+            latestVersionInfo,
+            updates,
+            isApkDowngrade,
+            skippedReason,
+            manifestUrl,
+            manifestBody,
+            hasCheckCompleted,
+          }) => {
             if (!mountedRef.current) {
               console.log("OTA: check finished after its checker unmounted - dropping the result")
               return
@@ -403,6 +418,14 @@ export function OtaUpdateChecker() {
 
             if (updates.length === 0 || !latestVersionInfo) {
               console.log("OTA: check result: No updates available")
+              // Only a check that compared versions shows there is nothing to install. One that couldn't
+              // fetch the manifest proves nothing: its offer stays.
+              const shown = shownOfferRef.current
+              if (shown && hasCheckCompleted) {
+                console.log("OTA: glasses are up to date - closing the earlier update offer")
+                dismissAlert(shown.title, shown.message)
+                shownOfferRef.current = null
+              }
               return
             }
 
@@ -450,8 +473,7 @@ export function OtaUpdateChecker() {
                   currentOtaSnapshot.wifiConnected ? "glasses are on WiFi" : "hotspot OTA is supported"
                 } - prompting install`,
               )
-              const offered = offerUpdateOnSheet(
-                mountedRef.current,
+              const offered = offer(
                 translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
                 updateMessage,
                 [
@@ -479,8 +501,7 @@ export function OtaUpdateChecker() {
               superMode && !isApkDowngrade
                 ? `Updates available: ${updateList}\n\nConnect your ${deviceName} to WiFi to install.`
                 : `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`
-            const offered = offerUpdateOnSheet(
-              mountedRef.current,
+            const offered = offer(
               translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
               wifiMessage,
               [

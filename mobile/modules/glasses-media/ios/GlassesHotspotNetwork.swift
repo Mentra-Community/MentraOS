@@ -535,12 +535,14 @@ public final class GlassesHotspotNetwork {
         if let association = macAssociation {
             association.cancel()
             // This queue is also the association queue: cleanup cannot overtake
-            // a blocking scan/join, and process-wide ownership remains held.
+            // a blocking scan/join, and process-wide ownership remains held, including
+            // while leave() forgets the hotspot and returns the Mac to its previous Wi-Fi.
             macWorker.async {
                 let result = Result { try association.leave() }
                 self.queue.async {
                     switch result {
-                    case .success:
+                    case let .success(report):
+                        if report.restore != .notNeeded { MediaLog.log("HOTSPOT_LEAVE mac_wifi \(report.summary)") }
                         self.macAssociation = nil
                         self.completeLeave()
                     case let .failure(error):

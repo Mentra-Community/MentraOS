@@ -320,6 +320,31 @@ describe("prepareArtifacts", () => {
     expect(files.get(artifact.filePath)).toBe("apk")
   })
 
+  // As on pro-1 in nightly-2026-11-11: the CDN closed a slow 110 MB APK body at 32.5 MB.
+  for (const [what, error] of [
+    ["the server ends the body early", Object.assign(new Error("unexpected end of stream"), {code: "RNFS"})],
+    // RNFS on Android forwards a SocketTimeoutException as its bare message, "timeout".
+    ["the read stalls past its timeout", Object.assign(new Error("timeout"), {code: "RNFS"})],
+  ] as const) {
+    test(`resumes when ${what}`, async () => {
+      const requests: (string | undefined)[] = []
+      downloadImpl = async (options) => {
+        requests.push(options.headers?.Range)
+        if (!options.headers?.Range) {
+          options.begin?.({statusCode: 200, contentLength: 3})
+          files.set(options.toFile, "ap")
+          throw error
+        }
+        options.begin?.({statusCode: 206, contentLength: 1, headers: {"Content-Range": "bytes 2-2/3"}})
+        files.set(options.toFile, "k")
+        return {statusCode: 206}
+      }
+      const [artifact] = await prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])
+      expect(requests).toEqual([undefined, "bytes=2-"])
+      expect(files.get(artifact.filePath)).toBe("apk")
+    })
+  }
+
   test("stops resuming after a bounded number of dropped connections", async () => {
     let attempts = 0
     downloadImpl = async (options) => {
