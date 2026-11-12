@@ -17,6 +17,8 @@
  *  - `workspaceRole`: the person's role in that workspace (member, developer, admin or owner), from the same
  *    lookup, so a company's miniapp can show an admin what a member doesn't see. Only beside `workspaceId`,
  *    and absent while a workspace is assigning the package: that check needs no role.
+ *  - `workspaceName`: that workspace's name, for the miniapp to show. Only beside `workspaceId`, and best
+ *    effort, like the email: a slow or failing lookup mints the token without it.
  *  - `localBuild: true`: the token is for a local or development build. Such a token never names a
  *    workspace, so no workspace is looked up for it.
  *
@@ -28,7 +30,7 @@ import {createLogger} from "@mentra/cloud-shared"
 import {trustedAccountEmail} from "./account/trusted-email.service"
 import {featuresFor} from "./licenses/features.service"
 import {issueMiniappToken} from "./session.service"
-import {assigningMembership, type AssigningMembership} from "./workspaces/assigned-packages.service"
+import {assigningMembership, workspaceNameOf, type AssigningMembership} from "./workspaces/assigned-packages.service"
 
 /** How long each lookup a miniapp token waits for may take. */
 export const MINIAPP_LOOKUP_DEADLINE_MS = 1_500
@@ -79,6 +81,7 @@ export async function mintMiniappTokenFor(args: {
     ),
     workspaceLookup(),
   ])
+  const workspaceName = workspace?.workspaceId ? await miniappTokenWorkspaceName(workspace.workspaceId) : null
   return issueMiniappToken({
     mentraUserId,
     tenantId: args.tenantId,
@@ -87,6 +90,7 @@ export async function mintMiniappTokenFor(args: {
     features,
     workspaceId: workspace?.workspaceId ?? null,
     workspaceRole: workspace?.role ?? null,
+    workspaceName,
     localBuild,
     ...(args.website ? {websiteClientId: args.website.clientId, ttlSec: args.website.ttlSec} : {}),
   })
@@ -118,6 +122,19 @@ async function miniappTokenEmail(mentraUserId: string): Promise<string | null> {
     return await withinDeadline("account email lookup", (signal) => trustedAccountEmail(mentraUserId, {signal}))
   } catch (error) {
     logger.warn({mentraUserId, error: (error as Error)?.message}, "miniapp token issued without email claim")
+    return null
+  }
+}
+
+/**
+ * The name of the workspace the token names, for its optional `workspaceName` claim. Best effort, like the
+ * email: a slow or failing lookup mints the token without it.
+ */
+async function miniappTokenWorkspaceName(workspaceId: string): Promise<string | null> {
+  try {
+    return await withinDeadline("workspace name lookup", () => workspaceNameOf(workspaceId))
+  } catch (error) {
+    logger.warn({workspaceId, error: (error as Error)?.message}, "miniapp token issued without workspace name")
     return null
   }
 }

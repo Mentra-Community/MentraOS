@@ -29,6 +29,7 @@ import type {ClientSession} from "mongoose"
 import {withTransaction} from "../../connections/mongo.connection"
 import {WorkspaceAssignedPackagesModel} from "../../models/workspace-assigned-packages.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
+import {WorkspaceModel} from "../../models/workspace.model"
 import {managingWorkspaceOf} from "./managing-workspace.service"
 import {fail} from "./workspace-error"
 import {loadActiveWorkspace, touchWorkspace} from "./workspace.service"
@@ -177,6 +178,17 @@ export async function assigningMembership(mentraUserId: string, packageName: str
     }
   }
   return chosen ? {workspaceId: chosen.workspaceId, role: chosen.role} : null
+}
+
+/**
+ * The name of the workspace a miniapp token names, for its `workspaceName` claim: a miniapp shows it where
+ * the person sees which workspace they are in. Null for a workspace with no name, or none.
+ */
+export async function workspaceNameOf(workspaceId: string): Promise<string | null> {
+  if (typeof workspaceId !== "string" || !workspaceId) return null
+  const workspace = await WorkspaceModel.findOne({workspaceId}).select({_id: 0, name: 1}).lean<{name?: unknown} | null>()
+  const name = typeof workspace?.name === "string" ? workspace.name.trim() : ""
+  return name || null
 }
 
 /** The workspace alone: see {@link assigningMembership}. */

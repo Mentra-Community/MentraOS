@@ -115,6 +115,7 @@ out. A `503` means "try again", not "no".
 | `mentraUserId` | The person. Key your data on this. |
 | `clientId` | Set when the token came from your website, `null` from the phone. Use it to keep a route for the phone only. |
 | `workspaceId`, `workspaceRole` | The person's workspace and their role there (`member`, `developer`, `admin`, `owner`), when that workspace added your miniapp through Fleet. Otherwise `null`. |
+| `workspaceName` | That workspace's name, to show the person which workspace they're in. `null` without a workspace, and sometimes with one: show something else then, and never decide anything by it. |
 | `email` | Their verified email, when Mentra has one. It can change. |
 
 ## Site types

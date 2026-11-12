@@ -482,6 +482,8 @@ export async function issueMiniappToken(args: {
   workspaceId?: string | null
   /** The person's role in `workspaceId`. Ignored without a workspace. */
   workspaceRole?: string | null
+  /** The name of `workspaceId`, for the miniapp to show. Ignored without a workspace. */
+  workspaceName?: string | null
   localBuild?: boolean
   /** The miniapp website the token is issued to; a phone's token carries none. */
   websiteClientId?: string | null
@@ -501,7 +503,11 @@ export async function issueMiniappToken(args: {
     ...(args.localBuild
       ? {localBuild: true}
       : args.workspaceId
-        ? {workspaceId: args.workspaceId, ...(args.workspaceRole ? {workspaceRole: args.workspaceRole} : {})}
+        ? {
+            workspaceId: args.workspaceId,
+            ...(args.workspaceRole ? {workspaceRole: args.workspaceRole} : {}),
+            ...(args.workspaceName ? {workspaceName: args.workspaceName} : {}),
+          }
         : {}),
   })
     // The `kid` points the developer backend at the miniapp-token public key.

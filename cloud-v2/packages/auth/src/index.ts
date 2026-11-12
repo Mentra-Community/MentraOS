@@ -79,6 +79,14 @@ export interface VerifiedMentraAuth {
    */
   workspaceRole: MentraWorkspaceRole | null;
   /**
+   * The name of {@link workspaceId}, from the token's `workspaceName` claim,
+   * for showing the person which workspace they are in. `null` whenever
+   * `workspaceId` is, and for tokens from a Core that doesn't name it yet or
+   * couldn't read it in time: show something else then, never decide anything
+   * by it.
+   */
+  workspaceName: string | null;
+  /**
    * True when Core minted the token for a local-network build of this miniapp
    * (the `localBuild` claim). A local build can claim any package name, so its
    * tokens are refused unless the backend allows local builds
@@ -291,6 +299,7 @@ export class MentraAuth {
       workspaceId,
       // A role means nothing without the workspace it is held in.
       workspaceRole: workspaceId ? workspaceRoleClaim(payload.workspaceRole) : null,
+      workspaceName: workspaceId ? workspaceNameClaim(payload.workspaceName) : null,
       localBuild,
       clientId: stringClaim(payload.client_id) ?? null,
       claims: payload,
@@ -570,6 +579,11 @@ function workspaceRoleClaim(value: unknown): MentraWorkspaceRole | null {
   return typeof value === "string" && (MENTRA_WORKSPACE_ROLES as readonly string[]).includes(value)
     ? (value as MentraWorkspaceRole)
     : null;
+}
+
+/** The `workspaceName` claim: a non-empty string, trimmed, else null. */
+function workspaceNameClaim(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function localBuildClaim(value: unknown): boolean {

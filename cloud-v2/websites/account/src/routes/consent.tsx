@@ -10,7 +10,7 @@ import {
 } from "../lib/consent-flow";
 import type { InteractionApi } from "../lib/interaction-api";
 import { MESSAGES } from "../lib/messages";
-import { describeScope } from "../lib/scopes";
+import { describeScopes } from "../lib/scopes";
 import { Loading, Notice, Page } from "../ui";
 
 export interface ConsentRouteProps {
@@ -87,23 +87,12 @@ export function ConsentView({
         <>
           <p>{consent.clientName} will be able to:</p>
           <ul className="scopes">
-            {consent.scopes.map((scope) => (
-              <li key={scope}>{describeScope(scope)}</li>
+            {describeScopes(consent.scopes).map((line) => (
+              <li key={line}>{line}</li>
             ))}
           </ul>
         </>
       ) : null}
-      {consent.packageName ? <p>This site can use this sign-in to reach your data in the {consent.clientName} miniapp.</p> : null}
-      {consent.returnsTo ? (
-        <p className="muted">
-          You will be sent back to
-          <span className="uri">{consent.returnsTo}</span>
-        </p>
-      ) : null}
-      <p className="muted">
-        {consent.returnsTo ? "Allow only if you recognise that address. " : ""}
-        You can take this back at any time under <a href="/connections">Connected apps</a>.
-      </p>
       <div className="actions">
         <button className="button button-secondary" type="button" disabled={busy} onClick={() => onDecision("deny")}>
           Deny

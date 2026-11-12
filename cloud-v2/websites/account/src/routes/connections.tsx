@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CONNECTIONS_SIGN_IN_PATH, type Connection, type ConnectionsApi } from "../lib/connections-api";
 import { loadConnections, revokeConnection, type ConnectionsDeps, type ConnectionsState } from "../lib/connections-flow";
 import { MESSAGES } from "../lib/messages";
-import { describeScope } from "../lib/scopes";
+import { describeScopes } from "../lib/scopes";
 import { Loading, Notice, Page } from "../ui";
 
 export interface ConnectionsRouteProps {
@@ -97,7 +97,7 @@ export function ConnectionsView({
             <li key={connection.clientId}>
               <div>
                 <strong>{connection.name}</strong>
-                <span className="muted">{connection.scopes.map(describeScope).join(" · ")}</span>
+                <span className="muted">{describeScopes(connection.scopes).join(" · ")}</span>
                 <span className="muted">{grantedText(connection.grantedAt)}</span>
               </div>
               <button

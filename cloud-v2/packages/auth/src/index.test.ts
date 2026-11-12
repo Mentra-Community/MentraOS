@@ -517,6 +517,18 @@ describe("workspace and local-build claims", () => {
     expect(verified.workspaceRole).toBeNull();
   });
 
+  test("surfaces the workspace's name beside the workspace, and never without one", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl });
+    const name = async (claims: Record<string, unknown>) => (await auth.verifyToken(await mintMiniappToken(TEST_PACKAGE, { claims }))).workspaceName;
+
+    expect(await name({ workspaceId: "ws_123", workspaceName: "  Acme Fleet " })).toBe("Acme Fleet");
+    // An older Core, or a name it couldn't read in time.
+    expect(await name({ workspaceId: "ws_123" })).toBeNull();
+    expect(await name({ workspaceId: "ws_123", workspaceName: "   " })).toBeNull();
+    expect(await name({ workspaceId: "ws_123", workspaceName: ["Acme"] })).toBeNull();
+    expect(await name({ workspaceName: "Acme Fleet" })).toBeNull();
+  });
+
   test("a website's token names the website; the phone's names none", async () => {
     const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl });
 
