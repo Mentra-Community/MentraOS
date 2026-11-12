@@ -34,15 +34,9 @@ function fixture() {
     import {appendFileSync, writeFileSync} from "node:fs";
     Object.defineProperty(Bun, "secrets", {value: {get: async ({service}) => { if (service === "mentra-miniapp-publisher-signing") { writeFileSync(${JSON.stringify(join(cwd, "publisher-key-access.txt"))}, "unexpected"); throw new Error("Publisher key must not be accessed"); } return null; },
     set: async () => { throw new Error("Unexpected credential write"); }}});
-    globalThis.fetch = async (input, options) => {
+    globalThis.fetch = async (input) => {
       const url = String(input);
       appendFileSync(${JSON.stringify(join(cwd, "requests.txt"))}, url + "\\n");
-      if (url.endsWith("/api/console/apps")) return Response.json({app: {}});
-      if (url.endsWith("/releases")) {
-        const upload = options.body.get("bundle");
-        writeFileSync(${JSON.stringify(join(cwd, "uploaded.zip"))}, new Uint8Array(await upload.arrayBuffer()));
-        return Response.json({release: {id: "release", version: "1.0.0", status: "draft", releaseTrack: "stable"}});
-      }
       throw new Error("Unexpected network request: " + url);
     };
   `,
@@ -55,6 +49,7 @@ async function cli(
   args: string[],
   env: Record<string, string> = {},
   scriptName?: string,
+  { mayFail = false }: { mayFail?: boolean } = {},
 ) {
   const cloudDir = new URL("../../../", import.meta.url).pathname;
   const bin = join(f.cwd, "bin");
@@ -79,10 +74,8 @@ async function cli(
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH}`,
-        MENTRA_CORE_URL: "",
-        MENTRA_STORE_URL: "https://catalog.example.test",
+        MENTRA_CORE_URL: "https://core.example.test",
         MENTRA_CLI_HOME: join(f.cwd, "keys"),
-        MENTRA_CLI_TOKEN: "",
         MENTRA_CLI_OIDC_ISSUER: "",
         MENTRA_CLI_CLIENT_ID: "",
         MENTRA_MINIAPP_SIGNING_KEY_FILE: "",
@@ -93,48 +86,38 @@ async function cli(
     },
   );
   const { status: code, stdout, stderr } = child;
+  if (mayFail) return `${stdout}${stderr}`;
   if (code !== 0) throw new Error(`CLI exited ${code}: ${stdout} ${stderr}`);
   expect(code).toBe(0);
   return stdout;
 }
 
-describe("CLI targets and publication", () => {
+describe("CLI targets and packing", () => {
   test.each([
-    ["mentra", "Store: https://api.apps.mentraglass.com"],
-    ["mentra:local", "Store: http://localhost:3003"],
-    ["mentra:dev", "Store: https://api.apps.dev.mentraglass.com"],
-    ["mentra:staging", "Store: https://api.apps.staging.mentraglass.com"],
-    ["mentra:prod", "Store: https://api.apps.mentraglass.com"],
-  ])("%s targets %s without Doppler", async (scriptName, target) => {
+    ["mentra", "https://core.mentraglass.com"],
+    ["mentra:local", "http://localhost:3000"],
+    ["mentra:dev", "https://core.dev.us-west-2.mentraglass.com"],
+    ["mentra:staging", "https://core.staging.us-west-2.mentraglass.com"],
+    ["mentra:prod", "https://core.mentraglass.com"],
+  ])("%s signs in at %s without Doppler", async (scriptName, core) => {
     const f = fixture();
-    // A shortcut wins over a Store or Core a developer may have exported; plain `mentra` uses the default.
-    const exported =
-      scriptName === "mentra"
-        ? { MENTRA_STORE_URL: "", MENTRA_CORE_URL: "" }
-        : { MENTRA_STORE_URL: "https://exported-store.example.test", MENTRA_CORE_URL: "https://exported-core.example.test" };
-    const stdout = await cli(f, ["whoami"], { ...exported, MENTRA_CLI_TOKEN: "msk_test" }, scriptName);
-    expect(stdout).toContain(`${target}\n`);
-    expect(existsSync(join(f.cwd, "requests.txt"))).toBe(false);
+    // A shortcut wins over a Core a developer may have exported; plain `mentra` uses the default.
+    const exported = scriptName === "mentra" ? { MENTRA_CORE_URL: "" } : { MENTRA_CORE_URL: "https://exported-core.example.test" };
+    // The fixture refuses every request, so sign-in stops at its first one: asking that Core for its sign-in server.
+    const output = await cli(f, ["login", "--no-browser"], exported, scriptName, { mayFail: true });
+    expect(output).toContain(`Could not reach ${core}`);
+    expect(readFileSync(join(f.cwd, "requests.txt"), "utf8")).toBe(`${core}/api/cli/config\n`);
   });
 
-  test.each([false, true])("publish uploads unsigned bytes with configured keys: %s", async (configured) => {
+  test("pack leaves the bundle unsigned and never reads the configured signing keys without --sign", async () => {
     const f = fixture();
-    const env = {
-      MENTRA_CLI_TOKEN: "test-token",
-      MENTRA_MINIAPP_SIGNING_KEY_JSON: configured ? "must-not-be-read" : "",
-      MENTRA_MINIAPP_SIGNING_KEY_FILE: configured ? join(f.cwd, "must-not-be-read.json") : "",
-    };
-    await cli(f, ["pack", "--no-build"], env);
-    await cli(f, ["publish", "--no-build", "--no-submit", "--json"], env);
-    const path = join(f.cwd, "build/com.example.fixture-1.0.0.zip");
-    const uploaded = readFileSync(join(f.cwd, "uploaded.zip"));
-    expect(uploaded).toEqual(readFileSync(path));
-    expect((await JSZip.loadAsync(uploaded)).file("META-INF/MENTRA.SIG")).toBeNull();
+    await cli(f, ["pack", "--no-build"], {
+      MENTRA_MINIAPP_SIGNING_KEY_JSON: "must-not-be-read",
+      MENTRA_MINIAPP_SIGNING_KEY_FILE: join(f.cwd, "must-not-be-read.json"),
+    });
+    const bundle = readFileSync(join(f.cwd, "build/com.example.fixture-1.0.0.zip"));
+    expect((await JSZip.loadAsync(bundle)).file("META-INF/MENTRA.SIG")).toBeNull();
     expect(existsSync(join(f.cwd, "publisher-key-access.txt"))).toBe(false);
-    expect(readFileSync(join(f.cwd, "requests.txt"), "utf8")).not.toContain("/submit");
-
-    // Reuse the unsigned archive without repacking or changing its bytes.
-    await cli(f, ["publish", "--no-build", "--no-pack", "--no-submit"], env);
-    expect(readFileSync(join(f.cwd, "uploaded.zip"))).toEqual(uploaded);
+    expect(existsSync(join(f.cwd, "requests.txt"))).toBe(false);
   });
 });

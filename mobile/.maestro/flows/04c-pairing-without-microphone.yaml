@@ -14,9 +14,9 @@ appId: ${MAESTRO_APP_ID}
 - tapOn:
     id: "pairing-model-mentra_live"
 - extendedWaitUntil:
-    visible: "Turn on your glasses"
+    visible: "Put your glasses in pairing mode"
     timeout: 20000
-- assertVisible: "We're looking for your Mentra Live."
+- assertVisible: "Turn your glasses on: hold the power button for 5 seconds."
 - assertNotVisible: "Microphone Permission Required"
 - assertNotVisible: "Open Settings"
 - takeScreenshot: "pairing-microphone-denied"

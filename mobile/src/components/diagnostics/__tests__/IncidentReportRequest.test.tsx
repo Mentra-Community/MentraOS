@@ -2,13 +2,19 @@ import {act, fireEvent, render, within} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {ScrollView} from "react-native"
 
+import {engine} from "@mentra/engine"
+
 import {useAuth} from "@/contexts/AuthContext"
 import {submitIncidentReportOnce} from "@/services/bugReport/incidentReportAutomation"
 
 import IncidentReportRequest from "../IncidentReportRequest"
 
 const mockDismiss = jest.fn()
-jest.mock("@mentra/engine", () => ({submitIncidentReport: jest.fn()}))
+jest.mock("@mentra/engine", () => ({
+  submitIncidentReport: jest.fn(),
+  SETTINGS: {super_mode: {key: "super_mode"}},
+  engine: {settings: {get: jest.fn()}},
+}))
 jest.mock("@/contexts/AuthContext", () => ({useAuth: jest.fn()}))
 jest.mock("@/services/deployment", () => ({
   useDeployment: () => ({
@@ -47,6 +53,7 @@ const auth = (signedIn: boolean) =>
 beforeEach(() => {
   jest.clearAllMocks()
   jest.mocked(useAuth).mockReturnValue(auth(true))
+  jest.mocked(engine.settings.get).mockReturnValue(true)
   jest.mocked(submitIncidentReportOnce).mockResolvedValue(receipt)
 })
 
@@ -144,6 +151,22 @@ it("lets cleanup return immediately while the report remains pending", () => {
     test_run_id: request.test_run_id,
     status: "submitting",
   })
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(mockDismiss).toHaveBeenCalledTimes(1)
+})
+
+it("refuses without uploading unless Super Mode is on", () => {
+  jest.mocked(engine.settings.get).mockReturnValue(false)
+  const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
+  expect(engine.settings.get).toHaveBeenCalledWith("super_mode")
+  expect(JSON.parse(tree.getByTestId("incident-report-result").props.children)).toEqual({
+    alert_id: request.alert_id,
+    test_run_id: request.test_run_id,
+    failure_code: request.failure_code,
+    status: "failed",
+    error: "Enable Super Mode to request an incident report from a script",
+  })
+  expect(submitIncidentReportOnce).not.toHaveBeenCalled()
   fireEvent.press(tree.getByTestId("incident-report-done"))
   expect(mockDismiss).toHaveBeenCalledTimes(1)
 })

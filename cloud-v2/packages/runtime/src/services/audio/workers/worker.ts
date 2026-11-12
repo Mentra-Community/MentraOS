@@ -24,11 +24,13 @@
  */
 
 import {Redis} from "ioredis"
+import {workerData} from "node:worker_threads"
 import type {TranscriptionToken} from "@mentra/cloud-protocol"
 import {createLogger} from "@mentra/cloud-shared"
 import {AUDIO_STREAM_GROUP, audioStreamKey} from "../../session/stream"
 import {CONTROL_STREAM_GROUP, controlStreamKey} from "../../session/control-stream"
 import type {SubscriptionRecord} from "../../session/subscriptions-store"
+import {resolveWorkerIdentity} from "./identity"
 import {LC3Decoder} from "./lc3"
 import {createMockProvider} from "../providers/mock"
 import {createSonioxProvider} from "../providers/soniox"
@@ -149,6 +151,10 @@ export interface TranscriptMessage {
 
 export interface WorkerReadyMessage {
   type: "WORKER_READY"
+  /** Identity this worker resolved at boot (see identity.ts). */
+  workerId: string
+  podId: string
+  consumerName: string
 }
 
 export interface UdpLivenessAckMessage {
@@ -196,14 +202,18 @@ let running = true
 const PROVIDER_KIND = process.env.AUDIO_PROVIDER ?? "soniox"
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379"
-const WORKER_ID = process.env.WORKER_ID ?? "worker"
-const POD_ID = process.env.POD_ID ?? "pod"
+// Identity comes from `workerData` (set by pool.ts); see identity.ts for why
+// the `env` option of `new Worker` is not used.
+const IDENTITY = resolveWorkerIdentity(workerData, {
+  WORKER_ID: process.env.WORKER_ID,
+  POD_ID: process.env.POD_ID,
+})
 /**
  * Consumer name combines pod + worker so the consumer-group view in Redis
  * shows distinct entries per worker. Useful for ops + lets XAUTOCLAIM
  * reassign entries from a dead worker to a peer on the same pod.
  */
-const CONSUMER_NAME = `${POD_ID}:${WORKER_ID}`
+const CONSUMER_NAME = IDENTITY.consumerName
 
 const XREAD_COUNT_PER_STREAM = 100
 const XREAD_IDLE_SLEEP_MS = 50
@@ -885,7 +895,12 @@ async function shutdown(): Promise<void> {
 // clients are up would hit "Stream isn't writeable."
 async function bootstrap(): Promise<void> {
   await Promise.all([waitForReady(streamsClient), waitForReady(mainClient), waitForReady(controlClient)])
-  self.postMessage({type: "WORKER_READY"} satisfies WorkerReadyMessage)
+  self.postMessage({
+    type: "WORKER_READY",
+    workerId: IDENTITY.workerId,
+    podId: IDENTITY.podId,
+    consumerName: IDENTITY.consumerName,
+  } satisfies WorkerReadyMessage)
   void freshReadLoop()
   void autoclaimLoop()
   void controlReadLoop()

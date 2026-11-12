@@ -1,11 +1,14 @@
+import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
 import {result as Res, type AsyncResult} from "typesafe-ts"
 
 import {assertMiniappDevelopmentAllowed} from "../runtime/bootstrap"
-import {installMiniappRelease} from "./miniappReleaseInstall"
+import {installLocalBuild} from "./localBuildInstall"
 
 /**
- * Explicit release QR installation (`miniapp://release?url=...`). The archive
- * must match the manifest the release server shows.
+ * Explicit release QR installation (`miniapp://release?url=...`, from `mentra release`). The archive must match the
+ * manifest the release server shows. Nothing checks its package name against a domain, so it is a developer's
+ * build of that name whatever address serves it: it installs as a local build (see `localBuildInstall.ts`), beside
+ * any installed release of the name, with its own data and tokens marked as a local build's.
  */
 export function installMiniappFromJsonUrl(
   baseUrl: string,
@@ -21,10 +24,10 @@ export function installMiniappFromJsonUrl(
     if (!packageName) throw new Error("miniapp.json missing packageName")
     if (!version) throw new Error("miniapp.json missing version")
     const name = typeof manifest.name === "string" ? manifest.name : packageName
-    await installMiniappRelease(`${trimmed}/bundle.zip`, {
-      expectedPackageName: packageName,
-      expectedVersion: version,
-      releaseIdentity: {source: "direct_download"},
+    await installLocalBuild(`${trimmed}/bundle.zip`, {
+      packageName,
+      version,
+      sourceUrl: normalizeMiniappUrl(baseUrl)?.url ?? `${trimmed}/`,
     })
     return {packageName, version, name}
   })

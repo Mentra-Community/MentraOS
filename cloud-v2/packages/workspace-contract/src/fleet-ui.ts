@@ -18,6 +18,13 @@ export interface FleetUiMe {
   /** The signed-in Mentra user, or null when the caller is not signed in as one. */
   user: {mentraUserId: string; email: string | null} | null
   organization: {capabilities: string[]}
+  /**
+   * The workspaces the caller may use Fleet Management in, each with the caller's capabilities there. The workspace
+   * portal names exactly the workspace the page is open on: a member's own role there (a person may belong to
+   * several workspaces), or an Organization Admin's, whether or not they are a member.
+   * Optional for a host that predates it (the admin portal's organization view).
+   */
+  workspaces?: Array<{workspaceId: string; name: string; capabilities: string[]}>
   fleet: {installed: boolean}
 }
 

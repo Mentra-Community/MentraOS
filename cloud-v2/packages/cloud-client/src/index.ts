@@ -58,6 +58,7 @@ export type {
   RuntimeAudioTransport,
   RuntimeSnapshot,
   RuntimeStatus,
+  RuntimeTtsFormat,
   RuntimeTtsSpeakOptions,
   RuntimeTtsSpeechSource,
 } from "./modules/runtime/runtime";
@@ -86,3 +87,18 @@ export type {
   SupportProfileUpdateResult,
   SupportStateInput,
 } from "./modules/core/core";
+
+// Workspace, Fleet desired-state and registry calls (`cloud.core.workspaces`, `cloud.core.fleet.desiredState`,
+// `cloud.core.registry`). The registry's request and answer types come from `@mentra/cloud-protocol`.
+export {CoreRequestError, CoreResponseError, SessionChangedError} from "./modules/core/core";
+export type {AccountCallOptions} from "./modules/core/core";
+export type {
+  AcceptInvitationResult,
+  ClientWorkspaceRole,
+  DeclineInvitationResult,
+  InvitationPreview,
+  LeaveWorkspaceRequest,
+  MyWorkspace,
+  MyWorkspaceResponse,
+  PendingInvitationsResponse,
+} from "./modules/core/workspace-types";

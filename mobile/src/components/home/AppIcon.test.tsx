@@ -119,3 +119,16 @@ describe("AppIcon compatibility changes", () => {
     expect(onClick).toHaveBeenCalledTimes(1)
   })
 })
+
+describe("a development build's tile", () => {
+  it("is announced as a development build", () => {
+    const dev = {...app, isMiniappDev: true}
+    ;(engine.miniapps.list as jest.Mock).mockReturnValue([dev])
+    const {getByLabelText, queryByLabelText, rerender} = render(<AppIcon app={dev} onClick={jest.fn()} />)
+    expect(getByLabelText(`Launch Notes, ${translate("home:developmentBuild")}`)).toBeTruthy()
+    ;(engine.miniapps.list as jest.Mock).mockReturnValue([app])
+    rerender(<AppIcon app={app} onClick={jest.fn()} />)
+    expect(queryByLabelText(`Launch Notes, ${translate("home:developmentBuild")}`)).toBeNull()
+    expect(getByLabelText("Launch Notes")).toBeTruthy()
+  })
+})

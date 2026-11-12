@@ -31,6 +31,7 @@ jest.mock("@/utils/auth/authClient", () => ({__esModule: true, default: {}}))
 jest.mock("@/utils/auth/authErrors", () => ({mapAuthError: jest.fn()}))
 jest.mock("@/utils/settleFrame", () => ({settleFrame: jest.fn()}))
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))
+jest.mock("@react-navigation/native", () => ({useFocusEffect: jest.fn()}))
 jest.mock("@/components/auth/WorkspaceBrand", () => ({WorkspaceBrand: () => null}))
 jest.mock("@/components/settings/DeviceSettingsSection", () => ({DeviceSettingsSection: () => null}))
 jest.mock("@/components/dev/VersionInfo", () => ({

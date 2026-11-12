@@ -97,6 +97,16 @@ final class PreviewPacerTests: XCTestCase {
     XCTAssertEqual(pacer.onAck(generation: pacer.generation, sequence: 1, nowNs: period), .stale, "acked twice")
   }
 
+  func testAnAckThatBeatsTheWorkersOnPackedReturnsTheCredit() {
+    let pacer = readyPacer()
+    _ = pacer.admit(nowNs: 0)
+    XCTAssertEqual(pacer.onAck(generation: pacer.generation, sequence: 1, nowNs: period), .accepted(roundTripNs: period))
+    pacer.onPacked(sequence: 1, sent: true, nowNs: period)
+    XCTAssertEqual(pacer.outstandingFrames, 0, "the late onPacked must not re-arm the ack deadline")
+    XCTAssertFalse(pacer.hasAckTimedOut(nowNs: 3_000_000_000))
+    XCTAssertEqual(pacer.admit(nowNs: period), .admit(sequence: 2))
+  }
+
   func testAckTimeoutIsReportedAndANewDocumentRevokesCredit() {
     let pacer = readyPacer()
     guard case .admit = pacer.admit(nowNs: 0) else { return XCTFail("first frame") }

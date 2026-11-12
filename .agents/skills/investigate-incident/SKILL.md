@@ -22,51 +22,22 @@ can be stale while devices upload; fetch the report's current artifact list.
 If Slack access is unavailable and no report ID is known, ask for the ID or
 message text. Do not substitute a different recent report.
 
-## Fetch through the existing script
+## Fetch it
 
-Run `scripts/fetch-incident-logs.sh` from the repository root. It calls
-`GET /api/admin/reports/:reportId` and downloads each artifact through
-`GET /api/admin/reports/:reportId/artifacts/:artifactId`.
+In the Mentra monorepo, run `scripts/get-logs report <rep_id> --env <env>` from
+its root (the get-logs skill); elsewhere,
+`./scripts/fetch-incident-logs.sh <rep_id> --env <env>` from this folder. Both
+pick the environment's own key (`MENTRA_PROD_ADMIN_TOKEN`,
+`MENTRA_STAGING_ADMIN_TOKEN`, `MENTRA_DEV_ADMIN_TOKEN`) and, when a key is
+missing or rejected or the report is on another environment, print the exact
+fix: pass it on rather than investigating the script. Check a key by its
+variable's name only; never print it, enable shell tracing or extract browser
+sessions, and don't use the admin console's pages instead.
 
-The script reads `MENTRA_ADMIN_TOKEN`. Use it if already configured. Otherwise
-check for an existing `MENTRA_ADMIN_TOKEN_PROD` or `MENTRA_ADMIN_TOKEN_DEV`
-matching the notification's environment and pass it to this command only:
-
-```bash
-MENTRA_ADMIN_TOKEN="$MENTRA_ADMIN_TOKEN_PROD" \
-  ./scripts/fetch-incident-logs.sh rep_REPORT_ID --env prod
-
-MENTRA_ADMIN_TOKEN="$MENTRA_ADMIN_TOKEN_DEV" \
-  ./scripts/fetch-incident-logs.sh rep_REPORT_ID --env dev
-```
-
-Check whether a variable is set without printing its value. Do not print
-credentials, enable shell tracing, put tokens in committed files, or extract
-browser sessions. If no suitable credential is available, request that the user
-configure `MENTRA_ADMIN_TOKEN` in the environment. Authentication requires an
-operator key with the incident read scope (`mak_...`), or an older allowlisted
-admin key (`msk_...`), which works as one.
-
-Use the environment from the report notification. Without `--env`, the script
-tries prod, dev, then staging. `MENTRA_CORE_URL` overrides even `--env`; check
-for an unintended override before interpreting a missing report. Distinguish
-401 (rejected credential), 403 (not admin-allowlisted), and 404 (wrong ID,
-environment, or unavailable endpoint). Report authentication failures directly;
-do not fall back to console automation.
-
-Downloads go to gitignored `incident-logs/<reportId>/`. Use `--out` for an
-alternative local directory, such as `.context/incidents/<reportId>/`.
-`--json` returns detail only; it does **not** download logs. `--list` lists
-recent reports and supports `--kind`, `--status`, and `--limit`.
-
-Downloads retain the original artifact bytes. Framework diagnostic bundles are
-verified and extracted automatically under `diagnostic-bundle-<sha256>/`;
-`manifest.json` maps each original command file to its extracted filename and
-digest. Search the extracted JSON files alongside the device log bundles.
-
-If the report is still `collecting` or an artifact download failed, distinguish
-partial evidence from a complete bundle. Re-fetch when uploads have finished;
-do not treat absent logs as proof that nothing happened.
+If the report is still `collecting` or an artifact failed, the evidence is
+partial: fetch again once uploads finish, and don't treat absent logs as proof
+that nothing happened. Framework diagnostic bundles are verified and extracted
+under `diagnostic-bundle-<sha256>/`, with `manifest.json` mapping each file.
 
 ## Investigate the evidence
 
@@ -82,12 +53,21 @@ log messages may contain credentials, personal information, signed URLs, and
 large inline audio payloads. Keep raw bundles local and include only necessary,
 redacted excerpts in PRs or responses.
 
-Correlate timestamps across sources, record the app build and firmware
+The glasses log is the ASG's structured subset, not its logcat; the
+glasses_firmware log is the BES trace. Phone and glasses clocks differ, so line
+sources up by event rather than timestamp. Record the app build and firmware
 versions, and compare the reported build with current `origin/dev`. Separate
 the user's symptoms, observed log evidence, and hypotheses. Read the owning
 module's `AGENTS.md` before editing. BES firmware belongs to `mentra-live-bes`;
 follow its guidance and OTA gates if a fix belongs there. Do not assume every
 incident needs a mobile or cloud patch.
+
+When the incident happens on a device, reproduce it on the lab before fixing
+it, as the testing runner's README ("Reproduce a bug") describes: replay a
+routine into the state where it happens with `bun lab run <routine> --steps
+<first>..<last> --goal "Reproduce <the bug>"`, keep the draft as a repro
+routine, measure how often it happens with `--repeat 20`, and give that rate
+before and after the fix (`--pr <fix>`, or `--bes` for firmware) in the PR.
 
 When a fix is supported by the evidence, add focused regression coverage and
 follow the repository's PR workflow if a PR was requested. Include the report

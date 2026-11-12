@@ -7,6 +7,7 @@ import {
   pcmStreamAbort,
   pcmStreamClose,
   pcmStreamOpen,
+  pcmStreamPlayUrl,
   pcmStreamWrite,
   resetAudioTestMocks,
   sendAudioFrame,
@@ -89,6 +90,28 @@ describe("AudioPlaybackService live PCM streams", () => {
   afterEach(async () => {
     await audioPlaybackService.stopAll()
     stopAudioCloudUplink()
+  })
+
+  test("a prepared PCM cue is silent and only marks playback active on its first write", async () => {
+    await audioPlaybackService.openStream({
+      streamId: "prepared-pcm",
+      appId: "cue-app",
+      sampleRate: 48000,
+      channels: 1,
+      volume: 0.7,
+      jitterMs: 80,
+      prewarm: true,
+      stopOtherAudio: false,
+      onEnded: mock(() => {}),
+    })
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+    expect(audioPlaybackService.getActiveAppIds()).toEqual([])
+    expect(setOwnAppAudioPlaying).not.toHaveBeenCalled()
+    expect(pcmStreamWrite).not.toHaveBeenCalled()
+    await audioPlaybackService.writeStreamChunk("prepared-pcm", "AAAA")
+    expect(audioPlaybackService.isPlaying()).toBe(true)
+    expect(setOwnAppAudioPlaying).toHaveBeenCalledWith(true)
+    await audioPlaybackService.abortStream("prepared-pcm")
   })
 
   test("stalled cloud playback unloads its source before reporting one startup error", async () => {
@@ -293,7 +316,7 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(pcmStreamWrite).toHaveBeenCalledWith("stream-1", "AAAA")
     expect(pcmStreamClose).toHaveBeenCalledWith("stream-1")
-    expect(onEnded).toHaveBeenCalledWith("stream-1", true, null, 1_500)
+    expect(onEnded).toHaveBeenCalledWith("stream-1", true, null, 1_500, true)
     emitLc3Frame([2])
     expect(sendAudioFrame).toHaveBeenCalledTimes(2)
     expect(audioPlaybackService.isPlaying()).toBe(false)
@@ -337,7 +360,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     })
 
     await expect(audioPlaybackService.writeStreamChunk("broken", "AAAA")).rejects.toThrow("native output failed")
-    expect(onEnded).toHaveBeenCalledWith("broken", false, "native output failed", expect.any(Number))
+    expect(onEnded).toHaveBeenCalledWith("broken", false, "native output failed", expect.any(Number), true)
     expect(audioPlaybackService.getActiveCount()).toBe(0)
   })
 
@@ -715,5 +738,210 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(audioPlayer.play).toHaveBeenCalledTimes(1)
     expect(onComplete).not.toHaveBeenCalled()
     expect(audioPlaybackService.isPlaying()).toBe(true)
+  })
+
+  test("prepares playback without starting sound or suppressing the microphone", async () => {
+    await Promise.all([audioPlaybackService.prepareForPlayback(), audioPlaybackService.prepareForPlayback()])
+    expect(audioPlayer.play).not.toHaveBeenCalled()
+    expect(audioPlayer.replace).not.toHaveBeenCalled()
+    expect(setOwnAppAudioPlaying).not.toHaveBeenCalled()
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+  })
+
+  test("a prewarmed stream survives other audio and speaker.stop() until it plays", async () => {
+    const prewarmEnded = mock(() => {})
+    await audioPlaybackService.openStream({
+      streamId: "cue",
+      appId: "voice-app",
+      sampleRate: 48000,
+      channels: 1,
+      jitterMs: 80,
+      prewarm: true,
+      onEnded: prewarmEnded,
+    })
+    // Another app's sound and this app's own stop leave the idle stream alone.
+    await audioPlaybackService.openStream({
+      streamId: "other",
+      appId: "other-app",
+      sampleRate: 16000,
+      channels: 1,
+      onEnded: () => {},
+    })
+    await audioPlaybackService.play({requestId: "thinking", appId: "voice-app", audioUrl: "file://think.mp3"}, () => {})
+    await audioPlaybackService.stopForApp("voice-app")
+    expect(pcmStreamAbort).not.toHaveBeenCalledWith("cue")
+    expect(prewarmEnded).not.toHaveBeenCalled()
+
+    // Its first write makes it audible and, by default, stops other audio then.
+    await audioPlaybackService.openStream({
+      streamId: "other",
+      appId: "other-app",
+      sampleRate: 16000,
+      channels: 1,
+      stopOtherAudio: false,
+      onEnded: () => {},
+    })
+    pcmStreamAbort.mockClear()
+    await audioPlaybackService.writeStreamChunk("cue", "AAAA")
+    expect(pcmStreamAbort).toHaveBeenCalledWith("other")
+    expect(audioPlaybackService.getActiveAppIds()).toEqual(["voice-app"])
+    await audioPlaybackService.abortStream("cue")
+    expect(prewarmEnded).toHaveBeenCalledWith("cue", true, null, expect.any(Number), true)
+  })
+
+  test("a prewarmed stream closed by a route change ends quietly and reports not open", async () => {
+    const onEnded = mock(() => {})
+    await audioPlaybackService.openStream({
+      streamId: "stale",
+      appId: "voice-app",
+      sampleRate: 48000,
+      channels: 1,
+      prewarm: true,
+      onEnded,
+    })
+    pcmStreamWrite.mockImplementationOnce(async () => {
+      throw new Error("pcm stream stale is not open")
+    })
+    await expect(audioPlaybackService.writeStreamChunk("stale", "AAAA")).rejects.toThrow("not open")
+    expect(onEnded).toHaveBeenCalledWith("stale", true, null, 0, false)
+    expect(setOwnAppAudioPlaying).not.toHaveBeenCalledWith(true)
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+  })
+
+  test("teardown includes prewarmed streams", async () => {
+    await audioPlaybackService.openStream({
+      streamId: "orphan",
+      appId: "voice-app",
+      sampleRate: 48000,
+      channels: 1,
+      prewarm: true,
+      onEnded: () => {},
+    })
+    await audioPlaybackService.stopForApp("voice-app", {includeUnstarted: true})
+    expect(pcmStreamAbort).toHaveBeenCalledWith("orphan")
+  })
+})
+
+describe("AudioPlaybackService cloud speech from a PCM URL", () => {
+  beforeEach(async () => {
+    await audioPlaybackService.stopAll()
+    resetAudioTestMocks()
+    pcmStreamPlayUrl.mockClear()
+    pcmStreamPlayUrl.mockImplementation(async () => ({durationMs: 2_000}))
+  })
+
+  afterEach(async () => {
+    await audioPlaybackService.stopAll()
+  })
+
+  test("plays through the native URL stream and reports completion", async () => {
+    const onComplete = mock(() => {})
+    await audioPlaybackService.playPcmUrl(
+      {
+        requestId: "tts-1",
+        appId: "app",
+        url: "https://runtime.test/tts",
+        sampleRate: 24000,
+        volume: 0.5,
+        jitterMs: 250,
+      },
+      onComplete,
+    )
+    expect(pcmStreamPlayUrl).toHaveBeenCalledWith("tts-1", "https://runtime.test/tts", 24000, 0.5, 250)
+    expect(setOwnAppAudioPlaying).toHaveBeenCalledWith(true)
+    expect(onComplete).toHaveBeenCalledWith("tts-1", true, null, 2_000, "completed")
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+  })
+
+  test("counts as playing while it streams, and cancelPlayback interrupts it", async () => {
+    let reject!: (error: Error) => void
+    pcmStreamPlayUrl.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, rejectPlay) => {
+          reject = rejectPlay
+        }),
+    )
+    const onComplete = mock(() => {})
+    const playing = audioPlaybackService.playPcmUrl(
+      {requestId: "tts-2", appId: "app", url: "https://runtime.test/tts", sampleRate: 24000},
+      onComplete,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(audioPlaybackService.isPlaying()).toBe(true)
+    expect(audioPlaybackService.getActiveAppIds()).toEqual(["app"])
+    audioPlaybackService.cancelPlayback("tts-2")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(pcmStreamAbort).toHaveBeenCalledWith("tts-2")
+    reject(new Error("aborted"))
+    await playing
+    expect(onComplete).toHaveBeenCalledTimes(1)
+    expect(onComplete).toHaveBeenCalledWith("tts-2", true, null, expect.any(Number), "interrupted")
+  })
+
+  test("a dropped connection ends the stream with an error", async () => {
+    pcmStreamPlayUrl.mockImplementationOnce(async () => {
+      throw new Error("The network connection was lost.")
+    })
+    const onComplete = mock(() => {})
+    await audioPlaybackService.playPcmUrl(
+      {requestId: "tts-3", appId: "app", url: "https://runtime.test/tts", sampleRate: 24000},
+      onComplete,
+    )
+    expect(onComplete).toHaveBeenCalledWith(
+      "tts-3",
+      false,
+      "The network connection was lost.",
+      expect.any(Number),
+      "error",
+    )
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+  })
+
+  test("keeps the native error code in the reported error", async () => {
+    pcmStreamPlayUrl.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("HTTP 401"), {code: "http_error"})
+    })
+    const onComplete = mock(() => {})
+    await audioPlaybackService.playPcmUrl(
+      {requestId: "tts-6", appId: "app", url: "https://runtime.test/tts", sampleRate: 24000},
+      onComplete,
+    )
+    expect(onComplete).toHaveBeenCalledWith("tts-6", false, "http_error: HTTP 401", expect.any(Number), "error")
+  })
+
+  test("other audio interrupts it like any stream", async () => {
+    pcmStreamPlayUrl.mockImplementationOnce(() => new Promise(() => {}))
+    const onComplete = mock(() => {})
+    void audioPlaybackService.playPcmUrl(
+      {requestId: "tts-4", appId: "app", url: "https://runtime.test/tts", sampleRate: 24000},
+      onComplete,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await audioPlaybackService.play({requestId: "chime", appId: "other", audioUrl: "file://chime.wav"}, () => {})
+    expect(onComplete).toHaveBeenCalledWith("tts-4", true, null, expect.any(Number), "interrupted")
+  })
+
+  test("the opt-in uplink mute holds while it plays and releases after the tail", async () => {
+    startAudioCloudUplink()
+    let finish!: () => void
+    pcmStreamPlayUrl.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({durationMs: 1_000})
+        }),
+    )
+    const playing = audioPlaybackService.playPcmUrl(
+      {requestId: "tts-5", appId: "app", url: "https://runtime.test/tts", sampleRate: 24000, suppressCloudUplink: true},
+      () => {},
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    emitLc3Frame([1])
+    expect(sendAudioFrame).not.toHaveBeenCalled()
+    finish()
+    await playing
+    for (const callback of tailTimerCallbacks.splice(0)) callback()
+    emitLc3Frame([2])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(1)
+    stopAudioCloudUplink()
   })
 })

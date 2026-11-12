@@ -26,6 +26,7 @@ import {ConfigurationModule} from "./modules/configuration"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
 import {EventManager, type TranscriptionEventRoute, type UnsubscribeFn} from "./modules/events"
+import type {SpeechProcessingOptions} from "./modules/speechProcessing"
 import {GlassesModule} from "./modules/glasses"
 import {HeadingModule} from "./modules/heading"
 import {ImuModule} from "./modules/imu"
@@ -45,6 +46,7 @@ import {StreamModule} from "./modules/stream"
 import {SystemModule} from "./modules/system"
 import {MiniappsModule} from "./modules/miniapps"
 import {ActionsModule} from "./modules/actions"
+import {TelemetryModule} from "./modules/telemetry"
 import {BlobModule} from "./modules/blob"
 import {
   MeetingModule,
@@ -130,6 +132,13 @@ export interface HostFeatures {
   captureAudio?: boolean
   /** Host keeps the UI closed until a background session that announced it sends READY. */
   initReady?: boolean
+  /**
+   * Host installs miniapps from a miniapp URL through `session.miniapps.install({url})`. Only a miniapp on the
+   * Mentra App's system list may call it; older Mentra Apps answer NOT_PERMITTED.
+   */
+  miniappInstall?: boolean
+  /** Host takes the miniapp's own events from `session.telemetry.capture` (Fleet Management's miniapp telemetry). */
+  telemetry?: boolean
 }
 
 export interface MiniappAuthState {
@@ -185,6 +194,8 @@ export class ConnectAckTimeoutError extends Error {
 export interface MiniappRequestError {
   code: string
   message: string
+  /** A finer cause, where a request documents one (`INSTALL_FAILED` from `session.miniapps.install`). */
+  reason?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +307,8 @@ export class MiniappSession<TChannels extends object = any> {
    * declared action; `handle` (open to all) exposes one of your own.
    */
   public readonly actions: ActionsModule
+  /** The miniapp's own analytics, shown in its organization's Fleet Management (see {@link TelemetryModule}). */
+  public readonly telemetry: TelemetryModule
 
   /** Phone-declared glasses capabilities. Null until CONNECT_ACK arrives. */
   public capabilities: GlassesCapabilities | null = null
@@ -403,6 +416,12 @@ export class MiniappSession<TChannels extends object = any> {
     this.ui = new UIModuleImpl<TChannels>(this)
     this.miniapps = new MiniappsModule(this)
     this.actions = new ActionsModule(this)
+    this.telemetry = new TelemetryModule(this)
+  }
+
+  /** @internal Whether CONNECT_ACK arrived, so `hostFeatures` is the host's answer and not just unknown. */
+  get handshakeDone(): boolean {
+    return this.handshakeComplete
   }
 
   /**
@@ -476,7 +495,7 @@ export class MiniappSession<TChannels extends object = any> {
   _subscribe(
     streamType: string,
     handler: (data: unknown) => void,
-    options: {forceLocal?: boolean} = {},
+    options: SpeechProcessingOptions = {},
   ): UnsubscribeFn {
     return this.events.subscribe(streamType, handler, options)
   }
@@ -995,22 +1014,6 @@ export class MiniappSession<TChannels extends object = any> {
         if (next === "light" || next === "dark") {
           this.colorScheme = next
           this.emitter.emit("colorScheme", next)
-        }
-        return
-      }
-
-      case MiniappResponseType.MINIAPPS_INSTALL_PROGRESS: {
-        const {packageName, version, phase} = payload as Record<string, unknown>
-        if (
-          typeof packageName === "string" &&
-          typeof version === "string" &&
-          (phase === "downloading" ||
-            phase === "verifying" ||
-            phase === "extracting" ||
-            phase === "activating" ||
-            phase === "complete")
-        ) {
-          this.miniapps._deliverInstallProgress({packageName, version, phase})
         }
         return
       }

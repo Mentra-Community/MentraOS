@@ -5,7 +5,14 @@ import zlib
 
 /// Links select immutable CI coordinates, never a download URL or a command.
 struct InstallRequest {
+    // The repository whose PR builds this installer opens, fixed at compile
+    // time: mac_installer.py defines MENTRA_MONOREPO for builds of the
+    // Mentra-Community/Mentra monorepo.
+#if MENTRA_MONOREPO
+    static let origin = "https://artifactscdn.mentraglass.com/Mentra-Community/Mentra/releases/pr-builds/"
+#else
     static let origin = "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/pr-builds/"
+#endif
     let pr: Int
     let head: String
     let runID: Int

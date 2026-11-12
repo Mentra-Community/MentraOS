@@ -13,6 +13,13 @@ import localSttFallbackCoordinator from "../../../modules/engine/src/services/Lo
 import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
+// The store object is shared across tests, so a spy created earlier can still hold its calls.
+const spyOnSetSetting = () => {
+  const spy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+  spy.mockClear()
+  return spy
+}
+
 describe("DeviceEventRouter", () => {
   beforeEach(() => {
     resetBluetoothSdkMock()
@@ -54,7 +61,10 @@ describe("DeviceEventRouter", () => {
 
     it("BLE drop flips connected=false but reports linkConnected=false so miniapps can tell it apart", () => {
       const store = useGlassesStore.getState()
-      store.setGlassesInfo({connection: {state: "connected"} as never, wifi: {state: "connected", ssid: "Net"} as never})
+      store.setGlassesInfo({
+        connection: {state: "connected"} as never,
+        wifi: {state: "connected", ssid: "Net"} as never,
+      })
       const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
       fwdSpy.mockClear()
 
@@ -67,7 +77,10 @@ describe("DeviceEventRouter", () => {
 
     it("Wi-Fi drop with BLE up reports connected=false and linkConnected=true", () => {
       const store = useGlassesStore.getState()
-      store.setGlassesInfo({connection: {state: "connected"} as never, wifi: {state: "connected", ssid: "Net"} as never})
+      store.setGlassesInfo({
+        connection: {state: "connected"} as never,
+        wifi: {state: "connected", ssid: "Net"} as never,
+      })
       const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
       fwdSpy.mockClear()
 
@@ -130,6 +143,30 @@ describe("DeviceEventRouter", () => {
     const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
     emitBluetoothSdkEvent("save_setting", {type: "save_setting", key: "brightness", value: 42})
     expect(setSpy).toHaveBeenCalledWith("brightness", 42)
+  })
+
+  describe("pairing_state_changed mirrors the SDK pairing state", () => {
+    it("starts in the normal state", () => {
+      expect(useGlassesStore.getState().pairingState).toEqual({state: "normal"})
+    })
+
+    it.each([
+      ["pairing_mode", {state: "pairing_mode", windowId: 7, endsAtMs: 1_900_000_000_000}],
+      ["pairing_rejected", {state: "pairing_rejected"}],
+      ["normal", {state: "normal"}],
+    ])("mirrors %s into the glasses store", (_label, state) => {
+      emitBluetoothSdkEvent("pairing_state_changed", {state})
+      expect(useGlassesStore.getState().pairingState).toEqual(state)
+    })
+
+    it("keeps no owner-lost setting: the SDK pairing state is the only source", () => {
+      const setSpy = spyOnSetSetting()
+      emitBluetoothSdkEvent("pairing_state_changed", {state: {state: "pairing_rejected"}})
+      emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 300_000, window_id: 7})
+      emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected"} as never})
+      expect(setSpy).not.toHaveBeenCalled()
+    })
   })
 
   it("routes an owned photo_response error to the photo coordinator and drops non-owned ones", () => {

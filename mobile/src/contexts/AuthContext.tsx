@@ -6,11 +6,14 @@ import {
   createDeploymentAuthProvider,
   type DeploymentAuthProvider,
   type DeploymentAuthSession,
+  providerCleanupSettled,
+  queueProviderCleanup,
   useDeployment,
 } from "@/services/deployment"
 import {clearDeploymentDebugOverrides} from "@/services/deployment/debugOverrides"
+import {openAccountSettings, settleSignedOutAccountSettings} from "@/services/accountSettings"
 import {LogoutUtils} from "@/utils/LogoutUtils"
-import {storage} from "@/utils/storage"
+import {hasStoredAccountSession} from "@/utils/auth/accountCredentials"
 import mentraAuth from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser} from "@/utils/auth/authProvider.types"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
@@ -22,21 +25,6 @@ interface AuthContextProps {
   logout: () => Promise<void>
   signInWorkspace: () => Promise<void>
   leaveWorkspace: (destination: "consumer" | "selector") => Promise<void>
-}
-
-// Native provider sign-out (MSAL) removes every cached account for the client
-// id, so a sign-out still running from a previous workspace visit must finish
-// before a new interactive sign-in stores its account.
-let pendingProviderCleanup: Promise<void> = Promise.resolve()
-
-function queueProviderCleanup(provider: DeploymentAuthProvider): Promise<void> {
-  const cleanup = pendingProviderCleanup.then(() =>
-    provider.signOut().catch((error) => {
-      console.warn("AuthContext: failed to clear workspace provider account", error)
-    }),
-  )
-  pendingProviderCleanup = cleanup
-  return cleanup
 }
 
 const AuthContext = createContext<AuthContextProps>({
@@ -81,6 +69,8 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     const applySession = (next: MentraAuthSession | null, allowTelemetry: boolean) => {
       if (cancelled) return
+      // Before anything renders for this account, so every screen reads its settings.
+      if (next?.user?.id) openAccountSettings(next.user.id)
       setSession(next)
       setUser(next?.user ?? null)
       Sentry.setUser(allowTelemetry && next?.user ? {id: next.user.id, email: next.user.email} : null)
@@ -97,15 +87,21 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       // A fresh install must not contact Mentra account services until the user
       // chooses the consumer path. Preserve seamless upgrades for already
       // signed-in consumers by recognizing their existing local token pair.
-      const access = storage.load<string>("mentra.account.accessToken")
-      const refresh = storage.load<string>("mentra.account.refreshToken")
-      const hasExistingConsumerSession =
-        (access.is_ok() && Boolean(access.value)) || (refresh.is_ok() && Boolean(refresh.value))
-      if (hasExistingConsumerSession && !store.isSelectingWorkspace()) {
-        store.restoreConsumerSessionSelection()
-      } else {
-        applySession(null, false)
-      }
+      void hasStoredAccountSession()
+        .catch((error) => {
+          console.warn("AuthContext: could not read the stored account session", error)
+          return null
+        })
+        .then((hasExistingConsumerSession) => {
+          if (cancelled) return
+          if (hasExistingConsumerSession && !store.isSelectingWorkspace()) {
+            store.restoreConsumerSessionSelection()
+          } else {
+            // Only a definite "no session": one that couldn't be read keeps the settings for the account.
+            if (hasExistingConsumerSession === false) settleSignedOutAccountSettings()
+            applySession(null, false)
+          }
+        })
     } else if (workspaceAuth && activeDeployment.kind === "workspace") {
       const allowTelemetry = activeDeployment.manifest.telemetry
       unsubscribe = workspaceAuth.onStateChange((next) => applySession(toMentraSession(next), allowTelemetry))
@@ -125,6 +121,8 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
           applySession(null, true)
           return
         }
+        // No stored tokens at all: this phone is signed out.
+        if (!res.value.token) settleSignedOutAccountSettings()
         applySession(res.value, true)
       })
 
@@ -157,7 +155,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     if (!workspaceAuth) throw new Error("No organization is active")
     setLoading(true)
     try {
-      await pendingProviderCleanup
+      await providerCleanupSettled()
       const next = toMentraSession(await workspaceAuth.signIn())
       setSession(next)
       setUser(next?.user ?? null)

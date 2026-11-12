@@ -12,6 +12,12 @@
  * provider test. Run it with:
  *   doppler run -- bun test tests/audio.e2e.soniox.integration.test.ts
  * Offline (no key) the whole suite skips so the default `bun test` stays green.
+ *
+ * Safety: Mongo comes from `localTestMongoUrl` (loopback only, random database
+ * name, ignores `MONGO_URL`), checked before any destructive call and dropped
+ * afterwards. Redis comes from `localTestRedisUrl` (loopback only; refuses to
+ * run when `REDIS_URL` is set), so the keys this suite deletes are on a local
+ * server even under `doppler run`. Override with `CLOUD_V2_TEST_MONGO_URL` / `CLOUD_V2_TEST_REDIS_URL`.
  */
 
 import crypto from "node:crypto";
@@ -56,10 +62,8 @@ if (!RUN) {
       oemIdClaim: "oem_id",
     },
   ]);
-  process.env.MONGO_URL ??=
-    "mongodb://127.0.0.1:27017/mentra-cloud-v2-audio-e2e-soniox-test";
   // Own Redis DB so this suite doesn't stomp the other audio suites.
-  process.env.REDIS_URL ??= "redis://127.0.0.1:6379/3";
+  process.env.REDIS_URL = localTestRedisUrl(3);
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
   process.env.AUDIO_UDP_ADVERTISED_PORT = String(AUDIO_UDP_PORT);
   // The whole point: use the real Soniox provider in the workers.
@@ -68,6 +72,8 @@ if (!RUN) {
 }
 
 import { startCore, type CoreHandle } from "../packages/core/src/index";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { localTestRedisUrl } from "./support/local-redis";
 import { startAudio, type AudioHandle } from "../packages/runtime/src/index";
 import { startTestOem, type TestOemHandle } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
@@ -85,6 +91,11 @@ let pcmEn: Int16Array;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const databaseUrl = localTestMongoUrl("audio-e2e-soniox");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
+
 beforeAll(async () => {
   if (!RUN) return;
 
@@ -96,7 +107,9 @@ beforeAll(async () => {
   resetSigningKeyCache();
 
   testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
-  coreHandle = await startCore({ port: CORE_PORT });
+  coreHandle = await startCore({ port: CORE_PORT, mongoUrl: databaseUrl });
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
   await Promise.all([
     OemModel.syncIndexes(),
     UserModel.syncIndexes(),
@@ -115,6 +128,10 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  if (verified && UserModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   await audioHandle?.stop();
   await coreHandle?.stop();
   await testOemHandle?.stop();
@@ -122,6 +139,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   if (!RUN) return;
+  assertConnectedTo(databaseUrl, UserModel.db.name);
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),

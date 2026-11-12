@@ -2,7 +2,7 @@ package com.mentra.acsmeeting.video
 
 import com.mentra.glassesmedia.video.I420Packer
 
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.azure.android.communication.calling.RawOutgoingVideoStream
 import com.azure.android.communication.calling.RawVideoFrameBuffer
 import com.azure.android.communication.calling.VideoStreamFormat

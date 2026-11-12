@@ -30,8 +30,8 @@ export {
   registerDevApp,
   unregisterDevApp,
   getDevAppRecords,
-  getDevAppSourcePackage,
   DEV_APP_PACKAGE_NAME,
+  hasAssignmentReason,
   SignedMiniappDevBuildError,
   type DevAppRecord,
   type InstallBundleOptions,
@@ -40,8 +40,29 @@ export {
 export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
-export {miniappLauncher, type LaunchHints, type LaunchResult, type ResolvedBundle} from "./services/MiniappLauncher"
+export {
+  miniappLauncher,
+  MiniappAgeRestrictedError,
+  type LaunchHints,
+  type LaunchResult,
+  type ResolvedBundle,
+} from "./services/MiniappLauncher"
+export {miniappOrigin, miniappOriginHost, miniappOriginUrl, type MiniappOriginPlatform} from "./services/miniappOrigin"
+export {resolveMiniappDataPartition} from "./services/miniappDataPartition"
+export {
+  applyMiniappWebStorageOps,
+  fillMiniappWebStorage,
+  markMiniappWebStorageLoaded,
+  markMiniappWebStorageOriginUnknown,
+  MINIAPP_WEB_STORAGE_CAP_BYTES,
+  miniappWebStorageEntries,
+  openMiniappWebStorage,
+  removedMiniappWebStorageKeys,
+  type MiniappWebStorageOp,
+  type MiniappWebStorageSession,
+} from "./services/miniappWebStorage"
 export {installMiniappFromJsonUrl} from "./services/manualMiniappInstall"
+export {installMiniapp, InstallMiniappError, isLocalNetworkMiniappUrl} from "./services/installMiniapp"
 export {
   installMiniappRelease,
   MiniappInstallCancelledError,
@@ -122,6 +143,8 @@ export {default as audioPlaybackService} from "./services/AudioPlaybackService"
 export {default as sttModelManager, STTModelManager} from "./services/STTModelManager"
 export {default as ttsModelManager, TTSModelManager} from "./services/TTSModelManager"
 export {default as offlineSpeechModelService} from "./services/OfflineSpeechModelService"
+export {default as wakeWordModelManager, WakeWordModelManager} from "./services/WakeWordModelManager"
+export type {WakeWordModelInfo} from "./services/WakeWordModelManager"
 
 export {default as navigationService} from "./services/NavigationService"
 // Phone GPS — the background location task + tier control. Importing this
@@ -178,8 +201,19 @@ export {useAppStatusStore, installAppStoreHooks, type AppStoreHooks} from "./sto
 
 // Cloud client + credentials + v1 comms.
 export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
+// Core credentials in the platform secure store, moved out of MMKV once.
+export {createPlatformCredentialVault, mmkvLegacyCredentials} from "./utils/credentials/platform"
+export type {CredentialLocation, CredentialVault} from "./utils/credentials/credentialVault"
 export {cloudClientService} from "./services/CloudClientService"
 export {createCloudUdpSocket} from "./utils/cloudClient/RnUdpAdapter"
+// Fleet: the workspace screens ask the assignment reconciler to read desired state now.
+export {notifyFleetWorkspaceLeft, triggerAssignmentReconcile} from "./services/fleet/assignmentReconcilerHost"
+export {fleetEvents} from "./services/fleet/fleetEvents"
+export {
+  getFleetManagementState,
+  onFleetManagementStateChanged,
+  type FleetManagementState,
+} from "./services/fleet/fleetManagementState"
 
 // Log ring buffer + console interception (bug-report attachments).
 export {logBuffer, type LogEntry} from "./utils/devLogging"

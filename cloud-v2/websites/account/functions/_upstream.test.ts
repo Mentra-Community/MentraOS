@@ -27,6 +27,9 @@ test("relays exactly the provider's routes and the password reset calls; everyth
     "/oidc/auth",
     "/oidc/token",
     "/oidc/session/end/confirm",
+    "/oidc/connections",
+    "/oidc/connections/revoke",
+    "/oidc/connections/sign-in",
     "/interaction/uid-1/supabase",
     "/interaction/callback/workforce",
     "/api/account/password/forgot",
@@ -34,7 +37,8 @@ test("relays exactly the provider's routes and the password reset calls; everyth
   ]) {
     expect(isRelayedPath(path)).toBe(true);
   }
-  for (const path of ["/", "/login", "/consent", "/signout", "/api/account/login", "/api/admin/me", "/.well-known/other", "/oidc"]) {
+  // `/connections` is the site's own page; only its calls under `/oidc/` go to Core.
+  for (const path of ["/", "/login", "/consent", "/connections", "/signout", "/api/account/login", "/api/admin/me", "/.well-known/other", "/oidc"]) {
     expect(isRelayedPath(path)).toBe(false);
   }
 });

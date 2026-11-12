@@ -1,8 +1,20 @@
 /// <reference types="bun-types" />
 
-import {afterAll, beforeAll, beforeEach, describe, expect, test, mock} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, mock, spyOn} from "bun:test"
 
-import {configure, resetForTests} from "../../runtime/bootstrap"
+import {reactNative, reactNativeAppState} from "./reactNativeTestMock"
+
+import type {DeclaredAge} from "@mentra/cloud-protocol/declared-age"
+
+import {
+  configure,
+  isInstalledMiniappAllowed,
+  isLocalMiniappPackageAllowed,
+  resetForTests,
+  updateUiSeams,
+  type AgeRestrictionNotice,
+  type IslandConfigValues,
+} from "../../runtime/bootstrap"
 import {installWithRuntimeReload} from "../../utils/storeInstallRuntime"
 import type {MentraJSRouter} from "../MentraJSRouter"
 
@@ -13,23 +25,55 @@ let activeVersion = "1.0.0"
 let available = true
 let backgroundAvailable = false
 let releaseSource = "bundled_asset"
+/** The account's current workspace assigned the package through Fleet. */
+let assignedHere = false
 let releaseStorePackageName: string | undefined
 let selectedSnapshot: string | null = null
 let storedDevUrl: string | null = null
 let publisherFingerprint: string | null = null
 let snapshotVersions: string[] = []
+let uiPath = "ui/index.html"
+/** The installed bundle's own `ageRating`; undefined declares none. */
+let manifestAgeRating: string | undefined
+/** The installed bundle's own `minHostVersion` and `sdkVersion`; undefined declares none. */
+let manifestMinHostVersion: string | undefined
+let manifestSdkVersion: string | undefined
+const revoked = new Set<string>()
 
 mock.module("../AppRegistry", () => ({
   default: {
+    isMiniappAccessRevoked: (packageName: string) => revoked.has(packageName),
     getActiveVersion: async () => activeVersion,
+    peekActiveVersion: () => activeVersion || undefined,
     getPublisherKeyFingerprint: () => publisherFingerprint,
     getSelectedDevSnapshot: () => selectedSnapshot,
     getMiniappEntryPaths: (_package: string, version: string) => {
       snapshotVersions.push(version)
-      return {background: `file:///bundle/${version}/bg.js`, ui: `file:///bundle/${version}/ui.html`}
+      return {
+        background: `file:///bundle/${version}/bg.js`,
+        ui: `file:///bundle/${version}/${uiPath}`,
+        rootDir: `file:///bundle/${version}/`,
+        uiPath,
+      }
     },
-    getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
+    getMiniappManifest: () => ({
+      name: "Night Club",
+      permissions: [{type: "MICROPHONE"}],
+      hardwareRequirements: [],
+      ...(manifestAgeRating === undefined ? {} : {ageRating: manifestAgeRating}),
+      ...(manifestMinHostVersion === undefined ? {} : {minHostVersion: manifestMinHostVersion}),
+      ...(manifestSdkVersion === undefined ? {} : {sdkVersion: manifestSdkVersion}),
+    }),
     getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
+    // AppRegistry asks the deployment's policy, knowing whether the current workspace assigned the package.
+    isPackageAllowed: (packageName: string) => isLocalMiniappPackageAllowed(packageName, {assigned: assignedHere}),
+    isReleaseAllowed: (packageName: string, version: string | undefined) =>
+      isInstalledMiniappAllowed(
+        packageName,
+        version,
+        {source: releaseSource, storePackageName: releaseStorePackageName},
+        {assigned: releaseSource === "url" && assignedHere},
+      ),
     getLatestDevSnapshotVersion: () => null,
     hasDevSnapshot: () => false,
     installFromUrl: async () => ({is_ok: () => true, is_error: () => false}),
@@ -73,22 +117,26 @@ mock.module("expo-file-system", () => ({
   },
 }))
 
-mock.module("../../stores/settings", () => ({SETTINGS: {super_mode: {key: "super_mode"}}, useSettingsStore: {getState: () => ({getSetting: () => false})}}))
+mock.module("../../stores/settings", () => ({
+  SETTINGS: {super_mode: {key: "super_mode"}},
+  useSettingsStore: {getState: () => ({getSetting: () => false})},
+}))
 
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
+let launchFailureReason: typeof import("../MiniappLauncher").launchFailureReason
+
+const launcherConfig: IslandConfigValues = {
+  isMiniappAvailable: (_packageName, mode) => available || (mode === "background" && backgroundAvailable),
+  bundledSystemMiniappPackages: ["com.mentra.notes"],
+  hostVersion: "3.3.0",
+  supportedMiniappSdkRange: "^0.3.0",
+}
 
 beforeAll(async () => {
-  configure({
-    auth: {},
-    config: {
-      isMiniappAvailable: (_packageName, mode) => available || (mode === "background" && backgroundAvailable),
-      bundledSystemMiniappPackages: ["com.mentra.store", "com.mentra.notes"],
-      bundledStoreMiniappPackages: ["com.mentra.store"],
-      bundledSystemMiniappStoreOwners: {"com.mentra.notes": "com.mentra.store"},
-    },
-  })
+  configure({auth: {}, config: launcherConfig})
   const mod = await import("../MiniappLauncher")
   miniappLauncher = mod.miniappLauncher
+  launchFailureReason = mod.launchFailureReason
 })
 
 afterAll(resetForTests)
@@ -103,6 +151,7 @@ function buildMockRouter() {
     permissions?: string[]
     hostTrustedSystem?: boolean
     projectRunning?: boolean
+    developmentBuild?: boolean
   }> = []
   const unregisterCalls: string[] = []
   const router = {
@@ -110,7 +159,12 @@ function buildMockRouter() {
     spawnAndRegister: async (
       packageName: string,
       src: string,
-      opts?: {permissions?: string[]; hostTrustedSystem?: boolean; projectRunning?: boolean},
+      opts?: {
+        permissions?: string[]
+        hostTrustedSystem?: boolean
+        projectRunning?: boolean
+        developmentBuild?: boolean
+      },
     ) => {
       spawnCalls.push({
         packageName,
@@ -118,6 +172,7 @@ function buildMockRouter() {
         permissions: opts?.permissions,
         hostTrustedSystem: opts?.hostTrustedSystem,
         projectRunning: opts?.projectRunning,
+        developmentBuild: opts?.developmentBuild,
       })
       registered.add(packageName)
       if (opts?.projectRunning ?? true) projected.add(packageName)
@@ -142,14 +197,32 @@ describe("MiniappLauncher", () => {
     available = true
     backgroundAvailable = false
     releaseSource = "bundled_asset"
+    assignedHere = false
     releaseStorePackageName = undefined
     selectedSnapshot = null
     storedDevUrl = null
     publisherFingerprint = null
     snapshotVersions = []
+    uiPath = "ui/index.html"
+    manifestAgeRating = undefined
+    manifestMinHostVersion = undefined
+    manifestSdkVersion = undefined
+    reactNativeAppState.currentState = "active"
+    ;(reactNative.Platform as {OS: string}).OS = "android"
     waitForConnectCalls = []
+    revoked.clear()
     mockRouter = buildMockRouter()
     miniappLauncher.configure({router: mockRouter.router})
+  })
+
+  test("a miniapp whose access was revoked is refused with a revocation error, spawning nothing", async () => {
+    const {MiniappAccessRevokedError} = await import("../MiniappLauncher")
+    revoked.add("com.mentra.notes")
+    await expect(miniappLauncher.ensureRunning("com.mentra.notes")).rejects.toBeInstanceOf(MiniappAccessRevokedError)
+    expect(mockRouter.spawnCalls).toHaveLength(0)
+    revoked.delete("com.mentra.notes")
+    await miniappLauncher.ensureRunning("com.mentra.notes")
+    expect(mockRouter.spawnCalls).toHaveLength(1)
   })
 
   test("an unavailable Store cannot resolve UI or launch", async () => {
@@ -248,7 +321,7 @@ describe("MiniappLauncher", () => {
     expect(launched).toBe(true)
     expect(mockRouter.spawnCalls).toHaveLength(1)
     expect(mockRouter.spawnCalls[0].src).toBe(fail ? "BG SOURCE" : "UPDATED SOURCE")
-    expect(result.uiUri).toBe(`file:///bundle/${fail ? "1.0.0" : "2.0.0"}/ui.html`)
+    expect(result.uiRootDir).toBe(`file:///bundle/${fail ? "1.0.0" : "2.0.0"}/`)
     expect(mockRouter.unregisterCalls).toEqual([])
   })
 
@@ -265,10 +338,10 @@ describe("MiniappLauncher", () => {
   })
 
   test("marks only a host-provenance bundled package as SYSTEM-trusted", async () => {
-    await miniappLauncher.ensureRunning("com.mentra.store")
+    await miniappLauncher.ensureRunning("com.mentra.notes")
     expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(true)
 
-    await miniappLauncher.ensureRunning("com.example.store")
+    await miniappLauncher.ensureRunning("com.example.notes")
     expect(mockRouter.spawnCalls[1].hostTrustedSystem).toBe(false)
   })
 
@@ -283,8 +356,30 @@ describe("MiniappLauncher", () => {
       expect(resolved?.devUrl).toBe("http://localhost:8081")
       expect(resolved?.bgSource).toBe("DEV SOURCE")
       expect(resolved?.hostTrustedSystem).toBe(false)
+      // A live development build keeps loading its screen from its server.
+      expect(resolved?.uiUri).toBe("http://localhost:8081/dist/ui.html")
+      expect(resolved?.uiOrigin).toBe("http://localhost:8081")
+      expect(resolved?.uiRootDir).toBeNull()
+      expect(resolved?.devBuild).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
+    }
+  })
+
+  test("launches a workspace's Fleet assignment where the deployment's developer tools are off", async () => {
+    configure({
+      auth: {},
+      config: {...launcherConfig, localMiniappPolicy: {systemPackageNames: ["com.mentra.settings"], managed: []}},
+    })
+    try {
+      releaseSource = "url"
+      await expect(miniappLauncher.ensureRunning("com.acme.tools")).rejects.toThrow("disabled by deployment policy")
+      assignedHere = true
+      await miniappLauncher.ensureRunning("com.acme.tools")
+      expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual(["com.acme.tools"])
+      expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(false)
+    } finally {
+      configure({auth: {}, config: launcherConfig})
     }
   })
 
@@ -294,13 +389,14 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(false)
   })
 
-  test("does not trust an ordinary Store release of a bundled Store package", async () => {
+  test("does not trust a Store's release of a bundled package", async () => {
     releaseSource = "store"
-    await miniappLauncher.ensureRunning("com.mentra.store")
+    releaseStorePackageName = "com.mentra.store"
+    await miniappLauncher.ensureRunning("com.mentra.notes")
     expect(mockRouter.spawnCalls[0].hostTrustedSystem).toBe(false)
   })
 
-  test("trusts a bundled package updated by the Store its build assigns", async () => {
+  test("trusts a bundled package the retired Mentra Store updated, and no other Store's", async () => {
     releaseSource = "system_store"
     releaseStorePackageName = "com.mentra.store"
     await miniappLauncher.ensureRunning("com.mentra.notes")
@@ -325,12 +421,15 @@ describe("MiniappLauncher", () => {
     expect(miniappLauncher.isProjectedRunning("com.x")).toBe(true)
   })
 
-  test.each(["http://reachable.local:3000", "http://unreachable.local:3000"])("explicit packed snapshot wins over scanned URL %s", async url => {
-    selectedSnapshot = "dev-1234-a"
-    storedDevUrl = url
-    await miniappLauncher.resolveBundle("com.x", {devUrl: url})
-    expect(snapshotVersions).toEqual([selectedSnapshot])
-  })
+  test.each(["http://reachable.local:3000", "http://unreachable.local:3000"])(
+    "explicit packed snapshot wins over scanned URL %s",
+    async (url) => {
+      selectedSnapshot = "dev-1234-a"
+      storedDevUrl = url
+      await miniappLauncher.resolveBundle("com.x", {devUrl: url})
+      expect(snapshotVersions).toEqual([selectedSnapshot])
+    },
+  )
 
   test("ensureRunning spawns the background context when not registered", async () => {
     const result = await miniappLauncher.ensureRunning("com.x")
@@ -338,10 +437,85 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls[0].packageName).toBe("com.x")
     expect(mockRouter.spawnCalls[0].src).toBe("BG SOURCE")
     expect(mockRouter.spawnCalls[0].permissions).toEqual(["MICROPHONE"])
-    // Hands the resolved UI entry back to the host (for the WebView mount).
-    expect(result.uiUri).toBe("file:///bundle/1.0.0/ui.html")
-    expect(result.uiBaseDir).toBe("file:///bundle/1.0.0/")
+    // Hands the resolved UI entry back to the host (for the WebView mount): the
+    // package's own origin, serving the active version's bundle root.
+    expect(result).toEqual({
+      uiUri: "https://com.x.miniapp.invalid/ui/index.html",
+      uiOrigin: "https://com.x.miniapp.invalid",
+      uiRootDir: "file:///bundle/1.0.0/",
+      uiOriginName: "com.x",
+      devBuild: false,
+    })
+    // A release: its data and tokens are the package's own.
+    expect(mockRouter.spawnCalls[0].developmentBuild).toBe(false)
     expect(miniappLauncher.isRunning("com.x")).toBe(true)
+  })
+
+  test("loads an installed screen from the package's own origin on iOS", async () => {
+    ;(reactNative.Platform as {OS: string}).OS = "ios"
+    const result = await miniappLauncher.ensureRunning("com.mentra.notes")
+    expect(result).toEqual({
+      uiUri: "miniapp://com.mentra.notes/ui/index.html",
+      uiOrigin: "miniapp://com.mentra.notes",
+      uiRootDir: "file:///bundle/1.0.0/",
+      uiOriginName: "com.mentra.notes",
+      devBuild: false,
+    })
+  })
+
+  test("writes an underscore as a hyphen in the Android host and encodes the entry path", async () => {
+    uiPath = "ui/main page.html"
+    const resolved = await miniappLauncher.resolveBundle("com.example_corp.my_app")
+    expect(resolved?.uiUri).toBe("https://com.example-corp.my-app.miniapp.invalid/ui/main%20page.html")
+    expect(resolved?.uiOrigin).toBe("https://com.example-corp.my-app.miniapp.invalid")
+  })
+
+  test.each(["com.Example.notes", "com.example.my-app"])(
+    "gives %s no screen, never a file URL, when its name can't have an origin",
+    async (packageName) => {
+      const warn = spyOn(console, "warn").mockImplementation(() => {})
+      try {
+        const result = await miniappLauncher.ensureRunning(packageName)
+        expect(result).toEqual({uiUri: null, uiOrigin: null, uiRootDir: null, uiOriginName: null, devBuild: false})
+        // The background still runs; only the screen is refused.
+        expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual([packageName])
+      } finally {
+        warn.mockRestore()
+      }
+    },
+  )
+
+  test("gives no screen for a UI entry that leaves the bundle", async () => {
+    uiPath = "../other/index.html"
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const resolved = await miniappLauncher.resolveBundle("com.x")
+      expect(resolved?.uiUri).toBeNull()
+      expect(resolved?.uiRootDir).toBeNull()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("a development snapshot loads from its development origin, never the package's, and is marked a development build", async () => {
+    selectedSnapshot = "dev-1234-a"
+    const resolved = await miniappLauncher.resolveBundle("com.x")
+    expect(resolved?.uiUri).toBe("https://invalid.dev.com.x.miniapp.invalid/ui/index.html")
+    expect(resolved?.uiOrigin).toBe("https://invalid.dev.com.x.miniapp.invalid")
+    expect(resolved?.uiOriginName).toBe("invalid.dev.com.x")
+    expect(resolved?.uiRootDir).toBe("file:///bundle/dev-1234-a/")
+    expect(resolved?.devBuild).toBe(true)
+  })
+
+  test("a development snapshot of a system package spawns as a development build, with no system trust", async () => {
+    ;(reactNative.Platform as {OS: string}).OS = "ios"
+    selectedSnapshot = "dev-1234-a"
+    // Even under an identity that would be trusted for a release of the name.
+    releaseSource = "bundled_asset"
+    const result = await miniappLauncher.ensureRunning("com.mentra.notes")
+    expect(result.uiUri).toBe("miniapp://invalid.dev.com.mentra.notes/ui/index.html")
+    expect(result.uiOriginName).toBe("invalid.dev.com.mentra.notes")
+    expect(mockRouter.spawnCalls[0]).toMatchObject({developmentBuild: true, hostTrustedSystem: false})
   })
 
   test("ensureRunning is idempotent — no second spawn for a live context", async () => {
@@ -355,8 +529,8 @@ describe("MiniappLauncher", () => {
     // spawn resolves — they must share one spawn, not race into a double-spawn.
     const [a, b] = await Promise.all([miniappLauncher.ensureRunning("com.x"), miniappLauncher.ensureRunning("com.x")])
     expect(mockRouter.spawnCalls.length).toBe(1)
-    expect(a.uiUri).toBe("file:///bundle/1.0.0/ui.html")
-    expect(b.uiUri).toBe("file:///bundle/1.0.0/ui.html")
+    expect(a.uiUri).toBe("https://com.x.miniapp.invalid/ui/index.html")
+    expect(b.uiUri).toBe("https://com.x.miniapp.invalid/ui/index.html")
   })
 
   test("runs the installed bundle instead of live dev code for a package with a publisher signature", async () => {
@@ -403,7 +577,7 @@ describe("MiniappLauncher", () => {
     if (fail) expect(result.message).toBe("install failed")
     const launched = await launch
     expect(mockRouter.spawnCalls.map((call) => call.src)).toEqual([fail ? "BG SOURCE" : "UPDATED SOURCE"])
-    expect(launched.uiUri).toBe(`file:///bundle/${fail ? "1.0.0" : "2.0.0"}/ui.html`)
+    expect(launched.uiRootDir).toBe(`file:///bundle/${fail ? "1.0.0" : "2.0.0"}/`)
   })
 
   test("explicit installs wait for an already-starting context and restart the new bundle", async () => {
@@ -428,7 +602,7 @@ describe("MiniappLauncher", () => {
     activeVersion = "2.0.0"
     const result = await miniappLauncher.ensureRunning("com.x", {version: "1.0.0"})
     expect(mockRouter.spawnCalls[0].src).toBe("UPDATED SOURCE")
-    expect(result.uiUri).toBe("file:///bundle/2.0.0/ui.html")
+    expect(result.uiRootDir).toBe("file:///bundle/2.0.0/")
   })
 
   test("ensureConnected spawns then waits for the CONNECT handshake", async () => {
@@ -443,6 +617,50 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls.length).toBe(0)
   })
 
+  describe("the Mentra App version a release needs", () => {
+    test("a release that needs a newer Mentra App is refused with the reason, spawning nothing", async () => {
+      manifestMinHostVersion = "3.4.0"
+      const launch = miniappLauncher.ensureRunning("com.mentra.ai")
+      await expect(launch).rejects.toThrow(
+        "Night Club can't run on this phone: Requires Mentra App 3.4.0+; this host is 3.3.0.",
+      )
+      const refusal = await launch.catch((error: unknown) => error)
+      // A screen explains it in the person's language from these, not from the message.
+      expect(refusal).toMatchObject({
+        name: "MiniappIncompatibleHostError",
+        packageName: "com.mentra.ai",
+        miniappName: "Night Club",
+        reason: "Requires Mentra App 3.4.0+; this host is 3.3.0.",
+      })
+      expect(launchFailureReason(refusal)).toBe("incompatible_host")
+      expect(mockRouter.spawnCalls).toEqual([])
+    })
+
+    test("a background wake of it is refused too", async () => {
+      manifestMinHostVersion = "3.4.0"
+      await expect(
+        miniappLauncher.ensureConnected("com.mentra.ai", 5000, undefined, {projectRunning: false}),
+      ).rejects.toThrow(/can't run on this phone/)
+      expect(mockRouter.spawnCalls).toEqual([])
+      expect(waitForConnectCalls).toEqual([])
+    })
+
+    test("a release built for a Mentra Miniapp SDK this app doesn't run is refused", async () => {
+      manifestSdkVersion = "1.0.0"
+      await expect(miniappLauncher.ensureRunning("com.x")).rejects.toThrow(
+        "Night Club can't run on this phone: Built for SDK 1.0.0; host supports ^0.3.0.",
+      )
+      expect(mockRouter.spawnCalls).toEqual([])
+    })
+
+    test("a release that needs this Mentra App or older launches", async () => {
+      manifestMinHostVersion = "3.3.0"
+      manifestSdkVersion = "0.3.0"
+      await miniappLauncher.ensureRunning("com.x")
+      expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual(["com.x"])
+    })
+  })
+
   test("ensureRunning returns null UI for an already-registered package whose resolve fails", async () => {
     // First launch succeeds and registers the package. Later the bundle becomes
     // unresolvable (e.g. the mentra-miniapp dev server dropped). Headless
@@ -452,7 +670,7 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls.length).toBe(1)
     activeVersion = ""
     const result = await miniappLauncher.ensureRunning("com.x")
-    expect(result).toEqual({uiUri: null, uiBaseDir: null})
+    expect(result).toEqual({uiUri: null, uiOrigin: null, uiRootDir: null, uiOriginName: null, devBuild: false})
     expect(mockRouter.spawnCalls.length).toBe(1)
     expect(miniappLauncher.isRunning("com.x")).toBe(true)
   })
@@ -467,5 +685,158 @@ describe("MiniappLauncher", () => {
 
   test("isRunning is false for an unconfigured / unknown package", () => {
     expect(miniappLauncher.isRunning("com.unknown")).toBe(false)
+  })
+
+  describe("the age gate", () => {
+    /** What the person's account holds; null until they answer. */
+    let declared: DeclaredAge
+    let answers: Array<number | null>
+    let gateCalls: string[]
+    let notices: AgeRestrictionNotice[]
+
+    beforeEach(async () => {
+      const {setMiniappAgeGateDependenciesForTests} = await import("../miniappAgeGate")
+      declared = {declaredAge: null, declaredAgeAt: null}
+      answers = []
+      gateCalls = []
+      notices = []
+      updateUiSeams({showAgeRestricted: (notice) => notices.push(notice)})
+      setMiniappAgeGateDependenciesForTests({
+        hostAgeRating: () => "12+",
+        account: async () => {
+          gateCalls.push("account")
+          return "mu_alice"
+        },
+        cached: () => null,
+        cache: () => {},
+        fetch: async () => declared,
+        store: async (_account, age) => {
+          gateCalls.push(`store ${age}`)
+          declared = {declaredAge: age, declaredAgeAt: new Date().toISOString()}
+          return declared
+        },
+        asker: () => async () => {
+          gateCalls.push("ask")
+          return answers.shift() ?? null
+        },
+        now: () => new Date(),
+        warn: () => {},
+      })
+    })
+
+    afterEach(async () => {
+      const {setMiniappAgeGateDependenciesForTests} = await import("../miniappAgeGate")
+      setMiniappAgeGateDependenciesForTests(null)
+      updateUiSeams({showAgeRestricted: undefined})
+    })
+
+    test("a miniapp without a rating never meets it", async () => {
+      await miniappLauncher.ensureRunning("com.club")
+      expect(mockRouter.spawnCalls).toHaveLength(1)
+      expect(gateCalls).toEqual([])
+    })
+
+    test("a miniapp rated above the host's rating opens for a person old enough", async () => {
+      manifestAgeRating = "18+"
+      declared = {declaredAge: 21, declaredAgeAt: new Date().toISOString()}
+      await miniappLauncher.ensureRunning("com.club")
+      expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual(["com.club"])
+    })
+
+    test("a miniapp this Mentra App can't run is refused before anyone is asked their age", async () => {
+      manifestAgeRating = "18+"
+      manifestMinHostVersion = "3.4.0"
+      await expect(miniappLauncher.ensureRunning("com.club")).rejects.toThrow(/can't run on this phone/)
+      expect(gateCalls).toEqual([])
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+    })
+
+    test("a person too young is told why, and nothing spawns", async () => {
+      const {MiniappAgeRestrictedError} = await import("../MiniappLauncher")
+      manifestAgeRating = "18+"
+      declared = {declaredAge: 15, declaredAgeAt: new Date().toISOString()}
+      const refusal = await miniappLauncher.ensureRunning("com.club").catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(MiniappAgeRestrictedError)
+      expect(refusal).toMatchObject({packageName: "com.club", verdict: "too_young"})
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+      expect(notices).toEqual([{packageName: "com.club", name: "Night Club", ageRating: "18+", reason: "too_young"}])
+    })
+
+    test("the first open in front of the person asks once, keeps the answer, and opens", async () => {
+      manifestAgeRating = "16+"
+      answers = [16]
+      await miniappLauncher.ensureRunning("com.club", undefined, {trigger: "user"})
+      expect(gateCalls).toEqual(["account", "ask", "store 16"])
+      expect(mockRouter.spawnCalls).toHaveLength(1)
+    })
+
+    test("a headless install's first open without the person (a hidden wake) asks nobody and doesn't run", async () => {
+      const {MiniappAgeRestrictedError} = await import("../MiniappLauncher")
+      manifestAgeRating = "16+"
+      answers = [30]
+      await expect(
+        miniappLauncher.ensureConnected("com.club", 5000, undefined, {projectRunning: false}),
+      ).rejects.toBeInstanceOf(MiniappAgeRestrictedError)
+      expect(gateCalls).not.toContain("ask")
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+      expect(notices).toEqual([])
+    })
+
+    test("a launch while the Mentra App is in the background asks nobody", async () => {
+      manifestAgeRating = "16+"
+      answers = [30]
+      reactNativeAppState.currentState = "background"
+      await expect(miniappLauncher.ensureRunning("com.club")).rejects.toMatchObject({verdict: "unknown"})
+      expect(gateCalls).not.toContain("ask")
+    })
+
+    test("closing the question opens nothing", async () => {
+      manifestAgeRating = "18+"
+      answers = [null]
+      await expect(miniappLauncher.ensureRunning("com.club")).rejects.toMatchObject({verdict: "cancelled"})
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+      expect(notices).toEqual([])
+    })
+
+    test("a Home tap and the screen's own launch share one question", async () => {
+      manifestAgeRating = "16+"
+      answers = [16]
+      await Promise.all([
+        miniappLauncher.ensureRunning("com.club"),
+        miniappLauncher.ensureRunning("com.club", undefined, {trigger: "user"}),
+      ])
+      expect(gateCalls.filter((call) => call === "ask")).toHaveLength(1)
+      expect(mockRouter.spawnCalls).toHaveLength(1)
+    })
+
+    test("the apps store reads the installed bundle's name and rating ahead of a launch, without waiting", () => {
+      manifestAgeRating = "18+"
+      expect(miniappLauncher.installedAgeRating("com.club")).toEqual({
+        packageName: "com.club",
+        name: "Night Club",
+        ageRating: "18+",
+      })
+      // The version a launch runs, a development snapshot nobody selected included.
+      activeVersion = "dev-5"
+      expect(miniappLauncher.installedAgeRating("com.club").ageRating).toBe("18+")
+      manifestAgeRating = undefined
+      expect(miniappLauncher.installedAgeRating("com.club").ageRating).toBeNull()
+      activeVersion = ""
+      expect(miniappLauncher.installedAgeRating("com.club")).toEqual({
+        packageName: "com.club",
+        name: "com.club",
+        ageRating: null,
+      })
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+      expect(gateCalls).toEqual([])
+    })
+
+    test("a development snapshot that declares a rating meets it too", async () => {
+      manifestAgeRating = "18+"
+      declared = {declaredAge: 15, declaredAgeAt: new Date().toISOString()}
+      selectedSnapshot = "dev-1"
+      await expect(miniappLauncher.ensureRunning("com.club")).rejects.toMatchObject({verdict: "too_young"})
+      expect(mockRouter.spawnCalls).toHaveLength(0)
+    })
   })
 })

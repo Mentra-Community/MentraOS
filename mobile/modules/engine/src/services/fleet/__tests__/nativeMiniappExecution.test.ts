@@ -73,6 +73,7 @@ mock.module("../../../stores/glasses", () => ({
 // real one: the collector reads it too.
 const compatible = {isCompatible: true, missingRequired: [], missingOptional: [], warnings: []}
 mock.module("../../AppRegistry", () => ({
+  buildHardwareRequirements: () => [],
   default: {
     getInstalledMiniapps: async () => [],
     uninstall: async () => Res.ok(undefined),
@@ -84,7 +85,6 @@ mock.module("../../MiniappLauncher", () => ({miniappLauncher: {ensureRunning: as
 mock.module("../../LocalDisplayManager", () => ({default: {onCoreAppChange: () => {}}}))
 mock.module("../../NotificationsEmitter", () => ({islandNotifications: {emit: () => {}}}))
 mock.module("../../STTModelManager", () => ({default: {isModelAvailable: async () => true}}))
-mock.module("../../SystemMiniappPolicy", () => ({isStoreMiniappPackage: () => false}))
 mock.module("../../../utils/hardware/hardware", () => ({HardwareCompatibility: {checkCompatibility: () => compatible}}))
 mock.module("../../../types/hardware", () => ({getModelCapabilities: () => ({})}))
 mock.module("../../../utils/storage/storage", () => ({

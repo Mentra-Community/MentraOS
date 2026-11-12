@@ -7,6 +7,12 @@
       "deleteObjectsTransition": {"condition": {"type": "Age", "maxAge": 604800}}
     },
     {
+      "id": "Expire rolling Mentra monorepo PR artifacts",
+      "enabled": true,
+      "conditions": {"prefix": "Mentra-Community/Mentra/releases/pr-builds/"},
+      "deleteObjectsTransition": {"condition": {"type": "Age", "maxAge": 604800}}
+    },
+    {
       "id": "Expire rolling OEM artifacts",
       "enabled": true,
       "conditions": {"prefix": "Mentra-Community/MentraOS/releases/oem-app-builds/"},

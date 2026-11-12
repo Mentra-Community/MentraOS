@@ -355,6 +355,10 @@ export function selectMtkUpdate(
   return full
 }
 
+/**
+ * Whether the manifest's BES firmware applies: its version differs from the installed one, in
+ * either direction, or the installed one is unknown, mirroring the glasses-side `BesUpdateGate`.
+ */
 export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVersion: string | undefined): boolean {
   if (!besFirmware) {
     return false
@@ -364,26 +368,7 @@ export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVers
     console.log(`📱 BES current version unknown - assuming update needed (server: ${besFirmware.version})`)
     return true
   }
-  return compareVersions(besFirmware.version, currentVersion) > 0
-}
-
-export function compareVersions(version1: string, version2: string): number {
-  if (version1.includes(".") && version2.includes(".")) {
-    const parts1 = version1.split(".")
-    const parts2 = version2.split(".")
-    const maxLen = Math.max(parts1.length, parts2.length)
-
-    for (let i = 0; i < maxLen; i++) {
-      const v1 = i < parts1.length ? parseInt(parts1[i], 10) : 0
-      const v2 = i < parts2.length ? parseInt(parts2[i], 10) : 0
-      if (v1 !== v2) {
-        return v1 - v2
-      }
-    }
-    return 0
-  }
-
-  return version1.localeCompare(version2)
+  return besFirmware.version !== currentVersion
 }
 
 export async function checkForOtaUpdate(
@@ -515,6 +500,35 @@ export function isOtaCheckForCurrentDevice(result: OtaCheckCurrentGlassesResult)
   return checkedRevision === undefined || checkedRevision === otaDeviceSessionRevision()
 }
 
+const VERSION_INFO_ATTEMPTS = 2
+
+function isRequestTimeout(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as {code?: unknown}).code === "request_timeout"
+}
+
+/**
+ * The glasses can answer just after the native deadline: right after a BES restart their
+ * outbound queue held a version reply for 12 s, and it reached the phone as the request
+ * expired. Ask once more while the same glasses stay connected, rather than report their
+ * versions unreadable while the reply is on its way.
+ */
+async function requestVersionInfoAgainAfterTimeout(revision: number) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await BluetoothSdk.requestVersionInfo()
+    } catch (error) {
+      if (
+        attempt >= VERSION_INFO_ATTEMPTS ||
+        !isRequestTimeout(error) ||
+        revision !== otaDeviceSessionRevision() ||
+        !glassesConnectedNow()
+      )
+        throw error
+      console.warn("OTA: the glasses did not answer the version request in time - asking again")
+    }
+  }
+}
+
 async function refreshGlassesVersionInfo(): Promise<void> {
   // The background checker and mounted flow may check together. The native SDK
   // allows one version request at a time, so share its fresh response.
@@ -527,7 +541,7 @@ async function refreshGlassesVersionInfo(): Promise<void> {
   }
   if (versionInfoRefresh?.revision === revision) return versionInfoRefresh.promise
   const refresh = {revision, promise: Promise.resolve()}
-  refresh.promise = BluetoothSdk.requestVersionInfo()
+  refresh.promise = requestVersionInfoAgainAfterTimeout(revision)
     .then((versionInfo) => {
       if (revision === otaDeviceSessionRevision()) useGlassesStore.getState().setGlassesInfo(versionInfo)
     })
@@ -741,8 +755,8 @@ export async function checkCurrentGlassesForUpdate(
       result.latestVersionInfo?.isRequired === true
         ? true
         : result.latestVersionInfo?.isRequired === false
-        ? false
-        : !isApkDowngrade,
+          ? false
+          : !isApkDowngrade,
     manifestUrl,
     buildNumber,
     mtkFirmwareVersion,

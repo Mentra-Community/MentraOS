@@ -3,7 +3,7 @@
 import {createRequire} from "node:module"
 
 import TestRenderer, {act} from "react-test-renderer"
-import {beforeEach, describe, expect, mock, test} from "bun:test"
+import {beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 
 import type {OtaInstallSnapshot} from "../../services/OtaInstallCoordinator"
 import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckService"
@@ -175,8 +175,10 @@ const {useMentraLiveOta} = require("../useMentraLiveOta") as typeof import("../u
 let latestController: ReturnType<typeof useMentraLiveOta>
 let renderedScreens: string[] = []
 
+const onFinished = mock(() => {})
+
 function Probe({initialPage = "progress"}: {initialPage?: "check" | "progress"}) {
-  latestController = useMentraLiveOta({initialPage, initializeRuntime: false})
+  latestController = useMentraLiveOta({initialPage, initializeRuntime: false, onFinished})
   renderedScreens.push(latestController.state.screen)
   return null
 }
@@ -312,6 +314,67 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
+  test("offers only Retry after a required update fails", async () => {
+    onFinished.mockClear()
+    const renderer = await renderProbe()
+    installSnapshot = {...installSnapshot, displayState: "failed", errorMsg: "Network lost"}
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+
+    expect(latestController.state).toMatchObject({
+      screen: "failed",
+      updateRequired: true,
+      canRetry: true,
+      canFinish: false,
+      canDismiss: false,
+    })
+    await act(async () => latestController.dismiss())
+    expect(finish).not.toHaveBeenCalled()
+    expect(onFinished).not.toHaveBeenCalled()
+    await act(async () => renderer.unmount())
+  })
+
+  test("lets a failed optional update be left as its offer's Later does, ending an approved chain", async () => {
+    onFinished.mockClear()
+    currentCheckResult = {...checkResult, isRequired: false}
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    expect(latestController.state).toMatchObject({screen: "update_available", canDismiss: true})
+    await act(async () => latestController.install())
+    autoChainActive = true
+    installSnapshot = {...installSnapshot, displayState: "failed", errorMsg: "Network lost"}
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+
+    expect(latestController.state).toMatchObject({
+      screen: "failed",
+      updateRequired: false,
+      canRetry: true,
+      canFinish: false,
+      canDismiss: true,
+    })
+    stopAutoChain.mockClear()
+    await act(async () => latestController.dismiss())
+    expect(stopAutoChain).toHaveBeenCalledTimes(1)
+    expect(finish).toHaveBeenCalledTimes(1)
+    expect(onFinished).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
+  test("a failed check offers Retry, and leaving it is for developers only", async () => {
+    currentCheckResult = {...checkResult, hasCheckCompleted: false, checkFailureReason: "network"}
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    expect(latestController.state).toMatchObject({screen: "check_failed", canRetry: true, canFinish: false})
+    await act(async () => renderer.unmount())
+  })
+
   test("maps a glasses failure code to copy and keeps the raw code for support", async () => {
     const renderer = await renderProbe()
     installSnapshot = {
@@ -344,6 +407,39 @@ describe("useMentraLiveOta", () => {
         glassesCode: "downgrade_handoff_failed",
       },
     })
+    await act(async () => renderer.unmount())
+  })
+
+  test("logs the glasses code the failure screen replaces with copy", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    const renderer = await renderProbe()
+    installSnapshot = {
+      ...installSnapshot,
+      displayState: "failed",
+      errorMsg: "",
+      otaStatus: {
+        sessionId: "s1",
+        totalSteps: 2,
+        currentStep: 2,
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "bes_not_started",
+      },
+    }
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+
+    expect(latestController.state).toMatchObject({
+      screen: "failed",
+      canRetry: true,
+      error: {glassesCode: "bes_not_started", copyKey: "ota:key:bes_not_started"},
+    })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("hides glasses code bes_not_started"))
+    warn.mockRestore()
     await act(async () => renderer.unmount())
   })
 

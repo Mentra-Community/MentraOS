@@ -16,7 +16,6 @@ function requiredString(value, label) {
 
 export function createExampleTestflightRecord({
   plan,
-  starterKit,
   appId,
   bundleId,
   buildId,
@@ -41,13 +40,9 @@ export function createExampleTestflightRecord({
   ) {
     throw new Error("A valid dev, beta, or production release plan is required")
   }
-  if (
-    starterKit?.releaseSetId !== plan.releaseSetId ||
-    starterKit.releaseIdentity !== plan.releaseIdentity ||
-    starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
-    !SHA_PATTERN.test(starterKit.starterKit?.releaseCommit || "")
-  ) {
-    throw new Error("Starter Kit result does not match the release plan")
+  // The example is built from examples/bluetooth at the plan's source commit.
+  if (plan.releaseSetId !== `mentra-${plan.releaseIdentity}` || !SHA_PATTERN.test(plan.sourceCommit || "")) {
+    throw new Error("A coordinated release plan with a source commit is required")
   }
   const expectedGroup =
     plan.channel === "dev"
@@ -73,12 +68,11 @@ export function createExampleTestflightRecord({
   if (!URL_PATTERN.test(provenanceUrl || "")) throw new Error("TestFlight provenance URL must use HTTPS")
 
   const record = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
     channel: plan.channel,
     mentraosSourceCommit: plan.sourceCommit,
-    starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
     app: {
       id: requiredString(appId, "App Store Connect app ID"),
       bundleId: requiredString(bundleId, "bundle ID"),
@@ -131,7 +125,6 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   const record = createExampleTestflightRecord({
     plan: JSON.parse(readFileSync(path.resolve(args.plan), "utf8")),
-    starterKit: JSON.parse(readFileSync(path.resolve(args["starter-kit"]), "utf8")),
     appId: args["app-id"],
     bundleId: args["bundle-id"],
     buildId: args["build-id"],

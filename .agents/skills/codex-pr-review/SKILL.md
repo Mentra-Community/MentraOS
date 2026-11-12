@@ -2,12 +2,38 @@
 name: codex-pr-review
 description: >-
   Run an independent local Codex (gpt-6.1-sol, medium) review of a GitHub pull
-  request and relay its verdict. Use for every PR an agent opens or updates,
-  and whenever the user asks to review a PR "with Codex". The review is posted
+  request and relay its verdict. Use for a PR an agent opens or updates when
+  the agent judges a review worth it (see "When to skip"), and whenever the
+  user asks to review a PR "with Codex". The review is posted
   on the PR as approve / request-changes; it never edits, commits or merges.
 ---
 
 # Local Codex PR review
+
+## When to skip
+
+Whether to review is the agent's call. A review costs 5-20 minutes, so run it when it is likely
+to catch something the agent and the PR's own checks would miss, and skip it when the agent has
+high confidence in the change. For example:
+
+- **Simple:** a reader can check it in full at a glance, and a mistake would show at once and be
+  cheap to undo: docs or copy, a one-line config value, a pure revert, a style tweak, or recorded
+  routine steps that a hardware run just replayed.
+- **Already reviewed:** the code was reviewed elsewhere and is ported, merged across, or reused
+  with small adjustments, such as a one-off job that runs a release workflow's reviewed steps.
+- **A follow-up:** a commit on a reviewed PR that fixes one of its findings or is simple by itself.
+- **Checked another way:** a dry run, a hardware run or tests exercise what a review would read,
+  and a failure would stop before doing harm. A lab run for the PR shows as its own comment and a
+  `lab / <routine>` check on the PR, which says what ran and whether it passed.
+
+Lean toward a review for new logic in release workflows, firmware, signing, permissions or data
+handling, and for a change across several areas, where a mistake is costly or hard to undo. The
+user can always ask for one, or ask to skip it.
+
+When skipping, say why in the PR description (`No Codex review: <reason>`), or in a PR comment for
+a follow-up commit.
+
+## Run it
 
 One command does everything. Run it in the background and wait for it; do not
 re-verify the Codex binary, the scripts, the token minter or the gh login first.
@@ -49,6 +75,10 @@ total, and retries once unless the verdict was already posted. Never launch a ba
   `--request-changes` whose body starts with `Reviewed by local Codex (gpt-6.1-sol, medium).`
   and lists what was checked. If GitHub refuses the formal review it falls back to `--comment`
   with `Approve.` or `Request changes.` as the first line.
+- Balances risk against machinery: complexity is a cost, so only a likely, harmful defect blocks.
+  What can only happen through an unlikely coincidence, or would cost more machinery than the
+  harm, goes under "Accepted-risk candidates" for the owner to decide. Needless machinery in the
+  PR is a finding. Codex weighs an author's reasoned pushback and can change its verdict.
 - Always adds an "Is this change needed?" step: Codex must judge whether the change is needed or
   desirable for the project at all (real problem, existing or planned alternative, surface area
   and maintenance cost versus benefit, smaller change possible) and let that weigh in the
@@ -156,6 +186,9 @@ comment; let Codex weigh comments itself.
 - If the PR is the agent's own and the verdict is request-changes: read the bot comments too,
   fix real defects with a coherent design change, say which comments were ignored and why, push,
   and rerun the script on the new head.
+- Not every finding deserves a fix. Fix what will happen in ordinary use. When a finding only can
+  happen, or its fix adds more tracking than it's worth, say why in a PR comment and rerun: Codex
+  weighs that reasoning. Whoever may merge can also merge over an explained finding.
 - If the PR belongs to someone else, report only; do not rework unless asked.
 - On `codex-pr-review: FAILED`, read `runner.log`, report the failure, and do not claim a review
   was posted.

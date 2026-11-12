@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import GlassesMedia
 
 /// Downmix/resample PCM16 to 48 kHz mono ~20 ms blocks for ACS raw outgoing audio.
 final class PcmBridge {
@@ -41,7 +42,7 @@ final class PcmBridge {
     dumped = true
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("acs-whep-p4.wav")
     try? Self.wav(pcm: dump, sampleRate: dumpRate, channels: dumpChannels).write(to: url)
-    NSLog("ACS-SPIKE P4 wrote \(url.path) bytes=\(dump.count) rate=\(dumpRate) ch=\(dumpChannels)")
+    MediaLog.log("ACS-SPIKE P4 wrote \(url.path) bytes=\(dump.count) rate=\(dumpRate) ch=\(dumpChannels)")
     dump.removeAll()
   }
 
@@ -59,7 +60,7 @@ final class PcmBridge {
       }
     }
     let mean = count == 0 ? 0 : acc / Int64(count)
-    NSLog("ACS-SPIKE P4 pcm rate=\(sampleRate) ch=\(channels) meanAbs=\(mean) bytes=\(pcm.count)")
+    MediaLog.log("ACS-SPIKE P4 pcm rate=\(sampleRate) ch=\(channels) meanAbs=\(mean) bytes=\(pcm.count)")
   }
 
   static let targetRate = 48_000

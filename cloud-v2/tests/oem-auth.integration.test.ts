@@ -8,11 +8,12 @@
  *     ↓ verifies, mints Mentra access + refresh
  *   assertions on response shape + downstream rejection paths
  *
- * Prereq: a running Mongo. Defaults to `mongodb://127.0.0.1:27017/mentra-cloud-v2-test`;
- * override via `MONGO_URL`. The test wipes its own collections between cases —
- * do NOT point this at a real database.
+ * Safety: the test connects through `localTestMongoUrl` (loopback only, random
+ * database name, ignores `MONGO_URL`) and asserts the live connection is on
+ * that database before any destructive call. It clears its collections before
+ * each case and drops the database in `afterAll`, only if the check passed.
  *
- * Run: `bun test tests/oem-auth.integration.test.ts`
+ * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/oem-auth.integration.test.ts`
  */
 
 import crypto from "node:crypto";
@@ -39,8 +40,6 @@ import {
     nodePub.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??=
-    "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
 }
 
 // eslint-disable-next-line import/first
@@ -57,16 +56,26 @@ import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
 import { loadKeypair, type TestOemKeypair } from "../test/test-oem/src/keypair";
 import { mintJwt } from "../test/test-oem/src/app";
+import { resetCoreKeyCaches } from "./support/key-caches";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 
 const TEST_OEM_ID = "test-oem";
 
+const databaseUrl = localTestMongoUrl("oem-auth");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
 let coreApp: ReturnType<typeof createApp>;
 let oemKeypair: TestOemKeypair;
 
 // === Test lifecycle ===
 
 beforeAll(async () => {
-  await connectMongo(process.env.MONGO_URL!);
+  // This suite's keys were set when the file loaded; a suite before it may have cached its own.
+  resetCoreKeyCaches();
+  await connectMongo(databaseUrl);
+  assertConnectedTo(databaseUrl, OemModel.db.name);
+  verified = true;
 
   // Build indexes before any test depends on them (the seen-jti replay test
   // relies on the unique index firing).
@@ -83,10 +92,16 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (verified && OemModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, OemModel.db.name);
+    await OemModel.db.dropDatabase();
+  }
   await disconnectMongo();
+  resetCoreKeyCaches();
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, OemModel.db.name);
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),

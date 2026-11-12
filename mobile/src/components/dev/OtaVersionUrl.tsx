@@ -4,6 +4,7 @@ import {TextInput, View, ViewStyle, TextStyle, TouchableOpacity} from "react-nat
 import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -173,6 +174,8 @@ export default function OtaVersionUrl() {
           />
           <Button
             tx="common:reset"
+            // Distinct from the Cloud URL section's Reset on the same page.
+            accessibilityLabel={translate("debug:resetOtaManifestUrl")}
             onPress={handleResetUrl}
             disabled={isSavingUrl}
             preset="alternate"

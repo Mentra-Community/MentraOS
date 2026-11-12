@@ -19,17 +19,19 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {shallow} from "zustand/shallow"
 
+import audioPlaybackService from "./AudioPlaybackService"
+import {wakeWordService} from "./WakeWordService"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
-import {useSettingsStore} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
-import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
+import {startPairingProjection, stopPairingProjection} from "./PairingProjection"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
+import {reclaimLateHotspot} from "./GlassesHotspotLease"
 
 let subs: Array<{remove: () => void}> = []
 
@@ -102,6 +104,11 @@ export function startDeviceEventRouter(): void {
       // of hitting the previous network's stale glasses IP.
       asgCameraApi.setServer(localIp || "localhost", 8089)
       GlobalEventEmitter.emit("hotspot_status_change", {enabled, ssid, password, local_ip: localIp})
+      if (enabled) {
+        void reclaimLateHotspot((state) => BluetoothSdk.setHotspotState(state)).catch((error) =>
+          console.warn("[GlassesHotspot] Could not turn off the late hotspot", error),
+        )
+      }
     }),
   )
   subs.push(
@@ -123,22 +130,8 @@ export function startDeviceEventRouter(): void {
     }),
   )
 
-  // Hardware-originated setting changes (user changes a setting ON the glasses) → store.
-  // The inbound complement to GlassesSettingsSync (which only pushes store→device).
-  subs.push(
-    BluetoothSdk.addListener("save_setting", async (event) => {
-      const settings = useSettingsStore.getState()
-      // Damp the relay: native re-echoes some settings unconditionally (e.g.
-      // the identity block at every handleDeviceReady) — a same-value echo
-      // must not become a store write (persistence churn + change-push noise).
-      if (settings.getSetting(event.key) !== event.value) {
-        await settings.setSetting(event.key, event.value)
-      }
-      // Two-phase identity: a promoted default retires the pending selection
-      // marker. The rule lives with PairingIdentity (a no-op for other keys).
-      await retirePendingSelectionOnPromotion(event.key, event.value)
-    }),
-  )
+  // Identity echo, pairing state and audio setup → stores (shared with the standalone pairing flow).
+  startPairingProjection()
 
   // --- coordinators (owns()-gated) ---
 
@@ -206,9 +199,33 @@ export function startDeviceEventRouter(): void {
       localMiniappRuntime.forwardEvent("head_up", {position: event.up ? "up" : "down", timestamp: Date.now()})
     }),
   )
+  // On-device "Hey Mentra" → every miniapp subscribed to the wake word. Warm
+  // up the audio player on each detection so the next sound starts quickly.
+  subs.push(
+    BluetoothSdk.addListener("wake_word", (event) => {
+      if (event.kind === "detected" && localMiniappRuntime.hasStreamSubscribers("wake_word")) {
+        void audioPlaybackService.prepareForPlayback().catch((error) => {
+          console.warn("Audio playback preparation after wake word failed", error)
+        })
+      }
+      const forwarded = wakeWordService.onNativeEvent(event)
+      if (forwarded) localMiniappRuntime.forwardEvent("wake_word", forwarded)
+    }),
+  )
+  // Phone-side voice activity (native Silero) → `vad`, one event per start or
+  // stop. Native counts a gap in microphone audio as silence.
+  subs.push(
+    BluetoothSdk.addListener("speech_activity", (event) => {
+      localMiniappRuntime.forwardEvent("vad", {
+        status: event.speaking,
+        silentForMs: event.silentForMs,
+        timestamp: event.timestamp,
+      })
+    }),
+  )
   // On-device STT transcripts → local miniapps only while the local engine is
-  // active (cloud fallback or an explicit forceLocal subscription). The runtime
-  // filters mixed local/cloud delivery per miniapp to avoid double-delivery.
+  // active (a localOnly or preferLocal listener, or the cloud fallback). The
+  // runtime routes each listener to one source, so nothing arrives twice.
   // forwardEvent is subscriber-gated — a no-op when no miniapp listens.
   // (Was MantleManager.handle_local_transcription; its offline-captions display branch
   // went away with the pseudo captions renderer.)
@@ -241,4 +258,5 @@ export function startDeviceEventRouter(): void {
 export function stopDeviceEventRouter(): void {
   for (const sub of subs) sub.remove()
   subs = []
+  stopPairingProjection()
 }

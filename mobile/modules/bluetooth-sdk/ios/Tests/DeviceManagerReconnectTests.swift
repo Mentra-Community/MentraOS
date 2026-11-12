@@ -280,6 +280,8 @@ final class DeviceManagerReconnectTests: XCTestCase {
 
 @MainActor
 private final class ReconnectRecordingDevice: SGCManager {
+    var onCleanup: (() -> Void)?
+    var onDisconnect: (() -> Void)?
     var type = "Reconnect test glasses"
     let hasMic = true
     let showConnectionConfirmation = false
@@ -333,7 +335,7 @@ private final class ReconnectRecordingDevice: SGCManager {
     func sendShutdown() {}
     func sendReboot() {}
     func sendRgbLedControl(requestId _: String, packageName _: String?, action _: String, color _: String?, onDurationMs _: Int, offDurationMs _: Int, count _: Int) {}
-    func disconnect() {}
+    func disconnect() { onDisconnect?() }
     func forget() {}
     func findCompatibleDevices() {}
     func stopScan() {}
@@ -342,7 +344,7 @@ private final class ReconnectRecordingDevice: SGCManager {
         nil
     }
 
-    func cleanup() {}
+    func cleanup() { onCleanup?() }
     func ping() {}
     func dbg1() {}
     func dbg2() {}

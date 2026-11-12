@@ -5,7 +5,7 @@ import android.net.ConnectivityManager
 import android.os.Handler
 import android.os.HandlerThread
 import com.mentra.glassesmedia.network.InternetHold
-import com.mentra.glassesmedia.trace.SoftApTrace
+import com.mentra.bluetoothsdk.hotspot.SoftApTrace
 import com.mentra.glassesmedia.source.I420Planes
 import java.io.IOException
 import java.util.concurrent.CountDownLatch

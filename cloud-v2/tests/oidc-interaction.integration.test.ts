@@ -17,7 +17,7 @@
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/oidc-interaction.integration.test.ts`
  */
 
-import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, spyOn, test} from "bun:test"
 import * as client from "openid-client"
 
 import {createApp} from "../packages/core/src/api/app"
@@ -34,6 +34,7 @@ import {resetUpstreamCaches} from "../packages/core/src/services/oidc/upstream"
 import type {SessionIdentity} from "../packages/core/src/services/signin/browser-session.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
+import * as rateLimits from "../packages/core/src/services/signin/rate-limit.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {resetCoreKeyCaches} from "./support/key-caches"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
@@ -206,7 +207,13 @@ describe("hosted Core: the sign-in page's hand-off", () => {
     expect(response.headers.get("location")).toBe(`${OIDC_ISSUER}/login?interaction=${signIn.uid}`)
     expect(response.headers.get("cache-control")).toBe("no-store")
     const details = await signIn.browser.request(`${OIDC_ISSUER}/interaction/${signIn.uid}/details`)
-    expect(await details.json()).toEqual({prompt: "login", client: {name: "Mentra admin portal"}, scopes: ["openid", "email", "profile"]})
+    expect(await details.json()).toEqual({
+      prompt: "login",
+      // A first-party client reaches no miniapp's data.
+      client: {name: "Mentra admin portal", packageName: null},
+      redirectUri: ADMIN_CALLBACK,
+      scopes: ["openid", "email", "profile"],
+    })
   })
 
   test("a hand-off signs in the Mentra App's Core user, ends that Supabase session, and redirects only to the provider's continuation (L01, L13, Review Focus 1)", async () => {
@@ -327,17 +334,23 @@ describe("hosted Core: the sign-in page's hand-off", () => {
 
   test("the hand-off is rate-limited per IP", async () => {
     const signIn = await startSignIn()
+    const consume = rateLimits.consumeRateLimit
+    let now = Date.now()
+    // All 31 calls test one fixed window, even when CI crosses a real minute.
+    const clock = spyOn(rateLimits, "consumeRateLimit").mockImplementation((key, limit, windowSec) => consume(key, limit, windowSec, now))
     const statuses: number[] = []
-    for (let i = 0; i < 31; i++) {
-      const response = await signIn.browser.request(`${OIDC_ISSUER}/interaction/${signIn.uid}/supabase`, {
+    const request = () => signIn.browser.request(`${OIDC_ISSUER}/interaction/${signIn.uid}/supabase`, {
         method: "POST",
         headers: {"content-type": "application/json", origin: OIDC_ISSUER, "x-forwarded-for": "203.0.113.9"},
         body: JSON.stringify({access_token: "not-a-token"}),
       })
-      statuses.push(response.status)
-    }
-    expect(statuses.slice(0, 30).every(status => status === 401)).toBe(true)
-    expect(statuses[30]).toBe(429)
+    try {
+      for (let i = 0; i < 31; i++) statuses.push((await request()).status)
+      expect(statuses.slice(0, 30).every(status => status === 401)).toBe(true)
+      expect(statuses[30]).toBe(429)
+      now += 60_000
+      expect((await request()).status).toBe(401)
+    } finally {clock.mockRestore()}
   })
 
   test("a Supabase key set outage fails the hand-off closed (S02)", async () => {

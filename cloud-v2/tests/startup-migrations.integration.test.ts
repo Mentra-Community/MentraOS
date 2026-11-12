@@ -2,7 +2,15 @@
  * @fileoverview Startup migration integration tests.
  *
  * Covers the legacy oemId -> tenantId backfills that keep pre-rename rows usable
- * with the current schema. Prereq: a running Mongo (override via MONGO_URL).
+ * with the current schema.
+ *
+ * Safety: the migrations run against the whole connected database, so the test
+ * connects through `localTestMongoUrl` (loopback only, random database name,
+ * ignores `MONGO_URL`) and asserts the live connection is on that database
+ * before any write. The database is dropped in `afterAll`, only if the check
+ * passed.
+ *
+ * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/startup-migrations.integration.test.ts`
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -13,18 +21,29 @@ import {
 } from "../packages/core/src/connections/mongo.connection";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { runStartupMigrations } from "../packages/core/src/migrations/startup.migrations";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+
+const databaseUrl = localTestMongoUrl("startup-migrations");
+// Set only once the live connection is confirmed to be our random database;
+// every write is gated on it.
+let verified = false;
 
 beforeAll(async () => {
-  await connectMongo(
-    process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2-test",
-  );
+  await connectMongo(databaseUrl);
+  assertConnectedTo(databaseUrl, RefreshTokenModel.db.name);
+  verified = true;
 });
 
 afterAll(async () => {
+  if (verified && RefreshTokenModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, RefreshTokenModel.db.name);
+    await RefreshTokenModel.db.dropDatabase();
+  }
   await disconnectMongo();
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, RefreshTokenModel.db.name);
   await RefreshTokenModel.collection.deleteMany({ sessionId: /^sess_mig_/ });
 });
 
@@ -50,6 +69,7 @@ describe("startup migrations", () => {
       expiresAt: new Date(Date.now() + 86_400_000),
     });
 
+    assertConnectedTo(databaseUrl, RefreshTokenModel.db.name);
     await runStartupMigrations();
 
     const legacy = await col.findOne({ sessionId: "sess_mig_legacy" });

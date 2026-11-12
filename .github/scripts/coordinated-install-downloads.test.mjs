@@ -4,24 +4,25 @@ import {mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
-import {downloadNames, prepareDownloads, publishDownloads, restoreDownloads, validateDownloads} from "./coordinated-install-downloads.mjs"
-import {platformDownloads, otaTargetText, coordinatedRoutineLinks} from "./coordinated-downloads-slack.mjs"
+import {downloadLinks, downloadNames, prepareDownloads, publishDownloads, restoreDownloads, validateDownloads} from "./coordinated-install-downloads.mjs"
 import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
 import {createIosRecord} from "./coordinated-mobile-records.mjs"
 
 const repository = "Mentra-Community/MentraOS"
 const ota = "https://artifactscdn.mentraglass.com/release.json"
+// Production is the bare X.Y.Z in mentra-v<X.Y.Z>; dev and beta are prereleases in mentra-builds-v<X.Y.Z>.
+const backends = {dev: "dev", beta: "staging", production: "prod"}
 function fixture(t, channel = "dev") {
   const directory = mkdtempSync(path.join(tmpdir(), "coordinated-downloads-test-"))
   t.after(() => rmSync(directory, {recursive: true, force: true}))
-  const identity = `3.2.1-${channel}.57`
+  const identity = channel === "production" ? "3.2.1" : `3.2.1-${channel}.57`
   const plan = {
     channel,
     sourceCommit: "a".repeat(40),
     releaseIdentity: identity,
     releaseSetId: `mentra-${identity}`,
     familyBaseVersion: "3.2.1",
-    artifactContainerTag: "mentra-builds-v3.2.1",
+    artifactContainerTag: channel === "production" ? "mentra-v3.2.1" : "mentra-builds-v3.2.1",
     members: {mentraos: {version: identity}},
     native: {buildNumber: 302010057, marketingVersion: "3.2.1"},
     artifactNames: {iosApp: `mentraos-${identity}-ios.ipa`},
@@ -36,7 +37,7 @@ function fixture(t, channel = "dev") {
       build: "302010057",
       version: "3.2.1",
       headSha: plan.sourceCommit,
-      backend: channel === "dev" ? "dev" : "staging",
+      backend: backends[channel],
       otaManifestUrl: ota,
       executableSha256: "e".repeat(64),
       javascriptSha256: "f".repeat(64),
@@ -55,7 +56,7 @@ function fixture(t, channel = "dev") {
   writeFileSync(path.join(directory, names.receipt), JSON.stringify(receipt))
   return {plan, directory, receipt, names}
 }
-for (const channel of ["dev", "beta"])
+for (const channel of ["dev", "beta", "production"])
   test(`${channel} installation page targets the exact ad hoc IPA and backend`, (t) => {
     const {plan, directory, names} = fixture(t, channel)
     prepareDownloads(directory, plan, repository, ota)
@@ -63,9 +64,18 @@ for (const channel of ["dev", "beta"])
     const page = readFileSync(path.join(directory, names.install), "utf8")
     assert.ok(plist.includes(names.iphone))
     assert.ok(page.includes(encodeURIComponent(names.manifest)))
-    assert.match(page, new RegExp(`${channel === "dev" ? "dev" : "staging"} backend`))
+    assert.match(page, new RegExp(`${backends[channel]} backend`))
+    assert.ok(plist.includes(`/${plan.artifactContainerTag}/`), "the iPhone download is in the channel's container")
     assert.doesNotMatch(page, /PR #|7 days/)
   })
+test("production downloads are named by the bare version and reject another channel's backend", (t) => {
+  const {plan, directory, names} = fixture(t, "production")
+  assert.equal(names.mac, "mentraos-3.2.1-mac.zip")
+  const receipt = prepareDownloads(directory, plan, repository, ota)
+  assert.throws(() => validateDownloads({...receipt, app: {...receipt.app, backend: "staging"}}, plan, ota))
+  assert.throws(() => downloadNames({...plan, releaseIdentity: "3.2.1-beta.57"}), /release identity/)
+  assert.match(downloadLinks(plan, repository).mac_url, /mentra-v3\.2\.1\/mentraos-3\.2\.1-mac\.zip$/)
+})
 test("publishes verified original bytes before the receipt and preserves them on retry", (t) => {
   const {plan, directory, names} = fixture(t)
   const calls = []
@@ -93,7 +103,9 @@ test("rejects stale source, release, native version, backend, OTA and partial do
   ]) {
     assert.throws(() => validateDownloads({...receipt, ...change}, plan, ota))
   }
-  assert.throws(() => downloadNames({...plan, releaseIdentity: "3.2.1"}), /dev or beta/)
+  assert.throws(() => downloadNames({...plan, releaseIdentity: "3.2.1"}), /release identity/)
+  assert.equal(downloadNames({...plan, channel: "production", releaseIdentity: "3.2.1"}).mac, "mentraos-3.2.1-mac.zip")
+  assert.throws(() => downloadNames({...plan, channel: "production"}), /release identity/)
 })
 test("iOS result keeps TestFlight evidence and adds verified downloads for finalization", (t) => {
   const {plan, directory, names} = fixture(t)
@@ -113,36 +125,6 @@ test("iOS result keeps TestFlight evidence and adds verified downloads for final
   assert.equal(record.publications.mentraos["app-store-connect"].status, "built")
   assert.ok(record.artifacts.some((entry) => entry.coordinate === names.install))
 })
-test("Slack uses symmetric rows, direct iPhone and share links; incomplete Apple downloads stay unavailable", () => {
-  const env = {
-    BRANCH: "staging",
-    MOBILE_APK_URL: "https://example.com/a.apk",
-    IPHONE_MANIFEST_URL: "https://example.com/i.plist",
-    IPHONE_SHARE_URL: "https://example.com/i.html",
-    MAC_URL: "https://example.com/m.zip",
-  }
-  const blocks = platformDownloads(env, (url) => Boolean(url))
-  assert.equal(blocks[0].elements.length, 3)
-  const iphone = blocks[0].elements[1].elements.filter((entry) => entry.type === "link")
-  assert.equal(iphone[0].text, "Install on iPhone")
-  assert.ok(iphone[0].url.startsWith("itms-services://"))
-  assert.equal(iphone[1].text, "Share install link")
-  assert.doesNotMatch(JSON.stringify(blocks), /Download IPA/)
-  const failed = platformDownloads(env, (url) => url !== env.MAC_URL)
-  assert.match(JSON.stringify(failed), /Download APK/)
-  assert.doesNotMatch(JSON.stringify(failed), /Install on iPhone/)
-})
-test("Slack firmware targets must belong to the current release", () => {
-  const manifest = {
-    releaseVersion: "3.2.1-dev.57",
-    apps: {"com.mentra.asg_client": {versionName: "3.2.1", versionCode: 302010057}},
-    bes_firmware: {version: "26.9.21.1"},
-    mtk_full_ota: {end_firmware: "MentraLive_20260915.0"},
-  }
-  assert.match(otaTargetText(manifest, manifest.releaseVersion), /302010057/)
-  assert.throws(() => otaTargetText(manifest, "3.2.1-dev.58"), /do not match/)
-})
-
 test("restore accepts only a complete matching published receipt and its original bytes", async (t) => {
   const {plan, directory, names} = fixture(t)
   prepareDownloads(directory, plan, repository, ota)
@@ -169,40 +151,3 @@ test("restore accepts only a complete matching published receipt and its origina
   await assert.rejects(restoreDownloads(restored, plan, repository, ota, deps), /bytes disagree/)
 })
 
-test("coordinated routine links select the exact source and archive without claiming execution", async () => {
-  for (const channel of ["dev", "staging"]) {
-    const {state, options} = coordinatedFixture(channel)
-    const env = {BRANCH: channel, RELEASE_SCOPE: "core", FINALIZE_RESULT: "success", RELEASE_PAGE_RESULT: "success",
-      EXAMPLES_DISPATCH_RESULT: "success", RELEASE_IDENTITY: state.plan.releaseIdentity,
-      REPOSITORY: "Mentra-Community/MentraOS", SHA: state.plan.sourceCommit, RUN_ID: "100", RUN_ATTEMPT: "2",
-      TEST_RUN_INGEST_TOKEN: "synthetic-ingest-token",
-      MAC_URL: state.receipt.app.otaManifestUrl.replace(state.plan.artifactNames.otaManifest, state.receipt.artifacts.mac.name)}
-    const fetchImpl = (url, init) => String(url).endsWith("/api/internal/routine-catalog")
-      ? new Response(JSON.stringify({routineRevision: "a".repeat(40), routines: [{routineId: "current-source-id"}]}))
-      : options.fetchImpl(url, init)
-    const blocks = await coordinatedRoutineLinks(env, fetchImpl)
-    const text = blocks[0].text.text
-    assert.match(text, /Publishing this build does not request tests/); assert.match(text, /Routine results for published app builds/)
-    assert.doesNotMatch(text, /test passed|test succeeded|queued/i)
-    const results = new URL(text.match(/<(https:\/\/admin\.dev\.[^|]+)\|/)[1])
-    assert.equal(results.searchParams.get("headSha"), state.plan.sourceCommit)
-    assert.equal(results.searchParams.get("archiveSha256"), state.receipt.artifacts.mac.sha256)
-    assert.equal(results.searchParams.get("routineId"), "current-source-id")
-    assert.equal(results.searchParams.get("channel"), channel)
-    assert.equal(results.searchParams.has("pr"), false)
-    const pipeline = new URL(text.match(/<(https:\/\/github\.com\/[^|]+)\|/)[1])
-    assert.equal(pipeline.searchParams.get("query"), '"Device request callback 100 / attempt 2"')
-    for (const override of [{FINALIZE_RESULT: "failure"}, {MAC_URL: "https://other.example/app.zip"}, {SHA: "f".repeat(40)}]) {
-      const unavailable = JSON.stringify(await coordinatedRoutineLinks({...env, ...override}, fetchImpl))
-      assert.match(unavailable, /Not requested|could not be verified/)
-      assert.doesNotMatch(unavailable, /Results for this exact build/)
-    }
-    for (const key of ["RELEASE_PAGE_RESULT", "EXAMPLES_DISPATCH_RESULT"]) for (const result of ["failure", "cancelled", "skipped", undefined]) {
-      const notRequested = JSON.stringify(await coordinatedRoutineLinks({...env, [key]: result}, fetchImpl))
-      assert.match(notRequested, /Publishing this build does not request tests/)
-      assert.doesNotMatch(notRequested, /pending/)
-      assert.match(notRequested, /Results for this exact build/, "A published artifact remains reviewable independently of other release jobs")
-    }
-    assert.deepEqual(await coordinatedRoutineLinks({...env, RELEASE_SCOPE: "examples"}, options.fetchImpl), [])
-  }
-})

@@ -1,9 +1,14 @@
 /**
  * @fileoverview Integration tests for the Mentra account module (issue 019),
- * with a mock GoTrue server so no real Supabase is needed. Prereq: a running
- * Mongo (override via MONGO_URL). Wipes its own collections.
+ * with a mock GoTrue server so no real Supabase is needed.
  *
- * Run: bun test tests/account-auth.integration.test.ts
+ * Safety: the test connects through `localTestMongoUrl` (loopback only, random
+ * database name, ignores `MONGO_URL`) and asserts the live connection is on
+ * that database before any destructive call. Each test starts with no users in
+ * any tenant, and the database is dropped in `afterAll`, only if the check
+ * passed.
+ *
+ * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/account-auth.integration.test.ts`
  */
 import crypto from "node:crypto";
 import http from "node:http";
@@ -29,7 +34,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
   process.env.MENTRA_ACCOUNT_JWT_PRIVATE_KEY = account.priv;
   process.env.MENTRA_ACCOUNT_JWT_PUBLIC_KEY = account.pub;
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
 }
 
 // eslint-disable-next-line import/first
@@ -47,11 +51,16 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { AccountCodeModel } from "../packages/core/src/models/account-code.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 
 const TEST_EMAIL = "isaiah+android@mentraglass.com";
 const TEST_PASSWORD = "android1";
 const SUPABASE_USER_ID = "sb-user-0001";
 
+let databaseUrl: string;
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
 let app: ReturnType<typeof createApp>;
 let gotrueServer: http.Server;
 // mutable mock state
@@ -131,7 +140,10 @@ beforeAll(async () => {
   // Discard any signing keys another test file cached into the shared module
   // state, so this file's own key env vars are used (mirrors the audio tests).
   resetSigningKeyCache();
-  await connectMongo(process.env.MONGO_URL!);
+  databaseUrl = localTestMongoUrl("account-auth");
+  await connectMongo(databaseUrl);
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
   await Promise.all([
     OemModel.syncIndexes(),
     UserModel.syncIndexes(),
@@ -152,6 +164,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((r) => gotrueServer.close(() => r()));
+  if (verified && UserModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   await disconnectMongo();
 });
 
@@ -162,8 +178,12 @@ beforeEach(async () => {
   lastEmailConfirmFlag = null;
   signupExistingProvider = null;
   resetAccountRateLimits();
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  // Every tenant, not just `mentra`: the signup tests assert no user row exists
+  // at all, and the external-OEM test leaves an `acme-test` user and OEM row.
   await Promise.all([
-    UserModel.deleteMany({ tenantId: "mentra" }),
+    UserModel.deleteMany({}),
+    OemModel.deleteMany({ tenantId: { $ne: "mentra" } }),
     RefreshTokenModel.deleteMany({}),
     AccountCodeModel.deleteMany({}),
     SeenJtiModel.deleteMany({}),

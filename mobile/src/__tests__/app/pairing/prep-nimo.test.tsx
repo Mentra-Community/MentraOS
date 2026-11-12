@@ -9,12 +9,14 @@ import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
 
 jest.mock("@mentra/engine", () => ({DeviceTypes: {NIMO: "NIMO", SIMULATED: "Simulated"}, engine: {}}))
 jest.mock("@react-navigation/native", () => ({useRoute: () => ({params: {deviceModel: "NIMO"}})}))
+// Mentra Live pairs through the Engine's flow, covered by the Engine's own tests.
+jest.mock("@/components/pairing/MentraLivePairingFlowHost", () => ({MentraLivePairingFlowHost: () => null}))
+
 jest.mock("@/stores/navigation", () => ({useNavigationStore: {getState: jest.fn()}}))
 jest.mock("@/contexts/ThemeContext", () => ({useAppTheme: () => ({themed: jest.fn()})}))
 jest.mock("@/services/deployment", () => ({deploymentStore: {getActive: () => ({kind: "consumer"})}}))
 jest.mock("@/services/deployment/glassesPolicy", () => ({isGlassesModelAllowedByDeployment: () => true}))
 jest.mock("@/utils/pairing/preparePairingScan", () => ({preparePairingScan: jest.fn()}))
-jest.mock("@/utils/pairing/securePairingFeature", () => ({isMentraLiveSecurePairingEnabled: () => false}))
 jest.mock("@/utils/getGlassesImage", () => ({getAr99DisplayName: jest.fn(), getAr99ImageSource: jest.fn()}))
 jest.mock("@/constants/appConfig", () => ({CDN_BASE_URL: ""}))
 jest.mock("@/components/brands/MentraLogoStandalone", () => ({MentraLogoStandalone: () => null}))

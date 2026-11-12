@@ -12,6 +12,7 @@ import {
 
 import {type BluetoothSdkPluginProps} from "./index"
 import {resolveAnalyticsProps} from "./analyticsProps"
+import {withKotlinVersion} from "./withKotlinVersion"
 
 const META_ANALYTICS_DISABLED = "com.mentra.bluetoothsdk.analytics.disabled"
 const META_ANALYTICS_ENVIRONMENT = "com.mentra.bluetoothsdk.analytics.environment"
@@ -33,7 +34,7 @@ function toGroovyString(value: string): string {
 }
 
 /**
- * Modify settings.gradle to include lc3Lib and silero modules
+ * Modify settings.gradle to include the lc3Lib module
  */
 function withSettingsGradleModifications(config: any) {
   return withSettingsGradle(config, (config) => {
@@ -67,17 +68,12 @@ function withSettingsGradleModifications(config: any) {
   `
     }
 
-    if (!settingsGradle.includes("include ':silero'")) {
-      settingsGradle += `
-  include ':silero'
-  `
-    }
-
-    if (!settingsGradle.includes("project(':silero').projectDir")) {
-      settingsGradle += `
-  project(':silero').projectDir = new File(${bluetoothSdkRootExpression}, 'android/silero')
-  `
-    }
+    // Earlier versions of this plugin added a `:silero` module, which no longer exists. Prebuild
+    // runs without --clean, so remove those lines from an already generated settings.gradle.
+    settingsGradle = settingsGradle
+      .split("\n")
+      .filter((line) => !line.includes("include ':silero'") && !line.includes("project(':silero')"))
+      .join("\n")
 
     config.modResults.contents = settingsGradle
     return config
@@ -205,6 +201,7 @@ function withAnalyticsManifestMetadata(config: any, props: BluetoothSdkPluginPro
 }
 
 export const withAndroidConfiguration: ConfigPlugin<BluetoothSdkPluginProps> = (config, props) => {
+  config = withKotlinVersion(config)
   config = withSettingsGradleModifications(config)
   config = withSherpaOnnxLocalMavenRepo(config)
   config = withAnalyticsManifestMetadata(config, props)

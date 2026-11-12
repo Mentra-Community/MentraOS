@@ -72,7 +72,7 @@ describe("the login route", () => {
   });
 
   test("an interaction waiting for consent goes to the consent route", async () => {
-    const d = deps({ details: { kind: "ok", prompt: "consent", clientName: "Notes", scopes: ["openid"] } });
+    const d = deps({ details: { kind: "ok", prompt: "consent", clientName: "Notes", scopes: ["openid"], redirectUri: "https://notes.example/cb", packageName: null } });
     expect(await startLogin(d, SEARCH)).toEqual({ kind: "redirecting" });
     expect(d.navigate.mock.calls).toEqual([["/consent?interaction=uid-1234567890"]]);
   });

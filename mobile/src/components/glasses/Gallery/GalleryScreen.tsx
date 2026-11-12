@@ -45,6 +45,7 @@ import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
 import showAlert, {showBluetoothAlert} from "@/utils/AlertUtils"
+import {logPermissionAlert} from "@/utils/permissionLog"
 import {canShareGallerySelection, MAX_GALLERY_SHARE_ITEMS} from "@/utils/galleryShareLimits"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
@@ -185,6 +186,7 @@ export function GalleryScreen() {
           )
           break
         case "location_services_off":
+          logPermissionAlert("location", notice.data?.systemAnswer, notice.code)
           showAlert(
             "Location Services Required",
             "Android requires Location Services to be enabled to connect to your glasses’ Wi-Fi hotspot. Would you like to enable them?",
@@ -195,17 +197,19 @@ export function GalleryScreen() {
             {cancelable: false},
           )
           break
-        case "location_permission_required":
+        case "local_network_permission_required":
+          logPermissionAlert("local_network", notice.data?.systemAnswer, notice.code)
           showAlert(
-            "Location Access Required",
-            "The app needs location access to verify it joined your glasses’ Wi-Fi network. Enable it in Settings, then try syncing again.",
+            "Local Network Access Required",
+            "Allow Local Network access to sync with your glasses. If you denied it before, turn it on in Settings, or cancel the sync.",
             [
-              {text: "Cancel", style: "cancel"},
+              {text: "Cancel Sync", style: "cancel", onPress: () => void engine.gallery.cancel()},
               {text: "Open Settings", onPress: () => void SettingsNavigationUtils.openAppSettings()},
             ],
           )
           break
         case "camera_roll_permission_required":
+          logPermissionAlert("photo_library", notice.data?.systemAnswer, notice.code)
           showAlert(
             "Camera Roll Access Required",
             "Automatic saving is enabled. Allow photo-library access, or turn automatic saving off in Gallery Settings before syncing.",
@@ -217,6 +221,7 @@ export function GalleryScreen() {
           break
         case "bluetooth_off":
           // Same copy the host's old pre-sync connectivity gate showed.
+          logPermissionAlert("bluetooth", notice.data?.systemAnswer, notice.code)
           showBluetoothAlert(
             translate("pairing:connectionIssueTitle"),
             "Bluetooth is required to connect to glasses. Please enable Bluetooth and try again.",
@@ -1377,7 +1382,11 @@ export function GalleryScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            <TouchableOpacity onPress={() => push("/asg/gallery-settings")} style={themed($settingsButton)}>
+            <TouchableOpacity
+              onPress={() => push("/asg/gallery-settings")}
+              style={themed($settingsButton)}
+              accessibilityRole="button"
+              accessibilityLabel={translate("glasses:gallerySettings")}>
               <Icon name="settings" size={24} color={theme.colors.text} />
             </TouchableOpacity>
           )

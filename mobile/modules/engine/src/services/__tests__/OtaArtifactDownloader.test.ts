@@ -14,7 +14,14 @@ const hashes: Record<string, string> = {
   tampered: "e".repeat(64),
 }
 const fakeHash = (content: string) => hashes[content] ?? "f".repeat(64)
-let downloadImpl: (options: {fromUrl: string; toFile: string}) => Promise<{statusCode: number}> = async () => ({
+type DownloadOptions = {
+  fromUrl: string
+  toFile: string
+  headers?: Record<string, string>
+  begin?: (result: {statusCode: number; contentLength: number; headers?: Record<string, string>}) => void
+  progress?: (result: {bytesWritten: number; contentLength: number}) => void
+}
+let downloadImpl: (options: DownloadOptions) => Promise<{statusCode: number}> = async () => ({
   statusCode: 200,
 })
 
@@ -36,6 +43,17 @@ const rnfsMock = {
     files.delete(from)
     files.set(to, content)
   }),
+  stat: mock(async (path: string) => {
+    const content = files.get(path)
+    if (content === undefined) throw new Error(`no such file ${path}`)
+    return {size: content.length}
+  }),
+  read: mock(async (path: string, length: number, position: number) =>
+    Buffer.from((files.get(path) ?? "").slice(position, position + length)).toString("base64"),
+  ),
+  appendFile: mock(async (path: string, base64: string) => {
+    files.set(path, (files.get(path) ?? "") + Buffer.from(base64, "base64").toString())
+  }),
   readDir: mock(async () =>
     [...files.keys()]
       .filter((path) => path.startsWith("/docs/ota_artifacts/"))
@@ -45,7 +63,7 @@ const rnfsMock = {
         isFile: () => true,
       })),
   ),
-  downloadFile: mock((options: {fromUrl: string; toFile: string}) => ({
+  downloadFile: mock((options: DownloadOptions) => ({
     jobId: 1,
     promise: downloadImpl(options),
   })),
@@ -54,6 +72,11 @@ const rnfsMock = {
 mock.module("@dr.pogodin/react-native-fs", () => ({
   ...rnfsMock,
   default: rnfsMock,
+}))
+
+// Resume backoff waits seconds; run its timers at once.
+mock.module("../../utils/timers", () => ({
+  BgTimer: {setTimeout: (callback: () => void) => setTimeout(callback, 0)},
 }))
 
 const {OtaArtifactError, cleanupArtifacts, planArtifacts, prepareArtifacts, rewriteManifestForLocalServer} =
@@ -164,6 +187,162 @@ describe("planArtifacts", () => {
 })
 
 describe("prepareArtifacts", () => {
+  test.each([
+    ["ENOSPC: No space left on device", "storage"],
+    ["EACCES: Permission denied", "save"],
+  ])("retains a directory creation failure (%s) before any download", async (message, category) => {
+    const original = Object.assign(new Error(`${message} /data/user/0/private/update`), {code: "RNFS"})
+    rnfsMock.mkdir.mockRejectedValueOnce(original)
+    const previousDownloads = rnfsMock.downloadFile.mock.calls.length
+    await expect(prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])).rejects.toMatchObject({
+      code: "artifact_download_failed",
+      failure: {artifact: null, stage: "save", category, nativeErrors: [{name: "Error", code: "RNFS"}]},
+    })
+    expect(rnfsMock.downloadFile.mock.calls.length).toBe(previousDownloads)
+    expect(files.size).toBe(0)
+  })
+
+  test.each(["EACCES: Permission denied", "Unexpected hash read failure"])(
+    "retains a cached hash rejection (%s) without replacing the cache or downloading",
+    async (message) => {
+      const cachedPath = `/docs/ota_artifacts/${hashes.apk}`
+      files.set(cachedPath, "apk")
+      rnfsMock.hash.mockRejectedValueOnce(Object.assign(new Error(message), {code: "RNFS"}))
+      const previousDownloads = rnfsMock.downloadFile.mock.calls.length
+      await expect(prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])).rejects.toMatchObject({
+        code: "artifact_verify_failed",
+        failure: {
+          artifact: "apk",
+          stage: "verify",
+          category: "verify",
+          nativeErrors: [{name: "Error", code: "RNFS", message}],
+        },
+      })
+      expect(rnfsMock.downloadFile.mock.calls.length).toBe(previousDownloads)
+      expect([...files.entries()]).toEqual([[cachedPath, "apk"]])
+    },
+  )
+
+  test("retains a cache existence check rejection before any download", async () => {
+    rnfsMock.exists.mockRejectedValueOnce(Object.assign(new Error("EACCES: Permission denied"), {code: "RNFS"}))
+    const previousDownloads = rnfsMock.downloadFile.mock.calls.length
+    await expect(prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])).rejects.toMatchObject({
+      code: "artifact_verify_failed",
+      failure: {stage: "verify", category: "verify", nativeErrors: [{code: "RNFS"}]},
+    })
+    expect(rnfsMock.downloadFile.mock.calls.length).toBe(previousDownloads)
+  })
+
+  test("preserves a redacted native download failure and never repeats the download", async () => {
+    const original = Object.assign(
+      new Error("Software caused connection abort https://cdn.example.com/a?token=private"),
+      {code: "ECONNABORTED"},
+    )
+    let attempts = 0
+    downloadImpl = async (options) => {
+      attempts++
+      options.begin?.({statusCode: 200, contentLength: 100})
+      options.progress?.({bytesWritten: 40, contentLength: 100})
+      throw original
+    }
+    let failure: unknown
+    try {
+      await prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(OtaArtifactError)
+    expect(failure).toMatchObject({
+      code: "artifact_download_failed",
+      failure: {category: "connection", stage: "download", nativeErrors: [{code: "ECONNABORTED"}]},
+    })
+    expect((failure as Error & {cause: unknown}).cause).toBe(original)
+    expect(JSON.stringify(failure)).not.toContain("private")
+    expect(attempts).toBe(1)
+    expect(files.has("/docs/ota_artifacts/download-0.part")).toBe(false)
+  })
+
+  const connectionAbort = () => Object.assign(new Error("Software caused connection abort"), {code: "RNFS"})
+
+  test("resumes a dropped download with a Range request and verifies the whole file", async () => {
+    const requests: (string | undefined)[] = []
+    const progress = mock((_event: import("../OtaArtifactDownloader").OtaArtifactDownloadProgress) => {})
+    downloadImpl = async (options) => {
+      const range = options.headers?.Range
+      requests.push(range)
+      if (!range) {
+        options.begin?.({statusCode: 200, contentLength: 3})
+        files.set(options.toFile, "ap")
+        options.progress?.({bytesWritten: 2, contentLength: 3})
+        throw connectionAbort()
+      }
+      options.begin?.({statusCode: 206, contentLength: 1, headers: {"Content-Range": "bytes 2-2/3"}})
+      files.set(options.toFile, "k")
+      options.progress?.({bytesWritten: 1, contentLength: 1})
+      return {statusCode: 206}
+    }
+    const [artifact] = await prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}], progress)
+    expect(requests).toEqual([undefined, "bytes=2-"])
+    expect(files.get(artifact.filePath)).toBe("apk")
+    expect(progress.mock.calls.at(-1)?.[0]).toMatchObject({bytesWritten: 3, contentLength: 3, artifactPercent: 100})
+    expect([...files.keys()]).toEqual([artifact.filePath])
+  })
+
+  test("takes the whole body when a resumed request is answered with 200", async () => {
+    downloadImpl = async (options) => {
+      if (!options.headers?.Range) {
+        files.set(options.toFile, "ap")
+        throw connectionAbort()
+      }
+      options.begin?.({statusCode: 200, contentLength: 3})
+      files.set(options.toFile, "apk")
+      return {statusCode: 200}
+    }
+    const [artifact] = await prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])
+    expect(files.get(artifact.filePath)).toBe("apk")
+  })
+
+  // As on pro-1 in nightly-2026-11-11: the CDN closed a slow 110 MB APK body at 32.5 MB.
+  for (const [what, error] of [
+    ["the server ends the body early", Object.assign(new Error("unexpected end of stream"), {code: "RNFS"})],
+    // RNFS on Android forwards a SocketTimeoutException as its bare message, "timeout".
+    ["the read stalls past its timeout", Object.assign(new Error("timeout"), {code: "RNFS"})],
+  ] as const) {
+    test(`resumes when ${what}`, async () => {
+      const requests: (string | undefined)[] = []
+      downloadImpl = async (options) => {
+        requests.push(options.headers?.Range)
+        if (!options.headers?.Range) {
+          options.begin?.({statusCode: 200, contentLength: 3})
+          files.set(options.toFile, "ap")
+          throw error
+        }
+        options.begin?.({statusCode: 206, contentLength: 1, headers: {"Content-Range": "bytes 2-2/3"}})
+        files.set(options.toFile, "k")
+        return {statusCode: 206}
+      }
+      const [artifact] = await prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])
+      expect(requests).toEqual([undefined, "bytes=2-"])
+      expect(files.get(artifact.filePath)).toBe("apk")
+    })
+  }
+
+  test("stops resuming after a bounded number of dropped connections", async () => {
+    let attempts = 0
+    downloadImpl = async (options) => {
+      attempts++
+      options.begin?.({statusCode: 206, contentLength: 1, headers: {"content-range": `bytes ${attempts - 1}-`}})
+      files.set(options.toFile, "a")
+      throw connectionAbort()
+    }
+    await expect(prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])).rejects.toMatchObject({
+      code: "artifact_download_failed",
+      failure: {category: "connection", stage: "download"},
+    })
+    expect(attempts).toBe(4)
+    expect(files.size).toBe(0)
+  })
+
   test("announces every file before its download, including an unknown-length transfer", async () => {
     const progress = mock((_event: import("../OtaArtifactDownloader").OtaArtifactDownloadProgress) => {})
     await prepareArtifacts(planArtifacts(checkResult()), progress, async (entry, destination, report) => {
@@ -227,12 +406,31 @@ describe("prepareArtifacts", () => {
     await expect(prepareArtifacts(plan)).rejects.toMatchObject({code: "artifact_download_failed"})
   })
 
+  test("retains an iOS native HTTP rejection without repeating or accepting the download", async () => {
+    const nativeDownload = mock(async () => {
+      throw new Error("Artifact download failed with HTTP 404")
+    })
+    await expect(
+      prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}], undefined, nativeDownload),
+    ).rejects.toMatchObject({
+      code: "artifact_download_failed",
+      failure: {stage: "download", httpStatus: 404, category: "server"},
+    })
+    expect(nativeDownload).toHaveBeenCalledTimes(1)
+    expect(files.has(`/docs/ota_artifacts/${hashes.apk}`)).toBe(false)
+    expect(files.has("/docs/ota_artifacts/download-0.part")).toBe(false)
+  })
+
   test("accepts a completed native 206 download only after its full-file hash verifies", async () => {
     const nativeDownload = mock(async (_entry: unknown, destination: string) => {
       files.set(destination, "apk")
       return {statusCode: 206}
     })
-    const prepared = await prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}], undefined, nativeDownload)
+    const prepared = await prepareArtifacts(
+      [{kind: "apk", url: APK_URL, sha256: hashes.apk}],
+      undefined,
+      nativeDownload,
+    )
     expect(nativeDownload).toHaveBeenCalledTimes(1)
     expect(prepared[0].filePath).toBe(`/docs/ota_artifacts/${hashes.apk}`)
     expect(files.get(prepared[0].filePath)).toBe("apk")

@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["MentraVideoStreamReceiverModule"]
+  },
+  "android": {
+    "modules": ["com.mentra.videostreamreceiver.MentraVideoStreamReceiverModule"]
+  }
+}

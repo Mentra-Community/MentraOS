@@ -18,8 +18,10 @@ jest.mock("@mentra/engine", () => ({
     NIMO: "Nimo",
   },
   SETTINGS: {super_mode: {key: "super_mode"}},
-  useSetting: () => [false],
+  useSetting: () => [mockSuperMode],
 }))
+
+let mockSuperMode = false
 
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
@@ -80,6 +82,7 @@ describe("glasses model selection", () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    mockSuperMode = false
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({push, goBack})
     ;(preparePairingScan as jest.Mock).mockResolvedValue(true)
     ;(deploymentStore.getActive as jest.Mock).mockReturnValue({
@@ -187,8 +190,17 @@ describe("glasses model selection", () => {
     expect(push).not.toHaveBeenCalled()
   })
 
-  it("offers NIMO without Super Mode and preserves its pairing preparation", () => {
+  it("hides NIMO without Super Mode", () => {
     const {getByTestId, queryByTestId} = render(<SelectGlassesModelScreen />)
+
+    expect(getByTestId("pairing-model-mentra_live")).toBeTruthy()
+    expect(queryByTestId("pairing-model-nimo")).toBeNull()
+    expect(queryByTestId("pairing-model-mentra_nex")).toBeNull()
+  })
+
+  it("offers NIMO in Super Mode and preserves its pairing preparation", () => {
+    mockSuperMode = true
+    const {getByTestId} = render(<SelectGlassesModelScreen />)
 
     fireEvent.press(getByTestId("pairing-model-nimo"))
 
@@ -196,7 +208,6 @@ describe("glasses model selection", () => {
       deviceModel: "Nimo",
       ar99ProjectName: undefined,
     })
-    expect(queryByTestId("pairing-model-mentra_nex")).toBeNull()
     expect(preparePairingScan).not.toHaveBeenCalled()
   })
 

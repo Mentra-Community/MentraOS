@@ -11,8 +11,12 @@ protocol LocalNetworkAccessConnection: AnyObject {
 /// Connect to the glasses' existing gallery HTTP endpoint to prove local access (TN3179).
 /// Network.framework retries when access is granted. A denied path can also mean that the
 /// alert is still open, so it must not be treated as a terminal error or given a media timeout.
+/// macOS also reports a denied path for about a second and a half right after the Mac joins the
+/// glasses' hotspot, with access granted, while it re-applies its policies to the new network.
+/// The caller is told only when the path stays denied for `permissionGrace`.
 /// Ordinary connection setup has a 30-second budget, paused while permission is required.
 public final class LocalNetworkAccessRequest {
+    static let permissionGrace: TimeInterval = 5
     private let queue: DispatchQueue
     private let connection: LocalNetworkAccessConnection
     private let now: () -> TimeInterval
@@ -21,7 +25,8 @@ public final class LocalNetworkAccessRequest {
     private var timeoutDeadline: TimeInterval?
     private var timeoutWork: DispatchWorkItem?
     private var completion: ((Result<Void, Error>) -> Void)?
-    private var waiting: (() -> Void)?
+    private var waiting: ((String) -> Void)?
+    private var permissionWork: DispatchWorkItem?
     private var finished = false
     private var reportedPermission = false
 
@@ -39,7 +44,10 @@ public final class LocalNetworkAccessRequest {
         self.scheduleTimeout = scheduleTimeout ?? { delay, work in queue.asyncAfter(deadline: .now() + delay, execute: work) }
     }
 
-    public func start(onPermissionRequired: @escaping () -> Void, completion: @escaping (Result<Void, Error>) -> Void) {
+    /// `onPermissionRequired` gets the system's answer, for logs, once the path has stayed denied.
+    public func start(onPermissionRequired: @escaping (_ systemAnswer: String) -> Void,
+                      completion: @escaping (Result<Void, Error>) -> Void)
+    {
         queue.async {
             guard !self.finished, self.completion == nil else { return }
             self.completion = completion
@@ -50,13 +58,12 @@ public final class LocalNetworkAccessRequest {
                 case .ready: self.finish(.success(()))
                 case .waiting where reason == .localNetworkDenied:
                     self.pauseConnectivityTimeout()
-                    if !self.reportedPermission {
-                        self.reportedPermission = true
-                        self.waiting?()
-                    }
+                    self.reportPermissionIfStillDenied(state)
                 // Waiting errors are nonfatal; NWConnection retries when its path recovers.
                 // A nil path is not proof of denied permission, but must not fail immediately.
-                case .setup, .preparing, .waiting: self.resumeConnectivityTimeout()
+                case .setup, .preparing, .waiting:
+                    self.cancelPermissionReport()
+                    self.resumeConnectivityTimeout()
                 case let .failed(error): self.finish(.failure(error))
                 case .cancelled: self.finish(.failure(CancellationError()))
                 @unknown default: break
@@ -69,6 +76,24 @@ public final class LocalNetworkAccessRequest {
 
     public func cancel() {
         queue.async { self.finish(.failure(CancellationError())) }
+    }
+
+    private func reportPermissionIfStillDenied(_ state: NWConnection.State) {
+        guard !reportedPermission, permissionWork == nil else { return }
+        let grace = Self.permissionGrace
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.finished, self.permissionWork != nil else { return }
+            self.permissionWork = nil
+            self.reportedPermission = true
+            self.waiting?("NWConnection \(state) unsatisfiedReason=localNetworkDenied for \(Int(grace))s")
+        }
+        permissionWork = work
+        scheduleTimeout(grace, work)
+    }
+
+    private func cancelPermissionReport() {
+        permissionWork?.cancel()
+        permissionWork = nil
     }
 
     private func resumeConnectivityTimeout() {
@@ -94,6 +119,7 @@ public final class LocalNetworkAccessRequest {
         guard !finished else { return }
         finished = true
         pauseConnectivityTimeout()
+        cancelPermissionReport()
         connection.onState = nil
         connection.cancel()
         let reply = completion

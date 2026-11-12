@@ -62,6 +62,15 @@ const UserSchema = new Schema(
      * never searched.
      */
     portalWorkspaceAt: {type: Date, default: null},
+
+    /**
+     * The age the person gave when an app first asked (`PUT /api/account/declared-age`), because a miniapp rated
+     * above the app's own App Store rating was installing or opening, and when they gave it. Their age now is
+     * `declaredAge` plus the whole years since `declaredAgeAt`. Set together, never put in a token, never sent to a
+     * miniapp, and cleared when the account is deleted.
+     */
+    declaredAge: {type: Number, default: null},
+    declaredAgeAt: {type: Date, default: null},
   },
   {timestamps: {createdAt: true, updatedAt: false}, collection: "users"},
 )

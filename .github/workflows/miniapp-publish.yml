@@ -1,26 +1,12 @@
 name: Publish first-party miniapps
 
-# Builds the first-party miniapps kept in miniapps/ on every change. Each branch
-# publishes them to its own static host, where the Mentra App updates them from
-# <host>/<packageName>/miniapp.json: dev to miniapps.dev.mentraglass.com,
-# staging to miniapps.staging.mentraglass.com, and main to
-# miniapps.mentraglass.com. A version a host already has is skipped, so
+# Builds the first-party miniapps kept in miniapps/ on every change. Their hosts,
+# where the Mentra App updates them from <host>/<packageName>/miniapp.json, are
+# published from elsewhere; a manual run publishes the selected branch. A version a host already has is skipped, so
 # publishing happens when a miniapp.json version is bumped.
 
 on:
   pull_request:
-    paths:
-      - "miniapps/captions/**"
-      - "miniapps/translation/**"
-      - "miniapps/teleprompter/**"
-      - "miniapps/navigation/**"
-      - "miniapps/recorder/**"
-      - "sdk/miniapp-cli/**"
-      - "mobile/modules/miniapp/**"
-      - ".github/scripts/publish-miniapp-r2*"
-      - ".github/workflows/miniapp-publish.yml"
-  push:
-    branches: [dev, staging, main]
     paths:
       - "miniapps/captions/**"
       - "miniapps/translation/**"
@@ -63,10 +49,13 @@ jobs:
       - name: Build the Mentra Miniapp SDK
         working-directory: mobile/modules/miniapp
         run: bun run build
+      - name: Typecheck
+        working-directory: miniapps/${{ matrix.miniapp }}
+        run: bun run typecheck
       - name: Test
         if: matrix.miniapp == 'navigation'
         working-directory: miniapps/${{ matrix.miniapp }}
-        run: bun test
+        run: bun run test
       - name: Production pack
         working-directory: miniapps/${{ matrix.miniapp }}
         run: NODE_ENV=production bun run pack

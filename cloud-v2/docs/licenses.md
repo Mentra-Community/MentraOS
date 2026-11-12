@@ -206,7 +206,7 @@ says the [billing module](portal-modules.md#is-the-module-installed) is ready on
 this Core, and with it its catalog, for everyone who signs in. The page asks only
 for what its viewer's view needs ([Who sees what](#who-sees-what)).
 
-- **The page.** A workspace has a Licenses item, last in its sidebar, when the
+- **The page.** A workspace has a Licenses item, first in its sidebar, when the
   person is offered billing or the workspace has products to show them (an Admin's
   every product, a member's own licenses). A Private Cloud has neither, so it never
   shows the item. If the licenses cannot be loaded, the sidebar offers the item

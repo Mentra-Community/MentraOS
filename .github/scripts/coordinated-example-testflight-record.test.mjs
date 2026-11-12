@@ -15,17 +15,9 @@ const plan = {
   native: {marketingVersion: "3.1.0", buildNumber: 310000045},
 }
 
-const starterKit = {
-  releaseSetId: plan.releaseSetId,
-  releaseIdentity: plan.releaseIdentity,
-  mentraos: {sourceCommit: plan.sourceCommit},
-  starterKit: {releaseCommit: "b".repeat(40)},
-}
-
 function input(overrides = {}) {
   return {
     plan,
-    starterKit,
     appId: "6792839366",
     bundleId: "com.mentra.bluetoothsdkexample",
     buildId: "build-1",
@@ -45,7 +37,9 @@ test("records the exact coordinated example TestFlight build", () => {
   const ipa = path.join(root, "example.ipa")
   writeFileSync(ipa, "signed ipa")
   const record = createExampleTestflightRecord(input({ipa}))
-  assert.equal(record.starterKitReleaseCommit, "b".repeat(40))
+  assert.equal(record.schemaVersion, 2)
+  assert.equal(record.mentraosSourceCommit, plan.sourceCommit)
+  assert.equal(record.starterKitReleaseCommit, undefined)
   assert.equal(record.version.buildNumber, 310000045)
   assert.equal(record.group.id, "group-1")
   assert.match(record.ipa.sha256, /^[0-9a-f]{64}$/)
@@ -66,16 +60,9 @@ test("records a skipped beta build while an earlier review is pending", () => {
     channel: "beta",
     sourceCommit: "c".repeat(40),
   }
-  const betaStarterKit = {
-    ...starterKit,
-    releaseSetId: betaPlan.releaseSetId,
-    releaseIdentity: betaPlan.releaseIdentity,
-    mentraos: {sourceCommit: betaPlan.sourceCommit},
-  }
   const record = createExampleTestflightRecord(
     input({
       plan: betaPlan,
-      starterKit: betaStarterKit,
       buildId: "build-skipped",
       uploadStatus: "published",
       groupName: "Mentra Staging Public",
@@ -92,22 +79,16 @@ test("records a skipped beta build while an earlier review is pending", () => {
   assert.equal(record.distribution.reviewState, "WAITING_FOR_REVIEW")
 })
 
-test("records an independently allocated production Starter Kit candidate", () => {
+test("records an independently allocated production example candidate", () => {
   const productionPlan = {
     ...plan,
     releaseSetId: "mentra-3.1.0",
     releaseIdentity: "3.1.0",
     channel: "production",
   }
-  const productionStarterKit = {
-    ...starterKit,
-    releaseSetId: productionPlan.releaseSetId,
-    releaseIdentity: productionPlan.releaseIdentity,
-  }
   const record = createExampleTestflightRecord(
     input({
       plan: productionPlan,
-      starterKit: productionStarterKit,
       groupName: "Mentra Bluetooth Example",
       audience: "external",
       installUrl: "https://testflight.apple.com/join/production123",
@@ -118,9 +99,13 @@ test("records an independently allocated production Starter Kit candidate", () =
   assert.equal(record.version.buildNumber, 310000099)
 })
 
-test("rejects a Starter Kit result from another release", () => {
+test("rejects a plan without a coordinated identity and source", () => {
   assert.throws(
-    () => createExampleTestflightRecord(input({starterKit: {...starterKit, releaseIdentity: "3.1.0-dev.44"}})),
-    /Starter Kit result does not match/,
+    () => createExampleTestflightRecord(input({plan: {...plan, releaseSetId: "mentra-3.1.0-dev.44"}})),
+    /coordinated release plan with a source commit/,
+  )
+  assert.throws(
+    () => createExampleTestflightRecord(input({plan: {...plan, sourceCommit: "main"}})),
+    /coordinated release plan with a source commit/,
   )
 })

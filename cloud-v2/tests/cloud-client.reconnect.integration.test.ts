@@ -16,9 +16,16 @@
  *      observable proof the client re-handshook and re-sent.
  *
  * No Soniox: the proof is the re-sent subscription, not a resumed transcript, so
- * this runs offline. Needs Mongo at 127.0.0.1:27017 and Redis at 127.0.0.1:6379.
+ * this runs offline. Needs a local Mongo and Redis
+ * (by default 127.0.0.1:27017 and 127.0.0.1:6379).
  *
  * Run with: bun test tests/cloud-client.reconnect.integration.test.ts
+ *
+ * Safety: Mongo comes from `localTestMongoUrl` (loopback only, random database
+ * name, ignores `MONGO_URL`), checked before any destructive call and dropped
+ * afterwards. Redis comes from `localTestRedisUrl` (loopback only; refuses to
+ * run when `REDIS_URL` is set), so the keys this suite deletes are on a local
+ * server even under `doppler run`. Override with `CLOUD_V2_TEST_MONGO_URL` / `CLOUD_V2_TEST_REDIS_URL`.
  */
 import crypto from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -67,9 +74,7 @@ const RELAY_PORT = 13042;
       oemIdClaim: "oem_id",
     },
   ]);
-  process.env.MONGO_URL ??=
-    "mongodb://127.0.0.1:27017/mentra-cloud-v2-cloudclient-reconnect-test";
-  process.env.REDIS_URL ??= "redis://127.0.0.1:6379/6";
+  process.env.REDIS_URL = localTestRedisUrl(6);
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
   process.env.AUDIO_UDP_ADVERTISED_PORT = String(AUDIO_UDP_PORT);
   process.env.AUDIO_PROVIDER = "mock";
@@ -77,6 +82,8 @@ const RELAY_PORT = 13042;
 }
 
 import { startCore, type CoreHandle } from "../packages/core/src/index";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { localTestRedisUrl } from "./support/local-redis";
 import { startAudio, type AudioHandle } from "../packages/runtime/src/index";
 import { startTestOem, type TestOemHandle } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
@@ -95,6 +102,11 @@ let relay: WsRelay;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const databaseUrl = localTestMongoUrl("cloud-client-reconnect");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
+
 beforeAll(async () => {
   const { resetMentraKeyCache } = await import("../packages/shared/src/auth");
   const { resetSigningKeyCache } = await import(
@@ -104,7 +116,9 @@ beforeAll(async () => {
   resetSigningKeyCache();
 
   testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
-  coreHandle = await startCore({ port: CORE_PORT });
+  coreHandle = await startCore({ port: CORE_PORT, mongoUrl: databaseUrl });
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
   await Promise.all([
     OemModel.createCollection(),
     UserModel.createCollection(),
@@ -130,6 +144,10 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  if (verified && UserModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   await relay?.stop();
   await audioHandle?.stop();
   await coreHandle?.stop();
@@ -137,6 +155,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, UserModel.db.name);
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),

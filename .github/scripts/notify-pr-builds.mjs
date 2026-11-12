@@ -4,18 +4,59 @@ import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {routineLabelIds} from "./routine-api.mjs"
-import {slackRoutineSection, slackRoutineText} from "./slack-routine-section.mjs"
+import {buildPost, DOCS, otaTargets, postToWebhook, slackText} from "./slack-build-post.mjs"
 
-export function iosBuildRequired(files) {
-  return files.some(({filename}) =>
-    MOBILE_PR_PATHS.some((pattern) =>
-      pattern.endsWith("*") ? filename.startsWith(pattern.replace(/\*+$/, "")) : filename === pattern,
-    ),
-  )
+// The Mentra monorepo holds this tree at public/mentraos, the ASG client at
+// mentra_live/asg_client and the miniapps the app bundles at miniapps/; its
+// producer workflows sit at the root's .github/workflows/.
+export const MONOREPO = "Mentra-Community/Mentra"
+const MONOREPO_ROOT = "public/mentraos/"
+
+/** A changed file's path in MentraOS's layout; null when it has none (a bundled miniapp). */
+export function mentraOsPath(filename, repository) {
+  if (repository !== MONOREPO) return filename
+  if (filename.startsWith(MONOREPO_ROOT)) return filename.slice(MONOREPO_ROOT.length)
+  if (filename.startsWith("mentra_live/asg_client/")) return filename.slice("mentra_live/".length)
+  if (filename.startsWith("miniapps/")) return null
+  return filename
 }
 
-const link = (url, label) => `<${url}|${slackRoutineText(label, 200).replaceAll("|", " ")}>`
+/**
+ * Monorepo paths that start the PR app builds beyond MentraOS's own (the paths of its root mentra-app-*-build.yml and
+ * mentra-asg-client-build.yml workflows): its glasses firmware and build scripts, and the SDK packages the bundled
+ * miniapps are built with.
+ */
+export const MONOREPO_PR_BUILD_PATHS = [
+  "public/mentraos/cloud-v2/tsconfig.base.json",
+  "public/mentraos/cloud-v2/packages/auth/*",
+  "public/mentraos/cloud-v2/packages/miniapp-tools/*",
+  "public/mentraos/cloud-v2/packages/protocol/*",
+  "public/mentraos/sdk/miniapp-cli/*",
+  "mentra_live/bes/*",
+  "testing/*",
+  ".github/workflows/bes.yml",
+  ".github/workflows/mentra-app-android-build.yml",
+  ".github/workflows/mentra-app-ios-build.yml",
+  ".github/workflows/mentra-asg-client-build.yml",
+  ".github/workflows/reusable-pr-build-notification.yml",
+  ".github/ci/pack-miniapps.sh",
+  ".github/ci/bundled-miniapps.sh",
+  ".github/ci/asg-build-identity.mjs",
+]
+
+const matches = (path, pattern) =>
+  pattern.endsWith("*") ? path.startsWith(pattern.replace(/\*+$/, "")) : path === pattern
+
+export function iosBuildRequired(files, repository) {
+  return files.some(({filename}) => {
+    if (repository === MONOREPO && MONOREPO_PR_BUILD_PATHS.some((pattern) => matches(filename, pattern))) return true
+    const path = mentraOsPath(filename, repository)
+    // The monorepo packs every miniapp into the app it builds.
+    if (path === null) return true
+    return MOBILE_PR_PATHS.some((pattern) => matches(path, pattern))
+  })
+}
+
 const marker = "<!-- mentra-pr-builds-slack -->"
 const iosTextTypes = {install: "text/html", manifest: "text/xml"}
 
@@ -34,173 +75,110 @@ export async function verifyIosTextArtifact(response, kind, asset) {
 export function readOtaTargets(manifest, number, sha) {
   if (manifest.releaseVersion !== `pr-${number}-${sha}`)
     throw new Error("OTA manifest belongs to a different PR revision")
-  const asg = manifest.apps?.["com.mentra.asg_client"]
-  const bes = manifest.bes_firmware
-  const mtk = manifest.mtk_full_ota
-  if (
-    !asg?.versionName ||
-    !Number.isSafeInteger(asg.versionCode) ||
-    asg.versionCode <= 0 ||
-    !/^[a-f0-9]{64}$/i.test(asg.sha256 ?? "") ||
-    !Number.isSafeInteger(asg.apkSize) ||
-    asg.apkSize <= 0 ||
-    !/^https:\/\//.test(asg.apkUrl ?? "") ||
-    !bes?.version ||
-    !mtk?.end_firmware
-  ) {
+  const targets = otaTargets(manifest, manifest.releaseVersion)
+  const {asg} = targets
+  if (!/^[a-f0-9]{64}$/i.test(asg.sha256 ?? "") || !Number.isSafeInteger(asg.apkSize) || asg.apkSize <= 0 ||
+    !/^https:\/\//.test(asg.apkUrl ?? ""))
     throw new Error("OTA manifest is missing ASG, BES or MTK target metadata")
-  }
-  return {asg, bes: bes.version, mtk: mtk.end_firmware}
+  return targets
 }
 
 const backendName = (backend) => (backend === "staging" ? "Staging" : "Dev")
 
-/** `backend` is shown only when a published receipt verified it for this PR's destination. */
-export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios, routines = [],
-  backend, unverifiedBackend = []}) {
-  const ready = !error && !ios?.error
-  const title = ready ? "✅ PR build ready to test" : "⚠️ PR build incomplete"
-  const overflowUrl = pr.html_url
-  const lines = [
-    `*${title}*`,
-    link(pr.html_url, `#${pr.number} — ${pr.title}`),
-    `${slackRoutineText(pr.head.ref, 120)} → ${slackRoutineText(pr.base.ref, 120)} · by ${slackRoutineText(pr.user.login, 80)} · commit \`${sha.slice(0, 7)}\``,
+/** The small line under the title: `backend` is named only when a published receipt verified it for this PR's destination. */
+function backendFact(backend, unverified) {
+  if (!backend) return "backend not verified"
+  return `${backendName(backend)} backend${unverified.length ? ` (${unverified.join(", ")} not verified)` : ""}`
+}
+
+/** One app's install slots on a PR: HTTPS pages, which open the iPhone and Mac installers. A slot without one failed or wasn't built. */
+function prInstalls({android, androidError, apple, appleError}) {
+  const missing = (error) => (error ? "failed, see Details" : "not built for this PR")
+  return [
+    {platform: "Android", url: android, missing: missing(androidError)},
+    {platform: "iOS", url: apple?.iphone, missing: missing(appleError)},
+    {platform: "macOS", url: apple?.mac, missing: missing(appleError)},
   ]
-  const appleStatus = ios?.error ? "Unavailable" : "Not built for these changes"
-  const richLink = (url, text) => ({type: "link", url, text})
-  const iphoneLinks = []
-  if (ios?.assets) {
-    if (ios.assets.install)
-      iphoneLinks.push(
-        richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
-        richLink(ios.assets.install, "Share install link"),
-      )
-    else iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
-  }
-  const macLinks = ios?.assets
-    ? [
-        ...(ios.macInstallUrl ? [richLink(ios.macInstallUrl, "Install on Mac")] : []),
-        richLink(ios.assets.mac, ios.macInstallUrl ? "First-time setup ZIP" : "Download ZIP"),
-      ]
-    : []
-  // Slack's webhook mrkdwn parser escapes itms-services links as literal text.
-  // Rich-text links open the installer on iPhone; Slack renders them as plain
-  // text on Mac, so also include the HTTPS installation page for sharing.
-  // Mac installation uses HTTPS too; the browser performs the custom-protocol
-  // handoff instead of depending on Slack's handling of a new URL scheme.
-  const platforms = {
-    type: "rich_text",
-    elements: [
-      ["iphone", "Android", error ? [] : [richLink(androidUrl, "Download APK")], "Unavailable"],
-      ["iphone", "iOS", iphoneLinks, appleStatus],
-      ["computer", "macOS", macLinks, appleStatus],
-    ].map(([icon, name, links, status]) => ({
-      type: "rich_text_section",
-      elements: [
-        {type: "emoji", name: icon},
-        {type: "text", text: ` ${name}`, style: {bold: true}},
-        {type: "text", text: " — "},
-        ...(links.length
-          ? links.flatMap((item, index) => (index ? [{type: "text", text: " · "}, item] : [item]))
-          : [{type: "text", text: status}]),
-      ],
-    })),
-  }
-  if (error) lines.push(`*Android:* ${slackRoutineText(error, 200)}`)
-  if (ios?.error) lines.push(`*iOS / macOS:* ${slackRoutineText(ios.error, 200)}`)
-  if (!error || ios?.assets)
-    lines.push(
-      `Backend: ${backend ? `*${backendName(backend)}*` : "not verified"}${
-        backend && unverifiedBackend.length ? ` (${slackRoutineText(unverifiedBackend.join(", "), 200)} not verified)` : ""}${!error ? " · Android ARM64" : ""}${
-        ios?.assets
-          ? ` · Apple devices must be registered · ${link(ios.instructionsUrl, "Installation instructions")}`
-          : ""
-      }`,
-    )
-  if (!error) {
-    lines.push(
-      `🕶️ *Glasses OTA — ready*\n*ASG:* ${slackRoutineText(targets.asg.versionName, 120)} · build ${
-        targets.asg.versionCode
-      }\n*BES:* ${slackRoutineText(targets.bes, 120)}\n*MTK:* ${slackRoutineText(targets.mtk, 120)}\n${link(manifestUrl, "OTA manifest")} · ${link(
-        targets.asg.apkUrl,
-        "ASG APK",
-      )}`,
-    )
-    lines.push(
-      "Install the app, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
-    )
-  }
-  if (routines.length) lines.push(slackRoutineSection({
-    lines: routines.map(routine =>
-      `*Requested tests:* ${slackRoutineText(routine.title ?? routine.id, 200)}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n${[
-        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable ? slackRoutineText(routine.resultsUnavailable, 200) : `Results link available with the ${routine.platform === "android" ? "Android" : "Mac"} build`,
-        link(routine.pipelineUrl, routine.pipelineLabel),
-      ].join(" · ")}`),
-    footer: "Results appear after the device run is uploaded.", overflowUrl, overflowLabel: "View all requested tests on the PR",
-  }))
-  lines.push(
-    `${link(pr.html_url, "View PR and checks")} · ${link(androidRunUrl, "Android build logs")}${
-      ios?.runUrl ? ` · ${link(ios.runUrl, "iOS / macOS build logs")}` : ""
-    }${asgRunUrl ? ` · ${link(asgRunUrl, "ASG build logs")}` : ""}`,
-  )
-  if (ready) lines.push("Downloads may be cleaned up after 7 days.")
-  const blocks = lines.map(text => ({type: "section", text: {type: "mrkdwn", text}}))
-  blocks.splice(3, 0, platforms)
-  return {
-    text: `${title}: #${pr.number} ${slackRoutineText(pr.title, 200)} (${sha.slice(0, 7)})`,
-    unfurl_links: false,
-    unfurl_media: false,
-    blocks,
-  }
 }
 
-export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId, platform}) {
-  if (
-    !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
-    !Number.isSafeInteger(pr) ||
-    pr <= 0 ||
-    !/^[a-f0-9]{40}$/.test(sha) ||
-    !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "") || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(routineId ?? "") ||
-    !["android", "ios-on-mac"].includes(platform)
-  )
-    return null
-  // Results are stored centrally regardless of the app backend. This is the deployed
-  // admin origin documented in cloud-v2/docs/prds/admin-console.md, not the worker's UI.
-  const url = new URL("https://admin.dev.mentraglass.com/")
-  url.search = new URLSearchParams({
-    testRuns: "1",
-    channel: "pr",
-    repository,
-    pr: String(pr),
-    headSha: sha,
-    archiveSha256,
-    routineId,
-    platform,
-  }).toString()
-  return url.href
+/** The #pr-builds post. `details` is the PR comment, which lists everything the post leaves out. */
+export function prBuildPost({pr, sha, androidUrl, targets, androidRunUrl, error, errorRunUrl, ios, backend,
+  unverifiedBackend = [], example, hasExample = Boolean(example), details = pr.html_url}) {
+  const ready = !error && !ios?.error && !example?.error
+  const title = ready ? "✅ PR build ready to test" : "⚠️ PR build incomplete"
+  return buildPost({
+    text: `${title}: #${pr.number} ${slackText(pr.title, 200)} (${sha.slice(0, 7)})`,
+    title: `*${ready ? `✅ PR #${pr.number} ready to test` : `⚠️ PR #${pr.number} build incomplete`}:* ${slackText(pr.title, 150)}`,
+    details,
+    facts: [
+      `${pr.head.ref} → ${pr.base.ref}`,
+      `by ${pr.user.login}`,
+      sha.slice(0, 7),
+      ...(!error || ios?.assets ? [backendFact(backend, unverifiedBackend)] : []),
+    ],
+    apps: [
+      {name: "Mentra", installs: prInstalls({android: error ? undefined : androidUrl, androidError: error, appleError: ios?.error,
+        apple: ios?.assets && {iphone: ios.assets.install ?? ios.assets.iphone, mac: ios.macInstallUrl ?? ios.assets.mac}})},
+      // The Bluetooth example, right after the Mentra App, in the repository that builds it.
+      ...(hasExample ? [{name: "Bluetooth example", installs: prInstalls({android: example?.androidUrl, androidError: example?.error,
+        apple: example && {iphone: example.iphoneUrl, mac: example.macUrl}, appleError: example?.error})}] : []),
+    ],
+    docs: DOCS[pr.base.ref],
+    glasses: !error && targets ? {asg: targets.asg, bes: targets.bes, mtk: targets.mtk} : undefined,
+    problems: [
+      ...(error ? [{text: `*Android:* ${slackText(error, 200)}`, url: errorRunUrl ?? androidRunUrl}] : []),
+      ...(ios?.error ? [{text: `*iPhone / Mac:* ${slackText(ios.error, 200)}`, url: ios.runUrl}] : []),
+      ...(example?.error ? [{text: `*Bluetooth example:* ${slackText(example.error, 200)}`, url: example.runUrl}] : []),
+    ],
+  })
 }
 
-function requestedRoutineLinks({context, pr, sha, ios, android, requested, androidAvailable}) {
-  const repository = `${context.repo.owner}/${context.repo.repo}`
-  const result = {
-    pipelineUrl: `https://github.com/${repository}/actions/workflows/request-e2e-routine.yml`,
-    pipelineLabel: "Request pipeline (workflow)",
-  }
-  // Platform labels name published app builds, not inferred routine support or execution.
-  const platforms = [...(androidAvailable ? ["android"] : []), ...(ios.assets ? ["ios-on-mac"] : [])]
-  return requested.flatMap(id => platforms.length ? platforms.map(platform => ({...result, id, title: id, platform,
-    ...(platform === "android" && android.receiptUnavailable
-      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
-    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha,
-      archiveSha256: platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id, platform})}))
-    : [{...result, id, title: id, resultsUnavailable: "No published app platform is available for this build; no execution is inferred."}])
+/** The PR comment: the post's details page, with every download, the glasses' OTA files and the logs. */
+export function prBuildComment({identity, sha, androidUrl, manifestUrl, targets, androidRunUrl, asgRunUrl, error, ios,
+  backend, example}) {
+  const incomplete = Boolean(error || ios.error || example?.error)
+  const links = (items) => items.map(([label, url]) => `[${label}](${url})`).join(" · ")
+  const lines = [
+    `**Mentra App:** ${error || links([["Download Android APK", androidUrl]])}`,
+    ios.assets
+      ? `**iPhone / Mac:** ${links([
+          ...(ios.assets.install ? [["Install on iPhone", ios.assets.install]] : []),
+          ["Download iPhone IPA", ios.assets.iphone],
+          ...(ios.macInstallUrl ? [["Install on Mac", ios.macInstallUrl]] : []),
+          [ios.macInstallUrl ? "Download Mac app (first-time setup)" : "Download Mac app", ios.assets.mac],
+        ])}`
+      : `**iPhone / Mac:** ${ios.error || "not built for these changed paths."}`,
+    ...(example ? [`**Bluetooth example:** ${example.error || links([
+      ...(example.androidUrl ? [["Download Android APK", example.androidUrl]] : []),
+      ...(example.iphoneUrl ? [["Install on iPhone", example.iphoneUrl]] : []),
+      ...(example.macUrl ? [["Install on Mac", example.macUrl]] : []),
+    ])}`] : []),
+    ...(!error && targets
+      ? [`**Glasses:** ASG ${targets.asg.versionName} (build ${targets.asg.versionCode}) · BES ${targets.bes} · MTK ${targets.mtk} · ${links([
+          ["Glasses OTA manifest", manifestUrl], ["ASG APK", targets.asg.apkUrl]])}`]
+      : []),
+    `**Setup:** ${[
+      backend ? `${backendName(backend)} backend` : "backend not verified",
+      "Android ARM64",
+      ...(ios.assets ? ["Apple devices must be registered", links([["Installation instructions", ios.instructionsUrl]])] : []),
+    ].join(" · ")}`,
+    `**Logs:** ${links([["Android build logs", androidRunUrl], ...(ios.runUrl ? [["iOS build logs", ios.runUrl]] : []),
+      ...(asgRunUrl ? [["ASG build logs", asgRunUrl]] : [])])}`,
+  ]
+  return `${marker}\n<!-- ${identity} -->\n${
+    incomplete ? "⚠️ PR build incomplete" : "✅ PR build ready to test"
+  } for \`${sha.slice(0, 7)}\` — posted to **#pr-builds**.\n\n${lines.join("\n\n")}${incomplete ? "" : "\n\nDownloads may be cleaned up after 7 days."}`
 }
+
+// The run name of a label change that requests no build: never the build.
+export const NO_BUILD_RUN_NAME = "No build: label change"
 
 export function matchingBuildRun(runs, pr, sha) {
   return runs
     .filter(
       (run) =>
         run.event === "pull_request" &&
+        run.display_title !== NO_BUILD_RUN_NAME &&
         run.head_sha === sha &&
         run.head_branch === pr.head.ref &&
         run.head_repository?.full_name === pr.head.repo.full_name,
@@ -297,7 +275,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const mismatch = (platform, actual) =>
     `${platform} was built for ${["dev", "staging"].includes(actual) ? `the ${backendName(actual)}` : "an unrecorded"} backend, but this PR now targets ${destination}; rebuild it for this destination.`
   const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: pr.number, per_page: 100})
-  const ios = {required: iosBuildRequired(files)}
+  const ios = {required: iosBuildRequired(files, `${repo.owner}/${repo.repo}`)}
   const [androidBuild, asgBuild, iosBuild] = await Promise.all([
     readBuild(github, context, pr, sha, "android"),
     readBuild(github, context, pr, sha, "asg"),
@@ -326,8 +304,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     if (iosBuild.conclusion !== "success") ios.error = `iOS ${iosBuild.conclusion}; downloads are not ready.`
   }
   const base = `https://artifactscdn.mentraglass.com/${repo.owner}/${repo.repo}/releases/pr-builds`
-  // Mutable compatibility alias, linked only while the immutable receipt is unavailable.
-  let androidUrl = `${base}/mobile-pr-${pr.number}-${sha.slice(0, 7)}.apk`
+  // The APK this publication's receipt names when it built one, linked only while that receipt is unavailable.
+  let androidUrl = `${base}/${androidReceiptName(pr.number, sha, androidBuild.run.id, androidBuild.attempt).replace(/\.json$/, ".apk")}`
   const manifestUrl = `${base}/ota-pr-${pr.number}-${sha}.json`
   let targets
   const request = async (url, method = "GET") => {
@@ -370,8 +348,10 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       ios.assets = urls
       ios.backend = backend
       ios.archiveSha256 = assets.mac.sha256
-      if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.runAttempt)
-      ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/mobile/ci/pr-ios/README.md`
+      // The installation page opens the receipt it was published with: an earlier head's when reused.
+      if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.reusedFrom?.runAttempt ?? receipt.runAttempt)
+      const tree = `${repo.owner}/${repo.repo}` === MONOREPO ? MONOREPO_ROOT : ""
+      ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/${tree}mobile/ci/pr-ios/README.md`
     } catch (failure) {
       ios.error = failure.message
     }
@@ -384,7 +364,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       const coordinates = {pr: pr.number, sha, runId: androidBuild.run.id, attempt: androidBuild.attempt}
       receipt = await (await request(artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds",
         androidReceiptName(pr.number, sha, coordinates.runId, coordinates.attempt)))).json()
-      asset = validateAndroidReceipt(receipt, coordinates).android
+      // The monorepo's APKs pin its own OTA manifests; MentraOS's pin MentraOS's.
+      const repository = `${repo.owner}/${repo.repo}` === MONOREPO ? MONOREPO : undefined
+      asset = validateAndroidReceipt(receipt, {...coordinates, repository}).android
     } catch (failure) {
       receipt = undefined
       core.warning(`Android receipt unavailable: ${failure.message}; publish available downloads and keep receipt verification retryable.`)
@@ -394,7 +376,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       if (!receipt) await request(androidUrl, "HEAD")
       else if (receipt.app.backend !== backend) error = mismatch("Android", receipt.app.backend)
       else {
-        // Link the exact receipt-bound APK; the alias may hold another attempt's bytes.
+        // Link the exact receipt-bound APK.
         const url = artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds", asset.name)
         if (Number((await request(url, "HEAD")).headers.get("content-length")) !== asset.size)
           throw new Error("Published Android APK size disagrees with its receipt")
@@ -416,14 +398,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const publicationIdentity = builds
     .map((build) => `${build.run.id}-${build.attempt}`)
     .join(":")
-  // Selected routines are part of the delivered post, so a label added to the same
-  // publications posts their requested tests and result links once.
-  const requested = routineLabelIds(pr)
-  let routines = requestedRoutineLinks({context, pr, sha, ios, android, requested, androidAvailable: !error})
-  const selectionIdentity = requested.length ? createHash("sha256").update(JSON.stringify(routines.map(row =>
-    [row.id, row.platform ?? "unavailable"]))).digest("hex") : undefined
-  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}${
-    selectionIdentity ? `:routines-${selectionIdentity}` : ""}`
+  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}`
   if (android.receiptUnavailable) {
     const previous = comment?.body.split("\n").map(line =>
       new RegExp(`^<!-- ${buildIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
@@ -436,14 +411,6 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       android.receiptUnavailable = false
     }
   }
-  routines = routines.map(row => {
-    if (!row.platform) return row
-    const {resultsUrl, resultsUnavailable, ...definition} = row
-    return {...definition, ...(row.platform === "android" && android.receiptUnavailable
-      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
-    resultsUrl: routineResultsUrl({repository: `${context.repo.owner}/${context.repo.repo}`, pr: pr.number, sha,
-      archiveSha256: row.platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: row.id, platform: row.platform})}
-  })
   // A verified APK binds its immutable hash; an unverified backend is distinct so a
   // later notification can replace it once its receipt verifies.
   const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
@@ -455,10 +422,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     core.info("PR superseded or retargeted before notification.")
     return
   }
-  const currentRequested = new Set(routineLabelIds(pr))
-  routines = routines.filter(routine => currentRequested.has(routine.id))
-  const payload = buildPost({
-    pr,
+  const post = {
     sha,
     androidUrl,
     manifestUrl,
@@ -467,43 +431,16 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     asgRunUrl: asgRun?.html_url,
     error,
     ios,
-    routines,
     backend: android.backend ?? ios.backend,
+  }
+  await postToWebhook(webhook, prBuildPost({
+    ...post,
+    pr,
+    errorRunUrl: androidBuild.conclusion === "success" && asgBuild.conclusion !== "success" ? asgRun.html_url : androidRunUrl,
     unverifiedBackend: !error && !android.backend ? ["Android"] : [],
-  })
-  // No automatic POST retry: an ambiguous network failure must not duplicate a post.
-  const response = await fetchImpl(webhook, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(30_000),
-  })
-  if (!response.ok || (await response.text()).trim() !== "ok")
-    throw new Error(`Slack rejected the PR build notification (${response.status})`)
-  const downloads = [error || `[Download Android APK](${androidUrl}) · [Glasses OTA manifest](${manifestUrl})`]
-  if (ios.assets)
-    downloads.push(
-      `${ios.assets.install ? `[Install on iPhone](${ios.assets.install}) · ` : ""}[Download iPhone IPA](${
-        ios.assets.iphone
-      }) · ${ios.macInstallUrl ? `[Install on Mac](${ios.macInstallUrl}) · ` : ""}[Download Mac app](${
-        ios.assets.mac
-      }) · [Installation instructions](${ios.instructionsUrl})`,
-    )
-  else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
-  for (const routine of routines)
-    downloads.push(
-      `**Requested tests:** ${routine.title ?? routine.id}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n\n${[
-        ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
-        ...(routine.resultsUnavailable ? [routine.resultsUnavailable] : []),
-        `[${routine.pipelineLabel}](${routine.pipelineUrl})`,
-      ].join(" · ")}\n\nResults appear after the device run is uploaded.`,
-    )
-  const body = `${marker}\n<!-- ${identity} -->\n${
-    incomplete ? "⚠️ PR build incomplete" : "✅ PR build ready to test"
-  } for \`${sha.slice(0, 7)}\` — posted to **#pr-builds**.\n\n${downloads.join(
-    "\n\n",
-  )}\n\n[Android build logs](${androidRunUrl})${ios.runUrl ? ` · [iOS build logs](${ios.runUrl})` : ""}`
-
+    details: comment?.html_url,
+  }), fetchImpl)
+  const body = prBuildComment({...post, identity})
   if (comment) await github.rest.issues.updateComment({...repo, comment_id: comment.id, body})
   else await github.rest.issues.createComment({...repo, issue_number: pr.number, body})
   core.info(`Delivered ${identity} to #pr-builds`)

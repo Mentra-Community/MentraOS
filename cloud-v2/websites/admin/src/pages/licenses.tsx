@@ -23,7 +23,8 @@ export function licensesPath(query: string, cursor?: string): string {
 
 const ENDED_REASONS: Record<LicenseEndedReason, string> = {
   workspace_deleted: "workspace deleted",
-  admin_reset: "staging admin reset",
+  lapsed: "subscription ended",
+  admin_reset: "admin reset",
 };
 
 export interface LicenseState {
@@ -32,7 +33,7 @@ export interface LicenseState {
 }
 
 /**
- * Where a license stands at `now`. An ended license (its workspace was deleted) is ended whatever its term. Otherwise
+ * Where a license stands at `now`. An ended license (its workspace was deleted, or its subscription ended and its term ran out) is ended whatever its term. Otherwise
  * it is active only inside its term, `validFrom <= now < paidThrough` (the rule that puts its features in tokens):
  * expired once paid through, or, for a term with no instant in it, never valid; not started before `validFrom`.
  */

@@ -261,22 +261,50 @@ function coreOverHttp(): string {
  * Raw TCP, because `Bun.serve` would not send a body shorter than its declared length.
  */
 function resettingFleet(declared: number, sent: number) {
-  const answered = new WeakSet<object>()
-  return Bun.listen({
+  const bytes = Buffer.concat([
+    Buffer.from(`HTTP/1.1 200 OK\r\ncontent-type: text/javascript\r\netag: "from-fleet"\r\ncache-control: public, max-age=31536000\r\ncontent-length: ${declared}\r\nconnection: close\r\n\r\n`),
+    Buffer.alloc(sent, 97),
+  ])
+  const states = new WeakMap<Bun.Socket, {request: string; offset: number; started: boolean}>()
+  let answering: Bun.Socket | undefined
+  const send = (socket: Bun.Socket) => {
+    const state = states.get(socket)!
+    const written = socket.write(bytes.subarray(state.offset))
+    if (written > 0) state.offset += written
+  }
+  const listener = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
-      data(socket) {
-        if (answered.has(socket)) return
-        answered.add(socket)
-        socket.write(
-          `HTTP/1.1 200 OK\r\ncontent-type: text/javascript\r\netag: "from-fleet"\r\ncache-control: public, max-age=31536000\r\ncontent-length: ${declared}\r\nconnection: close\r\n\r\n`,
-        )
-        socket.write(new Uint8Array(sent).fill(97))
-        socket.end()
+      data(socket, chunk) {
+        const state = states.get(socket) ?? {request: "", offset: 0, started: false}
+        states.set(socket, state)
+        if (state.started) return
+        state.request += chunk.toString()
+        if (state.request.length > 65536) {socket.end(); return}
+        // TCP data callbacks need not contain the complete HTTP request headers.
+        if (!state.request.includes("\r\n\r\n")) return
+        state.started = true
+        answering = socket
+        send(socket)
+      },
+      drain(socket) {
+        const state = states.get(socket)
+        if (state?.started && state.offset < bytes.length) send(socket)
       },
     },
   })
+  return {
+    port: listener.port,
+    afterHeaders() {
+      // The real client's Response is the witness. Closing earlier can make fetch
+      // reject before it reports headers, exercising a different failure path.
+      expect(answering).toBeDefined()
+      expect(states.get(answering!)?.offset).toBe(bytes.length)
+      answering!.shutdown(true)
+    },
+    stop() {listener.stop(true)},
+  }
 }
 
 const decodePrincipal = (header: string | null) => JSON.parse(Buffer.from(header ?? "", "base64url").toString())
@@ -906,6 +934,25 @@ describe("limits and failures", () => {
 
       expect([status, response.status]).toEqual([status, 503])
       expect(await response.json()).toEqual({error: "fleet_unavailable"})
+    }
+  })
+
+  test("a 503 naming Fleet's own code reaches the phone and the admin with that code and nothing else of its body", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+    respond = () =>
+      Response.json(
+        {error: "directory_unavailable", error_description: "The miniapp directory cannot be read right now.", secret: "internal details"},
+        {status: 503, headers: {"retry-after": "30", "x-internal": "1"}},
+      )
+
+    for (const response of [await phone("/devices"), await admin(organizationAdmin, "/devices")]) {
+      expect([response.status, await response.json(), response.headers.get("retry-after")]).toEqual([
+        503,
+        {error: "directory_unavailable"},
+        "30",
+      ])
+      expect(response.headers.get("x-internal")).toBeNull()
     }
   })
 
@@ -1851,11 +1898,26 @@ describe("Fleet UI assets", () => {
     // On a real socket: Fleet promises 1000 bytes, sends 100 and closes. A real client of Core sees a 503.
     logs = []
     const dying = resettingFleet(1000, 100)
+    const target = `http://127.0.0.1:${dying.port}`
+    const actualFetch = globalThis.fetch.bind(globalThis)
+    let headersObserved = 0
+    const observedFetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const response = await actualFetch(input, init)
+      const url = input instanceof Request ? input.url : String(input)
+      if (url === `${target}/v1/admin/ui/entry.js` && (init?.method ?? (input instanceof Request ? input.method : "GET")) === "GET") {
+        expect(response.status).toBe(200)
+        headersObserved++
+        dying.afterHeaders()
+      }
+      return response
+    }, {preconnect: globalThis.fetch.preconnect})
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(observedFetch)
     try {
-      process.env.CLOUD_CORE_FLEET_URL = `http://127.0.0.1:${dying.port}`
+      process.env.CLOUD_CORE_FLEET_URL = target
       const response = await fetch(`${coreOverHttp()}/api/admin/fleet/ui/entry.js`, {
         headers: {"x-test-principal": organizationAdmin()},
       })
+      expect(headersObserved).toBe(1)
       expect(response.status).toBe(503)
       expect(await response.json()).toEqual({error: "fleet_unavailable"})
       expect(response.headers.get("etag")).toBeNull()
@@ -1866,7 +1928,8 @@ describe("Fleet UI assets", () => {
       expect(failure?.fields.upstreamStatus).toBe(200)
       expect(typeof failure?.fields.reason).toBe("string")
     } finally {
-      dying.stop(true)
+      fetchSpy.mockRestore()
+      dying.stop()
     }
   })
 
@@ -2793,7 +2856,7 @@ describe("the admin surface", () => {
     configure()
     const member = as("member", person(false))
 
-    for (const path of ["/reports", "/support-profiles/lookup", "/test-runs", "/routine-catalog", "/test-routines"]) {
+    for (const path of ["/reports", "/support-profiles/lookup"]) {
       const response = await root.request(`http://localhost/api/admin${path}`, {headers: {"x-test-principal": member}})
       expect([path, response.status]).toEqual([path, 403])
     }

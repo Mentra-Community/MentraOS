@@ -43,7 +43,8 @@ export const developerConsoleUrls: Record<Environment, string> = {
   prod: "https://console.mentraglass.com",
 };
 
-/** The workspace portal each environment's admin portal opens. */
+// The workspace portal each environment's admin portal deep-links to (Workspaces, Fleet Management), given to
+// the admin portal's build as PORTAL_URL.
 export const portalUrls: Record<Environment, string> = {
   dev: "https://portal.dev.mentraglass.com",
   staging: "https://portal.staging.mentraglass.com",

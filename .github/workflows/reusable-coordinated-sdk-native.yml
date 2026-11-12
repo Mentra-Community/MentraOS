@@ -83,14 +83,8 @@ jobs:
           release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID")
           [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
           [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
-          channel=$(jq -er .channel release-intent/release-plan.json)
-          if [[ "$channel" == "production" ]]; then
-            # Stable packages may follow the manual publication of mentra-vX.Y.Z.
-            [[ "$(jq -r .prerelease <<< "$release")" == "false" ]]
-          else
-            [[ "$(jq -r .draft <<< "$release")" == "false" ]]
-            [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
-          fi
+          [[ "$(jq -r .draft <<< "$release")" == "false" ]]
+          [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
           {
             echo "release_id=$RELEASE_ID"
             echo "release_tag=$tag"
@@ -100,8 +94,7 @@ jobs:
     name: Build SDK and submit Maven Central publication
     needs: prepare
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # Prebuild, NDK, and two Gradle publishes take up to ~20 minutes; a
-    # production run then waits up to 30 minutes for Sonatype validation.
+    # Prebuild, NDK, and two Gradle publishes take up to ~20 minutes.
     timeout-minutes: 60
     steps:
       - uses: actions/setup-node@v4
@@ -116,10 +109,8 @@ jobs:
           name: ${{ inputs.release_plan_artifact }}
           path: release-intent
 
-      # Registry tooling comes from the workflow revision, not from the frozen
-      # package source: a promoted beta may predate the tooling this workflow
-      # relies on (for example the USER_MANAGED upload). On dev and staging the
-      # two revisions are the same commit.
+      # Registry tooling comes from the workflow revision, not from the package
+      # source. On a staging push the two revisions are the same commit.
       - name: Checkout registry tooling from the workflow revision
         uses: actions/checkout@v4
         with:
@@ -138,21 +129,10 @@ jobs:
           set -euo pipefail
           version=$(jq -er '.releaseIdentity' release-intent/release-plan.json)
           source=$(jq -er '.sourceCommit' release-intent/release-plan.json)
-          channel=$(jq -er '.channel' release-intent/release-plan.json)
           [[ "$source" == "$SOURCE_COMMIT" ]]
-          # Production deployments stay USER_MANAGED: Sonatype validates them
-          # but nothing reaches Maven Central until the separate protected
-          # release phase requests publication. Prereleases publish automatically.
-          if [[ "$channel" == "production" ]]; then
-            publishing_type=USER_MANAGED
-          else
-            publishing_type=AUTOMATIC
-          fi
           base="https://repo.maven.apache.org/maven2/com/mentraglass"
           {
             echo "version=$version"
-            echo "channel=$channel"
-            echo "publishing_type=$publishing_type"
             echo "deployment_name=mentra-$version-android-sdk"
             echo "deployment_asset=mentra-$version-sonatype-deployment.json"
             echo "sdk_purl=pkg:maven/com.mentraglass/bluetooth-sdk@$version"
@@ -378,16 +358,14 @@ jobs:
           MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
           RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
           ASSET_NAME: ${{ steps.release.outputs.deployment_asset }}
-          PUBLISHING_TYPE: ${{ steps.release.outputs.publishing_type }}
         run: |
           set -euo pipefail
           node release-tooling/.github/scripts/sonatype-central-deployment.mjs upload \
             --bundle native-result/maven/central-bundle.zip \
             --name "${{ steps.release.outputs.deployment_name }}" \
             --expected-purls "${{ steps.release.outputs.sdk_purl }},${{ steps.release.outputs.lc3_purl }}" \
-            --publishing-type "$PUBLISHING_TYPE" \
             --output native-result/maven/sonatype-deployment.json
-          [[ "$(jq -er .publishingType native-result/maven/sonatype-deployment.json)" == "$PUBLISHING_TYPE" ]]
+          [[ "$(jq -er .publishingType native-result/maven/sonatype-deployment.json)" == AUTOMATIC ]]
           # A private (draft) release stores this record as a GitHub asset, which
           # must carry its file's basename; stage a copy under the asset name.
           mkdir -p native-result/sonatype-record
@@ -396,17 +374,6 @@ jobs:
             --file "native-result/sonatype-record/$ASSET_NAME" --name "$ASSET_NAME" \
             --release-id "$RELEASE_ID" --repository "$GITHUB_REPOSITORY"
           rm -r native-result/sonatype-record
-
-      - name: Require the production deployment to be validated before staging succeeds
-        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true' && steps.release.outputs.channel == 'production'
-        env:
-          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
-        run: |
-          set -euo pipefail
-          [[ "$(jq -er .publishingType native-result/maven/sonatype-deployment.json)" == "USER_MANAGED" ]]
-          node release-tooling/.github/scripts/sonatype-central-deployment.mjs wait-validated \
-            --record native-result/maven/sonatype-deployment.json \
-            --output native-result/maven/sonatype-validation.json
 
       - name: Stage locally verified Maven artifacts
         run: |
@@ -484,48 +451,30 @@ jobs:
           version=$(jq -er .releaseIdentity release-intent/release-plan.json)
           artifact_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
           archive_name=$(jq -er .artifactNames.iosSdkArchive release-intent/release-plan.json)
-          channel=$(jq -er .channel release-intent/release-plan.json)
           [[ "$(jq -er .sourceCommit release-intent/release-plan.json)" == "$SOURCE_COMMIT" ]]
-          # A production run stages the exported commit on a release branch of
-          # the mirror. The public SwiftPM tag is pushed only by the separate
-          # protected release phase of production-release-packages.yml.
-          staging_ref=""
-          if [[ "$channel" == "production" ]]; then
-            staging_ref="release/$version"
-          fi
           {
             echo "version=$version"
-            echo "channel=$channel"
-            echo "staging_ref=$staging_ref"
             echo "archive_name=$archive_name"
             echo "release_tag=mentra-v$version"
             echo "archive_url=https://artifactscdn.mentraglass.com/${{ github.repository }}/releases/$artifact_tag/$archive_name"
             echo "tag_url=https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios/tree/$version"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Check public SwiftPM tag and staged production commit
+      - name: Check public SwiftPM tag
         id: existing
         working-directory: mentra-bluetooth-sdk-ios
-        env:
-          STAGING_REF: ${{ steps.release.outputs.staging_ref }}
         run: |
           set -euo pipefail
           git fetch --tags origin
           if git rev-parse -q --verify "refs/tags/${{ steps.release.outputs.version }}^{commit}" >/dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "staged=false" >> "$GITHUB_OUTPUT"
             git checkout --detach "refs/tags/${{ steps.release.outputs.version }}"
-          elif [[ -n "$STAGING_REF" ]] && git rev-parse -q --verify "refs/remotes/origin/$STAGING_REF^{commit}" >/dev/null; then
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "staged=true" >> "$GITHUB_OUTPUT"
-            git checkout --detach "refs/remotes/origin/$STAGING_REF"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "staged=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Stage coordinated Swift package source
-        if: steps.existing.outputs.exists != 'true' && steps.existing.outputs.staged != 'true'
+        if: steps.existing.outputs.exists != 'true'
         working-directory: MentraOS
         run: |
           npm --prefix mobile/modules/bluetooth-sdk pkg set version="${{ steps.release.outputs.version }}"
@@ -541,7 +490,7 @@ jobs:
             --verify
 
       - name: Commit exact SwiftPM export locally
-        if: steps.existing.outputs.exists != 'true' && steps.existing.outputs.staged != 'true'
+        if: steps.existing.outputs.exists != 'true'
         working-directory: mentra-bluetooth-sdk-ios
         run: |
           set -euo pipefail
@@ -569,7 +518,7 @@ jobs:
           echo "mirror_sha=$mirror_sha" >> "$GITHUB_OUTPUT"
 
       - name: Publish verified SwiftPM commit and tag
-        if: inputs.dry_run != true && steps.release.outputs.channel != 'production' && steps.existing.outputs.exists != 'true'
+        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true'
         working-directory: mentra-bluetooth-sdk-ios
         run: |
           set -euo pipefail
@@ -577,16 +526,6 @@ jobs:
           git push origin "${mirror_sha}:refs/heads/main"
           git tag "${{ steps.release.outputs.version }}" "$mirror_sha"
           git push origin "refs/tags/${{ steps.release.outputs.version }}"
-
-      - name: Stage verified production SwiftPM commit without a public tag
-        if: inputs.dry_run != true && steps.release.outputs.channel == 'production' && steps.existing.outputs.exists != 'true' && steps.existing.outputs.staged != 'true'
-        working-directory: mentra-bluetooth-sdk-ios
-        env:
-          STAGING_REF: ${{ steps.release.outputs.staging_ref }}
-        run: |
-          set -euo pipefail
-          test -n "$STAGING_REF"
-          git push origin "${{ steps.selected.outputs.mirror_sha }}:refs/heads/$STAGING_REF"
 
       - name: Publish exact SwiftPM archive as immutable release asset
         if: inputs.dry_run != true
@@ -607,7 +546,7 @@ jobs:
       - name: Write SwiftPM publication record
         working-directory: MentraOS
         env:
-          STATUS: ${{ inputs.dry_run && 'built' || (steps.existing.outputs.exists == 'true' && 'reused' || (steps.release.outputs.channel == 'production' && 'submitted' || 'published')) }}
+          STATUS: ${{ inputs.dry_run && 'built' || (steps.existing.outputs.exists == 'true' && 'reused' || 'published') }}
         run: >-
           node .github/scripts/coordinated-sdk-native-records.mjs create-swiftpm
           --plan release-intent/release-plan.json

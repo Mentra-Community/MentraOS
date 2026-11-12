@@ -2,7 +2,7 @@ package com.mentra.glassesmedia.source
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.telemetry.PipelineStats
 import com.mentra.glassesmedia.video.I420Packer
 import okhttp3.MediaType.Companion.toMediaType

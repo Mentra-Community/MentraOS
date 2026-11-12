@@ -5,13 +5,15 @@
  * audio chunks, VAD) lives on session.mic — the split is by I/O direction.
  *
  * Imperative surface:
- *   speaker.play({audioUrl})   — play an arbitrary URL via the phone's
+ *   speaker.play({audioUrl})   — play an http(s) or data: URL, or one of this
+ *                                miniapp's blobs, via the phone's
  *                                AudioPlaybackService.
- *   speaker.speak(text)        — send a SPEAK request. Phone streams cloud
- *                                TTS when connected and falls back to local
- *                                offline TTS when cloud is unavailable.
+ *   speaker.speak(text)        — send a SPEAK request. By default the phone
+ *                                streams cloud TTS when connected and falls
+ *                                back to its on-device voice; the
+ *                                `processing` option picks the order.
  *                                Resolves when playback completes; rejects
- *                                with a TTS_* error code on cloud failure.
+ *                                with a TTS_* error code on failure.
  *   speaker.createStream(opts) — open a live PCM output stream (16-bit LE).
  *                                Returns a SpeakerStreamWriter: write() PCM
  *                                chunks as they arrive (e.g. from a WebSocket
@@ -38,8 +40,13 @@ import {MiniappErrorCode, MiniappRequestType} from "../protocol"
 import {MiniappSession} from "../session"
 import {bytesToBase64, toUint8Array} from "./base64"
 import type {UnsubscribeFn} from "./events"
+import {resolveSpeechProcessing, type SpeechProcessing} from "./speechProcessing"
 
 export interface PlayAudioOptions {
+  /**
+   * An http(s) or `data:` URL, or the `file://` uri of one of this miniapp's
+   * blobs (`session.blob`). The host refuses any other file or scheme.
+   */
   audioUrl: string
   /** Start playback at this offset in milliseconds. Defaults to zero. */
   startPositionMs?: number
@@ -58,10 +65,17 @@ export interface SpeakOptions {
    */
   enableSanitization?: boolean
   /**
-   * Force this call to use on-device offline TTS, skipping cloud TTS
-   * entirely — even when cloud is connected. Rejects with `TTS_LOCAL_UNAVAILABLE`
-   * if the offline model isn't ready instead of falling back to cloud.
+   * Where the speech is synthesized. Default `"preferCloud"`.
+   *
+   * - `"preferCloud"`: cloud TTS while the cloud is connected, otherwise the
+   *   phone's on-device voice.
+   * - `"preferLocal"`: the on-device voice when its model is ready and can say
+   *   it (an explicit cloud `voice_id` cannot), otherwise cloud TTS.
+   * - `"localOnly"`: the on-device voice only; never the cloud. Rejects with
+   *   `TTS_LOCAL_UNAVAILABLE` when the on-device model isn't ready.
    */
+  processing?: SpeechProcessing
+  /** @deprecated Use `processing: "localOnly"`. Removed in 4.0; ignored when `processing` is set. */
   forceLocal?: boolean
 }
 
@@ -80,6 +94,22 @@ export type SpeakerStreamSampleRate = 16000 | 24000 | 48000
 export interface SpeakerStreamOptions {
   /** PCM sample rate in Hz. Default 16000. */
   sampleRate?: SpeakerStreamSampleRate
+  /**
+   * Open the native stream now and keep it idle until the first write, so a
+   * later sound only has to write samples. The speaker reports `idle` and other
+   * audio is left alone until then. If the audio route changes before the
+   * first write (Bluetooth or glasses connect/disconnect, a call, an audio
+   * interruption), the phone closes the stream and the next write fails with
+   * "not open"; open a fresh stream then.
+   */
+  prewarm?: boolean
+  /**
+   * How much audio (80–500 ms) the phone queues before playback starts, and
+   * the cushion against gaps after that. Default 500. A sound shorter than
+   * this still plays once you close the stream. Use a small value such as 80
+   * for short cues that should start immediately.
+   */
+  jitterMs?: number
   /** Channel count. v1 is mono only. Default 1. */
   channels?: 1
   /** Playback volume 0..1. Default 1. */
@@ -118,7 +148,10 @@ export class SpeakerStreamWriter {
   private settled = false
   private writeChain: Promise<void> = Promise.resolve()
 
-  constructor(private readonly session: MiniappSession, readonly streamId: string) {}
+  constructor(
+    private readonly session: MiniappSession,
+    readonly streamId: string,
+  ) {}
 
   /**
    * Append raw PCM bytes (16-bit LE). Auto-chunked. Resolves with the host's
@@ -255,8 +288,9 @@ export class SpeakerModule {
   }
 
   /**
-   * Speak text through the phone. The host streams cloud TTS when connected,
-   * then falls back to local offline TTS.
+   * Speak text through the phone, in the cloud or on-device as
+   * `options.processing` says (default: cloud TTS when connected, then the
+   * on-device voice).
    *
    * Rejects with a MiniappRequestError containing a `code` field on cloud-side
    * TTS failures: `TTS_TEXT_TOO_LONG`, `TTS_INVALID_VOICE`, `TTS_UPSTREAM_ERROR`.
@@ -268,6 +302,7 @@ export class SpeakerModule {
     if ((Array.isArray(normalized) && normalized.length === 0) || normalized === "") {
       throw {code: MiniappErrorCode.INTERNAL, message: "speak requires at least one non-empty sentence"}
     }
+    const processing = resolveSpeechProcessing(options, "speaker.speak(options)")
     try {
       // Like play(): resolves only when TTS playback completes, so opt out of the
       // default request timeout (long text can outlast it). Settled by the host
@@ -281,7 +316,9 @@ export class SpeakerModule {
           volume: options.volume,
           stopOtherAudio: options.stopOtherAudio ?? false,
           enableSanitization: options.enableSanitization ?? true,
-          forceLocal: options.forceLocal ?? false,
+          processing,
+          // Hosts before `processing` (Mentra App 3.4.0) read only this flag.
+          forceLocal: processing === "localOnly",
         },
         {timeoutMs: 0},
       )
@@ -312,9 +349,16 @@ export class SpeakerModule {
     ) {
       throw new RangeError("speaker stream volume must be between 0 and 1")
     }
+    if (
+      options.jitterMs !== undefined &&
+      (!Number.isFinite(options.jitterMs) || options.jitterMs < 80 || options.jitterMs > 500)
+    )
+      throw new RangeError("speaker stream jitterMs must be between 80 and 500")
     const res = await this.session.sendRequest<{streamId: string}>({
       type: MiniappRequestType.SPEAKER_STREAM_OPEN,
       sampleRate: options.sampleRate ?? 16000,
+      ...(options.jitterMs === undefined ? {} : {jitterMs: options.jitterMs}),
+      ...(options.prewarm === undefined ? {} : {prewarm: options.prewarm}),
       channels: options.channels ?? 1,
       volume: options.volume,
       stopOtherAudio: options.stopOtherAudio ?? true,

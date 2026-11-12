@@ -1,5 +1,6 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {StreamStartRequest, StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
+import {keepHotspotUpWhileJoining} from "./GlassesHotspotJoin"
 import {acquireGlassesHotspot} from "./GlassesHotspotLease"
 import {pcmToBase64} from "../utils/pcmToBase64"
 
@@ -55,7 +56,8 @@ export interface ManagedRelay {
   cancel(): void
   stop(): Promise<void>
   owns(streamId: string): boolean
-  handleGlassesStatus(event: StreamStatusEvent): void
+  /** Returns true when the event belongs to the live attempt, so its narration can reach miniapps. */
+  handleGlassesStatus(event: StreamStatusEvent): boolean
 }
 
 /** One attempt at a time; video stays native. All retries unwind both peers, mic and hotspot. */
@@ -111,9 +113,13 @@ export class ManagedWebRtcRelay implements ManagedRelay {
 
   cancel(): void {
     this.cancelled = true
+    this.interruptPrepare()
+  }
+
+  private interruptPrepare(): void {
     if (this.preparing && this.attemptId && !this.prepareStop) {
-      // Local Network permission can wait indefinitely. Interrupt this owned prepare
-      // before the coordinator's transition lock can reach stop(). Native stop rejects
+      // Local Network permission and the join prompt can wait indefinitely. Interrupt this owned
+      // prepare before the coordinator's transition lock can reach stop(). Native stop rejects
       // prepare and resolves only after its peers and hotspot join have been released.
       this.prepareStop = this.deps.native.stop(this.attemptId)
       void this.prepareStop.catch(() => undefined) // stop() awaits and reports cleanup failure.
@@ -125,11 +131,12 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     return streamId.startsWith(`${this.options.streamId}-relay-`)
   }
 
-  handleGlassesStatus(event: StreamStatusEvent): void {
-    if (event.streamId !== this.attemptId || this.cancelled) return
+  handleGlassesStatus(event: StreamStatusEvent): boolean {
+    if (event.streamId !== this.attemptId || this.cancelled) return false
     if (event.status === "stopped" || event.terminal) {
       this.failed(new Error("Glasses publisher stopped"))
     }
+    return !this.attemptError
   }
 
   private checkpoint(): void {
@@ -156,16 +163,20 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     this.preparing = true
     let url: string
     try {
-      url = await this.deps.native.prepare({
-        attemptId: this.attemptId,
-        ingestUrl: this.options.ingestUrl,
-        ssid: hotspot.ssid,
-        password: hotspot.password,
-        gatewayAddress: hotspot.localIp,
-        captureAudio,
-        audioTransport: lc3 ? "ble-lc3" : captureAudio ? "whip" : "none",
-        bitrate: this.options.video?.bitrate ?? 2_000_000,
-      })
+      // prepare joins the hotspot, which can wait on the person answering the join prompt.
+      url = await keepHotspotUpWhileJoining(
+        this.deps.native.prepare({
+          attemptId: this.attemptId,
+          ingestUrl: this.options.ingestUrl,
+          ssid: hotspot.ssid,
+          password: hotspot.password,
+          gatewayAddress: hotspot.localIp,
+          captureAudio,
+          audioTransport: lc3 ? "ble-lc3" : captureAudio ? "whip" : "none",
+          bitrate: this.options.video?.bitrate ?? 2_000_000,
+        }),
+        {enable: () => this.deps.hotspot(true), cancel: () => this.interruptPrepare()},
+      )
     } finally {
       this.preparing = false
     }

@@ -16,7 +16,13 @@ import {SplashVideo} from "@/components/splash/SplashVideo"
 import {resolvedEndpoints} from "@/services/cloudClient"
 import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
 import {refreshWorkspaceManifest, useDeployment} from "@/services/deployment"
-import {deploymentDebugOverrides, saveDeploymentCloudOverrides} from "@/services/deployment/debugOverrides"
+import {deploymentDebugOverrides} from "@/services/deployment/debugOverrides"
+import {
+  cloudSwitchSignsOut,
+  deploymentSignInRoute,
+  switchCloudEndpoints,
+} from "@/services/deployment/switchCloudEndpoints"
+import {confirmCloudSwitch} from "@/utils/confirmCloudSwitch"
 
 // Types
 type ScreenState = "loading" | "connection" | "outdated" | "success"
@@ -174,7 +180,8 @@ export default function InitScreen() {
     await navigateToDestination()
   }
 
-  const checkCloudVersion = async (isRetry = false): Promise<void> => {
+  // After a Core switch signed the person out, this render's `user` is stale: go to sign-in instead.
+  const checkCloudVersion = async (isRetry = false, afterSignOut = false): Promise<void> => {
     // Only show loading screen on initial load, not on retry
     if (!isRetry) {
       setState("loading")
@@ -244,6 +251,10 @@ export default function InitScreen() {
     }
 
     setIsRetrying(false)
+    if (afterSignOut) {
+      replaceAll(deploymentSignInRoute(activeDeployment))
+      return
+    }
     checkLoggedIn()
   }
 
@@ -272,11 +283,21 @@ export default function InitScreen() {
 
   const handleResetUrl = async (): Promise<void> => {
     try {
-      await saveDeploymentCloudOverrides(activeDeployment, {core: "", runtime: ""})
+      const signOut = await cloudSwitchSignsOut(activeDeployment, "")
+      if (signOut && !(await confirmCloudSwitch("reset"))) return
+      setIsRetrying(true)
+      // No miniapp is open on this screen, so it stays put and routes after the default backend's version check.
+      const {signedOut} = await switchCloudEndpoints(
+        activeDeployment,
+        {core: "", runtime: ""},
+        {signOut, navigate: false},
+      )
       setIsUsingCustomUrl(false)
-      await checkCloudVersion(true) // Pass true for retry to avoid flash
+      // Pass true for retry to avoid flash
+      await checkCloudVersion(true, signedOut)
     } catch (error) {
       console.error("Failed to reset URL:", error)
+      setIsRetrying(false)
     }
   }
 

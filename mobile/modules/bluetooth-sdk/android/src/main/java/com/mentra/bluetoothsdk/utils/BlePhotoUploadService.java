@@ -11,7 +11,7 @@ import androidx.exifinterface.media.ExifInterface;
 
 import com.mentra.bluetoothsdk.debug.BleTraceLogger;
 import com.mentra.bluetoothsdk.photoreceiver.LocalPhotoReceiverRegistry;
-import com.radzivon.bartoshyk.avif.coder.HeifCoder;
+import com.radzivon.bartoshyk.avif.coder.Coder;
 import com.radzivon.bartoshyk.avif.coder.PreferredColorConfig;
 
 import org.json.JSONArray;
@@ -371,12 +371,12 @@ public class BlePhotoUploadService {
     @Nullable
     private static Bitmap decodeAvifBytes(byte[] avifBytes) {
         try {
-            Bitmap bmp = new HeifCoder().decode(avifBytes, PreferredColorConfig.RGBA_8888);
+            Bitmap bmp = new Coder().decode(avifBytes, PreferredColorConfig.RGBA_8888);
             if (bmp != null) {
                 return bmp;
             }
         } catch (Exception | LinkageError e) {
-            NativeLog.w(TAG, "HeifCoder AVIF decode unavailable/failed, trying BitmapFactory: " + e.getMessage());
+            NativeLog.w(TAG, "AVIF Coder decode unavailable/failed, trying BitmapFactory: " + e.getMessage());
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             return BitmapFactory.decodeByteArray(avifBytes, 0, avifBytes.length);

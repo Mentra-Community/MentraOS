@@ -18,46 +18,42 @@ function me(
 
 describe("the admin portal's pages follow capabilities", () => {
   test("an Organization Admin sees exactly the operations pages and then the audit log, and opens on incidents", () => {
-    const pages: AdminPageKey[] = ["incidents", "test-runs", "routine-catalog", "system-health", "workspaces", "operator-keys", "audit"];
+    const pages: AdminPageKey[] = ["incidents", "workspaces", "registry", "websites", "operator-keys", "audit"];
     const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true));
     expect(visible).toEqual(pages);
     expect(resolvePage(null, visible)).toBe("incidents");
   });
 
-  test("the Fleet page follows the incident system in navigation order, and Licenses follows Workspaces", () => {
+  test("there is no Fleet page: Fleet Management opens in the workspace portal, from Workspaces", () => {
     expect([...PAGE_ORDER]).toEqual([
-      "incidents", "fleet", "test-runs", "routine-catalog", "system-health", "workspaces", "licenses", "operator-keys", "audit",
+      "incidents", "workspaces", "licenses", "registry", "websites", "operator-keys", "audit",
     ]);
-  });
-
-  test("an Organization Admin sees the Fleet page, right after the incident system, once Fleet is installed", () => {
+    expect([...PAGE_ORDER] as string[]).not.toContain("fleet");
+    // Installed or not, and whatever the principal holds, no page is offered for it.
+    for (const fleet of [{ installed: true }, { installed: false }, undefined]) {
+      expect(visiblePages(me(ORGANIZATION_CAPABILITIES, true, fleet)) as string[]).not.toContain("fleet");
+    }
+    // organization.fleet.administer alone opens nothing in the admin portal.
+    expect(visiblePages(me(["organization.fleet.administer"], false, { installed: true }))).toEqual([]);
     const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true, { installed: true }));
-    expect(visible).toEqual([
-      "incidents", "fleet", "test-runs", "routine-catalog", "system-health", "workspaces", "operator-keys", "audit",
-    ]);
-    expect(resolvePage("fleet", visible)).toBe("fleet");
-  });
-
-  test("the Fleet page is hidden when Fleet is not installed, or the answer is missing", () => {
-    expect(visiblePages(me(ORGANIZATION_CAPABILITIES, true, { installed: false }))).not.toContain("fleet");
-    expect(visiblePages(me(ORGANIZATION_CAPABILITIES, true))).not.toContain("fleet");
-    const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true, { installed: false }));
-    expect(resolvePage("fleet", visible)).toBe("incidents");
-  });
-
-  test("the Fleet page needs organization.fleet.administer even when Fleet is installed", () => {
-    const withoutFleet = ORGANIZATION_CAPABILITIES.filter(capability => capability !== "organization.fleet.administer");
-    expect(visiblePages(me(withoutFleet, true, { installed: true }))).not.toContain("fleet");
-    expect(visiblePages(me([], false, { installed: true }))).toEqual([]);
-    expect(visiblePages(me(["organization.fleet.administer"], false, { installed: true }))).toEqual(["fleet"]);
+    expect(resolvePage("fleet" as AdminPageKey, visible)).toBe("incidents");
   });
 
   test("an Organization Admin sees the Licenses page, right after Workspaces, once licenses are available", () => {
     const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true, undefined, { available: true }));
     expect(visible).toEqual([
-      "incidents", "test-runs", "routine-catalog", "system-health", "workspaces", "licenses", "operator-keys", "audit",
+      "incidents", "workspaces", "licenses", "registry", "websites", "operator-keys", "audit",
     ]);
     expect(resolvePage("licenses", visible)).toBe("licenses");
+  });
+
+  test("the Miniapp registry page needs organization.registry.administer, and comes after Licenses", () => {
+    const without = ORGANIZATION_CAPABILITIES.filter(capability => capability !== "organization.registry.administer");
+    expect(visiblePages(me(without, true))).not.toContain("registry");
+    expect(visiblePages(me(["organization.registry.administer"]))).toEqual(["registry"]);
+    const visible = visiblePages(me(ORGANIZATION_CAPABILITIES, true));
+    expect(resolvePage("registry", visible)).toBe("registry");
+    expect(visible.indexOf("registry")).toBe(visible.indexOf("workspaces") + 1);
   });
 
   test("the Licenses page is hidden on a Core with no billing and no licenses, or when the answer is missing", () => {
@@ -78,19 +74,20 @@ describe("the admin portal's pages follow capabilities", () => {
     expect(visiblePages(me([]))).toEqual([]);
   });
 
-  test("the audit log needs an Organization Admin who is a person, whatever capabilities are held", () => {
+  test("the audit log and Miniapp websites need an Organization Admin who is a person, whatever capabilities are held", () => {
     expect(visiblePages(me(ORGANIZATION_CAPABILITIES))).not.toContain("audit");
-    expect(visiblePages(me([], true))).toEqual(["audit"]);
+    expect(visiblePages(me(ORGANIZATION_CAPABILITIES))).not.toContain("websites");
+    expect(visiblePages(me([], true))).toEqual(["websites", "audit"]);
   });
 
   test("an operator key sees the pages its scopes open, never workspaces, operator keys or the audit log", () => {
     const key: Pick<AdminMe, "organization" | "user" | "fleet" | "licenses"> = {
-      organization: { capabilities: ["organization.incidents.read", "organization.testing.read"] },
+      organization: { capabilities: ["organization.incidents.read"] },
       user: null,
       fleet: { installed: true },
       licenses: { available: true },
     };
-    expect(visiblePages(key)).toEqual(["incidents", "test-runs", "routine-catalog", "system-health"]);
+    expect(visiblePages(key)).toEqual(["incidents"]);
     // Even a key holding every capability: no capability opens the audit log.
     const everything: Pick<AdminMe, "organization" | "user" | "fleet" | "licenses"> = {
       organization: { capabilities: [...ORGANIZATION_CAPABILITIES] },
@@ -104,7 +101,7 @@ describe("the admin portal's pages follow capabilities", () => {
 
   test("a requested page falls back to the default when it is not visible", () => {
     expect(resolvePage("workspaces", ["incidents"])).toBe("incidents");
-    expect(resolvePage("audit", ["incidents", "test-runs"])).toBe("incidents");
+    expect(resolvePage("audit", ["incidents", "workspaces"])).toBe("incidents");
     expect(resolvePage("incidents", ["incidents", "audit"])).toBe("incidents");
     expect(resolvePage(null, [])).toBeNull();
   });

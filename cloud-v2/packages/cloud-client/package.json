@@ -1,6 +1,6 @@
 {
   "name": "@mentra/cloud-client",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -12,10 +12,11 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@mentra/cloud-protocol": "3.3.0",
+    "@mentra/cloud-protocol": "3.4.0",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
+    "@mentra/workspace-contract": "workspace:*",
     "ws": "^8.18.0",
     "@types/ws": "^8.5.12"
   },

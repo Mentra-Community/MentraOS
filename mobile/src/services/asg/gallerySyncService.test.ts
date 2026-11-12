@@ -25,14 +25,14 @@ import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/med
 import {
   gallerySyncService,
   isSsidPermissionError,
-  verifyIosHotspotSsid,
+  SYNC_INTERRUPTED_MESSAGE,
 } from "../../../modules/engine/src/services/asg/gallerySyncService"
 import {MediaLibraryPermissions} from "../../../modules/engine/src/utils/permissions/MediaLibraryPermissions"
 import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySync"
 import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
-import {Platform} from "react-native"
+import {AppState, Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -53,7 +53,11 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => {
 })
 
 jest.mock("@mentra/glasses-media", () => ({
-  glassesHotspot: {join: jest.fn(async () => "192.168.43.2"), leave: jest.fn(async () => {})},
+  glassesHotspot: {
+    join: jest.fn(async () => "192.168.43.2"),
+    leave: jest.fn(async () => {}),
+    onPermissionRequired: jest.fn(() => ({remove: () => {}})),
+  },
 }))
 
 jest.mock("../../../modules/engine/src/services/OtaArtifactDownloader", () => ({
@@ -231,97 +235,6 @@ describe("isSsidPermissionError", () => {
   })
 })
 
-describe("verifyIosHotspotSsid", () => {
-  it("returns matched when the target SSID becomes visible", async () => {
-    const readCurrentSsid = jest.fn().mockResolvedValueOnce("home").mockResolvedValue(HOTSPOT_INFO.ssid)
-    const sleep = jest.fn().mockResolvedValue(undefined)
-
-    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
-      status: "matched",
-      lastSeenSsid: HOTSPOT_INFO.ssid,
-      permissionBlocked: false,
-    })
-    expect(readCurrentSsid).toHaveBeenCalledTimes(2)
-    expect(sleep).toHaveBeenCalledTimes(1)
-    // The helper owns the poll numbering; the caller no longer shadows it.
-    expect(readCurrentSsid.mock.calls).toEqual([[1], [2]])
-  })
-
-  it.each([
-    ["locationPermissionDenied", "Cannot detect SSID because LocationPermission is Denied"],
-    ["locationPermissionRestricted", "Cannot detect SSID because LocationPermission is Restricted"],
-    ["locationPermissionDenied", "Permission not granted"],
-  ])("returns unavailable immediately for %s", async (code, message) => {
-    const readCurrentSsid = jest.fn().mockRejectedValue(wifiError(code, message))
-    const sleep = jest.fn().mockResolvedValue(undefined)
-
-    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 30)).resolves.toEqual({
-      status: "unavailable",
-      lastSeenSsid: "error",
-      permissionBlocked: true,
-    })
-    expect(readCurrentSsid).toHaveBeenCalledTimes(1)
-    expect(sleep).not.toHaveBeenCalled()
-  })
-
-  it("keeps polling a transient read failure instead of short-circuiting", async () => {
-    const readCurrentSsid = jest
-      .fn()
-      .mockRejectedValueOnce(wifiError("couldNotDetectSSID", "Cannot detect SSID"))
-      .mockResolvedValue(HOTSPOT_INFO.ssid)
-    const sleep = jest.fn().mockResolvedValue(undefined)
-
-    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
-      status: "matched",
-      lastSeenSsid: HOTSPOT_INFO.ssid,
-      permissionBlocked: false,
-    })
-    expect(readCurrentSsid).toHaveBeenCalledTimes(2)
-  })
-
-  it("returns mismatched when a different readable SSID remains connected", async () => {
-    const readCurrentSsid = jest.fn().mockResolvedValue("home")
-    const sleep = jest.fn().mockResolvedValue(undefined)
-
-    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
-      status: "mismatched",
-      lastSeenSsid: "home",
-      permissionBlocked: false,
-    })
-    expect(readCurrentSsid).toHaveBeenCalledTimes(3)
-    expect(sleep).toHaveBeenCalledTimes(2)
-  })
-
-  it("does not blame Location when every read fails transiently", async () => {
-    // `unavailable` is NOT proof that Location is denied: exhausting transient reads
-    // lands here with the permission fully granted. Reporting permissionBlocked would
-    // make the caller disable later SSID gates and tell the user to grant a permission
-    // they already have.
-    const readCurrentSsid = jest.fn().mockRejectedValue(wifiError("couldNotDetectSSID", "Cannot detect SSID"))
-    const sleep = jest.fn().mockResolvedValue(undefined)
-
-    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
-      status: "unavailable",
-      lastSeenSsid: "error",
-      permissionBlocked: false,
-    })
-    expect(readCurrentSsid).toHaveBeenCalledTimes(3)
-  })
-
-  it("treats an empty SSID as unknown, not as a mismatch", async () => {
-    // An empty read means "we cannot see the network", which must fall back to the
-    // connectivity probe. Calling it a mismatch would hard-fail the sync.
-    const readCurrentSsid = jest.fn().mockResolvedValue("")
-    const sleep = jest.fn().mockResolvedValue(undefined)
-
-    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
-      status: "unavailable",
-      lastSeenSsid: "null",
-      permissionBlocked: false,
-    })
-  })
-})
-
 async function startFileDownload(): Promise<void> {
   await (
     gallerySyncService as unknown as {startFileDownload: (info: typeof HOTSPOT_INFO) => Promise<void>}
@@ -359,7 +272,6 @@ describe("GallerySyncService", () => {
     "a refused %s overlap cannot enable/disable the admitted AP or leave its native connection",
     async (admitted) => {
       Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
-      Object.defineProperty(CrustModule, "isIOSAppOnMac", {value: true, configurable: true, writable: true})
       useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
       await startOtaDeviceSession()
       const native = jest.requireMock("@mentra/glasses-media").glassesHotspot as {join: jest.Mock; leave: jest.Mock}
@@ -442,32 +354,6 @@ describe("GallerySyncService", () => {
   })
 
   it.each([
-    ["locationPermissionDenied", "Cannot detect SSID because LocationPermission is Denied"],
-    ["locationPermissionRestricted", "Cannot detect SSID because LocationPermission is Restricted"],
-  ])("uses the glasses connectivity probe when iOS blocks SSID inspection (%s)", async (code, message) => {
-    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
-    mockGetCurrentWifiSSID.mockRejectedValue(wifiError(code, message))
-    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
-    const connectSpy = jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
-    const fetchSpy = jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
-    const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
-
-    await (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
-
-    expect(connectSpy).toHaveBeenCalledWith(expect.any(Symbol), HOTSPOT_INFO.ssid, HOTSPOT_INFO.password, {
-      gateway: HOTSPOT_INFO.ip,
-    })
-    expect(fetchSpy).toHaveBeenCalledWith(
-      `http://${HOTSPOT_INFO.ip}:8089/api/health`,
-      expect.objectContaining({method: "GET"}),
-    )
-    expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO, undefined)
-    // The whole point of the fix: a permission wall must not cost 30 polls per attempt.
-    expect(mockGetCurrentWifiSSID.mock.calls.length).toBeLessThanOrEqual(2)
-  })
-
-  it.each([
     ["ios", "success"],
     ["ios", "empty"],
     ["ios", "preparation failure"],
@@ -535,9 +421,8 @@ describe("GallerySyncService", () => {
     release()
   })
 
-  it("uses the shared Mac association owner instead of a legacy SSID shortcut", async () => {
+  it("joins through the shared iOS association owner instead of an SSID shortcut", async () => {
     Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
-    Object.defineProperty(CrustModule, "isIOSAppOnMac", {value: true, configurable: true, writable: true})
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
     jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
@@ -550,15 +435,77 @@ describe("GallerySyncService", () => {
 
     expect(connectSpy).toHaveBeenCalledWith(expect.any(Symbol), HOTSPOT_INFO.ssid, HOTSPOT_INFO.password, {
       gateway: HOTSPOT_INFO.ip,
+      onPermissionRequired: expect.any(Function),
     })
-    expect(mockGetCurrentWifiSSID).toHaveBeenCalledTimes(1)
+    expect(mockGetCurrentWifiSSID).not.toHaveBeenCalled()
     expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO, undefined)
     expect(releaseSpy).toHaveBeenCalled()
   })
 
-  it("releases the Mac association before retrying after a failed health probe", async () => {
+  it("asks for Local Network access while the iOS join waits for it, and not after cancellation", async () => {
     Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
-    Object.defineProperty(CrustModule, "isIOSAppOnMac", {value: true, configurable: true, writable: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
+    const controller = new AbortController()
+    let waiting!: () => void
+    let finish!: (address: string) => void
+    jest.spyOn(localNetworkTransport, "connect").mockImplementation(
+      (_owner, _ssid, _password, options) =>
+        new Promise((resolve) => {
+          waiting = () => options?.onPermissionRequired?.("unsatisfiedReason=localNetworkDenied")
+          finish = resolve
+        }),
+    )
+    jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+    const notices: string[] = []
+    const unsubscribe = onGalleryNotice((notice) => notices.push(notice.code))
+    try {
+      const work = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO, controller.signal)
+      for (let i = 0; i < 20 && !waiting; i++) await Promise.resolve()
+      waiting()
+      expect(notices).toEqual(["local_network_permission_required"])
+      controller.abort()
+      waiting()
+      expect(notices).toEqual(["local_network_permission_required"])
+      finish("192.168.43.2")
+      await work
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it("does not join again when the glasses report the hotspot ready while a join waits", async () => {
+    // The join keep-alive re-sends the enable, and the glasses answer each with "hotspot ready".
+    gallerySyncService.initialize()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
+    let finish!: (address: string) => void
+    const connectSpy = jest
+      .spyOn(localNetworkTransport, "connect")
+      .mockImplementation(() => new Promise((resolve) => (finish = resolve)))
+    jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
+    jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+    jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+    const work = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+    for (let i = 0; i < 20 && !finish; i++) await Promise.resolve()
+    expect(useGallerySyncStore.getState().syncState).toBe("connecting_wifi")
+
+    GlobalEventEmitter.emit("hotspot_status_change", {
+      enabled: true,
+      ssid: HOTSPOT_INFO.ssid,
+      password: HOTSPOT_INFO.password,
+      local_ip: HOTSPOT_INFO.ip,
+    })
+    await jest.advanceTimersByTimeAsync(10_000)
+    expect(connectSpy).toHaveBeenCalledTimes(1)
+
+    finish("192.168.43.2")
+    await work
+    expect(connectSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it("releases the iOS association before retrying after a failed health probe", async () => {
+    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
     jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
@@ -582,55 +529,6 @@ describe("GallerySyncService", () => {
     expect(events).toEqual(["join", "leave", "join", "leave"])
     expect(releaseSpy).toHaveBeenCalledTimes(2)
     expect(startDownloadSpy).toHaveBeenCalledTimes(1)
-  })
-
-  it("does not tell the user to grant Location when SSID reads fail transiently", async () => {
-    // Location IS granted here; the reads just never resolve to a network. The failure
-    // must not be attributed to the permission, and the readable-mismatch gate must stay
-    // armed for the remaining retries.
-    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
-    mockGetCurrentWifiSSID.mockRejectedValue(wifiError("couldNotDetectSSID", "Cannot detect SSID"))
-    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
-    jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
-    jest.spyOn(localNetworkTransport, "fetch").mockRejectedValue(new Error("Network request failed"))
-    const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
-
-    const notices: string[] = []
-    const unsubscribe = onGalleryNotice((notice) => notices.push(notice.code))
-    try {
-      const pending = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
-      // 5 attempts x (15s verify + 10s probe + 3s retry delay)
-      await jest.advanceTimersByTimeAsync(200_000)
-      await pending
-    } finally {
-      unsubscribe()
-    }
-
-    expect(startDownloadSpy).not.toHaveBeenCalled()
-    expect(notices).not.toContain("location_permission_required")
-    expect(useGallerySyncStore.getState().lastError).not.toMatch(/Location/i)
-  })
-
-  it("still refuses to download when a readable SSID is not the glasses hotspot", async () => {
-    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
-    // Readable, and definitely not the glasses network - the mismatch protection this
-    // fallback must NOT weaken.
-    mockGetCurrentWifiSSID.mockResolvedValue("someone-elses-wifi")
-    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
-    jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
-    const fetchSpy = jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
-    const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
-
-    const pending = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
-    // 5 attempts x (30 verify polls x 500ms + a 3s retry delay)
-    await jest.advanceTimersByTimeAsync(120_000)
-    await pending
-
-    expect(startDownloadSpy).not.toHaveBeenCalled()
-    expect(fetchSpy).not.toHaveBeenCalled()
-    expect(useGallerySyncStore.getState().syncState).toBe("error")
   })
 
   it("updates gallery status from glasses events", () => {
@@ -1164,11 +1062,11 @@ describe("GallerySyncService", () => {
     }
   })
 
-  it.each([false, true])("ignores an old connection SSID rejection after cleanup (fresh start=%s)", async (fresh) => {
+  it.each([false, true])("ignores an old hotspot join rejection after cleanup (fresh start=%s)", async (fresh) => {
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     await gallerySyncService.startSync()
     let rejectOld!: (error: Error) => void
-    mockGetCurrentWifiSSID.mockImplementationOnce(
+    const connect = jest.spyOn(localNetworkTransport, "connect").mockImplementationOnce(
       () =>
         new Promise((_resolve, reject) => {
           rejectOld = reject
@@ -1179,7 +1077,6 @@ describe("GallerySyncService", () => {
       showWifiJoinExplanation(ssid: string): Promise<boolean>
     }
     jest.spyOn(service, "showWifiJoinExplanation").mockResolvedValue(true)
-    const connect = jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
     const oldConnection = service.connectToHotspotWifi(HOTSPOT_INFO)
     for (let i = 0; i < 20 && !rejectOld; i++) await Promise.resolve()
     expect(rejectOld).toBeDefined()
@@ -1198,9 +1095,9 @@ describe("GallerySyncService", () => {
     }
     const saved = useGallerySyncStore.getState()
     const hotspotCalls = (BluetoothSdk.setHotspotState as jest.Mock).mock.calls.length
-    rejectOld(wifiError("locationPermissionDenied", "Permission not granted"))
+    rejectOld(new Error("Hotspot join timed out"))
     await oldConnection
-    expect(connect).not.toHaveBeenCalled()
+    expect(connect).toHaveBeenCalledTimes(1)
     expect(useGallerySyncStore.getState()).toBe(saved)
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledTimes(hotspotCalls)
     expect((gallerySyncService as unknown as {ssidReadable: boolean}).ssidReadable).toBe(true)
@@ -1752,6 +1649,140 @@ describe("GallerySyncService", () => {
     })
     expect(useGallerySyncStore.getState().syncState).toBe("error")
     expect(localStorageService.clearSyncQueue).not.toHaveBeenCalled()
+  })
+
+  describe("interrupted transfers", () => {
+    const VIDEO = {name: "VID_1.mp4", size: 150_000_000, modified: 1, is_video: true} as any
+    const originalAppState = AppState.currentState
+    const setAppState = (state: string) =>
+      Object.defineProperty(AppState, "currentState", {value: state, configurable: true, writable: true})
+
+    const flush = async () => {
+      for (let i = 0; i < 30; i++) await Promise.resolve()
+    }
+
+    const startTransfer = async () => {
+      gallerySyncService.initialize()
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      await gallerySyncService.startSync()
+      useGallerySyncStore.getState().setSyncing([VIDEO])
+      ;(BluetoothSdk.setHotspotState as jest.Mock).mockClear()
+    }
+
+    beforeEach(() => setAppState("active"))
+    afterEach(() => setAppState(originalAppState))
+
+    it("ends a download when the glasses turn their hotspot off, then resumes it", async () => {
+      await startTransfer()
+
+      GlobalEventEmitter.emit("hotspot_status_change", {enabled: false})
+      expect(useGallerySyncStore.getState()).toMatchObject({syncState: "error", lastError: SYNC_INTERRUPTED_MESSAGE})
+      await flush()
+
+      // The dead attempt's AP is released, then a fresh attempt requests it again.
+      expect(BluetoothSdk.setHotspotState).toHaveBeenNthCalledWith(1, false)
+      expect(BluetoothSdk.setHotspotState).toHaveBeenLastCalledWith(true)
+      expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
+    })
+
+    it.each(["idle", "complete", "error"] as const)("ignores the hotspot turning off while %s", (state) => {
+      gallerySyncService.initialize()
+      useGallerySyncStore.getState().setSyncState(state)
+
+      GlobalEventEmitter.emit("hotspot_status_change", {enabled: false})
+
+      expect(useGallerySyncStore.getState().lastError).not.toBe(SYNC_INTERRUPTED_MESSAGE)
+    })
+
+    it("waits for the foreground to resume a transfer interrupted in the background", async () => {
+      await startTransfer()
+      setAppState("background")
+
+      GlobalEventEmitter.emit("hotspot_status_change", {enabled: false})
+      await flush()
+      expect(useGallerySyncStore.getState().syncState).toBe("error")
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalledWith(true)
+
+      setAppState("active")
+      await (gallerySyncService as any).handleAppStateChange("active")
+      await flush()
+      expect(BluetoothSdk.setHotspotState).toHaveBeenLastCalledWith(true)
+      expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
+    })
+
+    it("notices on return to the app that the hotspot went away while suspended", async () => {
+      await startTransfer()
+      useGlassesStore.getState().setGlassesInfo({hotspotEnabled: false} as any)
+
+      await (gallerySyncService as any).handleAppStateChange("active")
+
+      expect(BluetoothSdk.setHotspotState).toHaveBeenNthCalledWith(1, false)
+    })
+
+    it("ends a download that makes no progress for three minutes", async () => {
+      await startTransfer()
+
+      await jest.advanceTimersByTimeAsync(170_000)
+      expect(useGallerySyncStore.getState().syncState).toBe("syncing")
+
+      await jest.advanceTimersByTimeAsync(20_000)
+      expect(BluetoothSdk.setHotspotState).toHaveBeenNthCalledWith(1, false)
+    })
+
+    it("keeps a slow download that is still making progress", async () => {
+      await startTransfer()
+
+      for (let percent = 1; percent <= 6; percent++) {
+        await jest.advanceTimersByTimeAsync(60_000)
+        useGallerySyncStore.getState().setCurrentFile(VIDEO.name, percent)
+      }
+
+      expect(useGallerySyncStore.getState().syncState).toBe("syncing")
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    })
+
+    it("leaves the sync alone while it waits for local processing to finish", async () => {
+      await startTransfer()
+      jest.spyOn(mediaProcessingQueue, "waitUntilDrained").mockReturnValue(new Promise<void>(() => {}))
+      void (gallerySyncService as any).drainProcessingQueue()
+
+      // A long stabilization or export: no network traffic, so the glasses stop their hotspot.
+      await jest.advanceTimersByTimeAsync(200_000)
+      GlobalEventEmitter.emit("hotspot_status_change", {enabled: false})
+      await flush()
+
+      expect(useGallerySyncStore.getState().syncState).toBe("syncing")
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    })
+
+    it("does not resume after the engine is torn down mid-interruption", async () => {
+      await startTransfer()
+      const beginSync = jest.spyOn(gallerySyncService as any, "beginSync")
+
+      GlobalEventEmitter.emit("hotspot_status_change", {enabled: false})
+      await gallerySyncService.cleanup()
+      await flush()
+
+      expect(beginSync).not.toHaveBeenCalled()
+    })
+
+    it("stops resuming on its own after three interruptions in a row", async () => {
+      await startTransfer()
+
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        useGallerySyncStore.getState().setSyncing([VIDEO])
+        ;(BluetoothSdk.setHotspotState as jest.Mock).mockClear()
+        GlobalEventEmitter.emit("hotspot_status_change", {enabled: false})
+        await flush()
+        if (attempt <= 3) {
+          expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
+        }
+      }
+
+      expect(useGallerySyncStore.getState()).toMatchObject({syncState: "error", lastError: SYNC_INTERRUPTED_MESSAGE})
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalledWith(true)
+      expect(gallerySyncNotifications.showSyncError).toHaveBeenCalledWith(SYNC_INTERRUPTED_MESSAGE)
+    })
   })
 
   describe("startFileDownload /api/sync desync recovery", () => {

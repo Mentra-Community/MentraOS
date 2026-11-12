@@ -16,6 +16,7 @@ import type {WorkspaceDeployment} from "@/services/deployment/types"
 import {storage} from "@/utils/storage"
 import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
+import {installCloudWorkspaceApi} from "@/services/fleet/cloudWorkspaceApi"
 import {
   appRegistry,
   getDevAppRecords,
@@ -41,6 +42,19 @@ import {
   getBluetoothSdkListenerCount,
   resetBluetoothSdkMock,
 } from "@/test-utils/mockBluetoothSdk"
+
+// The bundled ZIPs are packed by CI, not committed: the tests use stand-ins.
+jest.mock("@/generated/bundledMiniapps", () => ({
+  BUNDLED_MINIAPPS: [1, 2],
+  BUNDLED_SYSTEM_MINIAPP_PACKAGES: [
+    "com.mentra.ai",
+    "com.mentra.call",
+    "com.mentra.captions",
+    "com.mentra.link",
+    "com.mentra.livestreamer",
+    "com.mentra.notes",
+  ],
+}))
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
@@ -70,6 +84,10 @@ jest.mock("@/utils/AlertUtils", () => ({
 
 jest.mock("@/services/Migrations", () => ({
   migrate: jest.fn(() => Promise.resolve()),
+}))
+
+jest.mock("@/services/fleet/cloudWorkspaceApi", () => ({
+  installCloudWorkspaceApi: jest.fn(() => () => {}),
 }))
 
 jest.mock("@/utils/PermissionsUtils", () => ({
@@ -660,8 +678,6 @@ describe("MantleManager", () => {
   })
 
   it("configures the build's bundled miniapps and its miniapp SDK range", () => {
-    expect(miniappConfig.bundledStoreMiniappPackages).toBeUndefined()
-    expect(miniappConfig.bundledSystemMiniappStoreOwners).toBeUndefined()
     expect(miniappConfig.isMiniappAvailable).toBeUndefined()
     expect(miniappConfig.supportedMiniappSdkRange).toBe(">=0.3.0 <4.0.0")
   })
@@ -1297,6 +1313,17 @@ describe("runtime recovery initialization", () => {
     await activity
     await manager.waitForMiniapps()
     expect(autostart).toHaveBeenCalledTimes(1)
+  })
+
+  it("wires the workspace calls before the engine starts", async () => {
+    const install = jest.mocked(installCloudWorkspaceApi)
+    install.mockClear()
+    jest.spyOn(engine, "start").mockImplementationOnce(async () => {
+      expect(install).toHaveBeenCalledTimes(1)
+    })
+    await manager.init()
+    expect(engine.start).toHaveBeenCalledTimes(1)
+    expect(install).toHaveBeenCalledTimes(1)
   })
 
   it("retries failed foreground reconciliation without restarting the runtime", async () => {

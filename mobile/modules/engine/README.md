@@ -13,6 +13,11 @@ npm install @mentra/engine
 > package manager. Until every peer is published to npm, consume the engine
 > from this monorepo's workspace (as the example OEM app does).
 
+> **Secure storage:** `expo-secure-store` (`~55.0.14`) is a required peer
+> dependency. The engine keeps Core sign-in credentials in it (iOS Keychain,
+> Android Keystore) instead of in MMKV, and moves existing ones on first
+> launch. Install it in your app like the other Expo peers.
+
 > **Module format:** the published entry points target **React Native /
 > Metro** consumers (the `react-native` exports condition). Loading
 > `@mentra/engine` from plain Node (`require`/ESM) is not supported at 0.1.x —
@@ -37,6 +42,10 @@ resolve live TypeScript source):
   controller plus its stock full-screen renderer. `useMentraLiveOta` owns the
   check, hotspot or Wi-Fi install, APK/MTK/BES progress, reboot, retry, and final
   verification behavior. `MentraLiveOtaFlow` renders that same public hook.
+- **`@mentra/engine/pairing`** (`src/react/pairing.ts`) — Mentra Live
+  pairing: `useMentraLivePairing` owns the scan, bond adoption, connect, Pair
+  Audio, iOS stale-bond and failure behavior over `engine.pairing`;
+  `MentraLivePairingFlow` renders it with the Mentra App's pages.
 - **`@mentra/engine/bluetooth-sdk`** (`src/bluetooth-sdk/index.ts`) — the
   complete public Bluetooth SDK surface, re-exported without a wrapper so it
   has the same singleton identity as `@mentra/bluetooth-sdk`. The supported
@@ -109,6 +118,36 @@ disabled unless an Expo/React Native host explicitly sets
 `EXPO_PUBLIC_ASG_OTA_VERSION_URL`; native source hosts use the Bluetooth SDK's
 debug `setOtaVersionUrl` surface. Pre-39 glasses retain their separate legacy
 path because those clients ignore the URL sent by the phone.
+
+### Mentra Live pairing flow
+
+Pairing works the same way, one stock flow and one hook:
+
+```tsx
+import {MentraLivePairingFlow} from "@mentra/engine/pairing"
+;<MentraLivePairingFlow initialPage="prep" onExit={() => setShowPairing(false)} onFinished={() => setShowPairing(false)} />
+```
+
+It starts on `prep` (power on) or `scan`, and ends in `onFinished` once the
+glasses are paired and the person continues, or in `onExit(page)` when they
+leave. `theme`, `translate`, `images` and `prepMedia` restyle the stock pages;
+`prepareScan` and `prepareConnect` let a host ask for permissions first. A host
+with its own navigator makes the controller itself and renders
+`MentraLivePairingPages`, wiring back gestures to `controller.back()`. Any page
+can be replaced through `pages`, keeping the others stock:
+
+```tsx
+import {MentraLivePairingPages, useMentraLivePairing} from "@mentra/engine/pairing"
+
+const pairing = useMentraLivePairing({onExit, onFinished})
+;<MentraLivePairingPages controller={pairing} pages={{scan: MyScanPage}} />
+// MyScanPage receives {state, controller}: state.glasses, controller.select(glasses), scanAgain(), back()
+```
+
+As with OTA, customize presentation only: the Bluetooth SDK and Engine decide
+when glasses are ready, whether audio needs the person, and what a failure means.
+The customer guide is
+[Pair Mentra Live](https://docs.mentraglass.com/bluetooth-sdk/pairing).
 
 ## Incident reports and collection completion
 

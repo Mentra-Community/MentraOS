@@ -408,6 +408,30 @@ describe("progress.tsx display states", () => {
     }
   })
 
+  it("offers only Retry when a required update fails", async () => {
+    setGlassesConnected()
+    const {getByText, queryByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "downgrade_handoff_failed",
+      })
+    })
+
+    expect(getByText("Update Failed")).toBeDefined()
+    expect(getByText("Retry")).toBeDefined()
+    expect(queryByText("Done")).toBeNull()
+    expect(queryByText("Later")).toBeNull()
+  })
+
   it("restores overlay suppression when retrying after WiFi setup", () => {
     setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
@@ -458,7 +482,7 @@ describe("progress.tsx display states", () => {
 
   it("explains a failed downgrade handoff instead of echoing the glasses code", () => {
     setGlassesConnected()
-    const {getByText, getByTestId, queryByText} = render(<OtaProgressScreen />)
+    const {getByText, queryByTestId, queryByText} = render(<OtaProgressScreen />)
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -478,15 +502,15 @@ describe("progress.tsx display states", () => {
     expect(
       getByText("The recovery service on your glasses did not respond. Restart your glasses and try again."),
     ).toBeDefined()
-    // The raw code stays visible for support, but only in the subdued secondary line.
-    expect(getByTestId("ota-error-code").props.children).toBe("Error code: downgrade_handoff_failed")
+    // Technical codes stay in private incident evidence.
+    expect(queryByTestId("ota-error-code")).toBeNull()
     expect(queryByText("downgrade_handoff_failed")).toBeNull()
     expect(getByText("Retry")).toBeDefined()
   })
 
-  it("falls back to generic glasses-error copy for an unknown code and keeps the code visible", () => {
+  it("falls back to plain unknown-error copy without exposing the technical code", () => {
     setGlassesConnected()
-    const {getByText, getByTestId} = render(<OtaProgressScreen />)
+    const {getByText, queryByTestId} = render(<OtaProgressScreen />)
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -502,8 +526,8 @@ describe("progress.tsx display states", () => {
       })
     })
 
-    expect(getByText("Your glasses reported an unexpected error. Restart your glasses and try again.")).toBeDefined()
-    expect(getByTestId("ota-error-code").props.children).toBe("Error code: brand_new_code")
+    expect(getByText("Something went wrong. Please try again.")).toBeDefined()
+    expect(queryByTestId("ota-error-code")).toBeNull()
   })
 
   it("shows disconnected state when not connected and not terminal", () => {

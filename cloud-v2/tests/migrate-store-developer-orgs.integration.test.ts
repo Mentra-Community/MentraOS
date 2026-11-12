@@ -504,6 +504,7 @@ describe("dry run", () => {
       synthesizedOwners: [ORG_BETA],
       promotedOwners: [ORG_DELTA],
       duplicateMemberships: [{orgId: ORG_BETA, userId: U.betaAdmin}],
+      otherOrgMemberships: [],
       targetCompared: false,
       skippedWorkspaces: [],
       workspaceProfiles: [],
@@ -834,6 +835,48 @@ describe("apply", () => {
     expect(await validateCredentialToken(keys.revoked.token)).toBeNull()
     expect(await validateCredentialToken(keys.ghostCreator.token)).toBeNull()
     expect(await validateCredentialToken(keys.removedCreator.token)).toBeNull()
+  })
+
+  test("a person in several orgs keeps one membership, the highest role and then the earliest; the rest are reported", async () => {
+    const ORG_EPS = "dorg_01J8Z3EPSILON00000000000E5"
+    const epsAt = at("2026-07-01T10:00:00.000Z")
+    await sourceDb()
+      .collection("developer_orgs")
+      .insertOne({orgId: ORG_EPS, ownerUserId: U.acmeOwner, displayName: "Epsilon", createdAt: epsAt, updatedAt: epsAt})
+    // Olive owns ACME (from January) and Epsilon (from July): equal roles, so the earlier one is kept.
+    const {insertedId: oliveInEps} = await sourceDb()
+      .collection("developer_org_memberships")
+      .insertOne(membership({orgId: ORG_EPS, userId: U.acmeOwner, role: "owner", createdAt: epsAt}))
+    // Beta's recorded owner is also an ACME admin from earlier, with a key there: the owner role wins.
+    const {insertedId: betaOwnerInAcme} = await sourceDb()
+      .collection("developer_org_memberships")
+      .insertOne(membership({orgId: ORG_ACME, userId: U.betaOwner, role: "admin", createdAt: at("2025-12-01T10:00:00.000Z")}))
+    const betaOwnersAcmeKey = storeKey({orgId: ORG_ACME, name: "Beta owner in Acme", createdByUserId: U.betaOwner})
+    await sourceDb().collection("developer_org_api_keys").insertOne(betaOwnersAcmeKey.row)
+
+    const report = await run({apply: true})
+
+    expect(report.otherOrgMemberships).toEqual([
+      {orgId: ORG_ACME, membershipId: `wm_${String(betaOwnerInAcme)}`, userId: U.betaOwner, keptOrgId: ORG_BETA},
+      {orgId: ORG_EPS, membershipId: `wm_${String(oliveInEps)}`, userId: U.acmeOwner, keptOrgId: ORG_ACME},
+    ])
+    // Epsilon is left with no owner, for an Organization Admin; the dropped membership's key is not imported.
+    expect(report.ownerlessOrgs).toContain(ORG_EPS)
+    expect(report.keysWithoutCreator).toContainEqual({orgId: ORG_ACME, keyId: betaOwnersAcmeKey.row.keyId, name: "Beta owner in Acme"})
+    expect(await validateCredentialToken(betaOwnersAcmeKey.token)).toBeNull()
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_owner_${ORG_BETA}`}).lean()).toMatchObject({status: "active", role: "owner"})
+    // No Store user waits on more than one membership in Core.
+    const several = await WorkspaceMembershipModel.aggregate([
+      {$match: {status: "active", pendingWorkosUserId: {$type: "string"}}},
+      {$group: {_id: "$pendingWorkosUserId", count: {$sum: 1}}},
+      {$match: {count: {$gt: 1}}},
+    ])
+    expect(several).toEqual([])
+
+    // A re-run picks the same way and changes nothing.
+    const settled = await snapshotTarget()
+    expect((await run({apply: true})).otherOrgMemberships).toEqual(report.otherOrgMemberships)
+    expect(await snapshotTarget()).toEqual(settled)
   })
 })
 
@@ -1877,10 +1920,16 @@ describe("re-running apply never leaves a workspace without an owner", () => {
 
     const report = await run({apply: true})
 
+    // Adam is DELTA's owner now: one membership per person, so ACME's admin membership is no longer imported.
+    const acmeAdminId = `wm_${await sourceMembershipHex(U.acmeAdmin, ORG_ACME, "admin")}`
+    expect(report.otherOrgMemberships).toEqual([
+      {orgId: ORG_ACME, membershipId: acmeAdminId, userId: U.acmeAdmin, keptOrgId: ORG_DELTA},
+    ])
     expect(report.keptLastOwners).toEqual([])
     expect(report.removedMemberships.map(entry => [entry.orgId, entry.membershipId]).sort()).toEqual(
       [
         [ORG_ACME, acmeOwnerId],
+        [ORG_ACME, acmeAdminId],
         [ORG_BETA, `wm_owner_${ORG_BETA}`],
         [ORG_DELTA, deltaOwnerId],
       ].sort(),

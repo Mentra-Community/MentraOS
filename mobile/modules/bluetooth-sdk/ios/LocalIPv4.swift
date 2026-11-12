@@ -5,54 +5,6 @@ import Foundation
 /// (photo upload receiver, hotspot-served OTA). Prefers WiFi-ish interfaces carrying RFC1918
 /// addresses — under a glasses-hotspot session en0 holds the 192.168.43.x client address.
 enum LocalIPv4 {
-    /// Return the active Wi-Fi address only when it is on the glasses gateway's /24.
-    /// iPhone Wi-Fi is `en0`; accepting AWDL, VPN, cellular, or another private
-    /// interface can publish an endpoint that the glasses cannot reach.
-    static func wifiIPv4Address(matchingGateway gateway: String) -> String? {
-        guard let gatewayPrefix = subnet24Prefix(gateway) else {
-            return nil
-        }
-
-        var interfaces: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&interfaces) == 0, let first = interfaces else {
-            return nil
-        }
-        defer { freeifaddrs(interfaces) }
-
-        var cursor: UnsafeMutablePointer<ifaddrs>? = first
-        while let current = cursor {
-            defer { cursor = current.pointee.ifa_next }
-            let interface = current.pointee
-            guard String(cString: interface.ifa_name) == "en0",
-                  let addressPointer = interface.ifa_addr,
-                  addressPointer.pointee.sa_family == UInt8(AF_INET),
-                  (interface.ifa_flags & UInt32(IFF_UP)) != 0
-            else {
-                continue
-            }
-
-            var address = addressPointer.pointee
-            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            guard getnameinfo(
-                &address,
-                socklen_t(address.sa_len),
-                &hostname,
-                socklen_t(hostname.count),
-                nil,
-                0,
-                NI_NUMERICHOST
-            ) == 0 else {
-                continue
-            }
-
-            let ip = String(cString: hostname)
-            if subnet24Prefix(ip) == gatewayPrefix {
-                return ip
-            }
-        }
-        return nil
-    }
-
     static func bestLocalIPv4Address() -> String? {
         var interfaces: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&interfaces) == 0, let first = interfaces else {
@@ -133,18 +85,5 @@ enum LocalIPv4 {
 
     private static func isLinkLocalIPv4(_ ip: String) -> Bool {
         ip.hasPrefix("169.254.")
-    }
-
-    private static func subnet24Prefix(_ ip: String) -> String? {
-        let parts = ip.split(separator: ".")
-        guard parts.count == 4,
-              parts.allSatisfy({ part in
-                  guard let value = Int(part) else { return false }
-                  return (0 ... 255).contains(value)
-              })
-        else {
-            return nil
-        }
-        return parts.prefix(3).joined(separator: ".")
     }
 }

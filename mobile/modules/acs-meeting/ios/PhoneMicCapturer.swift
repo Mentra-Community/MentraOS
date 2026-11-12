@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import GlassesMedia
 
 /// Phone-mic uplink for ACS virtual outgoing. Taps the hardware input at
 /// whatever rate the session is already using and never switches the session
@@ -29,9 +30,9 @@ final class PhoneMicCapturer {
       }
       try engine.start()
       running = true
-      NSLog("ACS-SPIKE PhoneMicCapturer started")
+      MediaLog.log("ACS-SPIKE PhoneMicCapturer started")
     } catch {
-      NSLog("ACS-SPIKE PhoneMicCapturer start failed: \(error)")
+      MediaLog.log("ACS-SPIKE PhoneMicCapturer start failed: \(error)")
       stop()
     }
   }
@@ -40,7 +41,7 @@ final class PhoneMicCapturer {
     engine.inputNode.removeTap(onBus: 0)
     if engine.isRunning { engine.stop() }
     running = false
-    NSLog("ACS-SPIKE PhoneMicCapturer stopped")
+    MediaLog.log("ACS-SPIKE PhoneMicCapturer stopped")
   }
 
   private static func pcm16(from buffer: AVAudioPCMBuffer) -> Data? {

@@ -35,14 +35,22 @@ final class LocalNetworkAccessRequestTests: XCTestCase {
     func testPermissionRequiredKeepsRequestPendingUntilAccessBecomesReady() throws {
         let queue = DispatchQueue(label: "test.permission")
         let connection = Connection()
-        let request = LocalNetworkAccessRequest(connection: connection, queue: queue)
-        var prompts = 0
+        let clock = Clock()
+        let request = LocalNetworkAccessRequest(connection: connection, queue: queue,
+                                                now: { clock.now }, scheduleTimeout: clock.schedule)
+        var answers: [String] = []
         var results: [Result<Void, Error>] = []
-        request.start(onPermissionRequired: { prompts += 1 }, completion: { results.append($0) })
+        request.start(onPermissionRequired: { answers.append($0) }, completion: { results.append($0) })
         try queue.sync {
             connection.onState?(.waiting(.posix(.ENETDOWN)), .localNetworkDenied)
+            clock.advance(3)
             connection.onState?(.waiting(.posix(.ENETDOWN)), .localNetworkDenied)
-            XCTAssertEqual(prompts, 1)
+            XCTAssertTrue(answers.isEmpty, "A denial shorter than the grace period is not reported")
+            clock.advance(2)
+            connection.onState?(.waiting(.posix(.ENETDOWN)), .localNetworkDenied)
+            clock.advance(60)
+            XCTAssertEqual(answers.count, 1)
+            XCTAssertTrue(answers[0].contains("unsatisfiedReason=localNetworkDenied"), answers[0])
             XCTAssertTrue(results.isEmpty, "A denied path may mean the user has not answered the alert yet")
             XCTAssertEqual(connection.cancellations, 0)
             connection.onState?(.ready, nil)
@@ -52,12 +60,39 @@ final class LocalNetworkAccessRequestTests: XCTestCase {
         }
     }
 
+    func testDenialThatClearsWithinTheGracePeriodIsNotReported() throws {
+        // macOS reports a denied path for about 1.5 s after joining the hotspot, with access granted.
+        let queue = DispatchQueue(label: "test.permission.join")
+        let connection = Connection()
+        let clock = Clock()
+        let request = LocalNetworkAccessRequest(connection: connection, queue: queue,
+                                                now: { clock.now }, scheduleTimeout: clock.schedule)
+        var prompts = 0
+        var results: [Result<Void, Error>] = []
+        request.start(onPermissionRequired: { _ in prompts += 1 }, completion: { results.append($0) })
+        try queue.sync {
+            connection.onState?(.waiting(.posix(.ENETDOWN)), .localNetworkDenied)
+            clock.advance(1.5)
+            connection.onState?(.waiting(.posix(.ENETDOWN)), nil)
+            clock.advance(10)
+            XCTAssertEqual(prompts, 0)
+            // A later denial gets its own full grace period.
+            connection.onState?(.waiting(.posix(.ENETDOWN)), .localNetworkDenied)
+            clock.advance(4)
+            connection.onState?(.ready, nil)
+            clock.advance(10)
+            XCTAssertEqual(prompts, 0)
+            XCTAssertEqual(results.count, 1)
+            XCTAssertNoThrow(try results[0].get())
+        }
+    }
+
     func testCancelWhileAlertIsOpenRejectsAndIgnoresLateApproval() throws {
         let queue = DispatchQueue(label: "test.permission.cancel")
         let connection = Connection()
         let request = LocalNetworkAccessRequest(connection: connection, queue: queue)
         var results: [Result<Void, Error>] = []
-        request.start(onPermissionRequired: {}, completion: { results.append($0) })
+        request.start(onPermissionRequired: { _ in }, completion: { results.append($0) })
         let late = queue.sync { () -> ((NWConnection.State, NWPath.UnsatisfiedReason?) -> Void)? in
             connection.onState?(.waiting(.posix(.ENETDOWN)), .localNetworkDenied)
             return connection.onState
@@ -76,7 +111,7 @@ final class LocalNetworkAccessRequestTests: XCTestCase {
         let connection = Connection()
         let request = LocalNetworkAccessRequest(connection: connection, queue: queue)
         var results: [Result<Void, Error>] = []
-        request.start(onPermissionRequired: {}, completion: { results.append($0) })
+        request.start(onPermissionRequired: { _ in }, completion: { results.append($0) })
         try queue.sync {
             connection.onState?(.waiting(.posix(.ENETUNREACH)), nil)
             XCTAssertTrue(results.isEmpty, "NWConnection.waiting is not a terminal failure")
@@ -93,7 +128,7 @@ final class LocalNetworkAccessRequestTests: XCTestCase {
         let request = LocalNetworkAccessRequest(connection: connection, queue: queue)
         var prompts = 0
         var results: [Result<Void, Error>] = []
-        request.start(onPermissionRequired: { prompts += 1 }, completion: { results.append($0) })
+        request.start(onPermissionRequired: { _ in prompts += 1 }, completion: { results.append($0) })
         try queue.sync {
             connection.onState?(.failed(.posix(.ECONNREFUSED)), nil)
             XCTAssertEqual(prompts, 0)
@@ -109,7 +144,7 @@ final class LocalNetworkAccessRequestTests: XCTestCase {
         let request = LocalNetworkAccessRequest(connection: connection, queue: queue,
                                                 now: { clock.now }, scheduleTimeout: clock.schedule)
         var results: [Result<Void, Error>] = []
-        request.start(onPermissionRequired: {}, completion: { results.append($0) })
+        request.start(onPermissionRequired: { _ in }, completion: { results.append($0) })
         try queue.sync {
             connection.onState?(.setup, nil)
             clock.advance(10)
@@ -136,7 +171,7 @@ final class LocalNetworkAccessRequestTests: XCTestCase {
                                                 now: { clock.now }, scheduleTimeout: clock.schedule)
         var prompts = 0
         var results: [Result<Void, Error>] = []
-        request.start(onPermissionRequired: { prompts += 1 }, completion: { results.append($0) })
+        request.start(onPermissionRequired: { _ in prompts += 1 }, completion: { results.append($0) })
         try queue.sync {
             connection.onState?(.waiting(.posix(.ENETDOWN)), nil)
             clock.advance(7)
@@ -171,7 +206,7 @@ final class LocalNetworkAccessRequestTests: XCTestCase {
         let request = LocalNetworkAccessRequest(connection: connection, queue: queue,
                                                 now: { clock.now }, scheduleTimeout: clock.schedule)
         var results: [Result<Void, Error>] = []
-        request.start(onPermissionRequired: {}, completion: { results.append($0) })
+        request.start(onPermissionRequired: { _ in }, completion: { results.append($0) })
         let late = queue.sync {
             connection.onState?(.waiting(.posix(.ENETUNREACH)), nil)
             return connection.onState
@@ -191,7 +226,7 @@ final class LocalNetworkAccessRequestTests: XCTestCase {
         let connection = Connection()
         let request = LocalNetworkAccessRequest(connection: connection, queue: queue)
         var results: [Result<Void, Error>] = []
-        request.start(onPermissionRequired: {}, completion: { results.append($0) })
+        request.start(onPermissionRequired: { _ in }, completion: { results.append($0) })
         try queue.sync {
             connection.onState?(.cancelled, nil)
             XCTAssertEqual(results.count, 1)

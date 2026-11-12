@@ -1,7 +1,7 @@
 /**
  * BlobStore
  *
- * Host-side implementation of `session.blob` — persistent, per-(userId,
+ * Host-side implementation of `session.blob` — persistent, per-(data partition,
  * packageName) BINARY storage for local miniapps, keyed like SimpleStorage (its
  * small-string sibling). Extracted from LocalMiniappRuntime the same way
  * NavigationHandlers is, to keep the runtime file small.
@@ -14,9 +14,15 @@
  *     entirely host-side;
  *   - `share` hands a stored file to the OS share sheet.
  *
- * Layout (mirrors SimpleStorage's scoping):
- *   bytes:    Paths.document/mentra_blobs/{userId}/{packageName}/{fileName}
- *   metadata: MMKV key  mentraos_blobmeta_{userId}_{packageName}_{key}  → StoredBlobMeta JSON
+ * Miniapp code is untrusted: `setFromUrl` downloads only http: and https: URLs,
+ * and a shared copy's name is one safe file name (blobPaths.shareFileName).
+ * This directory is the miniapp's own files (`ownFilesDirectory`), the only
+ * ones `session.system.share` and `session.speaker.play` accept by file URL.
+ *
+ * Layout (mirrors SimpleStorage's scoping; see miniappDataPartition.ts):
+ *   bytes:    Paths.document/mentra_blobs/{partitionId}/{packageName}/{fileName}
+ *   metadata: MMKV key  mentraos_blobmeta/{partitionId}/{packageName}/{key}  → StoredBlobMeta JSON
+ * Blobs from before partitions ({userId} in place of {partitionId}) move into the personal partition on first use.
  *
  * The on-disk file name is a generated id plus a mime-derived extension (iOS
  * AVPlayer keys a local file's format off the path extension, so blobs played
@@ -34,6 +40,9 @@ import {Directory, File, Paths, type FileHandle} from "expo-file-system"
 import {MiniappErrorCode} from "@mentra/miniapp"
 import {storage as mmkvStorage} from "../utils/storage/storage"
 import {sanitizeSegment, shareFileName, withDiskExt} from "./blobPaths"
+import {canonicalPath} from "./miniappFiles"
+import {filePathOfUri, isNetworkUrl} from "./miniappPaths"
+import type {MiniappDataPartition} from "./miniappDataPartition"
 
 const LOG_TAG = "LocalMiniappRuntime"
 
@@ -50,7 +59,9 @@ const SHARE_DIR_NAME = "mentra_blob_share"
  */
 const SHARE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const SHARE_LAST_USED_FILE = ".last-shared"
-const META_KEY_ROOT = "mentraos_blobmeta_"
+const META_KEY_ROOT = "mentraos_blobmeta/"
+const LEGACY_META_KEY_ROOT = "mentraos_blobmeta_"
+const MIGRATED_KEY_ROOT = "mentraos_blobmeta_migrated/"
 /** Cap md5 computation so we don't block the JS thread hashing a huge file. */
 const MD5_MAX_BYTES = 50 * 1024 * 1024
 
@@ -65,8 +76,8 @@ type SendResult = (
 
 export interface BlobStoreHooks {
   sendResult: SendResult
-  /** Resolve the current user id (same source SimpleStorage uses). */
-  getUserId: () => string
+  /** The data partition `packageName` uses now (same source SimpleStorage uses). Throws while no account is known. */
+  getPartition: (packageName: string) => MiniappDataPartition
 }
 
 interface StoredBlobMeta {
@@ -108,23 +119,77 @@ export class BlobStore {
   private readonly readers = new Map<string, ActiveReader>() // key: host handle id
   /** user + package → committed usage bytes, cached; invalidated on commit/delete/clear. */
   private readonly usageCache = new Map<string, number>()
+  private readonly migrated = new Set<string>()
 
   constructor(private readonly hooks: BlobStoreHooks) {}
 
   // ---- path / meta helpers -------------------------------------------------
 
-  private currentIdentity(packageName: string): {userId: string; scope: string} {
-    const userId = this.hooks.getUserId().trim()
-    if (!userId) throw new Error("Mentra user identity is unavailable")
-    const scope = `${userId}\0${packageName}`
-    return {userId, scope}
+  private currentIdentity(packageName: string): {partitionId: string; scope: string} {
+    const partition = this.hooks.getPartition(packageName)
+    if (!partition.id) throw new Error("Mentra user identity is unavailable")
+    if (partition.personalUserId) this.migrateLegacy(partition.personalUserId, packageName, partition.id)
+    return {partitionId: partition.id, scope: `${partition.id}\0${packageName}`}
+  }
+
+  /**
+   * Move blobs stored before partitions (scoped by user id alone) into that account's personal partition, once.
+   * Throws when the files cannot move, so the request fails and nothing is created in the partition: the next use
+   * tries again, with the blobs and their metadata still where they were.
+   */
+  private migrateLegacy(userId: string, packageName: string, partitionId: string): void {
+    const marker = `${MIGRATED_KEY_ROOT}${userId}/${packageName}`
+    if (this.migrated.has(marker) || mmkvStorage.load<boolean>(marker).is_ok()) {
+      this.migrated.add(marker)
+      return
+    }
+    try {
+      const legacyDir = new Directory(
+        Paths.document,
+        ROOT_DIR_NAME,
+        sanitizeSegment(userId),
+        sanitizeSegment(packageName),
+      )
+      const targetDir = new Directory(Paths.document, ROOT_DIR_NAME, partitionId, sanitizeSegment(packageName))
+      if (legacyDir.exists && !targetDir.exists) {
+        const parent = new Directory(Paths.document, ROOT_DIR_NAME, partitionId)
+        if (!parent.exists) parent.create({intermediates: true})
+        legacyDir.move(targetDir)
+      } else if (legacyDir.exists) {
+        for (const entry of legacyDir.list()) {
+          if (entry instanceof File && !new File(targetDir, entry.name).exists) entry.move(targetDir)
+        }
+      }
+      const legacyPrefix = `${LEGACY_META_KEY_ROOT}${sanitizeSegment(userId)}_${packageName}_`
+      const prefix = `${META_KEY_ROOT}${partitionId}/${packageName}/`
+      for (const key of mmkvStorage.getAllKeys()) {
+        if (!key.startsWith(legacyPrefix)) continue
+        const meta = mmkvStorage.load<StoredBlobMeta>(key)
+        const target = prefix + key.slice(legacyPrefix.length)
+        if (meta.is_ok() && !mmkvStorage.load<StoredBlobMeta>(target).is_ok()) mmkvStorage.save(target, meta.value)
+        mmkvStorage.remove(key)
+      }
+      mmkvStorage.save(marker, true)
+      this.migrated.add(marker)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: blob migration for ${packageName} failed; retried on next use`, err)
+      throw err
+    }
+  }
+
+  /**
+   * The directory holding this miniapp's blobs in the data partition it uses now:
+   * the only files its file URLs may name. Throws while no account is known.
+   */
+  ownFilesDirectory(packageName: string): Directory {
+    return this.dirFor(packageName)
   }
 
   private dirFor(packageName: string): Directory {
     const dir = new Directory(
       Paths.document,
       ROOT_DIR_NAME,
-      sanitizeSegment(this.currentIdentity(packageName).userId),
+      this.currentIdentity(packageName).partitionId,
       sanitizeSegment(packageName),
     )
     if (!dir.exists) dir.create({intermediates: true})
@@ -132,7 +197,7 @@ export class BlobStore {
   }
 
   private metaPrefix(packageName: string): string {
-    return `${META_KEY_ROOT}${sanitizeSegment(this.currentIdentity(packageName).userId)}_${packageName}_`
+    return `${META_KEY_ROOT}${this.currentIdentity(packageName).partitionId}/${packageName}/`
   }
 
   private metaKey(packageName: string, key: string): string {
@@ -390,10 +455,12 @@ export class BlobStore {
       this.fail(packageName, requestId, MiniappErrorCode.INTERNAL, new Error("setFromUrl requires key + url"))
       return
     }
-    if (url.startsWith("file:") || url.startsWith("javascript:")) {
+    // Only the network: a file: URL (in any case), content: URI or other local
+    // scheme would copy one of the phone's files into the miniapp's storage.
+    if (!isNetworkUrl(url)) {
       this.hooks.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.BLOB_DOWNLOAD_FAILED,
-        message: "Unsupported URL scheme",
+        message: "Unsupported URL scheme: setFromUrl downloads only http: and https: URLs",
       })
       return
     }
@@ -672,6 +739,13 @@ export class BlobStore {
       if (!temp.exists || temp.size !== meta.bytes) {
         if (temp.exists) temp.delete()
         file.copy(temp)
+      }
+      // Resolve, then verify: the copy is directly in its share directory.
+      const tempPath = filePathOfUri(temp.uri)
+      const real = tempPath ? canonicalPath(tempPath) : null
+      const realDir = canonicalPath(filePathOfUri(tempDir.uri) ?? "")
+      if (!real || !realDir || real.slice(0, real.lastIndexOf("/")) !== realDir) {
+        throw new Error("blob share copy is outside its directory")
       }
       cacheReady = true
       // Persist each handoff's age, even when reusing old bytes. Directory

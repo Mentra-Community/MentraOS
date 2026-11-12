@@ -43,6 +43,20 @@ describe("shareFileName", () => {
     expect(out).toBe("a_b_c_d_e_f_g_h.wav")
     expect(out).not.toContain("/")
   })
+  it("never names the share's directory or its parent", () => {
+    // A miniapp chose the name; "." or ".." would put the copy outside its directory.
+    for (const name of [".", "..", " .. ", "/", "\\"]) {
+      const out = shareFileName({name, fileName: "lq3x9-abcd1234ef", mimeType: "application/x-unknown"})
+      expect([".", ".."]).not.toContain(out)
+      expect(out).not.toContain("/")
+    }
+    expect(shareFileName({name: "..", fileName: "lq3x9-abcd1234ef", mimeType: "audio/wav"})).toBe(
+      "lq3x9-abcd1234ef.wav",
+    )
+    expect(shareFileName({name: "../../Documents/mmkv/mmkv.default", fileName: "x", mimeType: "audio/wav"})).toBe(
+      ".._.._Documents_mmkv_mmkv.default",
+    )
+  })
   it("leaves the name extension-less only when the mime is unknown", () => {
     expect(shareFileName({name: "blob", fileName: "x", mimeType: "application/x-unknown"})).toBe("blob")
   })

@@ -21,21 +21,28 @@ export function deploymentDebugOverrides(deployment: ActiveDeployment): {core?: 
   return {core: read(SETTINGS.cloud_core_url.key), runtime: read(SETTINGS.cloud_runtime_url.key)}
 }
 
+function resolveOverride(override: string | undefined, baseline: string | null, port: number): string | null {
+  if (!override) return baseline
+  if (override !== METRO_AUTO) return override
+  const host = devServerHost()
+  return host ? `http://${host}:${port}` : baseline
+}
+
 export function resolveDeploymentManifest(deployment: ActiveDeployment): DeploymentManifest {
   const overrides = deploymentDebugOverrides(deployment)
-  const resolve = (override: string | undefined, baseline: string | null, port: number) => {
-    if (!override) return baseline
-    if (override !== METRO_AUTO) return override
-    const host = devServerHost()
-    return host ? `http://${host}:${port}` : baseline
-  }
   return {
     ...deployment.manifest,
     services: {
-      coreUrl: resolve(overrides.core, deployment.manifest.services.coreUrl, 3000),
-      runtimeUrl: resolve(overrides.runtime, deployment.manifest.services.runtimeUrl, 3001),
+      coreUrl: resolveOverride(overrides.core, deployment.manifest.services.coreUrl, 3000),
+      runtimeUrl: resolveOverride(overrides.runtime, deployment.manifest.services.runtimeUrl, 3001),
     },
   }
+}
+
+/** Whether saving `core` as the override would point this deployment at a different Core. */
+export function coreOverrideChangesCore(deployment: ActiveDeployment, core: string): boolean {
+  const next = resolveOverride(core.trim() || undefined, deployment.manifest.services.coreUrl, 3000)
+  return next !== resolveDeploymentManifest(deployment).services.coreUrl
 }
 
 const CLEARED_DEBUG_OVERRIDES = {

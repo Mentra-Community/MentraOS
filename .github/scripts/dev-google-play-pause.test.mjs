@@ -88,7 +88,8 @@ test("dev can finalize GitHub Android artifacts without a Google Play publicatio
     publications: {...publications, ...mobile.publications},
     artifacts: [
       ...mobile.artifacts,
-      ...["asgSelection", "otaBundle", "enginePackage"].map((key) => publication(plan.artifactNames[key])),
+      // A dev release publishes no portable OTA bundle.
+      ...["asgSelection", "enginePackage"].map((key) => publication(plan.artifactNames[key])),
     ],
     otaManifest: publication(plan.artifactNames.otaManifest),
     cloud: cloudRecordForPlan(plan),
@@ -119,7 +120,7 @@ test("beta, production and legacy dev plans retain their Play publication requir
   }
 })
 
-test("the mobile workflow gates only Play operations, preserving Android artifacts and production promotion", () => {
+test("the mobile workflow gates only Play operations, preserving Android artifacts", () => {
   const workflow = readFileSync(new URL("../workflows/reusable-coordinated-mobile.yml", import.meta.url), "utf8")
   for (const name of [
     "Prepare Google Play upload tooling",
@@ -139,15 +140,6 @@ test("the mobile workflow gates only Play operations, preserving Android artifac
     const block = workflow.split(`      - name: ${name}\n`)[1].split("\n      - ")[0]
     assert.doesNotMatch(block, /if: .*upload_google_play/)
   }
-  // Production candidates land on the production track as a draft (see the
-  // family build numbers spec, "Google Play track floors"); submission verifies
-  // that draft instead of promoting from a testing track.
-  const production = readFileSync(new URL("../workflows/production-release-mobile.yml", import.meta.url), "utf8")
-  assert.match(production, /play_track: production/)
-  assert.match(production, /play_release_status: draft/)
-  const submission = readFileSync(new URL("../workflows/production-release-store-submit.yml", import.meta.url), "utf8")
-  assert.match(submission, /--required-state submitted/)
-  assert.doesNotMatch(submission, /GOOGLE_PLAY_SOURCE_TRACK/)
 })
 
 // The pause is decided at the CLI boundary, where the coordinator's plan job
@@ -157,9 +149,13 @@ test("the plan CLI pauses Google Play for dev and keeps it for staging", (t) => 
   t.after(() => rmSync(root, {recursive: true, force: true}))
   const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..")
   const otaInputs = path.join(root, "ota-inputs.json")
+  // The firmware pin (asg_client/ota_manifests/firmware_live.json) is gone:
+  // releases build their OTA set from source. The plan only carries it.
+  const firmwareManifest = path.join(root, "firmware.json")
+  writeFileSync(firmwareManifest, JSON.stringify({mtk_patches: [], bes_firmware: {version: "0.0.0"}}))
   const collected = spawnSync(
     process.execPath,
-    [".github/scripts/collect-ota-release-inputs.mjs", "asg_client/ota_manifests/firmware_live.json", otaInputs],
+    [".github/scripts/collect-ota-release-inputs.mjs", firmwareManifest, otaInputs],
     {cwd: repositoryRoot, encoding: "utf8"},
   )
   assert.equal(collected.status, 0, collected.stderr)

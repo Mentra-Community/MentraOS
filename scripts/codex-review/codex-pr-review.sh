@@ -300,6 +300,28 @@ Do the following, in order:
    reliability and a coherent design over patchy fixes made only to satisfy review comments.
    Check backwards compatibility, thread-safety, error handling, and whether tests cover the new
    behaviour.${need_step}
+4c. Balance risk against machinery. Complexity is a cost in its own right: every added state,
+   guard, retry, record or abstraction must be paid for by a real reduction in risk. Sometimes a
+   finding's best fix makes the code simpler; sometimes it needs more tracking than the problem is
+   worth.
+   - Weigh each potential defect by how likely it is in real use and how much harm it does, not
+     by whether it is conceivable. One that will happen in ordinary use (normal inputs, normal
+     timing, a failure that occurs as a matter of course) with real harm blocks approval; suggest
+     the simplest fix that removes it.
+   - One that can only happen through an unlikely coincidence or an unusual way of using the
+     code, or whose fix costs more machinery than the harm it prevents, does not block: list it
+     under "Accepted-risk candidates" with the conditions it needs and what guarding against it
+     would cost, and let the owner decide.
+   - Treat unnecessary machinery in the PR itself as a finding too: checks more elaborate than
+     needed to be reasonably confident, bookkeeping nobody acts on, and defensive layers for cases
+     that do not occur. Prefer removing them to adding more.
+   - Do not re-raise a risk the PR description or comments record as accepted by the owner unless
+     you have new evidence that it is likely; then explain that evidence.
+4d. Weigh the author's pushback. An author may disagree with a finding in a PR comment or reply.
+   Consider it honestly, as you would a colleague's. If the reasoning holds, or the disagreement is
+   a reasonable judgment about likelihood or complexity, drop the finding and approve if nothing
+   else blocks, saying why. Keep blocking only for a defect you can show will happen in ordinary
+   use, and show it.
 5. You may run cheap local tests or compile checks in the touched packages if they help you decide,
    but do not spend more than a few minutes on builds.
 6. Do NOT edit any files, do NOT commit, and do NOT push.
@@ -310,8 +332,9 @@ Do the following, in order:
    whose first line is "Approve." or "Request changes." and say in your final message that you fell back.
    The body must start with "Reviewed by local Codex (gpt-6.1-sol, medium)." and then list: what
    you checked (files/areas, tests/builds run), each existing comment and whether you agree with it
-   and why, any defects found with file:line references and a suggested coherent fix, the
-   "Is this change needed?" conclusion, and the reason for the verdict. Keep it
+   and why, any blocking defects found with file:line references and a suggested coherent fix, the
+   accepted-risk candidates (if any), the "Is this change needed?" conclusion, and the reason for
+   the verdict. Accepted-risk candidates alone are not a reason to request changes. Keep it
    concise and factual.
 
 Your final message must contain the verdict (Approve or Request changes) and the same list, plus the

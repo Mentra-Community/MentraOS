@@ -29,19 +29,16 @@ export const ORGANIZATION_CAPABILITIES = [
   "organization.credentials.manage",
   "organization.incidents.read",
   "organization.supportProfiles.read",
-  "organization.testing.read",
-  "organization.testing.manage",
   "organization.fleet.administer",
   "organization.licenses.read",
+  "organization.registry.administer",
 ] as const
 export type OrganizationCapability = (typeof ORGANIZATION_CAPABILITIES)[number]
 
-/** Scopes an operator key may carry; never workspace administration, Fleet administration or licenses. */
+/** Scopes an operator key may carry; never workspace administration, Fleet administration, licenses or the miniapp registry. */
 export const OPERATOR_KEY_SCOPES: readonly OrganizationCapability[] = [
   "organization.incidents.read",
   "organization.supportProfiles.read",
-  "organization.testing.read",
-  "organization.testing.manage",
 ]
 
 /** Capabilities each role adds on top of the role below it. */

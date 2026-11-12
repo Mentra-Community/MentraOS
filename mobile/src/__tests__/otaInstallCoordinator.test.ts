@@ -12,6 +12,8 @@ import {Platform} from "react-native"
 
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
+import {OtaArtifactError} from "../../modules/engine/src/services/OtaArtifactDownloader"
+import {otaArtifactFailure} from "../../modules/engine/src/services/OtaArtifactFailure"
 import {otaInstallCoordinator} from "../../modules/engine/src/services/OtaInstallCoordinator"
 import type {OtaCheckCurrentGlassesResult} from "../../modules/engine/src/services/OtaUpdateCheckService"
 import {
@@ -220,7 +222,8 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     "retains hotspot after reconnect before version_info on %s",
     async (action) => {
       useGlassesStore.getState().setGlassesInfo({
-        connection: {state: "connected", fullyBooted: true}, hotspotOtaVersion: 1,
+        connection: {state: "connected", fullyBooted: true},
+        hotspotOtaVersion: 1,
         wifi: {state: "disconnected"},
       })
       expect(otaInstallCoordinator.prepare(checkResult())).toBe("hotspot")
@@ -245,15 +248,24 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     const checker = require("../../modules/engine/src/services/OtaUpdateCheckService")
     const target = 303000500
     const checkSpy = jest.spyOn(checker, "checkCurrentGlassesForUpdate").mockResolvedValue({
-      ...checkResult(), updateInfo: {versionCode: target, versionName: "3.3.0", isDowngrade: false, updates: ["apk"]},
+      ...checkResult(),
+      updateInfo: {versionCode: target, versionName: "3.3.0", isDowngrade: false, updates: ["apk"]},
     })
-    ;(otaInstallCoordinator as unknown as {preparedCheckResult: OtaCheckCurrentGlassesResult | null}).preparedCheckResult = null
+    ;(
+      otaInstallCoordinator as unknown as {preparedCheckResult: OtaCheckCurrentGlassesResult | null}
+    ).preparedCheckResult = null
     useGlassesStore.getState().setGlassesInfo({
-      connection: {state: "connected", fullyBooted: true}, hotspotOtaVersion: 1, buildNumber: "303000100",
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      buildNumber: "303000100",
     })
     useGlassesStore.getState().setOtaUpdateAvailable({
-      available: true, totalSize: 0,
-      versionCode: 302000100, versionName: "3.2.0", isDowngrade: true, updates: ["apk"],
+      available: true,
+      totalSize: 0,
+      versionCode: 302000100,
+      versionName: "3.2.0",
+      isDowngrade: true,
+      updates: ["apk"],
     })
     otaInstallCoordinator.attach()
     await flushNativeStartPromise()
@@ -263,7 +275,9 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install"}))
     expect(otaInstallCoordinator.snapshot().versionChangePhase).toBeNull()
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}, buildNumber: String(target)})
+    useGlassesStore
+      .getState()
+      .setGlassesInfo({connection: {state: "connected", fullyBooted: true}, buildNumber: String(target)})
     expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(false)
     expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalled()
     checkSpy.mockRestore()
@@ -375,6 +389,53 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     await flushNativeStartPromise()
     expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("starts the update watchdogs on Retry only once the hotspot join is answered", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    expect(otaInstallCoordinator.prepare(checkResult())).toBe("hotspot")
+    mockHotspotPrepare.mockRejectedValueOnce(new Error("Local WiFi connection cancelled"))
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+
+    // An unfinished session makes Retry reconcile; its idle reply falls back to a fresh start.
+    useGlassesStore.getState().setOtaStatus(inProgressStatus())
+    let answerJoin!: (url: string) => void
+    mockHotspotPrepare.mockImplementationOnce(() => new Promise<string>((resolve) => (answerJoin = resolve)))
+    otaInstallCoordinator.retry()
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    // The idle reply, as the SDK maps it into both store shapes, gives the stall watchdog a signature.
+    useGlassesStore.getState().setOtaProgress(
+      legacyOtaProgressFromOtaStatusEvent(
+        normalizeOtaStatusEvent({
+          session_id: "",
+          total_steps: 0,
+          current_step: 0,
+          step_type: "apk",
+          phase: "download",
+          status: "idle",
+          step_percent: 0,
+          overall_percent: 0,
+        }),
+      ),
+    )
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+    expect(mockHotspotPrepare).toHaveBeenCalledTimes(2)
+
+    // The person takes longer than the watchdog to answer the join prompt.
+    await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS * 2)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBeFalsy()
+
+    answerJoin("http://192.168.43.2:8791/version.json")
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledWith("http://192.168.43.2:8791/version.json")
+    await jest.advanceTimersByTimeAsync(DOWNLOAD_STUCK_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
   })
 
   it("waits for an explicit glasses Wi-Fi status when hotspot OTA is unavailable", () => {
@@ -2661,6 +2722,44 @@ describe("automatic OTA failure incidents", () => {
     otaInstallCoordinator.attach()
     useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "failed", error: "download_timeout"}))
     expect(mockFailureReport).toHaveBeenCalledWith(expect.objectContaining({reason: "device_failed"}))
+  })
+
+  it("preserves the native download diagnosis before cleanup and exposes translated, factual copy", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    const failure = otaArtifactFailure(
+      Object.assign(new Error("Software caused connection abort"), {code: "ECONNABORTED"}),
+      {
+        artifact: "apk",
+        stage: "download",
+        bytesWritten: 40,
+        contentLength: 100,
+      },
+    )
+    mockHotspotPrepare.mockRejectedValueOnce(
+      new OtaArtifactError("artifact_download_failed", "Preparing apk artifact failed", failure),
+    )
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    await flushNativeStartPromise()
+    expect(mockFailureReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "hotspot_preflight_failed",
+        artifactFailure: failure,
+      }),
+    )
+    expect(otaInstallCoordinator.snapshot()).toMatchObject({
+      displayState: "failed",
+      errorCopyKey: "ota:errorPhoneConnection",
+      errorMsg: "Your phone could not reach the update server. Check its connection and try again.",
+    })
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
+    expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
   })
 
   it("captures hotspot preflight phase before teardown clears it", async () => {

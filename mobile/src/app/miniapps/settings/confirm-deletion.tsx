@@ -64,7 +64,7 @@ export default function ConfirmDeletionScreen() {
 
     // Account is gone server-side; clear everything device-side too.
     try {
-      await LogoutUtils.performCompleteLogout()
+      await LogoutUtils.performCompleteLogout({deleteAccount: true})
     } catch (error) {
       console.error("ConfirmDeletion: logout cleanup failed:", error)
     }

@@ -5,11 +5,11 @@ import android.net.wifi.WifiManager
 import android.os.SystemClock
 import com.mentra.glassesmedia.network.InternetHold
 import com.mentra.glassesmedia.network.ScopedNetworkChangeDetector
-import com.mentra.glassesmedia.network.ScopedNetworkError
-import com.mentra.glassesmedia.network.ScopedSoftApNetwork
+import com.mentra.bluetoothsdk.hotspot.ScopedNetworkError
+import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
 import com.mentra.glassesmedia.source.StillPhotoInbox
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
-import com.mentra.glassesmedia.trace.SoftApTrace
+import com.mentra.bluetoothsdk.hotspot.SoftApTrace
 import com.mentra.acsmeeting.video.VideoProfile
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -107,7 +107,7 @@ class AcsMeetingModule : Module() {
 
     AsyncFunction("beginTrace") { traceId: String ->
       require(traceId.matches(Regex("[A-Za-z0-9]*"))) { "invalid trace id" }
-      com.mentra.glassesmedia.trace.SoftApTrace.begin(traceId)
+      com.mentra.bluetoothsdk.hotspot.SoftApTrace.begin(traceId)
       Unit
     }
 
@@ -150,7 +150,7 @@ class AcsMeetingModule : Module() {
           override fun onAvailable(network: android.net.Network, localIpv4: String) = Unit
 
           override fun onLost(error: ScopedNetworkError) {
-            com.mentra.glassesmedia.trace.SoftApTrace.failure("scoped_network_lost_midcall", "code" to error.code)
+            com.mentra.bluetoothsdk.hotspot.SoftApTrace.failure("scoped_network_lost_midcall", "code" to error.code)
             sendEvent(
               "onScopedNetworkLost",
               mapOf("code" to error.code, "message" to (error.message ?: "The glasses hotspot went away")),
@@ -165,20 +165,8 @@ class AcsMeetingModule : Module() {
           // saying so: the panel-and-wait this replaced held the call for up to 90s behind a
           // system sheet with no explanation, and the Wi-Fi the user then picked often became the
           // default route with no internet, hanging the ACS token mint on DNS.
-          com.mentra.glassesmedia.trace.SoftApTrace.failure("wifi_disabled_at_join")
+          com.mentra.bluetoothsdk.hotspot.SoftApTrace.failure("wifi_disabled_at_join")
           throw error
-        } catch (error: ScopedNetworkError.Unavailable) {
-          // The first specifier steals wlan0 from the phone's current Wi-Fi (iPhone X, office
-          // AP). Samsung then assoc-rejects the glasses SoftAP (status 1025) and fires
-          // onUnavailable. After that request dies the STA is idle — the same join from idle
-          // is what succeeded at 17:43:20 after a failed switch.
-          com.mentra.glassesmedia.trace.SoftApTrace.stage(
-            "scoped_join_unavailable_retry",
-            "ssid" to ssid,
-            "settleMs" to ScopedSoftApNetwork.UNAVAILABLE_RETRY_SETTLE_MS,
-          )
-          Thread.sleep(ScopedSoftApNetwork.UNAVAILABLE_RETRY_SETTLE_MS)
-          scoped.join(ssid, passphrase, listener)
         }
         scoped.localIpv4() ?: throw IllegalStateException("scoped network has no IPv4 address")
       }

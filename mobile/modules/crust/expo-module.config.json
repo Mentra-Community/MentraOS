@@ -1,7 +1,8 @@
 {
   "platforms": ["apple", "android", "web"],
   "apple": {
-    "modules": ["CrustModule"]
+    "modules": ["CrustModule"],
+    "appDelegateSubscribers": ["MacQuitAppDelegateSubscriber"]
   },
   "android": {
     "modules": ["com.mentra.crust.CrustModule"]

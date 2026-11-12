@@ -8,8 +8,7 @@ import {fileURLToPath} from "node:url"
 
 import {assembleCoordinatedReleaseResults} from "./assemble-coordinated-release-results.mjs"
 import {createPrivateDeploymentRecord, TARGETS} from "./coordinated-private-deployment-records.mjs"
-import {completedReleaseDownloads} from "./publish-coordinated-release-page.mjs"
-import {validateCoreReleaseHandoff} from "./load-coordinated-example-release.mjs"
+import {completedReleaseDownloads, releaseDownloadNotes} from "./publish-coordinated-release-page.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
 import {runtimeImageRecordForPlan} from "./coordinated-runtime-image-test-helpers.mjs"
@@ -124,13 +123,18 @@ for (const channel of ["beta", "dev"]) {
         sha256: "c".repeat(64),
         size: 100,
       },
-      bundle: {
-        status: "published",
-        asset: plan.artifactNames.otaBundle,
-        url: "https://example.com/ota.zip",
-        sha256: "d".repeat(64),
-        size: 200,
-      },
+      // Only beta releases publish a portable OTA bundle.
+      ...(channel === "beta"
+        ? {
+            bundle: {
+              status: "published",
+              asset: plan.artifactNames.otaBundle,
+              url: "https://example.com/ota.zip",
+              sha256: "d".repeat(64),
+              size: 200,
+            },
+          }
+        : {}),
       asg: {
         fingerprint: asgSelection.fingerprint,
         versionCode: asgSelection.versionCode,
@@ -171,6 +175,33 @@ for (const channel of ["beta", "dev"]) {
     assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "submitted")
     assert.equal(manifest.publications.mentraos["app-store-connect"].status, "published")
     assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
+    // Beta releases publish the portable OTA bundle; dev releases do not name one.
+    assert.equal(plan.artifactNames.otaBundle, channel === "beta" ? `mentra-live-ota-bundle-${plan.releaseIdentity}.zip` : undefined)
+    assert.equal(manifest.artifacts.some((artifact) => /^mentra-live-ota-bundle-/.test(artifact.coordinate)), channel === "beta")
+    if (channel === "beta") {
+      const {bundle, ...withoutBundle} = ota
+      assert.ok(bundle)
+      assert.throws(
+        () =>
+          finalizeReleaseManifest({
+            plan,
+            results: assembleCoordinatedReleaseResults({
+              plan,
+              ota: withoutBundle,
+              npmRecords,
+              native,
+              mobile,
+              cloud: cloudRecordForPlan(plan),
+              runtimeImage,
+              asgSelectionFile,
+              enginePackage,
+              releaseAssetBaseUrl: "https://example.com/release",
+            }),
+            completedAt: "2026-08-25T02:00:00.000Z",
+          }),
+        new RegExp(`Missing required artifact ${plan.artifactNames.otaBundle}`),
+      )
+    }
     assert.equal(manifest.cloud.environment, channel === "dev" ? "dev" : "staging")
     assert.equal(manifest.privateDeployment, undefined)
     {
@@ -195,16 +226,16 @@ for (const channel of ["beta", "dev"]) {
       assert.equal(archived.privateDeployment.workspaceOrigin, workspaceOrigin)
       if (channel === "dev") {
         assert.equal(completedReleaseDownloads(plan, archived).apk.coordinate, plan.artifactNames.androidApp)
-        assert.equal(validateCoreReleaseHandoff({plan, manifest: archived, run: {head_sha: plan.sourceCommit},
-          selection: {identity: plan.releaseIdentity, channel: "dev", planName: `coordinated-release-plan-${plan.releaseSetId}`},
-          repository: "Mentra-Community/MentraOS"}).source_commit, plan.sourceCommit)
       }
+      const notes = releaseDownloadNotes({plan, manifest: archived, repository: "Mentra-Community/MentraOS"})
+      assert.equal(notes.includes("Glasses OTA bundle"), channel === "beta")
+      assert.ok(notes.includes("Glasses OTA manifest"))
       assert.throws(() => finalizeReleaseManifest({plan, results: {...archived,
         privateDeployment: {...privateDeployment, sourceCommit: "0".repeat(40)}}, completedAt: archived.completedAt}),
         /do not match a dev or beta release plan/)
     }
     assert.equal(manifest.runtimeImage.digest, runtimeImage.digest)
-    // The Mentra beta is complete without any Starter Kit or example evidence;
+    // The Mentra beta is complete without any example evidence;
     // the Bluetooth example is finalized separately (example-release-records).
     assert.equal(manifest.starterKit, undefined)
     assert.equal(manifest.exampleTestflight, undefined)

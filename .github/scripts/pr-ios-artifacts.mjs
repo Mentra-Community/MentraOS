@@ -3,6 +3,8 @@ import {execFileSync} from "node:child_process"
 import {readFile, stat, writeFile} from "node:fs/promises"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
+import {PR_BUILD_REPOSITORIES} from "./pr-android-artifacts.mjs"
+import {packagingFingerprint} from "./pr-mobile-build.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
 
@@ -20,8 +22,23 @@ export function iosReceiptName(pr, sha, runId, attempt) {
   return `mentra-ios-pr-${pr}-${sha}-${runId}-${attempt}.json`
 }
 
+/** A receipt with `reusedFrom` republishes that earlier head's unchanged publication for this head. */
 export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
   iosReceiptName(pr, sha, runId, attempt)
+  const source = receipt.reusedFrom
+  const keys = Object.keys(source ?? {}).filter((key) => key !== "buildAttempt").sort().join()
+  if (
+    source !== undefined &&
+    (keys !== "headSha,runAttempt,runId" ||
+      source.headSha === sha ||
+      receipt.buildAttempt !== undefined ||
+      receipt.app?.headSha !== source.headSha ||
+      !PR_BUILD_REPOSITORIES.some(
+        (repository) =>
+          receipt.app.otaManifestUrl === artifactUrl(repository, "pr-builds", `ota-pr-${pr}-${source.headSha}.json`),
+      ))
+  )
+    throw new Error("Invalid reused iOS publication")
   if (
     ![1, 2].includes(receipt.schemaVersion) ||
     receipt.pr !== pr ||
@@ -44,7 +61,9 @@ export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
     )
       throw new Error("Mac package is missing verified installer notarization")
   }
-  const sourceName = iosReceiptName(pr, sha, runId, receipt.buildAttempt ?? receipt.runAttempt)
+  const sourceName = source
+    ? iosReceiptName(pr, source.headSha, source.runId, source.buildAttempt ?? source.runAttempt)
+    : iosReceiptName(pr, sha, runId, receipt.buildAttempt ?? receipt.runAttempt)
   const suffix = sourceName.slice("mentra-ios-".length, -".json".length)
   const kinds =
     receipt.schemaVersion === 2
@@ -115,6 +134,7 @@ export async function publishIosArtifacts(directory, env = process.env, {exec = 
     assets[kind] = {name, size: Buffer.byteLength(content), sha256: createHash("sha256").update(content).digest("hex")}
   }
   receipt.schemaVersion = 2
+  receipt.packagingFingerprint = packagingFingerprint("ios")
   validateIosReceipt(receipt, {...coordinates, attempt: receipt.runAttempt})
   await writeFile(path.join(directory, receiptName), JSON.stringify(receipt, null, 2) + "\n")
   // The existing publisher verifies uploaded bytes and recovers ambiguous uploads.

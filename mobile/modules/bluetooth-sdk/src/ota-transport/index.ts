@@ -58,15 +58,16 @@ export type OtaServerResult = {
  * Scoped networking for traffic that must stay on a Mentra Live hotspot while
  * the phone's default route remains on cellular or another Wi-Fi network.
  *
- * The module is optional because iOS uses its system Wi-Fi join flow instead.
+ * The module is optional because iOS joins through glasses-media's hotspot owner instead.
  */
 export const otaLocalNetwork = Object.freeze({
   isAvailable: (): boolean => MentraLocalNetwork != null,
   /** Synchronous local observation; no network I/O, route changes or network identities. */
   getNetworkDiagnostics: (): NetworkDiagnostics | null => MentraLocalNetwork?.getNetworkDiagnostics() ?? null,
-  connect: async (ssid: string, password: string): Promise<OtaLocalNetworkConnection> => {
+  /** `incoming`: the glasses will connect to a server on this phone (OTA), not only the reverse. */
+  connect: async (ssid: string, password: string, incoming = true): Promise<OtaLocalNetworkConnection> => {
     if (!MentraLocalNetwork) throw new Error("Scoped local networking is not available in this native build")
-    return MentraLocalNetwork.connect(ssid, password)
+    return MentraLocalNetwork.connect(ssid, password, incoming)
   },
   request: async (
     requestId: string,
@@ -116,8 +117,6 @@ export const otaServer = Object.freeze({
     host?: string | null,
   ): Promise<OtaServerResult> => MentraOtaServer.startOtaServer(manifestJson, artifactPaths, host),
   stop: (): Promise<void> => MentraOtaServer.stopOtaServer(),
-  waitForWifiAddress: (gateway: string, timeoutMs: number): Promise<string> =>
-    MentraOtaServer.waitForWifiAddress(gateway, timeoutMs),
   downloadArtifact: (source: string, destination: string): Promise<{statusCode: number; bytesWritten: number}> =>
     MentraOtaServer.downloadArtifact(source, destination),
   onArtifactDownloadProgress: (listener: (event: OtaArtifactDownloadProgress) => void): OtaTransportSubscription =>

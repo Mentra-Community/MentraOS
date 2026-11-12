@@ -2,6 +2,7 @@ import {createIconSet} from "@expo/vector-icons"
 import glyphMap from "@assets/icons/tabler/glyph-map.json"
 import {
   Bell,
+  Building2,
   CircleUser,
   CircleX,
   Hammer,
@@ -49,6 +50,7 @@ const TablerIcon = createIconSet(glyphMap, "tablerIcons", "tabler-icons.ttf")
 
 const lucideIcons = {
   "circle-user": CircleUser,
+  "building-2": Building2,
   "fullscreen": Fullscreen,
   "glasses": Glasses,
   "bell": Bell,

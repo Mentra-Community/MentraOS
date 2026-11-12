@@ -14,6 +14,8 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
     reconnectOnForeground: !!reconnectOnAppForeground,
     defaultWearable,
     isSimulated: !!defaultWearable && defaultWearable.includes(DeviceTypes.SIMULATED),
+    pairingState: engine.glasses.status().pairingState,
+    userDisconnected: engine.glasses.userDisconnected(),
     connected: engine.pairing.readiness().connected,
     nativeLinkBusy: engine.pairing.readiness().nativeLinkBusy,
     // Fail open on a bridge/hydration error: pass true so the flow proceeds to

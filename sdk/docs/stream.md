@@ -1,16 +1,12 @@
 # `session.stream`
 
-Video streaming from the glasses camera. The miniapp calls
-`session.stream.startUnmanaged({...})` to push frames to a developer-owned RTMP
-endpoint, or `session.stream.startManaged({...})` to let the cloud host the
-stream and hand back HLS / DASH / WebRTC URLs.
+Live video streaming from the glasses camera. One entry point,
+`session.stream.startStream()`, covers both ways to stream: a Mentra-hosted
+(managed) stream that returns playback URLs, or a direct publish to an ingest
+URL you own. `onStatus()` reports what happens to the stream after it starts.
 
-The phone-side daemon (LocalMiniappRuntime → cloud streaming extensions) owns
-the stream lifecycle. The SDK module is a thin pass-through over the bridge.
-
-> **Status:** Deferred in v1 — methods bridge to the runtime but the
-> daemon path isn't live yet. Calls return shape-correct placeholders
-> until then.
+The Mentra App owns the stream lifecycle (`PhoneStreamCoordinator`); this
+module is a thin pass-through over the bridge.
 
 Source: [mobile/modules/miniapp/src/modules/stream.ts](../../mobile/modules/miniapp/src/modules/stream.ts)
 
@@ -24,106 +20,141 @@ import {MiniappSession, createTransport} from "@mentra/miniapp"
 const session = new MiniappSession({transport: createTransport()})
 await session.connect()
 
-// Unmanaged: push to your own RTMP server.
-const streamId = await session.stream.startUnmanaged({
-  streamUrl: "rtmp://ingest.example.com/live/abc123",
-  video: true,
-  audio: true,
+// Managed (default): Mentra hosts the stream.
+const stream = await session.stream.startStream({ingest: "whip"})
+console.log(stream.webrtcUrl) // WHEP playback
+
+const unsubscribe = session.stream.onStatus((status) => {
+  console.log(status.source, status.status, status.reason)
 })
 
-// …or managed: let the cloud host it.
-const managed = await session.stream.startManaged({
-  restreamDestinations: ["rtmp://twitch/..."],
-})
-console.log(managed.hlsUrl, managed.dashUrl, managed.webrtcUrl)
+// Direct: publish straight to your own ingest URL.
+// await session.stream.startStream({direct: "rtmp://ingest.example.com/live/KEY"})
 
 // later
-await session.stream.stop(streamId)
+unsubscribe()
+await session.stream.stop(stream.streamId)
 ```
 
 ---
 
 ## API
 
-### `startUnmanaged(options)` — `Promise<string>`
+### `startStream(options?)` — `Promise<StreamResult>`
 
-Starts an **unmanaged** stream: the glasses encode and push directly to a
-developer-supplied URL (typically RTMP). Returns the runtime-assigned
-`streamId` — pass it to `stop()` to tear down.
-
-**Parameters:** `StartUnmanagedOptions`
+Starts a stream. Without `direct`, Mentra provisions a hosted stream and the
+result carries playback URLs. With `direct`, the glasses publish to that URL
+and no playback URLs come back.
 
 ```ts
-interface StartUnmanagedOptions {
-  /** Destination URL (e.g. rtmp://...). */
-  streamUrl: string
-  /** Include video. Defaults to `true`. */
-  video?: boolean
-  /** Include audio. Defaults to `true`. */
-  audio?: boolean
+interface StartStreamOptions {
+  /** Your own ingest URL (rtmp/rtmps/srt/whip). Omit for a managed stream. */
+  direct?: string
+  /** Managed only: restream targets, bare URLs or {url, name?}. */
+  destinations?: Array<string | {url: string; name?: string}>
+  /** Managed only: "srt" (default), "whip" or "rtmp". See below. */
+  ingest?: "srt" | "whip" | "rtmp"
+  video?: {width?: number; height?: number; bitrate?: number; minBitrateBps?: number; initialBitrateBps?: number; fps?: number}
+  audio?: {bitrate?: number; sampleRate?: number; echoCancellation?: boolean; noiseSuppression?: boolean}
+  /** Glasses start/stop sounds. Defaults to true. */
+  sound?: boolean
+  /** Direct WHIP only: Bearer token for an authenticated endpoint. */
+  authToken?: string
+  /** false skips glasses mic capture for the stream. Defaults to true. */
+  captureAudio?: boolean
 }
 ```
 
-**Returns:** `string` — the assigned `streamId`, or `""` if the runtime
-returned no result.
+| `ingest` | Latency | Playback | Path |
+| --- | --- | --- | --- |
+| `"srt"` (default) | ~10-20s | `hlsUrl` / `dashUrl`, recorded | Glasses publish over their own Wi-Fi. |
+| `"rtmp"` | ~10-20s | `hlsUrl` / `dashUrl` | Glasses publish over their own Wi-Fi, TCP 443. For networks that block UDP. |
+| `"whip"` | <1s | `webrtcUrl` (WHEP) only, not recorded | **Through the phone**, see below. |
 
----
+#### WHIP goes through the phone
 
-### `startManaged(options?)` — `Promise<ManagedStreamResult>`
+With `ingest: "whip"`, the glasses start a hotspot, the phone joins it, and
+the phone relays the stream to Mentra over its cellular connection. The phone
+needs cellular data (or Ethernet), should stay near the glasses, and the
+Mentra App must keep running. If the phone leaves the glasses' hotspot, the
+relay reports `reconnecting`, rebuilds the hotspot and the uplink, and reports
+`reconnected`; it gives up with `error` when three retries in a row fail.
+While the hotspot is rebuilt, the glasses' Wi-Fi status can read as
+disconnected. That is a consequence of the drop, not its cause.
 
-Starts a **managed** stream: the cloud hosts the stream and exposes
-playback URLs (HLS / DASH / WebRTC). Optionally fans out to one or more
-restream destinations.
+For long sessions that don't need sub-second latency, prefer `"srt"` or
+`"rtmp"`.
 
-**Parameters:** `StartManagedOptions`
+**Returns:** `StreamResult`
 
 ```ts
-interface StartManagedOptions {
-  /** Optional list of restream destinations (e.g. RTMP URLs). */
-  restreamDestinations?: string[]
-}
-```
-
-**Returns:** `ManagedStreamResult`
-
-```ts
-interface ManagedStreamResult {
-  /** Runtime-assigned stream identifier. */
+interface StreamResult {
   streamId: string
-  /** Cloud-hosted HLS playback URL, when available. */
+  status: string
+  resolvedConfig?: StreamResolvedConfig
+  /** Managed only. */
+  liveInputId?: string
+  mode?: "hls" | "webrtc"
   hlsUrl?: string
-  /** Cloud-hosted DASH playback URL, when available. */
   dashUrl?: string
-  /** Cloud-hosted WebRTC playback URL, when available. */
+  /** WHEP playback; serves video in "webrtc" mode only. */
   webrtcUrl?: string
 }
 ```
 
-When the runtime returns no result, the module falls back to
-`{streamId: ""}`.
-
 ---
 
-### `stop(streamId?)` — `Promise<void>`
+### `onStatus(handler)` — `UnsubscribeFn`
 
-Stops a stream. Pass the `streamId` returned by `startUnmanaged` /
-`startManaged` to target a specific stream; omit to let the runtime stop
-whatever this miniapp has active.
-
----
-
-## Types
+Calls `handler` with every status update for the stream this miniapp started
+or joined. Needs no manifest permission.
 
 ```ts
 interface StreamStatus {
   streamId: string
   status: string
+  source?: "glasses" | "cloudflare" | "coordinator"
+  kind?: string
+  reason?: string
   errorDetails?: string
+  terminal?: boolean
+  willRetry?: boolean
+  attempt?: number
+  maxAttempts?: number
+  transport?: string
+  resolvedConfig?: StreamResolvedConfig
+  stats?: StreamLiveStats
 }
 ```
 
-Exported for consumers wiring `STREAM_STATUS` stream events; the module
-itself does not subscribe.
+| `source` | Statuses | Meaning |
+| --- | --- | --- |
+| `"glasses"` | `streaming`, `reconnecting`, `reconnected`, `error`, `stopped`, … | The glasses publisher. Reconnects carry `attempt` / `maxAttempts`; `terminal: true` means it gave up. In WHIP mode these come from the current relay attempt only; an attempt that ends is reported by the relay instead. |
+| `"coordinator"` | `connected`, `reconnecting`, `reconnected` | The WHIP phone relay (`transport: "softap_relay"`). |
+| `"coordinator"` | `suspended`, `resumed` | Bluetooth to the glasses dropped and came back. The stream ends if it stays down for 15 seconds. |
+| `"coordinator"` | `hls_ready`, `webrtc_ready` | Playback is live. |
+| `"coordinator"` | `error` | The stream has ended. `reason` says why. Call `startStream()` again. |
+| `"cloudflare"` | `connected`, `disconnected` | Whether the hosted ingest receives video, polled every 5s. Managed only. |
+
+A stream that recovers by itself keeps its `streamId` and playback URLs. A new
+`startStream()` after an `error` returns new ones.
+
+`stats` (encoder bitrate, fps, temperature) is currently not forwarded: the
+Mentra App keeps that telemetry off.
+
+---
+
+### `stop(streamId?)` — `Promise<void>`
+
+Stops the stream with that `streamId`, or this miniapp's active stream when
+omitted.
+
+---
+
+### `preview(options?)` — `Promise<PreviewHandle>`
+
+Takes the preview lease that lets a `<StreamPreview>` in the UI show a call's
+video. See the JSDoc in the source for details.
 
 ---
 
@@ -131,36 +162,27 @@ itself does not subscribe.
 
 | Code | Where | Meaning |
 | --- | --- | --- |
-| `NOT_IMPLEMENTED` | `startUnmanaged`, `startManaged`, `stop` (rejected Promise) | Runtime hasn't wired up streaming on this build. |
 | `INTERNAL` | any method (rejected Promise) | Phone-side path threw. Check `message`. |
-
-This module declares no synchronous throws and does not gate on a manifest
-permission at the SDK layer — permission enforcement, if any, happens
-phone-side.
+| `PreviewError` codes | `preview` | See `PREVIEW_ERROR_CODES`. |
 
 ---
 
 ## Wire-level reference
 
-For host implementors — request/response message types this module emits:
-
 | Method | Request type | Response |
 | --- | --- | --- |
-| `startUnmanaged` | `STREAM_START` (`{streamUrl, video, audio}`) | `REQUEST_RESULT` with `data: {streamId}` |
-| `startManaged` | `MANAGED_STREAM_START` (`{restreamDestinations}`) | `REQUEST_RESULT` with `data: ManagedStreamResult` |
+| `startStream()` managed | `MANAGED_STREAM_START` | `REQUEST_RESULT` with `data: StreamResult` |
+| `startStream({direct})` | `STREAM_START` | `REQUEST_RESULT` with `data: StreamResult` |
 | `stop` | `STREAM_STOP` (`{streamId?}`) | `REQUEST_RESULT` |
-
-Streams:
 
 | Subscribe | Stream type | Payload |
 | --- | --- | --- |
-| — (no module hook yet) | `STREAM_STATUS` | `StreamStatus` |
-
-`MANAGED_STREAM_STOP` is reserved in the wire protocol but not used by this
-module — `stop()` always emits `STREAM_STOP`.
+| `onStatus` | `STREAM_STATUS` (`stream_status`) | `StreamStatus` |
 
 ---
 
 ## Tests
 
-_no integration tests yet_
+[stream.test.ts](../../mobile/modules/miniapp/src/modules/stream.test.ts),
+and the coordinator's status routing in
+[PhoneStreamCoordinator.test.ts](../../mobile/modules/engine/src/services/__tests__/PhoneStreamCoordinator.test.ts).

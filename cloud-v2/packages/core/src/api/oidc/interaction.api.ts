@@ -11,7 +11,7 @@
  *        Consent: a first-party client is granted without a screen; any other
  *        client goes to the sign-in page's `/consent?interaction=<uid>`.
  *   GET  /interaction/:uid/details
- *        `{prompt, client: {name}, scopes}` for the sign-in page.
+ *        `{prompt, client: {name, packageName}, redirectUri, scopes}` for the sign-in page.
  *   POST /interaction/:uid/supabase   (hosted)
  *        The sign-in page's hand-off: `{access_token}` of the person's Supabase
  *        session. Core verifies it, resolves `("mentra", sub)`, records the
@@ -28,8 +28,6 @@
  * parameters. The only redirect the page is ever given is the provider's
  * continuation for this interaction.
  */
-
-import type {IncomingMessage} from "node:http"
 
 import {createLogger} from "@mentra/cloud-shared"
 import type Provider from "oidc-provider"
@@ -54,8 +52,8 @@ import {
 import {endSupabaseSession, IdentityProviderUnavailableError, verifySupabaseHandoffToken} from "../../services/signin/idp-tokens"
 import {consumeLoginTransaction, LOGIN_TRANSACTION_TTL_MS, startLoginTransaction} from "../../services/signin/login-transaction.service"
 import {s256} from "../../services/signin/random"
-import {consumeRateLimit} from "../../services/signin/rate-limit.service"
 import {findOrCreateUser, isDeletedAccount} from "../../services/user.service"
+import {clientIp, isSameOrigin, json, readJsonBody, redirect, withinLimit, type KoaContext} from "./provider-http"
 
 const logger = createLogger("core").child({service: "oidc-interaction"})
 
@@ -63,19 +61,7 @@ const HANDOFF_LIMIT_PER_MINUTE = 30
 const UPSTREAM_START_LIMIT_PER_MINUTE = 20
 const UPSTREAM_CALLBACK_LIMIT_PER_MINUTE = 30
 const CONSENT_LIMIT_PER_MINUTE = 30
-const MAX_BODY_BYTES = 16 * 1024
 const UID = /^[A-Za-z0-9_-]{10,64}$/
-
-type KoaContext = Parameters<Parameters<Provider["use"]>[0]>[0]
-
-// --- responses ---------------------------------------------------------------------
-
-function json(ctx: KoaContext, status: number, body: unknown): void {
-  ctx.status = status
-  ctx.set("cache-control", "no-store")
-  ctx.type = "application/json"
-  ctx.body = JSON.stringify(body)
-}
 
 function page(ctx: KoaContext, status: number, title: string, text: string): void {
   const rendered = renderPage({title, notice: text})
@@ -94,50 +80,6 @@ const tooManyPage = (ctx: KoaContext) =>
   page(ctx, 429, "Too many attempts", "Too many sign-in attempts from this network. Wait a minute and try again.")
 const notConfiguredPage = (ctx: KoaContext) =>
   page(ctx, 503, "Sign-in is not configured", "Sign-in is not configured on this deployment.")
-
-function redirect(ctx: KoaContext, location: string): void {
-  ctx.status = 303
-  ctx.set("cache-control", "no-store")
-  ctx.set("location", location)
-}
-
-// --- request helpers ---------------------------------------------------------------------
-
-/** The caller's IP for rate limits: the first `x-forwarded-for` hop (the ingress sets it). */
-function clientIp(ctx: KoaContext): string {
-  return ctx.get("x-forwarded-for").split(",")[0]?.trim() || "unknown"
-}
-
-/** CSRF: `Origin` must be the issuer's origin, or, without one, `Sec-Fetch-Site: same-origin`. */
-function isSameOrigin(ctx: KoaContext, issuer: string): boolean {
-  const origin = ctx.get("origin")
-  if (origin) return origin === new URL(issuer).origin
-  return ctx.get("sec-fetch-site") === "same-origin"
-}
-
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
-  const isJson = (req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")
-  const chunks: Buffer[] = []
-  let size = 0
-  let tooLarge = false
-  // Drain the whole body even past the limit, so the connection stays usable.
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length
-    if (size > MAX_BODY_BYTES) tooLarge = true
-    else chunks.push(chunk as Buffer)
-  }
-  if (tooLarge || !isJson) return null
-  try {
-    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
-  } catch {
-    return null
-  }
-}
-
-async function withinLimit(key: string, limit: number): Promise<boolean> {
-  return consumeRateLimit(key, limit, 60)
-}
 
 function txCookieName(issuer: string): string {
   return issuer.startsWith("https:") ? "__Host-mentra_signin_tx" : "mentra_signin_tx"
@@ -196,7 +138,10 @@ async function describeInteraction(provider: Provider, ctx: KoaContext, uid: str
   if (!client) return json(ctx, 400, {error: "interaction_expired"})
   return json(ctx, 200, {
     prompt: details.prompt.name,
-    client: {name: client.name},
+    // `packageName` is set for a miniapp website: the consent screen says whose data the site will reach.
+    client: {name: client.name, packageName: client.website?.packageName ?? null},
+    // Where the person is sent back to. The provider has already matched it against the client's registration.
+    redirectUri: String(details.params.redirect_uri ?? ""),
     scopes: grantableScopes(details.params.scope).split(" ").filter(Boolean),
   })
 }

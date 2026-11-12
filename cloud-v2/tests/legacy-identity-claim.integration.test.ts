@@ -58,7 +58,7 @@ import {
   claimLegacyIdentities,
   resetLegacyIdentityClaimChecks,
 } from "../packages/core/src/services/workspaces/membership-claim.service"
-import {countActiveOwners} from "../packages/core/src/services/workspaces/workspace.service"
+import {countActiveOwners, createWorkspace, leaveWorkspace} from "../packages/core/src/services/workspaces/workspace.service"
 import {createCoreWorkspaceClient} from "../packages/workspace-contract/src/server"
 import {installFakeIdp, type FakeIdp, type FakePerson} from "./support/fake-idp"
 import {resetCoreKeyCaches} from "./support/key-caches"
@@ -278,7 +278,7 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
 
   const signIn = (person: FakePerson, portal: "portal" | "admin" = "portal") => portalSignIn(app, idp, {portal, person})
 
-  test("a developer imported from the Store signs in through Core's provider with their verified email and receives both memberships, once", async () => {
+  test("a developer imported from the Store signs in through Core's provider with their verified email and receives the one membership the guard allows, once", async () => {
     // The Store: Dee owns one developer org and is a member of another.
     const source = await openSourceConnection(storeUrl)
     try {
@@ -293,7 +293,10 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
         {orgId: "dorg_partner", userId: "user_01PAT", role: "owner", status: "active", email: "pat@partner.example", createdAt: at},
         {orgId: "dorg_partner", userId: "user_01DEE", role: "member", status: "active", email: "dee@studio.example", createdAt: at},
       ])
-      expect((await migrateStoreDeveloperOrgs({source, apply: true})).counts).toMatchObject({orgs: 2, memberships: 3})
+      // One membership per person: Dee keeps Studio (owner), and Partner's member row is reported instead.
+      const imported = await migrateStoreDeveloperOrgs({source, apply: true})
+      expect(imported.counts).toMatchObject({orgs: 2, memberships: 2})
+      expect(imported.otherOrgMemberships).toMatchObject([{orgId: "dorg_partner", userId: "user_01DEE", keptOrgId: "dorg_studio"}])
 
       // The operator exports the WorkOS users' verified emails (Pat's is not verified).
       const workos = workosStub({
@@ -310,14 +313,13 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
       const dee = await mentraUser("supa-dee")
 
       const held = await WorkspaceMembershipModel.find({mentraUserId: dee, status: "active"}).sort({workspaceId: 1}).lean()
-      expect(held.map(row => [row.workspaceId, row.role, row.pendingWorkosUserId])).toEqual([
-        ["dorg_partner", "developer", null],
-        ["dorg_studio", "owner", null],
-      ])
+      // One workspace per person: Dee is claimed into the one where they rank highest, and the other
+      // membership is discarded, so nothing is left to claim later.
+      expect(held.map(row => [row.workspaceId, row.role, row.pendingWorkosUserId])).toEqual([["dorg_studio", "owner", null]])
+      expect(await WorkspaceMembershipModel.countDocuments({workspaceId: "dorg_partner", pendingWorkosUserId: "user_01DEE", status: "active"})).toBe(0)
       expect(await identity("user_01DEE")).toMatchObject({claimedBy: dee})
       expect((await identity("user_01DEE")).claimedAt).toBeInstanceOf(Date)
       expect((await claimEvents()).map(([action, workspaceId]) => [action, workspaceId]).sort()).toEqual([
-        ["membership.claimed", "dorg_partner"],
         ["membership.claimed", "dorg_studio"],
       ])
       // Pat has not signed in: their memberships still wait.
@@ -326,10 +328,7 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
       const listed = await app.request(`${PORTAL_ORIGIN}/api/portal/workspaces`, {
         headers: {cookie: `${PORTAL_COOKIE}=${first.sessionCookie}`},
       })
-      expect(((await listed.json()) as {items: Array<{workspaceId: string}>}).items.map(item => item.workspaceId).sort()).toEqual([
-        "dorg_partner",
-        "dorg_studio",
-      ])
+      expect(((await listed.json()) as {items: Array<{workspaceId: string}>}).items.map(item => item.workspaceId).sort()).toEqual(["dorg_studio"])
 
       // Once: signing in again (to the other portal, too) changes nothing.
       const memberships = await WorkspaceMembershipModel.find({}).sort({membershipId: 1}).lean()
@@ -358,6 +357,7 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
 
     expect(reply.status).toBe(200)
     const items = ((await reply.json()) as {items: Array<{workspaceId: string; membership: {role: string}}>}).items
+    // A person may belong to several workspaces: both memberships are claimed.
     expect(items.map(item => [item.workspaceId, item.membership.role]).sort()).toEqual([
       ["ws_a", "admin"],
       ["ws_b", "developer"],
@@ -476,8 +476,8 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
       invitedByMembershipId: "wm_held",
       invitedByMentraUserId: merged,
     })
-    // In ws_n there was nothing to merge with: the membership is claimed in place.
-    expect(await membership(fresh)).toMatchObject({mentraUserId: merged, pendingWorkosUserId: null, role: "member"})
+    // In ws_n there was nothing to merge with: Mo is claimed there too, beside ws_m.
+    expect(await membership(fresh)).toMatchObject({mentraUserId: merged, pendingWorkosUserId: null, role: "member", status: "active"})
     expect((await WorkspaceModel.findOne({workspaceId: "ws_n"}).lean())?.authorizationRevision).toBe(1)
 
     expect(await claimEvents()).toEqual([
@@ -499,12 +499,85 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
       },
     })
     expect(JSON.stringify(mergedEvent)).not.toContain("user_01MO")
-    const [claimedEvent] = await WorkspaceAuditEventModel.find({action: "membership.claimed"}).lean()
-    expect(claimedEvent).toMatchObject({
-      actor: {kind: "system"},
-      target: {membershipId: fresh, mentraUserId: merged},
-      after: {mentraUserId: merged, role: "member"},
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "membership.removed"})).toBe(0)
+  })
+
+  test("a merged duplicate leaves the surviving membership as the person's one membership there", async () => {
+    const person = await mentraUser("supa-keep")
+    const created = await createWorkspace(
+      {kind: "user", mentraUserId: person, email: "keep@studio.example", emailVerified: true, isOrganizationAdmin: false},
+      {name: "Kept"},
+    )
+    const kept = (await WorkspaceMembershipModel.findOne({workspaceId: created.workspaceId, mentraUserId: person}).lean())!.membershipId
+    const duplicate = await seedPending(created.workspaceId, "user_01KEEP", "admin")
+    await seedIdentity("user_01KEEP", "keep@studio.example")
+
+    await claimLegacyIdentities({mentraUserId: person, email: "keep@studio.example", emailVerified: true})
+
+    expect(await membership(duplicate)).toMatchObject({status: "ended", endedReason: "removed"})
+    expect(await WorkspaceMembershipModel.find({workspaceId: created.workspaceId, mentraUserId: person, status: "active"}).lean()).toMatchObject([
+      {membershipId: kept, role: "owner"},
+    ])
+  })
+
+  test("a person who already has a workspace is claimed into a second one beside it", async () => {
+    const person = await mentraUser("supa-second-ws")
+    const created = await createWorkspace(
+      {kind: "user", mentraUserId: person, email: "second@studio.example", emailVerified: true, isOrganizationAdmin: false},
+      {name: "Mine"},
+    )
+    await seedWorkspace("ws_g2")
+    const imported = await seedPending("ws_g2", "user_01SECOND", "owner")
+    await seedIdentity("user_01SECOND", "second@studio.example")
+
+    await claimLegacyIdentities({mentraUserId: person, email: "second@studio.example", emailVerified: true})
+
+    expect(await membership(imported)).toMatchObject({mentraUserId: person, pendingWorkosUserId: null, role: "owner", status: "active"})
+    expect(
+      (await WorkspaceMembershipModel.find({mentraUserId: person, status: "active"}).lean()).map(row => row.workspaceId).sort(),
+    ).toEqual([created.workspaceId, "ws_g2"].sort())
+    // A repeat claims nothing and writes nothing.
+    const events = await WorkspaceAuditEventModel.countDocuments({})
+    await claimLegacyIdentities({mentraUserId: person, email: "second@studio.example", emailVerified: true})
+    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
+  })
+
+  test("every identity with the email is claimed, with its keys", async () => {
+    const person = await mentraUser("supa-two-ids")
+    await seedWorkspace("ws_low")
+    await seedWorkspace("ws_high")
+    const low = await seedPending("ws_low", "user_01AAA", "developer")
+    const high = await seedPending("ws_high", "user_01ZZZ", "admin")
+    const lowKey = await seedKey("ws_low", low)
+    await seedIdentity("user_01AAA", "two@studio.example")
+    await seedIdentity("user_01ZZZ", "two@studio.example")
+
+    expect(await claimLegacyIdentities({mentraUserId: person, email: "two@studio.example", emailVerified: true})).toEqual({
+      claimedIdentities: 2,
     })
+
+    expect(await membership(high)).toMatchObject({mentraUserId: person, status: "active", role: "admin"})
+    expect(await membership(low)).toMatchObject({mentraUserId: person, status: "active", role: "developer"})
+    expect(await validateCredentialToken(lowKey.token)).toMatchObject({workspaceId: "ws_low"})
+    expect(await WorkspaceMembershipModel.countDocuments({pendingWorkosUserId: {$in: ["user_01AAA", "user_01ZZZ"]}, status: "active"})).toBe(0)
+    expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: person, status: "active"})).toBe(2)
+  })
+
+  test("an imported Owner of several workspaces is claimed as each one's Owner, so none is left ownerless", async () => {
+    const person = await mentraUser("supa-sole")
+    await seedWorkspace("ws_main")
+    await seedWorkspace("ws_alone")
+    const main = await seedPending("ws_main", "user_01SOLE", "owner", "wm_a_main")
+    const sole = await seedPending("ws_alone", "user_01SOLE", "owner", "wm_b_alone")
+    await seedPending("ws_alone", "user_01NOBODY", "admin")
+    await seedIdentity("user_01SOLE", "sole@studio.example")
+
+    await claimLegacyIdentities({mentraUserId: person, email: "sole@studio.example", emailVerified: true})
+
+    expect(await membership(main)).toMatchObject({mentraUserId: person, status: "active", role: "owner"})
+    expect(await membership(sole)).toMatchObject({mentraUserId: person, status: "active", role: "owner"})
+    expect(await countActiveOwners("ws_alone")).toBe(1)
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "membership.removed"})).toBe(0)
   })
 
   test("an unverified email claims nothing, through a provider sign-in or a Core access token", async () => {
@@ -553,8 +626,16 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
       claimedIdentities: 0,
     })
     expect((await membership(late)).mentraUserId).toBeNull()
+    // The person who claimed it gets it at their next sign-in, beside ws_once.
     await signIn({sub: "supa-first", email: "once@studio.example", emailConfirmed: true})
-    expect(await membership(late)).toMatchObject({mentraUserId: first, pendingWorkosUserId: null})
+    expect(await membership(late)).toMatchObject({mentraUserId: first, pendingWorkosUserId: null, status: "active"})
+
+    // So does one a later re-run adds after they have left.
+    await leaveWorkspace({kind: "user", mentraUserId: first, email: "once@studio.example", emailVerified: true, isOrganizationAdmin: false}, "ws_once")
+    await seedWorkspace("ws_rerun2")
+    const later = await seedPending("ws_rerun2", "user_01ONCE", "member")
+    await signIn({sub: "supa-first", email: "once@studio.example", emailConfirmed: true})
+    expect(await membership(later)).toMatchObject({mentraUserId: first, pendingWorkosUserId: null})
   })
 
   test("an enterprise org owned by the WorkOS user moves to the person who claims it", async () => {
@@ -653,7 +734,7 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
       expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.deleted"})).toBe(0)
     })
 
-    test("a workspace that holds anything is kept, and the claim goes through", async () => {
+    test("a workspace that holds anything is kept, and the claim discards the imported membership", async () => {
       const holds: Array<[string, (workspaceId: string, creator: string) => Promise<unknown>]> = [
         ["a second member", async ws =>
           WorkspaceMembershipModel.create(
@@ -682,7 +763,8 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
         await claimLegacyIdentities({mentraUserId, email, emailVerified: true})
 
         expect({what, status: await statusOf(automaticId)}).toEqual({what, status: "active"})
-        expect(await membership(pending)).toMatchObject({mentraUserId})
+        // The imported membership is claimed beside the automatic workspace, which is kept.
+        expect(await membership(pending), what).toMatchObject({mentraUserId, status: "active"})
         expect(await WorkspaceMembershipModel.countDocuments({mentraUserId, status: "active"})).toBe(2)
       }
     })
@@ -777,10 +859,12 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
     )
 
     expect(results.reduce((sum, result) => sum + result.claimedIdentities, 0)).toBe(1)
+    // ws_r1's merges into the membership Racer holds there, and ws_r2's is claimed beside it, each once.
     expect(await claimEvents()).toEqual([
       ["membership.merged_duplicate", "ws_r1", duplicate],
       ["membership.claimed", "ws_r2", fresh],
     ])
+    expect(await membership(fresh)).toMatchObject({mentraUserId: racer, status: "active"})
     expect(await membership("wm_race_held")).toMatchObject({role: "admin", status: "active"})
     expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: racer, status: "active"})).toBe(2)
   })

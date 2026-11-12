@@ -85,6 +85,8 @@ struct ViewState {
         // Check if device is paired (don't activate to preserve A2DP music playback)
         let isPaired = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
 
+        publishClassicAudioProfiles(devicePattern: audioDevicePattern)
+
         if isPaired {
             // Device is paired! Don't activate it - let PhoneMic.swift activate when recording starts
             Bridge.log("Audio: Mentra Live is paired (preserving A2DP for music)")
@@ -98,6 +100,7 @@ struct ViewState {
             AudioSessionMonitor.startMonitoring(devicePattern: audioDevicePattern) {
                 [weak self] (connected: Bool, _: String?) in
                 guard let self = self else { return }
+                self.publishClassicAudioProfiles(devicePattern: audioDevicePattern)
 
                 if connected {
                     Bridge.log("Audio: Device paired and connected")
@@ -131,6 +134,22 @@ struct ViewState {
     private var defaultWearable: String {
         get { DeviceStore.shared.get("bluetooth", "default_wearable") as? String ?? "" }
         set { DeviceStore.shared.apply("bluetooth", "default_wearable", newValue) }
+    }
+
+    /// Clears the retired pre-v4 owner-lost setting. The Mentra Live pairing state is native
+    /// (`MentraLivePairingStateStore`) and never rides the settings replay.
+    private func clearOwnerLost() {
+        guard DeviceStore.shared.get("bluetooth", "mentra_live_owner_lost") as? Bool == true else { return }
+        DeviceStore.shared.apply("bluetooth", "mentra_live_owner_lost", false)
+        Bridge.saveSetting("mentra_live_owner_lost", false)
+    }
+
+    /// The saved glasses' firmware is no longer known once they are forgotten. The next glasses
+    /// report it again with their first `pairing_info`.
+    private func clearSecureFirmware() {
+        guard DeviceStore.shared.get("bluetooth", "mentra_live_secure_firmware") as? Bool == true else { return }
+        DeviceStore.shared.apply("bluetooth", "mentra_live_secure_firmware", false)
+        Bridge.saveSetting("mentra_live_secure_firmware", false)
     }
 
     private var pendingWearable: String {
@@ -203,14 +222,6 @@ struct ViewState {
         set { DeviceStore.shared.apply("bluetooth", "sensing_enabled", newValue) }
     }
 
-    /// Phone-side VAD gating switch. Default is OFF (VAD runs) so that the
-    /// coordinator can drive per-utterance offline/online STT switching from
-    /// `vad_status` events. Set to `true` only as an emergency kill-switch.
-    private var bypassVad: Bool {
-        get { DeviceStore.shared.get("bluetooth", "bypass_vad") as? Bool ?? false }
-        set { DeviceStore.shared.apply("bluetooth", "bypass_vad", newValue) }
-    }
-
     private var localSttFallbackActive: Bool {
         get { DeviceStore.shared.get("bluetooth", "local_stt_fallback_active") as? Bool ?? false }
         set { DeviceStore.shared.apply("bluetooth", "local_stt_fallback_active", newValue) }
@@ -252,6 +263,26 @@ struct ViewState {
         get { DeviceStore.shared.get("glasses", "bluetoothClassicConnected") as? Bool ?? false }
         set { DeviceStore.shared.apply("glasses", "bluetoothClassicConnected", newValue) }
     }
+
+    /// An HFP input is available or a matching Bluetooth output is active.
+    private var glassesBluetoothClassicProfilesConnected: Bool {
+        get { DeviceStore.shared.get("glasses", "bluetoothClassicProfilesConnected") as? Bool ?? false }
+        set { DeviceStore.shared.apply("glasses", "bluetoothClassicProfilesConnected", newValue) }
+    }
+
+    /// A matching Bluetooth output is the active audio route.
+    private var glassesBluetoothAudioRouted: Bool {
+        get { DeviceStore.shared.get("glasses", "bluetoothAudioRouted") as? Bool ?? false }
+        set { DeviceStore.shared.apply("glasses", "bluetoothAudioRouted", newValue) }
+    }
+
+    #if !os(macOS)
+    private func publishClassicAudioProfiles(devicePattern: String) {
+        let profiles = AudioSessionMonitor.observeProfiles(devicePattern: devicePattern)
+        glassesBluetoothClassicProfilesConnected = profiles.profilesConnected
+        glassesBluetoothAudioRouted = profiles.audioRouted
+    }
+    #endif
 
     private var micRanking: [String] {
         get {
@@ -519,6 +550,11 @@ struct ViewState {
     }
 
     func handlePcm(_ pcmData: Data) {
+        // The wake word, phone-side speech activity, and local STT all hear the same 16 kHz mono PCM.
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
+            WakeWordDetector.shared.accept(pcmData)
+            SpeechActivityMonitor.shared.accept(pcmData)
+        #endif
         handleSendingPcm(pcmData)
 
         // Send PCM to local transcriber.
@@ -942,17 +978,23 @@ struct ViewState {
 
         if audioDevicePattern.isEmpty || audioDevicePattern == DeviceTypes.SIMULATED {
             glassesBluetoothClassicConnected = false
+            glassesBluetoothClassicProfilesConnected = false
+            glassesBluetoothAudioRouted = false
             Bridge.log("MAN: Audio device pattern is empty or simulated, returning")
             return
         }
 
         #if os(macOS)
         glassesBluetoothClassicConnected = AudioSessionMonitor.isAudioDeviceConnected(devicePattern: audioDevicePattern)
+        // macOS only sees active audio devices, so every fact collapses to the same value.
+        glassesBluetoothClassicProfilesConnected = glassesBluetoothClassicConnected
+        glassesBluetoothAudioRouted = glassesBluetoothClassicConnected
         otherBtConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
         #else
         // A connected HFP input remains eligible even while another output is
         // selected. Inspect available inputs as well as the active A2DP route.
         glassesBluetoothClassicConnected = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
+        publishClassicAudioProfiles(devicePattern: audioDevicePattern)
         otherBtConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
         #endif
     }
@@ -963,12 +1005,33 @@ struct ViewState {
         updateMicState()
     }
 
-    func restartTranscriber() {
+    /// Whether on-device transcription currently has `path` loaded. Never waits for a load.
+    func isSttModelLoaded(_ path: String) -> Bool {
         #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
-        Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
-        transcriber.restart()
+            return transcriber.isModelLoaded(path)
         #else
-        Bridge.log("MAN: Local STT is not included in this SwiftPM build")
+            return false
+        #endif
+    }
+
+    /// Reload the selected model if on-device transcription is in demand. Returns false only
+    /// when that reload failed; true once it loaded or when there is no demand.
+    func restartTranscriber() async -> Bool {
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
+            Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
+            return await transcriber.restart()
+        #else
+            Bridge.log("MAN: Local STT is not included in this SwiftPM build")
+            return true
+        #endif
+    }
+
+    /// End the current on-device utterance. See `SherpaOnnxTranscriber.finishUtterance`.
+    func finishTranscription() async -> String? {
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
+            return await transcriber.finishUtterance()
+        #else
+            return nil
         #endif
     }
 
@@ -1526,6 +1589,13 @@ struct ViewState {
         try driver.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
 
+    func sendBesCrashReported(incidentKey: String, reportId: String) throws {
+        guard let driver = sgc else {
+            throw BluetoothSdkError(code: "glasses_not_connected", message: "Cannot report the BES crash because glasses are not connected.")
+        }
+        try driver.sendBesCrashReported(incidentKey: incidentKey, reportId: reportId)
+    }
+
     func sendWifiCredentials(_ ssid: String, _ password: String) {
         Bridge.log("MAN: Sending wifi credentials: \(ssid)")
         sgc?.sendWifiCredentials(ssid, password)
@@ -1538,6 +1608,15 @@ struct ViewState {
     func setHotspotState(_ enabled: Bool) {
         Bridge.log("MAN: 🔥 Setting glasses hotspot state: \(enabled)")
         sgc?.sendHotspotState(enabled)
+    }
+
+    func setWifiAdbState(_ enabled: Bool, expectedBluetoothMac: String?) throws {
+        guard let expectedBluetoothMac else { setWifiAdbState(enabled); return }
+        guard let live = sgc as? MentraLive else {
+            throw BluetoothSdkError(code: "glasses_not_connected", message: "Mentra Live glasses are not connected.")
+        }
+        // Capture one driver; its own session identity guards the actual queue insertion.
+        try live.sendWifiAdbState(enabled, expectedBluetoothMac: expectedBluetoothMac)
     }
 
     func setWifiAdbState(_ enabled: Bool) {
@@ -1865,9 +1944,18 @@ struct ViewState {
         }
         initSGC(defaultWearable)
         (sgc as? MentraLive)?.setRequiresAncs(requiresAncs)
-        if let live = sgc as? MentraLive, live.isPairingYieldActive() {
-            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
-            return
+        if let live = sgc as? MentraLive {
+            let pairingState = MentraLivePairingStateStore.shared
+            if pairingState.isRejected {
+                Bridge.log("MAN: connectDefault skipped — Mentra Live pairing_rejected (Pair Again or forget)")
+                return
+            }
+            if pairingState.isPaused {
+                // The manager watches the advertisement and resumes on its own.
+                Bridge.log("MAN: connectDefault deferred — Mentra Live pairing_mode")
+                live.connectById(reconnectTarget)
+                return
+            }
         }
         searching = true
         sgc?.connectById(reconnectTarget)
@@ -1889,21 +1977,21 @@ struct ViewState {
     }
 
     func connectByName(_ dName: String, requiresAncs: Bool = true) {
-        Bridge.log("MAN: Connecting to wearable: \(dName)")
         var name = dName
 
         // use stored device name if available:
         if dName.isEmpty && !deviceName.isEmpty {
             name = deviceName
         }
+        Bridge.log("PAIRFLOW: connect_by_name requested=\(dName) resolved=\(name)")
 
         if pendingWearable.isEmpty, defaultWearable.isEmpty {
-            Bridge.log("MAN: No pending or default wearable, returning")
+            Bridge.log("PAIRFLOW: connect_by_name abort reason=no_wearable")
             return
         }
 
         if pendingWearable.isEmpty, !defaultWearable.isEmpty {
-            Bridge.log("MAN: No pending wearable, using default wearable: \(defaultWearable)")
+            Bridge.log("PAIRFLOW: connect_by_name pending=\(defaultWearable)")
             pendingWearable = defaultWearable
         }
 
@@ -1914,6 +2002,21 @@ struct ViewState {
             return
         }
 
+        // Only an existing Mentra Live manager is reused. Calling initSGC first would swap out a
+        // manager of another model here, before the queued handoff below disposes of it.
+        if pendingWearable.contains(DeviceTypes.LIVE), let live = sgc as? MentraLive, !live.isManagerKilled {
+            // The pairing scan already found this peripheral. Destroying the
+            // manager here drops it, and the glasses are no longer discoverable
+            // after the BLE bond, so the replacement scan never sees them.
+            Bridge.log("PAIRFLOW: connect_by_name decision=reuse_manager name=\(name)")
+            searching = true
+            pendingDeviceName = name
+            live.setRequiresAncs(requiresAncs)
+            live.connectById(name)
+            return
+        }
+
+        Bridge.log("PAIRFLOW: connect_by_name decision=new_manager name=\(name)")
         Task {
             disconnect(clearPendingConnection: false)
             try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms
@@ -1954,6 +2057,8 @@ struct ViewState {
         #if os(macOS)
         audioRouteObserver = nil
         glassesBluetoothClassicConnected = false
+        glassesBluetoothClassicProfilesConnected = false
+        glassesBluetoothAudioRouted = false
         otherBtConnected = false
         #endif
         sgc?.clearDisplay() // clear the screen
@@ -2030,6 +2135,14 @@ struct ViewState {
 
     func forget() {
         Bridge.log("MAN: Forgetting smart glasses")
+        MentraLivePairingStateStore.shared.update("forget") { $0.onForget() }
+        clearOwnerLost()
+        clearSecureFirmware()
+        // With no connection object, MentraLive.forget() can't run. Only clear Live's saved
+        // identity when Live is the target: forgetting G1/G2 must not touch a Live unit's.
+        if sgc == nil, defaultWearable.contains(DeviceTypes.LIVE) || pendingWearable.contains(DeviceTypes.LIVE) {
+            MentraLive.clearSavedPeripheral()
+        }
         // Call forget first to stop timers/handlers/reconnect logic
         sgc?.forget()
         disconnect()

@@ -460,6 +460,15 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
  * `features` claim only when there is at least one; a miniapp backend reads it
  * with `hasFeature` from `@mentra/auth`.
  *
+ * `workspaceId` is the person's workspace, which the caller passes only when
+ * that workspace assigned this package through Fleet
+ * (`services/workspaces/assigned-packages.service.ts`); it is stamped as the
+ * `workspaceId` claim. `localBuild` marks a token for a local or development
+ * build: it is stamped as `localBuild: true`, and such a token never carries
+ * `workspaceId`, whatever the caller passes. Both claims are left out
+ * otherwise, so every other token keeps exactly the claims it always had.
+ * `services/miniapp-token.service.ts` decides all of these for a person.
+ *
  * TTL defaults to 1h and is env-overridable via MENTRA_MINIAPP_TOKEN_TTL_SEC
  * so tests can shorten it. Returns the token and its absolute expiry as Unix
  * seconds (what the client caches against).
@@ -470,15 +479,36 @@ export async function issueMiniappToken(args: {
   packageName: string
   email?: string | null
   features?: string[]
+  workspaceId?: string | null
+  /** The person's role in `workspaceId`. Ignored without a workspace. */
+  workspaceRole?: string | null
+  /** The name of `workspaceId`, for the miniapp to show. Ignored without a workspace. */
+  workspaceName?: string | null
+  localBuild?: boolean
+  /** The miniapp website the token is issued to; a phone's token carries none. */
+  websiteClientId?: string | null
+  /** Overrides the configured lifetime, for a website's short-lived token. */
+  ttlSec?: number
 }): Promise<{token: string; expiresAt: number}> {
   const {privateKey} = await getMiniappKeys()
-  const ttlSec = miniappTokenTtlSec()
+  const ttlSec = args.ttlSec ?? miniappTokenTtlSec()
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSec
 
   const token = await new jose.SignJWT({
     tenantId: args.tenantId,
+    ...(args.websiteClientId ? {client_id: args.websiteClientId} : {}),
     ...(args.email ? {email: args.email, email_verified: true} : {}),
     ...(args.features?.length ? {features: args.features} : {}),
+    // A local build claims a package name no domain vouches for, so its token never names a workspace.
+    ...(args.localBuild
+      ? {localBuild: true}
+      : args.workspaceId
+        ? {
+            workspaceId: args.workspaceId,
+            ...(args.workspaceRole ? {workspaceRole: args.workspaceRole} : {}),
+            ...(args.workspaceName ? {workspaceName: args.workspaceName} : {}),
+          }
+        : {}),
   })
     // The `kid` points the developer backend at the miniapp-token public key.
     .setProtectedHeader({alg: MENTRA_ALG, kid: MINIAPP_TOKEN_KID})

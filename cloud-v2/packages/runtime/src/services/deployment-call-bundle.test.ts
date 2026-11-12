@@ -59,7 +59,7 @@ test("the reference Runtime serves the Call bundle it ships, as pinned in the ma
   expect(new Uint8Array(await bundle!.body.arrayBuffer())).toEqual(shipped)
 })
 
-test("the reference demo also serves the exact demo miniapps bundled in mobile", async () => {
+test("the reference demo also serves every demo miniapp it lists", async () => {
   const reference = new URL("../../../../deploy/azure/enterprise-reference/", import.meta.url)
   const manifest = await Bun.file(new URL("mentra-deployment.json", reference)).json()
   const demo = await Bun.file(new URL("demo-miniapps.json", reference)).json()
@@ -73,7 +73,5 @@ test("the reference demo also serves the exact demo miniapps bundled in mobile",
   for (const entry of demo) {
     const bundle = bundles.find((bundle) => bundle.path === new URL(entry.bundleUrl).pathname)
     expect(bundle).toBeDefined()
-    const mobile = Bun.file(new URL(`../../../../../mobile/assets/miniapps/${entry.packageName}-${entry.version}.zip`, import.meta.url))
-    expect(await bundle!.body.arrayBuffer()).toEqual(await mobile.arrayBuffer())
   }
 })

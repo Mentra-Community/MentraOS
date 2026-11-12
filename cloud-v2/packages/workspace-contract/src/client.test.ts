@@ -8,6 +8,8 @@ import type {
   AuthorizeResponse,
   DeletionHoldsResponse,
   PrincipalResponse,
+  RegistryCheckResult,
+  RegistryEntryDetail,
   WorkspaceChangeEvent,
   WorkspaceDeletionHold,
   WorkspaceSummary,
@@ -778,6 +780,173 @@ describe("licenses", () => {
   })
 })
 
+describe("the miniapp registry", () => {
+  const NOTES_URL = "https://notes.example.com/"
+  const verifies = (call: Recorded) => {
+    const url = new URL(call.url)
+    const timestampMs = Number(call.headers.get(SERVICE_HEADERS.timestamp))
+    return verifyServiceRequest({
+      secrets: [SECRET],
+      method: call.method,
+      pathWithQuery: `${url.pathname}${url.search}`,
+      body: call.body,
+      timestampMs,
+      signature: call.headers.get(SERVICE_HEADERS.signature) ?? "",
+      nowMs: timestampMs,
+    })
+  }
+  const result = (overrides: Partial<RegistryCheckResult> = {}): RegistryCheckResult => ({
+    url: NOTES_URL,
+    status: "accepted",
+    packageName: "com.example.notes",
+    name: "Notes",
+    iconUrl: `${NOTES_URL}icon.png`,
+    private: false,
+    checkedAt: "2026-10-24T08:00:00.000Z",
+    ...overrides,
+  })
+  const detail = (overrides: Partial<RegistryEntryDetail> = {}): RegistryEntryDetail => ({
+    url: NOTES_URL,
+    packageName: "com.example.notes",
+    registrableDomain: "example.com",
+    name: "Notes",
+    version: "1.0.0",
+    ageRating: "4+",
+    iconUrl: `${NOTES_URL}icon.png`,
+    verification: "verified",
+    private: false,
+    status: "active",
+    firstRegisteredAt: "2026-10-24T08:00:00.000Z",
+    lastVerifiedAt: "2026-10-24T08:00:00.000Z",
+    manifest: {
+      packageName: "com.example.notes",
+      version: "1.0.0",
+      name: "Notes",
+      entry: {ui: "ui/index.html"},
+      bundle: {url: "notes.zip", sha256: "ab".repeat(32)},
+    },
+    ...overrides,
+  })
+  const check = {urls: [NOTES_URL, "https://tools.acme.com/"], workspaceId: "ws_1", mentraUserId: "mu_1"}
+
+  test("checkRegistry POSTs the URLs, workspace and person, signed, and returns one result per URL", async () => {
+    const results = [result(), result({url: "https://tools.acme.com/", status: "unreachable", packageName: null, name: null, iconUrl: null})]
+    const {client, calls} = clientFor(() => json({results}))
+
+    expect(await client.checkRegistry(check)).toEqual(results)
+    expect(calls[0].method).toBe("POST")
+    expect(calls[0].url).toBe(`${BASE}/api/internal/registry/check`)
+    expect(JSON.parse(calls[0].body)).toEqual(check)
+    expect(verifies(calls[0])).toBe(true)
+  })
+
+  test("checkRegistry fails closed on results that aren't the URLs asked about, in order, each of its shape", async () => {
+    for (const results of [
+      [result()],
+      [result({url: "https://tools.acme.com/"}), result({url: NOTES_URL})],
+      [result(), result({url: "https://tools.acme.com/", status: "maybe" as never})],
+      [result(), result({url: "https://tools.acme.com/", private: null as never})],
+      [result(), result({url: "https://tools.acme.com/", name: 5 as never})],
+      [result(), result({url: "https://tools.acme.com/", checkedAt: "soon"})],
+    ]) {
+      const {client} = clientFor(() => json({results}))
+      await expectClientError(client.checkRegistry(check), "bad_response")
+    }
+    const {client} = clientFor(() => json({}))
+    await expectClientError(client.checkRegistry(check), "bad_response")
+  })
+
+  test("checkRegistry waits for Core's 10-second check deadline, past the client's usual timeout", async () => {
+    const results = [result(), result({url: "https://tools.acme.com/"})]
+    const slow = (delayMs: number) => (_request: Recorded, init: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(json({results})), delayMs)
+        init.signal?.addEventListener("abort", () => {
+          clearTimeout(timer)
+          reject(init.signal?.reason)
+        })
+      })
+    // A client whose timeout is 50 ms still gets a check that takes longer, while its other calls time out.
+    const {client} = clientFor(slow(200), {timeoutMs: 50})
+    expect(await client.checkRegistry(check)).toEqual(results)
+    await expectClientError(client.lookupRegistry({workspaceId: "ws_1", packageNames: ["com.example.notes"]}), "core_unavailable")
+  })
+
+  test("checkRegistry reads not_a_member as forbidden", async () => {
+    const {client} = clientFor(() => json({error: "not_a_member"}, 403))
+    expect((await expectClientError(client.checkRegistry(check), "forbidden")).message).toContain("not_a_member")
+  })
+
+  test("lookupRegistry returns every package asked about, an own entry even for __proto__", async () => {
+    const entries = {"com.example.notes": {name: "Notes", iconUrl: null, private: false, archived: false}, ["__proto__"]: null}
+    const {client, calls} = clientFor(() => new Response(JSON.stringify({entries}), {status: 200}))
+
+    const answer = await client.lookupRegistry({workspaceId: "ws_1", packageNames: ["com.example.notes", "__proto__"]})
+    expect(answer["com.example.notes"]).toEqual(entries["com.example.notes"])
+    expect(Object.prototype.hasOwnProperty.call(answer, "__proto__")).toBe(true)
+    expect(Object.getPrototypeOf(answer)).toBe(Object.prototype)
+    expect(calls[0].url).toBe(`${BASE}/api/internal/registry/lookup`)
+    expect(JSON.parse(calls[0].body)).toEqual({workspaceId: "ws_1", packageNames: ["com.example.notes", "__proto__"]})
+    expect(verifies(calls[0])).toBe(true)
+  })
+
+  test("lookupRegistry fails closed on an answer that leaves a package out or has the wrong shape", async () => {
+    for (const entries of [
+      {},
+      {"com.example.notes": {name: "Notes", iconUrl: null, private: false}},
+      {"com.example.notes": {name: "Notes", iconUrl: null, private: "no", archived: false}},
+      {"com.example.notes": "Notes"},
+    ]) {
+      const {client} = clientFor(() => json({entries}))
+      await expectClientError(client.lookupRegistry({workspaceId: "ws_1", packageNames: ["com.example.notes"]}), "bad_response")
+    }
+  })
+
+  test("getRegistryEntry asks for one URL, signed over the exact query, and reads only not_found as none", async () => {
+    const {client, calls} = clientFor(() => json({entry: detail()}))
+    expect(await client.getRegistryEntry(NOTES_URL)).toEqual(detail())
+    expect(calls[0].method).toBe("GET")
+    expect(calls[0].url).toBe(`${BASE}/api/internal/registry/entries?url=https%3A%2F%2Fnotes.example.com%2F`)
+    expect(verifies(calls[0])).toBe(true)
+
+    const none = clientFor(() => json({error: "not_found"}, 404))
+    expect(await none.client.getRegistryEntry(NOTES_URL)).toBeNull()
+    const proxy = clientFor(() => new Response("not found", {status: 404}))
+    await expectClientError(proxy.client.getRegistryEntry(NOTES_URL), "bad_request")
+  })
+
+  test("getRegistryEntry accepts an entry with only its URL and package, and fails closed on a malformed one", async () => {
+    const hidden = detail({name: null, version: null, ageRating: null, iconUrl: null, private: true, manifest: null})
+    expect(await clientFor(() => json({entry: hidden})).client.getRegistryEntry(NOTES_URL)).toEqual(hidden)
+    for (const entry of [
+      undefined,
+      {...detail(), packageName: ""},
+      {...detail(), ageRating: "21+"},
+      {...detail(), verification: "trusted"},
+      {...detail(), status: "deleted"},
+      {...detail(), lastVerifiedAt: "never"},
+      {...detail(), manifest: {name: "Notes"}},
+    ]) {
+      const {client} = clientFor(() => json({entry}))
+      await expectClientError(client.getRegistryEntry(NOTES_URL), "bad_response")
+    }
+  })
+
+  test("archiveRegistry POSTs the rule, reason and actor, and returns what Core did", async () => {
+    const body = {rule: {kind: "domain" as const, value: "Example.com"}, reason: "spam", actorEmail: "staff@example.com"}
+    const {client, calls} = clientFor(() => json({rule: {kind: "domain", value: "example.com"}, created: true, entriesArchived: 3}))
+    expect(await client.archiveRegistry(body)).toEqual({rule: {kind: "domain", value: "example.com"}, created: true, entriesArchived: 3})
+    expect(calls[0].url).toBe(`${BASE}/api/internal/registry/archive`)
+    expect(JSON.parse(calls[0].body)).toEqual(body)
+    expect(verifies(calls[0])).toBe(true)
+
+    for (const answer of [{}, {rule: {kind: "everything", value: "x"}, created: true, entriesArchived: 0}, {rule: body.rule, created: true, entriesArchived: -1}]) {
+      const {client: bad} = clientFor(() => json(answer))
+      await expectClientError(bad.archiveRegistry(body), "bad_response")
+    }
+  })
+})
+
 describe("construction", () => {
   test("throws on an empty or whitespace-only secret instead of signing forgeable requests", () => {
     for (const secret of ["", "   "]) {
@@ -790,5 +959,58 @@ describe("construction", () => {
         }),
       ).toThrow()
     }
+  })
+})
+
+describe("a developer's own websites", () => {
+  const view = {clientId: "mwc_1", name: "Notes", packageName: "com.example.notes"}
+
+  test("each call is a signed POST carrying the person's token, and Core's answer comes back as it gave it", async () => {
+    const {client, calls} = clientFor(() => json({client: view, secret: "mws_s"}, 201))
+    const answer = await client.websiteClients("person-token", {
+      route: "create",
+      client: {packageName: "com.example.notes", type: "server", environment: "production", redirectUris: ["https://notes.example.com/cb"]},
+    })
+    expect(answer).toEqual({status: 201, body: {client: view, secret: "mws_s"}})
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.method).toBe("POST")
+    expect(calls[0]!.url).toBe(`${BASE}/api/internal/website-clients/create`)
+    expect(JSON.parse(calls[0]!.body!)).toEqual({
+      token: "person-token",
+      client: {packageName: "com.example.notes", type: "server", environment: "production", redirectUris: ["https://notes.example.com/cb"]},
+    })
+
+    const routes = clientFor(() => json({clients: [], max: 20}))
+    await routes.client.websiteClients("t", {route: "list"})
+    await routes.client.websiteClients("t", {route: "update", clientId: "mwc_1", changes: {status: "disabled"}})
+    await routes.client.websiteClients("t", {route: "regenerate-secret", clientId: "mwc_1"})
+    await routes.client.websiteClients("t", {route: "delete", clientId: "mwc_1"})
+    expect(routes.calls.map((call) => [call.url.split("/").pop(), JSON.parse(call.body!)])).toEqual([
+      ["list", {token: "t"}],
+      ["update", {token: "t", clientId: "mwc_1", changes: {status: "disabled"}}],
+      ["regenerate-secret", {token: "t", clientId: "mwc_1"}],
+      ["delete", {token: "t", clientId: "mwc_1"}],
+    ])
+  })
+
+  test.each([
+    [422, {error: "domain_mismatch", error_description: "not on the package's domain"}],
+    [422, {error: "not_in_registry", error_description: "install it once"}],
+    [404, {error: "not_found", error_description: "no such website"}],
+    [400, {error: "invalid_request", error_description: "redirectUris must be a non-empty list of URLs"}],
+    [401, {error: INVALID_TOKEN_ERROR}],
+    [403, {error: "forbidden", reason: "email_unverified", error_description: "verify your email address first"}],
+  ])("a refusal the person can act on (%i) is relayed, not thrown", async (status, body) => {
+    const {client} = clientFor(() => json(body, status))
+    expect(await client.websiteClients("t", {route: "list"})).toEqual({status, body})
+  })
+
+  test("an answer the Store cannot trust throws: its own signature refused, a 5xx, or a body that is not an object", async () => {
+    await expectClientError(clientFor(() => json({error: SERVICE_UNAUTHORIZED_ERROR}, 401)).client.websiteClients("t", {route: "list"}), "service_unauthorized")
+    // Core refusing the Store itself (another service's route) is not about the person.
+    await expectClientError(clientFor(() => json({error: "forbidden"}, 403)).client.websiteClients("t", {route: "list"}), "forbidden")
+    await expectClientError(clientFor(() => json({error: "temporarily_unavailable"}, 503)).client.websiteClients("t", {route: "list"}), "core_unavailable")
+    await expectClientError(clientFor(() => new Response("[]", {status: 200})).client.websiteClients("t", {route: "list"}), "bad_response")
+    await expectClientError(clientFor(() => new Response("<html>", {status: 422})).client.websiteClients("t", {route: "list"}), "bad_response")
   })
 })

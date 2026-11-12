@@ -1,0 +1,140 @@
+---
+title: "Sign in with Mentra"
+description: "Let people sign in to your miniapp's website with their Mentra account."
+icon: "right-to-bracket"
+---
+
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
+If your miniapp has a website, people can sign in to it with the Mentra account
+they use on their glasses. Your site then gets the same token your miniapp gets
+on the phone ([Auth](/app-devs/core-concepts/auth)), so your backend sees the
+same user and reaches the same data. There are no passwords for you to store.
+
+It is standard OpenID Connect, so any OIDC client library works.
+
+## Get started
+
+### 1. Register your website
+
+1. Install your miniapp once in the Mentra App from its URL, so Mentra knows it.
+2. Sign in to the [Mentra Developer Console](https://console.mentraglass.com/websites)
+   and open **Websites**.
+3. Enter your miniapp's package name and your site's redirect URI, then
+   **Register website**.
+
+You get a **client ID** and, for a site with a server, a **client secret**. The
+secret is shown once: keep it on your server.
+
+<Note>
+A website signs people in for a miniapp only from the domain the miniapp's name
+belongs to. `com.example.notes` belongs to `example.com`, so its website's
+redirect URIs must be on `example.com` or one of its subdomains. It is the same
+rule that decides where a miniapp can be [served from](/app-devs/getting-started/distribution).
+</Note>
+
+### 2. Send people to Mentra and take them back
+
+Use the authorization code flow with PKCE. With
+[`openid-client`](https://www.npmjs.com/package/openid-client) on your server:
+
+```typescript
+import * as oidc from "openid-client";
+
+const config = await oidc.discovery(
+  new URL("https://account.mentraglass.com"),
+  process.env.MENTRA_CLIENT_ID!,
+  { client_secret: process.env.MENTRA_CLIENT_SECRET!, id_token_signed_response_alg: "EdDSA" },
+  oidc.ClientSecretPost(process.env.MENTRA_CLIENT_SECRET!),
+);
+
+// When someone clicks "Sign in with Mentra":
+const verifier = oidc.randomPKCECodeVerifier();
+const state = oidc.randomState();
+const nonce = oidc.randomNonce();
+// Keep verifier, state and nonce for this browser (a short-lived, HttpOnly cookie), then redirect to:
+const url = oidc.buildAuthorizationUrl(config, {
+  redirect_uri: "https://notes.example.com/auth/callback",
+  scope: "openid email profile",
+  code_challenge: await oidc.calculatePKCECodeChallenge(verifier),
+  code_challenge_method: "S256",
+  state,
+  nonce,
+});
+
+// On your redirect URI:
+const tokens = await oidc.authorizationCodeGrant(config, new URL(request.url), {
+  pkceCodeVerifier: verifier,
+  expectedState: state,
+  expectedNonce: nonce,
+  idTokenExpected: true,
+});
+```
+
+The first time, Mentra asks the person to allow your site. After that they go
+straight through.
+
+### 3. Use the token on your backend
+
+`tokens.access_token` is the person's miniapp token for your package. Verify it
+with [`@mentra/auth`](https://www.npmjs.com/package/@mentra/auth), exactly as
+for a request from the phone:
+
+```typescript
+import { createMentraAuth } from "@mentra/auth";
+
+const mentraAuth = createMentraAuth({ packageName: "com.example.notes" });
+const user = await mentraAuth.verifyToken(tokens.access_token);
+
+user.mentraUserId; // the same id your miniapp sees on the phone
+user.clientId;     // your website's client ID; null for a request from the phone
+```
+
+Then start your own session for that user. Don't put the token in a URL or in
+`localStorage`.
+
+## Tokens
+
+| Token | What it is | Lifetime |
+|---|---|---|
+| `access_token` | The person's miniapp token for your package. | 5 minutes |
+| `id_token` | Who signed in: `sub` (the Mentra user id), and `email` and `name` when you asked for them. | 1 hour |
+| `refresh_token` | Exchange it for a fresh access token. It changes every time you use it: store the new one. | 30 days from its last use, or until the person revokes your site |
+
+Refresh with `oidc.refreshTokenGrant(config, refreshToken)`. A refresh is also
+when Mentra tells you things have changed: if the person revoked your site, or
+your miniapp was archived, it answers with an error and you should sign them
+out. A `503` means "try again", not "no".
+
+## What your backend can tell
+
+| Field on the verified token | Meaning |
+|---|---|
+| `mentraUserId` | The person. Key your data on this. |
+| `clientId` | Set when the token came from your website, `null` from the phone. Use it to keep a route for the phone only. |
+| `workspaceId`, `workspaceRole` | The person's workspace and their role there (`member`, `developer`, `admin`, `owner`), when that workspace added your miniapp through Fleet. Otherwise `null`. |
+| `workspaceName` | That workspace's name, to show the person which workspace they're in. `null` without a workspace, and sometimes with one: show something else then, and never decide anything by it. |
+| `email` | Their verified email, when Mentra has one. It can change. |
+
+## Site types
+
+| Type | For | Secret |
+|---|---|---|
+| **Server** | A site whose server runs the sign-in and keeps the tokens. Use this when you can. | Yes |
+| **Browser only** | A single-page site with no server. Keep tokens in memory. | No |
+
+## Develop on your own computer
+
+Register a second website with **Environment: Development** and a redirect URI
+on your machine, such as `http://127.0.0.1:5173/callback`. A development website
+signs in only you.
+
+## Signing out, and being signed out
+
+- To sign someone out of your site, end your own session and revoke the refresh
+  token with `oidc.tokenRevocation(config, refreshToken)`.
+- People see the sites they have allowed, and can revoke any of them, under
+  **Connected apps** on [account.mentraglass.com](https://account.mentraglass.com/connections).
+  Your next refresh then fails.

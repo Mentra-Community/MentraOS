@@ -131,7 +131,7 @@ export type UseMentraBluetoothOptions = {
 
 export type MentraBluetoothSession = {
   busy: boolean
-  clearDefaultDevice: () => Promise<void>
+  unpair: () => Promise<void>
   connect: (device?: Device, options?: ConnectOptions) => Promise<void>
   connectDefault: (options?: ConnectOptions) => Promise<void>
   defaultDevice: Device | null
@@ -312,7 +312,7 @@ export function useMentraBluetooth(options: UseMentraBluetoothOptions = {}): Men
 
   return {
     busy: connection.busy || galleryModeApplying,
-    clearDefaultDevice: connection.clearDefaultDevice,
+    unpair: connection.unpair,
     connect: connection.connect,
     connectDefault: connection.connectDefault,
     defaultDevice: connection.defaultDevice,

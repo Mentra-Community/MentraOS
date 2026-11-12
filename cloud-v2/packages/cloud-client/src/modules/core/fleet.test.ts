@@ -155,6 +155,19 @@ describe("Fleet.report 200", () => {
     })
   })
 
+  test("keeps the desired-state revision an ack carries, and reads anything else as none", async () => {
+    await expect(outcomeFor(() => json(200, {schemaVersion: 1, results: [], revision: 7}))).resolves.toEqual({
+      kind: "results",
+      ack: {schemaVersion: 1, results: [], revision: 7},
+    })
+    for (const revision of [0, -1, 1.5, "7", null, Number.MAX_SAFE_INTEGER + 2]) {
+      await expect(outcomeFor(() => json(200, {schemaVersion: 1, results: [], revision}))).resolves.toEqual({
+        kind: "results",
+        ack: {schemaVersion: 1, results: []},
+      })
+    }
+  })
+
   const malformed: Array<[string, () => Response]> = [
     ["a wrong schemaVersion", () => json(200, {schemaVersion: 2, results: []})],
     ["a missing schemaVersion", () => json(200, {results: []})],

@@ -26,7 +26,16 @@ export enum MiniappRequestType {
   /** Request a fresh miniapp-scoped backend auth token. */
   AUTH_REFRESH = "miniapp_auth_refresh",
 
-  /** Update the set of streams the miniapp is subscribed to. */
+  /**
+   * Update the set of streams the miniapp is subscribed to. `subscriptions`
+   * lists stream names; a transcription stream is `{stream, processing}`, one
+   * entry per processing its listeners ask for, and `transcriptionListeners`
+   * lists every transcription listener as `{id, stream, processing}`. Both
+   * also carry `forceLocal: true` for `localOnly`, the form hosts before
+   * `processing` read. Hosts accept that older form,
+   * `{stream, forceLocal?, includeCloud?}`, from SDKs that predate
+   * `processing`.
+   */
   SUBSCRIBE = "miniapp_subscribe",
 
   /**
@@ -45,7 +54,7 @@ export enum MiniappRequestType {
   /** Stop any audio playback this miniapp initiated. */
   STOP_AUDIO = "miniapp_stop_audio",
 
-  /** Speak text via cloud TTS — phone constructs the URL. */
+  /** Speak text via cloud or on-device TTS, as its `processing` says. */
   SPEAK = "miniapp_speak",
 
   /**
@@ -189,6 +198,17 @@ export enum MiniappRequestType {
    * so future reconnect logic can re-send.
    */
   TRANSCRIPTION_CONFIG = "miniapp_transcription_config",
+  /**
+   * End the current on-device utterance now (transcription.finishUtterance).
+   * Result: the final text, "" when nothing was pending, or null when the
+   * model can't finish early.
+   */
+  TRANSCRIPTION_FINISH = "miniapp_transcription_finish",
+
+  // ----- Telemetry -----
+
+  /** A miniapp's own analytics event (`session.telemetry.capture`). One-shot; hosts with `hostFeatures.telemetry`. */
+  TELEMETRY_CAPTURE = "miniapp_telemetry_capture",
 
   // ----- Deferred in v1 -----
 
@@ -225,11 +245,11 @@ export enum MiniappRequestType {
   MINIAPPS_START = "miniapp_apps_start",
   /** Stop another miniapp. */
   MINIAPPS_STOP = "miniapp_apps_stop",
-  /** Install/update an approved bundle. Bundled host-trusted Stores only. */
+  /** Install the miniapp at a miniapp URL. System-list miniapps only. */
   MINIAPPS_INSTALL = "miniapp_apps_install",
   /** Preflight a release's host/SDK/hardware requirements without downloading it. */
   MINIAPPS_INSTALL_CHECK = "miniapp_apps_install_check",
-  /** Uninstall a package owned by the calling Store. Bundled host-trusted Stores only. */
+  /** Uninstall a miniapp installed from a miniapp URL. System-list miniapps only. */
   MINIAPPS_UNINSTALL = "miniapp_apps_uninstall",
   /** Invoke a declared action on another miniapp; headless-wakes it if stopped. */
   ACTION_INVOKE = "miniapp_action_invoke",
@@ -293,9 +313,6 @@ export enum MiniappResponseType {
 
   /** Push: host color scheme (light/dark) changed. */
   COLOR_SCHEME_CHANGE = "miniapp_color_scheme_change",
-
-  /** Push: a Store installation moved to another host-side phase. */
-  MINIAPPS_INSTALL_PROGRESS = "miniapp_apps_install_progress",
 
   /**
    * Push: speaker playback state transitioned. Per-miniapp; the runtime sends
@@ -391,6 +408,10 @@ export enum MiniappStreamType {
   // Speech / audio (cloud or local)
   TRANSCRIPTION = "transcription", // language variant: "transcription:en-US"
   TRANSLATION = "translation", // language variant: "translation:en-US"
+  /** State of the on-device speech-to-text model (session.transcription.onModelStatus). */
+  TRANSCRIPTION_MODEL_STATUS = "transcription_model_status",
+  /** On-device "Hey Mentra" keyword spotter (session.mic.onWakeWord). */
+  WAKE_WORD = "wake_word",
   AUDIO_CHUNK = "audio_chunk",
   VAD = "vad",
 
@@ -444,7 +465,7 @@ export enum MiniappErrorCode {
   TTS_INVALID_VOICE = "TTS_INVALID_VOICE",
   TTS_UPSTREAM_ERROR = "TTS_UPSTREAM_ERROR",
 
-  /** `speak({forceLocal: true})` but the on-device offline TTS model isn't downloaded/ready. */
+  /** `speak({processing: "localOnly"})` but the on-device TTS model isn't downloaded/ready. */
   TTS_LOCAL_UNAVAILABLE = "TTS_LOCAL_UNAVAILABLE",
 
   /** Not connected / pre-ACK and transport closed. */
@@ -459,21 +480,16 @@ export enum MiniappErrorCode {
   // ----- Inter-miniapp interop -----
   /**
    * Caller is not a system app — SYSTEM-only APIs (interop list/start/stop/invoke,
-   * setWifiAdbState) reject with this code.
+   * setWifiAdbState) reject with this code, as installs do from any miniapp off
+   * the system list. Also: an uninstall of a miniapp that isn't a URL install.
    */
   NOT_PERMITTED = "NOT_PERMITTED",
   /** Target miniapp is not installed. */
   APP_NOT_FOUND = "APP_NOT_FOUND",
   /** Target miniapp is incompatible with the connected glasses. */
   APP_NOT_COMPATIBLE = "APP_NOT_COMPATIBLE",
-  /** Bundle download, validation, or activation failed. */
+  /** The miniapp didn't install; the error's `reason` says why (`InstallMiniappFailureReason`). */
   INSTALL_FAILED = "INSTALL_FAILED",
-  /** Another Store installation is already in progress for the same package. */
-  INSTALL_IN_PROGRESS = "INSTALL_IN_PROGRESS",
-  /** An automatic update was deferred because the target is running or starting. */
-  APP_RUNNING = "APP_RUNNING",
-  /** Another Store owns the installed package's update provenance. */
-  STORE_OWNERSHIP_CONFLICT = "STORE_OWNERSHIP_CONFLICT",
   /** Target miniapp does not declare the requested action. */
   ACTION_NOT_FOUND = "ACTION_NOT_FOUND",
   /** Target connected but never registered a handler for the action (within the buffer window). */

@@ -106,6 +106,21 @@ data class OtaStatusEvent(
     }
 }
 
+/** Mentra Live stored a BES crash incident; [values] is the glasses message with JSON nulls omitted. */
+data class BesCrashDetectedEvent(
+    val values: Map<String, Any>,
+) {
+    val incidentKey: String get() = stringValue(values, "incidentKey").orEmpty()
+    val reason: String get() = stringValue(values, "reason").orEmpty()
+    val state: String get() = stringValue(values, "state").orEmpty()
+    val reportId: String? get() = stringValue(values, "reportId")?.takeIf { it.isNotEmpty() }
+    @Suppress("UNCHECKED_CAST")
+    val summary: Map<String, Any> get() = values["summary"] as? Map<String, Any> ?: emptyMap()
+
+    /** Event body for JavaScript; `reportId` is null rather than absent before a report exists. */
+    fun toEventMap(): Map<String, Any?> = values + ("reportId" to reportId)
+}
+
 data class OtaQueryResult(
     val values: Map<String, Any>,
 ) {
@@ -170,6 +185,7 @@ interface MentraBluetoothSdkListener {
     fun onKeepAliveAck(event: KeepAliveAckEvent) {}
     fun onOtaStartAck(event: OtaStartAckEvent) {}
     fun onOtaStatus(event: OtaStatusEvent) {}
+    fun onBesCrashDetected(event: BesCrashDetectedEvent) {}
     fun onSettingsAck(event: SettingsAckEvent) {}
     fun onVersionInfo(event: VersionInfoResult) {}
     fun onMicPcm(event: MicPcmEvent) {}

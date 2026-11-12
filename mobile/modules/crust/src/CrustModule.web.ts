@@ -27,6 +27,10 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
     this.httpRequests.get(requestId)?.abort()
     this.httpRequests.delete(requestId)
   }
+  /** The web has no local files to resolve. */
+  canonicalFilePath(_path: string): string | null {
+    return null
+  }
   hello() {
     return "Hello world! 👋"
   }
@@ -49,6 +53,9 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
     return false
   }
   async isBetaBuild() {
+    return false
+  }
+  async isScreenCaptured() {
     return false
   }
   async mentraJsSpawn(_pkg: string, _polyfill: string, _miniappJs: string) {

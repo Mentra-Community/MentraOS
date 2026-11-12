@@ -62,6 +62,9 @@ function projectReadiness() {
     connected: s.connection.state === "connected",
     fullyBooted: isGlassesReady(s.connection),
     bluetoothClassicConnected: s.bluetoothClassicConnected,
+    bluetoothClassicProfilesConnected: s.bluetoothClassicProfilesConnected,
+    bluetoothAudioRouted: s.bluetoothAudioRouted,
+    audioSetup: s.audioSetup ?? ({state: "idle"} as const),
     nativeLinkBusy: isGlassesLinkLayerBusy(s.connection),
   }
 }
@@ -292,6 +295,20 @@ export const pairing = {
 
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
   scan: (model: DeviceModel): Promise<void> => BluetoothSdk.startScan(model),
+  /** Stop a scan started with `scan()`. */
+  stopScan: (): Promise<void> => BluetoothSdk.stopScan(),
+  /** The glasses this phone is still bonded with, which never unpaired. Android only: iOS can't read its bonds. */
+  bondedGlasses: async (): Promise<Device | null> => {
+    try {
+      const bonded = await BluetoothSdk.getBondedGlasses?.()
+      // A bond says nothing about firmware: the session finds out whether they support secure pairing.
+      return bonded?.name
+        ? {id: bonded.address, model: "Mentra Live", name: bonded.name, address: bonded.address}
+        : null
+    } catch {
+      return null
+    }
+  },
   /** Best-effort advisory after a caller-managed scan completes empty. */
   diagnoseEmptyScan: async (model: DeviceModel): Promise<ScanDiagnostic | null> => {
     try {
@@ -339,6 +356,8 @@ export const pairing = {
    * failed attempt can't leave a default identity with no paired device behind.
    */
   pair: async (device: Device, options?: ConnectOptions): Promise<void> => {
+    // Pairing is the person asking for these glasses: a disconnect they made earlier no longer holds.
+    await useSettingsStore.getState().setSetting(SETTINGS.glasses_user_disconnected.key, false, false)
     await pushAllBluetoothSettings(device.model)
     return BluetoothSdk.connect(device, {...options, saveAsDefault: false})
   },

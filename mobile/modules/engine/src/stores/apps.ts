@@ -14,22 +14,24 @@ import {useMemo} from "react"
 import {AppState} from "react-native"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 import {create} from "zustand"
+import type {FleetLaunchFailureReason} from "@mentra/cloud-protocol"
 
 import type {ClientApp} from "../types/applet"
 import {DeviceTypes} from "../types/enums"
 import {getModelCapabilities} from "../types/hardware"
 import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
-import appRegistry from "../services/AppRegistry"
+import appRegistry, {buildHardwareRequirements, type UninstallOptions} from "../services/AppRegistry"
 import localDisplayManager from "../services/LocalDisplayManager"
 import {fleetEvents} from "../services/fleet/fleetEvents"
 import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
+import {checkMiniappAge, isMiniappAgeGateOn, miniappRequiredAge} from "../services/miniappAgeGate"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import {nativeMiniappExecution} from "../services/NativeMiniappExecution"
+import {noteMiniappOpened} from "../services/runningUpdatePrompt"
 import {isMiniappAvailable} from "../runtime/bootstrap"
-import {isStoreMiniappPackage} from "../services/SystemMiniappPolicy"
 import {resolveHiddenStatus} from "./appVisibility"
 import {SETTINGS, useSettingsStore} from "./settings"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
@@ -68,6 +70,8 @@ export interface AppStoreHooks {
    * alert / settings navigation here.
    */
   onMissingSpeechModel?: (app: ClientApp) => void
+  /** A start was refused because the miniapp's server no longer admits this account; the host explains why. */
+  onAccessRevoked?: (app: ClientApp) => void
   /**
    * An open request passed the gates — fired on EVERY open, including
    * re-opening an already-running app, so the host's navigation / open
@@ -77,6 +81,17 @@ export interface AppStoreHooks {
 }
 
 let hostHooks: AppStoreHooks = {}
+
+/** The running-state change at the end of each start, one at a time (see `start`). */
+let startTransitions: Promise<unknown> = Promise.resolve()
+/** How many times each package has been stopped, so a start can tell whether a later start stopped it. */
+const stopCounts = new Map<string, number>()
+
+function oneStartAtATime<T>(transition: () => Promise<T>): Promise<T> {
+  const run = startTransitions.then(transition)
+  startTransitions = run.catch(() => {})
+  return run
+}
 const uninstallingPackages = new Set<string>()
 const openedByUserListeners = new Set<(packageName: string) => void>()
 
@@ -137,7 +152,7 @@ interface AppStatusState {
   clearForeground: () => void
   stopAll: () => AsyncResult<void, Error>
   install: (url: string, opts?: {versionOverride?: string}) => AsyncResult<void, Error>
-  uninstall: (packageName: string, version?: string) => AsyncResult<void, Error>
+  uninstall: (packageName: string, version?: string, options?: UninstallOptions) => AsyncResult<void, Error>
   saveScreenshot: (packageName: string, screenshot: string) => Promise<void>
   setHiddenStatus: (packageName: string, status: boolean) => void
   getHiddenStatus: (packageName: string) => boolean
@@ -227,6 +242,26 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
   }
 }
 
+/** What the paired glasses (or none) have: what each app's `compatibility`, and so the gate in `start()`, checks. */
+function pairedGlassesCapabilities() {
+  const defaultWearable =
+    (useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) as DeviceTypes | undefined) ||
+    DeviceTypes.NONE
+  return getModelCapabilities(defaultWearable)
+}
+
+/**
+ * Whether a release declaring these `hardwareRequirements` (its `miniapp.json`'s) would pass the hardware gate in
+ * `start()` with the glasses paired now.
+ */
+export function launchesWithPairedGlasses(hardwareRequirements: unknown, packageName: string): boolean {
+  const requirements = buildHardwareRequirements(
+    hardwareRequirements as Parameters<typeof buildHardwareRequirements>[0],
+    packageName,
+  )
+  return HardwareCompatibility.checkCompatibility(requirements, pairedGlassesCapabilities()).isCompatible
+}
+
 /**
  * Build the final `apps` array for the store from the installed/offline app
  * source. Pure — same inputs -> same outputs.
@@ -246,10 +281,7 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[]): Cli
     previousByPackage.set(oldApp.packageName, oldApp)
   }
 
-  const defaultWearable =
-    (useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) as DeviceTypes | undefined) ||
-    DeviceTypes.NONE
-  const capabilities = getModelCapabilities(defaultWearable)
+  const capabilities = pairedGlassesCapabilities()
 
   // Single pass: dedupe → screenshot carry-over → compat → hidden, all into
   // fresh objects. The previous in-place mutation re-used object references
@@ -350,7 +382,7 @@ function reportingLaunches(
   return async (clientApp, opts) => {
     let attempted = false
     let started = false
-    const claim: {release?: () => void} = {}
+    const claim: {release?: () => FleetLaunchFailureReason | undefined} = {}
     try {
       started = await launch(clientApp, opts, {
         begin: () => {
@@ -360,6 +392,8 @@ function reportingLaunches(
       })
       return started
     } finally {
+      // The launcher classified any spawn failure it held back for this start; this report carries it.
+      const failureReason = claim.release?.()
       if (attempted) {
         fleetEvents.launch({
           packageName: clientApp.packageName,
@@ -367,9 +401,9 @@ function reportingLaunches(
           versionName: clientApp.version,
           start: opts?.trigger ?? "automatic",
           outcome: started ? "started" : "failed",
+          ...(!started && failureReason ? {failureReason} : {}),
         })
       }
-      claim.release?.()
     }
   }
 }
@@ -439,6 +473,10 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       explain.onUpdateBlocked?.(app)
       return false
     }
+    if (app.local && appRegistry.isMiniappAccessRevoked(packageName)) {
+      explain.onAccessRevoked?.(app)
+      return false
+    }
 
     // Skip spawning a NEW app while another is mid-launch — concurrent spawns
     // race the foreground-only-one teardown. This is checked BEFORE the gates
@@ -488,7 +526,18 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return false
     }
 
-    // A model check above may have yielded while an update started.
+    // The age gate, before the screen opens or another miniapp stops, so a refusal changes nothing: the person was
+    // asked their age, or told why. Only a gated miniapp waits here. The launch is checked again as its context
+    // spawns, for every other way in.
+    if (app.local && !app.running && isMiniappAgeGateOn()) {
+      const rated = miniappLauncher.installedAgeRating(packageName)
+      if (miniappRequiredAge(rated.ageRating) !== null) {
+        const verdict = await checkMiniappAge(rated, {interactive: AppState.currentState === "active"})
+        if (verdict !== "allowed") return false
+      }
+    }
+
+    // A model check or the age gate above may have yielded while an update started.
     if (get().updatingPackages.has(packageName)) {
       explain.onUpdateBlocked?.(app)
       return false
@@ -508,8 +557,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
     // If the tapped app is already running, this is a re-open: the nav/foreground
     // above already drove the animation, and there's nothing to spawn. Short-
-    // circuit before the spawn pipeline.
-    if (app.running) {
+    // circuit before the spawn pipeline. Another start of it may have finished
+    // while this one waited above.
+    if (app.running || get().apps.find((a) => a.packageName === packageName)?.running) {
       saveLastOpenTime(packageName)
       return true
     }
@@ -518,23 +568,29 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // declares no execution is the Mentra App's own interface (Settings, Feedback), not a miniapp, and is not reported.
     if (app.local || app.nativeExecution) attempt.begin()
 
-    // Foreground-only-one rule: stop other running standard apps.
-    if (app.type === "standard") {
-      const runningForeground = state.apps.filter(
-        (a) =>
-          a.running && a.type === "standard" && a.packageName !== packageName && !isStoreMiniappPackage(a.packageName),
-      )
-      for (const r of runningForeground) {
-        await get().stop(r.packageName)
+    // Foreground-only-one rule: stop other running standard apps, then mark this one running. Starts that waited
+    // above (the age question, a presentation) can get here together, so each does this one at a time, on the
+    // state as it is then: the last one in stops the others.
+    let stopsWhenMarked = 0
+    await oneStartAtATime(async () => {
+      if (app.type === "standard") {
+        const runningForeground = get().apps.filter(
+          (a) => a.running && a.type === "standard" && a.packageName !== packageName,
+        )
+        for (const r of runningForeground) {
+          await get().stop(r.packageName)
+        }
       }
-    }
 
-    set((s) => ({
-      apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: false} : a)),
-    }))
-
-    saveLastOpenTime(packageName)
-    await startStopApp(app, true)
+      set((s) => ({
+        apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: false} : a)),
+      }))
+      saveLastOpenTime(packageName)
+      await startStopApp(app, true)
+      stopsWhenMarked = stopCounts.get(packageName) ?? 0
+    })
+    // A start that came in after this one may have stopped it already: it doesn't come back.
+    if ((stopCounts.get(packageName) ?? 0) !== stopsWhenMarked) return false
 
     // Spawn the background JS context for local miniapps. This used to be a
     // side effect of LocalMiniappView mounting on foreground; pulling it here
@@ -566,6 +622,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   }),
 
   stop: async (packageName: string) => {
+    stopCounts.set(packageName, (stopCounts.get(packageName) ?? 0) + 1)
     const state = get()
     const app = state.apps.find((a) => a.packageName === packageName)
     if (!app) {
@@ -609,6 +666,10 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       hostHooks.onUpdateBlocked?.(app)
       return
     }
+    if (app.local && appRegistry.isMiniappAccessRevoked(packageName)) {
+      hostHooks.onAccessRevoked?.(app)
+      return
+    }
 
     // Flip the foreground flag synchronously so the Compositor's open
     // animation starts on the same frame as the tap. We do NOT await start()
@@ -621,6 +682,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       foregroundedPackage: packageName,
       apps: s.apps.map((a) => ({...a, foregrounded: a.packageName === packageName})),
     }))
+    noteMiniappOpened(packageName)
 
     // Ensure the JSContext exists. start() is idempotent for an
     // already-running app and enforces the foreground-only-one rule for
@@ -651,13 +713,27 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   install: (url, opts) => appRegistry.installFromUrl(url, opts),
 
-  uninstall: (packageName, version) => {
+  uninstall: (packageName, version, options) => {
     return Res.try_async(async () => {
       if (get().updatingPackages.has(packageName)) throw new Error(`${packageName} is updating; try again shortly`)
       if (uninstallingPackages.has(packageName)) throw new Error(`${packageName} is already being uninstalled`)
       uninstallingPackages.add(packageName)
       try {
-        const res = await appRegistry.uninstall(packageName, version)
+        // Only for Fleet's record: a lookup that fails (or throws) never stops the removal.
+        const removed =
+          version ??
+          (await Promise.resolve()
+            .then(() => appRegistry.getActiveVersion(packageName))
+            .catch(() => undefined))
+        const res = await appRegistry.uninstall(packageName, version, options)
+        // Fleet (Phase 12): every removal attempt, and how it went. The reason of a failed one is not known here.
+        fleetEvents.install({
+          packageName,
+          operation: "remove",
+          source: options?.fleetSource ?? "url",
+          ...(removed ? {fromVersion: removed} : {}),
+          ...(res.is_error() ? {outcome: "failed" as const, reason: "unknown" as const} : {outcome: "succeeded" as const}),
+        })
         if (res.is_error()) throw res.error
         set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
       } finally {

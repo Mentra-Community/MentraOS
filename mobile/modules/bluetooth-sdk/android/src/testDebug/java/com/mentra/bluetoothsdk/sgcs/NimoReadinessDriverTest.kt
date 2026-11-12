@@ -162,11 +162,41 @@ class NimoReadinessDriverTest {
     assertTrue(failures.isEmpty())
   }
 
-  private fun finishHandshake(peer: Boolean?) {
+  @Test fun canvasWaitsForTheSupportedFirmwareVersion() {
+    finishHandshake(peer = true, packed = null)
+    assertKeys() // No Launch against firmware that has not reported its version.
+    emitVersion(SUPPORTED_PACKED, SUPPORTED_DETAIL)
+    assertKeys(1)
+    assertTrue(failures.isEmpty())
+  }
+
+  @Test fun otherFirmwareWithoutAnOtaChannelStillStartsTheCanvas() {
+    // The test link exposes no OTA characteristics, so the update is unavailable and the session proceeds.
+    finishHandshake(peer = true, packed = (1 shl 21), detail = "FW-VERSION-v0.1.0.0-20250101000000-abcdef-Release")
+    assertKeys(1)
+    assertTrue(failures.isEmpty())
+  }
+
+  private fun finishHandshake(peer: Boolean?, packed: Int? = SUPPORTED_PACKED, detail: String = SUPPORTED_DETAIL) {
     field("twsConnected").set(nimo, true)
     field("peerCompanionReady").set(nimo, peer)
     Nimo::class.java.getDeclaredMethod("finishHandshake").apply { isAccessible = true }.invoke(nimo)
     idle()
+    if (packed != null) emitVersion(packed, detail)
+  }
+
+  /** GET_VERSION / GET_VERSION_DETAIL replies; the canvas starts only after the version check. */
+  private fun emitVersion(packed: Int, detail: String) {
+    val le = byteArrayOf(packed.toByte(), (packed shr 8).toByte(), (packed shr 16).toByte(), (packed shr 24).toByte())
+    emit(packet(NimoProtocol.CMD_GET_PARAMETER, NimoProtocol.GET_VERSION, byteArrayOf(0) + le))
+    emit(packet(NimoProtocol.CMD_GET_PARAMETER, NimoProtocol.GET_VERSION_DETAIL,
+      byteArrayOf(0) + detail.toByteArray(Charsets.UTF_8)))
+  }
+
+  private companion object {
+    // 0.1.1.1 packed as major<<28 | minor<<21 | micro<<12 | build.
+    const val SUPPORTED_PACKED = (1 shl 21) or (1 shl 12) or 1
+    const val SUPPORTED_DETAIL = "FW-VERSION-v0.1.1.1-20260827164351-537cf1-dirty-Debug"
   }
 
   private fun newGatt(): BluetoothGatt = ShadowBluetoothGatt.newInstance(

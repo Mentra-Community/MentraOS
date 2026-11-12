@@ -6,12 +6,14 @@ import {ConsoleLogger} from "@/utils/dev/console"
 import {FirebaseAnalyticsSetup} from "@/effects/FirebaseAnalyticsSetup"
 import {OtaUpdateChecker} from "@/effects/OtaUpdateChecker"
 import {BtClassicPairing} from "@/effects/BtClassicPairing"
+import {PairingModePopup} from "@/effects/PairingModePopup"
 import {ScreenshotFeedbackPrompt} from "@/effects/ScreenshotFeedbackPrompt"
 import NavigationHost from "@/effects/NavigationHost"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import Compositor from "@/effects/Compositor"
 import {QrScanOverlay} from "@/effects/QrScanOverlay"
 import {PhoneWifiOverlay} from "@/effects/PhoneWifiOverlay"
+import {FleetSheets} from "@/effects/FleetSheets"
 import {RunningUpdatePrompt} from "@/effects/RunningUpdatePrompt"
 import {useDeployment} from "@/services/deployment"
 // import TranscriptionsListener from "@/effects/TranscriptionsListener"
@@ -30,6 +32,7 @@ export const AllEffects = () => {
         <>
           <Reconnect />
           <BtClassicPairing />
+          <PairingModePopup />
           {/* <WhisperTest /> */}
           {/* <SherpaTest /> */}
           {/* <TranscriptionsListener /> */}
@@ -43,6 +46,7 @@ export const AllEffects = () => {
           <QrScanOverlay />
           <PhoneWifiOverlay />
           <RunningUpdatePrompt />
+          <FleetSheets />
           <MemoryWarningMonitor />
         </>
       )}

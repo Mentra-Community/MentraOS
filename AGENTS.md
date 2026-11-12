@@ -37,7 +37,7 @@ Consult module-specific AGENTS.md when working within that module.
 
 ## Project Structure & Module Organization
 
-Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
+Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Example apps for integrators embedding `@mentra/bluetooth-sdk` and `@mentra/engine`, and the reference miniapp built with the Mentra Miniapp SDK (`examples/miniapp/`), live in `examples/` (see [`examples/README.md`](examples/README.md)). Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
 First-party miniapps and their backends also live in `miniapps/`. All of those
 miniapps are part of this repository's source scope, for example
@@ -154,11 +154,6 @@ validates the public Maven artifact dependency shape.
 
 Cloud V2 services use Bun tests via `cd cloud-v2 && bun run test`; add suites in `cloud-v2/tests/` or beside the relevant package code and mock external providers. Mobile UI logic uses Jest (`bun test`, `bun test:watch`) with files colocated in `mobile/test/` and snapshots beside components. Device flows rely on Maestro (`bun test:maestro`), so update scripts whenever navigation or pairing shifts. Features touching pairing, BLE, or transcription need unit coverage plus an end-to-end path.
 
-For a failing nightly device suite, use
-[`fix-nightly-failures`](.agents/skills/fix-nightly-failures/SKILL.md). Keep independent
-members running, diagnose failures as they arrive, and choose targeted manual runs
-or held authoring for verification after the suite finishes.
-
 ## GitHub Actions runners
 
 When adding or editing GitHub Actions workflows, use the
@@ -170,13 +165,6 @@ requests an exception. Apply this to reusable workflows and runner matrices too.
 ## Commit & Pull Request Guidelines
 
 Write imperative, present-tense commit subjects (e.g., "Add BLE retry delay") and keep scope focused. Reference issue IDs or Slack threads in the body when applicable. Before opening a PR, run relevant `bun run test` suites and platform builds, attach log excerpts for hardware-dependent steps, and call out configuration updates. PR descriptions should outline scope, test evidence, and screenshots or screen recordings for UI-impacting changes.
-
-When opening or updating a PR, use the
-[`select-pr-routines` skill](.agents/skills/select-pr-routines/SKILL.md) to search
-device-test coverage. Add relevant `routine:<id>` labels for existing coverage;
-when the behavior needs changed or new coverage, submit the skill's authoring
-brief with `routine-work:edit` or `routine-work:create`. Explain the coverage and
-any missing prerequisite in the PR; a request is not a passing test result.
 
 ### AI agent attribution
 
@@ -237,30 +225,17 @@ you are otherwise asked to change one of those miniapps:
 ## Bug Report Logs
 
 Use [the investigate-incident skill](.agents/skills/investigate-incident/SKILL.md)
-for report IDs and incident Slack links. Fetch reports and artifacts through
-the API script below, not admin-console browser or computer-use automation.
+for report IDs and incident Slack links. In the Mentra monorepo,
+`scripts/get-logs report <rep_id>` wraps the script below and gathers the
+glasses', phones' and lab runs' logs too.
 
-Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports system. Report ids look like `rep_01...` and appear in the reports Slack notifications and in the admin console's Incident system page (admin.mentraglass.com).
-
-1. Get the report id (from Slack, the admin console, or the user)
-2. Fetch it: `./scripts/fetch-incident-logs.sh {reportId}` — downloads `report.json` plus every artifact into `./incident-logs/{reportId}/`
-3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an operator key with the incident read scope (`mak_...`, created in the admin portal under Operator keys). An older admin key (`msk_...`) whose `api-key@<keyId>.local` address is on `CLOUD_CORE_ADMIN_EMAILS` works as an operator key too
-4. Without an environment override, the script tries prod, dev, then staging and reports which backend succeeded. Use `--env prod|dev|staging` or `MENTRA_CORE_URL` to target one backend explicitly.
-
-What you get:
-
-- `report.json` - Full report document: `kind` (bug/feedback/automatic), `trigger`, `report` (actual/expected behavior, severity, contact email), `feedback`, `context` (phone/glasses/app state snapshot), artifact metadata, and asset rows
-- `NN-logs-{source}.json` - Log bundles uploaded by the devices (e.g. phone, glasses), each `{entries: [{timestamp, level, message, source?}]}`
-- `NN-screenshot-phone-*.{png,jpg}` - Screenshots attached by the user
-
-Other modes: `--json` prints the raw report JSON to stdout (no downloads); `--list [--kind ...] [--status ...] [--limit N]` lists recent reports.
-
-Example:
+Bug reports, feedback and automatic reports land in the Cloud V2 reports system, with ids like `rep_01...`.
 
 ```bash
-export MENTRA_ADMIN_TOKEN=mak_your-operator-key
-./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD
+./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD --env staging
 ```
+
+It saves `report.json` and every artifact (`NN-logs-<source>.json`, each `{entries: [{timestamp, level, message, source?}]}`, and screenshots) in `./incident-logs/<reportId>/`. Each environment has its own operator key with incident read, from its admin dashboard: `MENTRA_PROD_ADMIN_TOKEN` (admin.mentraglass.com), `MENTRA_STAGING_ADMIN_TOKEN` (admin.staging.mentraglass.com), `MENTRA_DEV_ADMIN_TOKEN` (admin.dev.mentraglass.com); `MENTRA_ADMIN_TOKEN` is the fallback. Without `--env` it tries every environment it has a key for. A failure prints the exact fix: a 404 means the report is on another environment. `--json` prints the report only; `--list` lists recent reports.
 
 ## Mentra Live BES firmware (sibling repo)
 

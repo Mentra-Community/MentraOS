@@ -2,9 +2,12 @@ import type { ReactElement } from "react";
 import { createAccountApi, type AccountApi } from "./lib/account-api";
 import { isConfigured, type AccountConfig } from "./lib/config";
 import type { EmailLinkLanding } from "./lib/email-link";
+import { createConnectionsApi, type ConnectionsApi } from "./lib/connections-api";
+import { isSignInReturn } from "./lib/connections-flow";
 import { createInteractionApi, type InteractionApi } from "./lib/interaction-api";
 import { matchRoute } from "./lib/router";
 import { createAccountAuthClient, type AccountAuthClient } from "./lib/supabase";
+import { ConnectionsRoute } from "./routes/connections";
 import { ConsentRoute } from "./routes/consent";
 import { HomeRoute } from "./routes/home";
 import { LoginRoute } from "./routes/login";
@@ -26,6 +29,8 @@ export interface AppEnvironment {
   createAuth?: (config: AccountConfig) => AccountAuthClient;
   /** Core's sign-in server on this origin; tests pass a fake. */
   interactions?: InteractionApi;
+  /** Core's Connected apps on this origin; tests pass a fake. */
+  connections?: ConnectionsApi;
   /** Core's account API on this origin; tests pass a fake. */
   account?: AccountApi;
   /** The outcome of an email link that fell back to the Site URL, already removed from the URL. */
@@ -54,6 +59,15 @@ export function createApp(config: AccountConfig, env: AppEnvironment): ReactElem
       break;
     case "consent":
       page = <ConsentRoute api={interactions} navigate={env.navigate} search={search} />;
+      break;
+    case "connections":
+      page = (
+        <ConnectionsRoute
+          api={env.connections ?? createConnectionsApi()}
+          navigate={env.navigate}
+          returnedFromSignIn={isSignInReturn(search)}
+        />
+      );
       break;
     case "reset":
       page = <ResetRoute api={env.account ?? createAccountApi()} search={search} />;

@@ -53,7 +53,14 @@ export function createFakeInteractions(
 ) {
   const api = {
     details: mock(async (_interactionId: string): Promise<DetailsResult> =>
-      overrides.details ?? { kind: "ok", prompt: "login", clientName: "Mentra admin portal", scopes: ["openid", "email"] },
+      overrides.details ?? {
+        kind: "ok",
+        prompt: "login",
+        clientName: "Mentra admin portal",
+        scopes: ["openid", "email"],
+        redirectUri: "https://admin.example/api/admin/auth/callback",
+        packageName: null,
+      },
     ),
     handOff: mock(async (_interactionId: string, _accessToken: string): Promise<ContinueResult> =>
       overrides.handOff ?? { kind: "continue", url: CONTINUATION },

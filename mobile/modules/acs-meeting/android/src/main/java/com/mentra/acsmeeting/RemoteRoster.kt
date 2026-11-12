@@ -1,6 +1,6 @@
 package com.mentra.acsmeeting
 
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.azure.android.communication.calling.CommonCall
 import com.azure.android.communication.calling.ParticipantState
 import com.azure.android.communication.calling.ParticipantsUpdatedListener

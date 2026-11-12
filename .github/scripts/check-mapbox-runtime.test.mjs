@@ -59,13 +59,6 @@ test("redacts transport failures containing authenticated URLs", async () => {
   })
 })
 
-test("promotion checks both environments before recording config readiness", () => {
-  const workflow = readFileSync(new URL("../workflows/production-release-cloud.yml", import.meta.url), "utf8")
-  for (const environment of ["staging", "prod"]) {
-    assert.match(workflow, new RegExp(`--environment ${environment} \\\\\n\\s+--env-file [^\\n]+\\n\\s+--check-maps true`))
-  }
-})
-
 test("CLI writes authentication evidence only after successful provider probes", t => {
   const directory = mkdtempSync(path.join(tmpdir(), "maps-preflight-"))
   t.after(() => rmSync(directory, {recursive: true, force: true}))

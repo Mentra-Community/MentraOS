@@ -51,7 +51,13 @@ Pod::Spec.new do |s|
   s.ios.vendored_frameworks = 'Packages/SherpaOnnx/sherpa-onnx.xcframework'
 
   s.resource_bundles = {
-    'BluetoothSDKPrivacy' => ['Source/PrivacyInfo.xcprivacy']
+    'BluetoothSDKPrivacy' => ['Source/PrivacyInfo.xcprivacy'],
+    # NIMO firmware the SGC installs when connected glasses report another version.
+    'MentraNimoFirmware' => ['Resources/NimoFirmware/*.bin']
+  }
+  # Phone-side Silero speech activity runs through the iOS-only sherpa-onnx framework.
+  s.ios.resource_bundles = {
+    'MentraSileroVad' => ['Resources/SileroVad/silero_vad.onnx']
   }
 
   native_source_files = [

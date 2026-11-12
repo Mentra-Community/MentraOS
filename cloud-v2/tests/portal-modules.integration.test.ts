@@ -541,7 +541,7 @@ describe("who may call", () => {
     useBilling("prod")
     const owner = await person("owner")
     const workspaceId = await workspaceOf(owner, "Acme")
-    const keys = [await workspaceKey(owner, workspaceId), await operatorKey(["organization.testing.read"])]
+    const keys = [await workspaceKey(owner, workspaceId), await operatorKey(["organization.supportProfiles.read"])]
 
     for (const key of keys) {
       for (const rest of [`/workspaces/${workspaceId}/licenses`, "/ui/entry.js"]) {
@@ -602,6 +602,22 @@ describe("what comes back", () => {
     const reply = await billing(someone, "GET", `/workspaces/${workspaceId}/licenses`)
 
     expect([reply.status, reply.json]).toEqual([503, {error: "module_unavailable"}])
+  })
+
+  test("a 503 naming the module's own code reaches the browser with that code and its Retry-After, and nothing else", async () => {
+    useBilling("prod")
+    const someone = await person("someone")
+    const workspaceId = await workspaceOf(someone, "Mine")
+    answer = () =>
+      Response.json(
+        {error: "core_unavailable", error_description: "the workspace service is unavailable; try again"},
+        {status: 503, headers: {"retry-after": "10", "x-internal": "1"}},
+      )
+
+    const reply = await billing(someone, "GET", `/workspaces/${workspaceId}/licenses`)
+
+    expect([reply.status, reply.json, reply.headers.get("retry-after")]).toEqual([503, {error: "core_unavailable"}, "10"])
+    expect([reply.headers.get("cache-control"), reply.headers.get("x-internal")]).toEqual(["private, no-store", null])
   })
 
   test("a session due for rotation keeps its new cookie on the forwarded answer", async () => {
@@ -684,6 +700,18 @@ describe("GET /api/portal/me", () => {
       const reply = await fromPerson(who, "GET", "/me")
       expect([reply.status, reply.json.modules]).toEqual([200, {billing: false}])
     }
+  })
+
+  test("reports the name the person's sign-in carried, and null when none has", async () => {
+    const named = await person("named")
+    const unnamed = await person("unnamed")
+    await SigninIdentityModel.updateOne({mentraUserId: named.mentraUserId}, {$set: {name: "  Ada Lovelace "}}, {upsert: true})
+    await SigninIdentityModel.updateOne({mentraUserId: unnamed.mentraUserId}, {$set: {name: "   "}}, {upsert: true})
+    const reply = await fromPerson(named, "GET", "/me")
+    expect(reply.status).toBe(200)
+    expect(reply.json.user.name).toBe("Ada Lovelace")
+    expect(reply.json.user.email).toBe(named.email)
+    expect((await fromPerson(unnamed, "GET", "/me")).json.user.name).toBeNull()
   })
 
   test("reports modules.billing: true when billing is installed and usable", async () => {

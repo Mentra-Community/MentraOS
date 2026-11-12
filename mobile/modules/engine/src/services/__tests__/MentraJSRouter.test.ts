@@ -401,6 +401,19 @@ describe("MentraJSRouter", () => {
     expect(crust.killCalls).toEqual(["com.foo"])
   })
 
+  test("every live context, a hidden one too, is in the context registry until it is torn down", async () => {
+    const {miniappContextRegistry, miniappRunningRegistry} = await import("../MiniappRunningRegistry")
+    const stopped: string[] = []
+    const unsubscribe = miniappContextRegistry.onRemoved((packageName) => stopped.push(packageName))
+    router.registerApp("com.hidden", undefined, false, false)
+    expect(miniappContextRegistry.has("com.hidden")).toBe(true)
+    expect(miniappRunningRegistry.has("com.hidden")).toBe(false)
+    await router.unregister("com.hidden")
+    unsubscribe()
+    expect(miniappContextRegistry.has("com.hidden")).toBe(false)
+    expect(stopped).toEqual(["com.hidden"])
+  })
+
   test("registeredPackages tracks registered packages", () => {
     router.registerApp("a")
     router.registerApp("b")
@@ -549,6 +562,36 @@ describe("MentraJSRouter", () => {
       packageName: "com.foo",
       envelope: {kind: "init"},
     })
+  })
+
+  test("records whether a context runs a local or development build before it is live, through a crash respawn", async () => {
+    const {isLocalBuildContext} = await import("../miniappBuildKind")
+    const {miniappContextRegistry} = await import("../MiniappRunningRegistry")
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    router.crashController = new MentraJSCrashController({now: () => 0, backoffMs: [1], maxRetries: 3})
+    router.start()
+    // What the data partition and the token see when the context becomes live.
+    const seenAtStart: boolean[] = []
+    const unsubscribe = miniappContextRegistry.subscribe(() => {
+      if (miniappContextRegistry.has("com.dev")) seenAtStart.push(isLocalBuildContext("com.dev"))
+    })
+    try {
+      await router.spawnAndRegister("com.dev", "/* dev js */", {developmentBuild: true})
+      expect(seenAtStart).toEqual([true])
+      ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (packageName: string) => void}).onLivenessTimeout(
+        "com.dev",
+      )
+      await new Promise((r) => setTimeout(r, 20))
+      expect(crust.spawnCalls).toHaveLength(2)
+      expect(isLocalBuildContext("com.dev")).toBe(true)
+      // The installed release, started again, is not one.
+      await router.unregister("com.dev")
+      await router.spawnAndRegister("com.dev", "/* release js */")
+      expect(isLocalBuildContext("com.dev")).toBe(false)
+    } finally {
+      unsubscribe()
+      await router.unregister("com.dev")
+    }
   })
 
   test("recovery reopens mounted UI once the replacement connects, not at init", async () => {

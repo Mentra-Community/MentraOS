@@ -12,7 +12,8 @@ if (args.includes("--help")) {
 
 Build the iOS app for this Apple Silicon Mac, then launch it in the background.
 Release is the default: JavaScript is bundled, so Metro is unnecessary.
---debug uses Metro; start bun start in a separate terminal.
+--debug uses Metro; start bun start in a separate terminal (it also serves
+  every miniapp of the checkout live).
 --build-only archives the build and leaves the installed app untouched.
 Set EXPO_PUBLIC_ASG_OTA_VERSION_URL to an explicitly selected public manifest
   to enable glasses OTA. Without a manifest, local builds keep OTA disabled.
@@ -30,7 +31,8 @@ if (process.platform !== "darwin" || process.arch !== "arm64") {
 const configuration = args.includes("--debug") ? "Debug" : "Release"
 const projectRoot = process.cwd()
 const derivedData = path.resolve("build/ios-mac")
-await setBuildEnv()
+// A debug build gets the miniapps live from the `bun start` it connects to, instead of packed.
+await setBuildEnv({packMiniapps: configuration === "Release"})
 // A copied .env may still name an old release. The repository root owns the
 // local version, including the value Metro embeds in the Settings screen.
 const localVersion = JSON.parse(await fs.readFile("../package.json", "utf8")).version

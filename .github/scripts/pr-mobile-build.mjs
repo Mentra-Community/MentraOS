@@ -53,9 +53,36 @@ export const MOBILE_PR_PATHS = [
 
 const packagingKeys = new Set(["EXPO_PUBLIC_ASG_OTA_VERSION_URL"])
 
-/** A staging-targeted PR app uses staging services; every other PR keeps dev.
+// What turns a compiled app into a PR publication: its packaging, installer
+// and receipt. A receipt records their fingerprint, and a later head reuses the
+// whole publication only when they are unchanged.
+export const PACKAGING_PATHS = {
+  android: [
+    ".github/scripts/pr-android-artifacts.mjs",
+    ".github/scripts/pr-android-artifacts-diagnostic.mjs",
+    ".github/scripts/repackage-pr-apk.py",
+    ".github/scripts/pr_mobile_config.py",
+  ],
+  ios: [
+    ".github/scripts/pr-ios-artifacts.mjs",
+    ".github/scripts/pr-ios-artifacts-install.mjs",
+    ".github/scripts/pr_mobile_config.py",
+    "mobile/ci/pr-ios",
+  ],
+}
+
+export function packagingFingerprint(platform, exec = execFileSync) {
+  const tree = exec("git", ["ls-tree", "-r", "HEAD", "--", ...PACKAGING_PATHS[platform]], {
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
+    encoding: "utf8",
+  })
+  if (!tree.trim()) throw new Error(`No ${platform} packaging sources in HEAD`)
+  return hash(JSON.stringify({schemaVersion: 1, platform, tree}))
+}
+
+/** A PR into staging or main uses staging services; every other PR keeps dev.
  * The backend is compiled in and fingerprinted, so reuse never crosses backends. */
-export const prBackend = (baseRef) => (baseRef === "staging" ? "staging" : "dev")
+export const prBackend = (baseRef) => (baseRef === "staging" || baseRef === "main" ? "staging" : "dev")
 const hash = (value) => createHash("sha256").update(value).digest("hex")
 const transientNetworkCodes = new Set(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "ECONNRESET", "EAI_AGAIN"])
 
@@ -73,16 +100,19 @@ export function fingerprintMobile({tree, env, tools}) {
         ([key]) =>
           !packagingKeys.has(key) &&
           (key.startsWith("EXPO_PUBLIC_") ||
-            ["MENTRAOS_BUILD_NAME", "MENTRAOS_NATIVE_MARKETING_VERSION", "NODE_ENV"].includes(key)),
+            ["MENTRAOS_BUILD_NAME", "MENTRAOS_NATIVE_MARKETING_VERSION", "NODE_ENV", "MENTRA_NIMO_DIAGNOSTIC"].includes(key)),
       )
       .sort(([a], [b]) => a.localeCompare(b)),
   )
   return hash(JSON.stringify({schemaVersion: 1, tree, embeddedEnv, tools}))
 }
 
+// An Android publication's receipt-named APK; mobile-pr-* copies were published before it carried the fingerprint.
 export function candidateAssets(assets, fingerprint, platform = "android") {
   const name =
-    platform === "ios" ? /^mentra-ios-iphone-pr-\d+-[a-f0-9]{40}-\d+-\d+\.ipa$/ : /^mobile-pr-\d+-[a-f0-9]{7}\.apk$/
+    platform === "ios"
+      ? /^mentra-ios-iphone-pr-\d+-[a-f0-9]{40}-\d+-\d+\.ipa$/
+      : /^(?:mentra-android-pr-\d+-[a-f0-9]{40}-\d+-\d+|mobile-pr-\d+-[a-f0-9]{7})\.apk$/
   return assets
     .filter(
       (asset) => name.test(asset.name) && new RegExp(`^mobile-v1:${fingerprint}:[a-f0-9]{64}$`).test(asset.label ?? ""),
@@ -167,6 +197,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const platform = process.argv[2] || "android"
   if (!["android", "ios"].includes(platform)) throw new Error("Expected android or ios")
   const tree = execFileSync("git", ["ls-tree", "-r", "HEAD", "--", ...MOBILE_INPUT_PATHS], {encoding: "utf8"})
+  // A repository that builds this tree inside a larger one (the Mentra
+  // monorepo) fingerprints the inputs it adds outside it: the miniapps it
+  // packs into the app and its own build workflows.
+  const host = process.env.MENTRA_PR_HOST_FINGERPRINT
+  if (host && !/^[a-f0-9]{64}$/.test(host)) throw new Error("Invalid MENTRA_PR_HOST_FINGERPRINT")
   const fingerprint = fingerprintMobile({
     tree,
     env: process.env,
@@ -186,6 +221,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
           }),
       platform: process.platform,
       arch: process.arch,
+      ...(host ? {host} : {}),
     },
   })
   appendFileSync(process.env.GITHUB_ENV, `MENTRA_PR_MOBILE_FINGERPRINT=${fingerprint}\n`)

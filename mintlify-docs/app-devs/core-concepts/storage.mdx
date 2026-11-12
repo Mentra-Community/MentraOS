@@ -67,3 +67,36 @@ Values are strings, so serialize structured data yourself:
 await session.storage.set("notes", JSON.stringify(notes));
 const notes = JSON.parse((await session.storage.get("notes")) ?? "[]");
 ```
+
+## What the phone keeps
+
+Your miniapp's screen is a web page, and on iOS the system browser engine may
+delete a web page's saved data when it hasn't been interacted with for a while.
+The Mentra App protects the parts below, so they last like a normal app's data.
+
+| Storage | Kept? | Notes |
+|---|---|---|
+| `session.storage` | Yes | Stored by the phone, never by the browser engine. |
+| [`session.blob`](/app-devs/core-concepts/blob) | Yes | Files and binary data. |
+| Your screen's `localStorage` | Yes, up to 5 MB | The Mentra App keeps a copy and puts it back before your page's scripts run. |
+| `sessionStorage` | No | Lasts while the screen is open, like a browser tab. |
+| IndexedDB, Cache Storage, cookies | No | iOS may delete them. Don't keep anything there you can't rebuild. |
+
+How the screen's `localStorage` copy works:
+
+- **The 5 MB cap** counts every key and value at two bytes per character, the
+  way browsers count their own quota. A write that would go over it still
+  works in the page, but isn't kept, so that key may be gone after iOS clears
+  the page's data.
+- **Write with `setItem`, `removeItem` and `clear`.** Those reach the copy
+  right away. A value set another way (`localStorage.x = "1"`) is picked up
+  when the screen closes or next opens. A key deleted another way
+  (`delete localStorage.x`) isn't seen, so it can come back.
+- **It follows your `session.storage`.** It belongs to the signed-in account
+  (and workspace, for miniapps a workspace installs), so another account on
+  the same phone starts with its own. Signing out clears it. A development
+  build keeps its own copy, apart from the installed miniapp's.
+
+For anything that matters, prefer `session.storage` or `session.blob`: they
+are available to your background code too, and work while the screen is
+closed.

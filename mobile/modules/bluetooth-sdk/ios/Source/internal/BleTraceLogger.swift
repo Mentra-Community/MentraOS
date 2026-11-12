@@ -17,7 +17,8 @@ enum BleTraceLogger {
         bytes: Int? = nil,
         sourceFile: String = #fileID,
         sourceFunction: String = #function,
-        sourceLine: Int = #line
+        sourceLine: Int = #line,
+        forwardToBridge: Bool = true
     ) {
         guard let payload else {
             emit(format(
@@ -27,19 +28,21 @@ enum BleTraceLogger {
                 type: "null",
                 bytes: bytes,
                 payload: "null"
-            ))
+            ), forwardToBridge: forwardToBridge)
             return
         }
 
+        let type = extractType(from: payload)
+        if isQuietType(type) { return }
         let sanitized = sanitizeDictionary(payload)
         emit(format(
             direction: direction,
             layer: layer,
             source: source(file: sourceFile, function: sourceFunction, line: sourceLine),
-            type: extractType(from: payload),
+            type: type,
             bytes: bytes,
             payload: jsonString(sanitized)
-        ))
+        ), forwardToBridge: forwardToBridge)
     }
 
     static func logMap(
@@ -50,7 +53,8 @@ enum BleTraceLogger {
         bytes: Int? = nil,
         sourceFile: String = #fileID,
         sourceFunction: String = #function,
-        sourceLine: Int = #line
+        sourceLine: Int = #line,
+        forwardToBridge: Bool = true
     ) {
         let sanitized = sanitizeDictionary(payload)
         emit(format(
@@ -60,7 +64,7 @@ enum BleTraceLogger {
             type: type ?? extractType(from: sanitized),
             bytes: bytes,
             payload: jsonString(sanitized)
-        ))
+        ), forwardToBridge: forwardToBridge)
     }
 
     static func logLifecycle(component: String, event: String, extra: [String: Any] = [:]) {
@@ -82,8 +86,9 @@ enum BleTraceLogger {
         logMap(direction: "phone_app", layer: "app_lifecycle", type: event, payload: payload)
     }
 
-    private static func emit(_ line: String) {
+    private static func emit(_ line: String, forwardToBridge: Bool = true) {
         os_log("%{public}@", log: log, type: .info, line)
+        guard forwardToBridge else { return }
         // Log events are excluded from tracing in Bridge, so forwarding a trace
         // cannot recursively generate another trace.
         Bridge.sendTypedMessage("log", body: ["message": line])
@@ -99,6 +104,17 @@ enum BleTraceLogger {
     ) -> String {
         let bytesText = bytes.map { " bytes=\($0)" } ?? ""
         return "BLE_TRACE direction=\(direction) layer=\(layer) source=\(source) type=\(type)\(bytesText) payload=\(truncate(payload))"
+    }
+
+    /// Messages sent every few seconds; tracing each would push everything else out of the
+    /// logs attached to bug reports.
+    static func isQuietType(_ type: String?) -> Bool {
+        type == "hotspot_keepalive"
+    }
+
+    /// Cheap check on a raw inbound JSON string, before it is parsed.
+    static func isQuietJson(_ json: String) -> Bool {
+        json.count <= 256 && json.contains("\"hotspot_keepalive\"")
     }
 
     private static func extractType(from payload: [String: Any]) -> String {

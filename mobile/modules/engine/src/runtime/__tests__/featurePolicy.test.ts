@@ -90,6 +90,7 @@ describe("deployment feature policy", () => {
     configure({
       auth: {},
       config: {
+        bundledSystemMiniappPackages: ["com.mentra.captions"],
         localMiniappPolicy: {
           systemPackageNames: approved,
           managed: [
@@ -109,14 +110,66 @@ describe("deployment feature policy", () => {
     expect(isDevMiniappAllowed("com.example.call")).toBe(allowed)
     expect(isDevMiniappAllowed("com.example.other")).toBe(allowed)
     expect(isInstalledMiniappAllowed("com.example.other", "1.0.0", {source: "direct_download"})).toBe(allowed)
+    // An install from a miniapp URL is an explicit install too.
+    const fromUrl = {source: "url", sourceUrl: "https://tools.example.com/app/"}
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", fromUrl)).toBe(allowed)
+    // A package the build bundles keeps the system policy, whatever URL it came from.
+    const captionsUrl = {source: "url", sourceUrl: "https://miniapps.mentraglass.com/com.mentra.captions/"}
+    expect(isInstalledMiniappAllowed("com.mentra.captions", "1.0.0", captionsUrl)).toBe(approved === null)
     if (allowed) expect(() => assertMiniappDevelopmentAllowed()).not.toThrow()
     else expect(() => assertMiniappDevelopmentAllowed()).toThrow("does not allow miniapp development")
+  })
+
+  test("runs a Fleet assignment's release from its URL where development is off", () => {
+    configure({
+      auth: {},
+      config: {
+        bundledSystemMiniappPackages: ["com.mentra.captions"],
+        localMiniappPolicy: {
+          systemPackageNames: ["com.mentra.settings"],
+          managed: [
+            {
+              packageName: "com.example.call",
+              version: "1.2.0",
+              sha256: "abc",
+              deploymentId: "acme",
+              deploymentOrigin: "https://acme.example",
+            },
+          ],
+        },
+      },
+    })
+    expect(isMiniappDevelopmentAllowed()).toBe(false)
+    const fromUrl = {source: "url", sourceUrl: "https://tools.example.com/app/"}
+    // The workspace's own assignment is not development.
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", fromUrl, {assigned: true})).toBe(true)
+    // Without it, an install from a URL is an explicit install, which this deployment leaves out.
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", fromUrl, {assigned: false})).toBe(false)
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", fromUrl)).toBe(false)
+    // An assignment rewrites no deployment trust: a bundled package it left out stays out, and a package its
+    // manifest pins stays the manifest's.
+    const captionsUrl = {source: "url", sourceUrl: "https://miniapps.mentraglass.com/com.mentra.captions/"}
+    expect(isInstalledMiniappAllowed("com.mentra.captions", "1.0.0", captionsUrl, {assigned: true})).toBe(false)
+    const callUrl = {source: "url", sourceUrl: "https://call.example.com/"}
+    expect(isInstalledMiniappAllowed("com.example.call", "1.3.0", callUrl, {assigned: true})).toBe(false)
+    // The package itself may run: launches check that first.
+    expect(isLocalMiniappPackageAllowed("com.example.tools", {assigned: true})).toBe(true)
+    expect(isLocalMiniappPackageAllowed("com.example.tools", {assigned: false})).toBe(false)
+    expect(isLocalMiniappPackageAllowed("com.example.tools")).toBe(false)
+    expect(isLocalMiniappPackageAllowed("com.mentra.captions", {assigned: true})).toBe(false)
+    // Only a release installed from its URL: a scanned release QR stays a developer build.
+    expect(isInstalledMiniappAllowed("com.example.tools", "1.0.0", {source: "direct_download"}, {assigned: true})).toBe(
+      false,
+    )
   })
 
   test("allows consumer developer builds", () => {
     configure({auth: {}})
     expect(isMiniappDevelopmentAllowed()).toBe(true)
     expect(isDevMiniappAllowed("com.example.call")).toBe(true)
+    expect(
+      isInstalledMiniappAllowed("com.example.tools", "1.0.0", {source: "url", sourceUrl: "https://tools.example.com/"}),
+    ).toBe(true)
   })
 
   test("applies a live Super Mode gate to listing, cached releases and direct/dev launches", () => {
@@ -174,16 +227,14 @@ describe("deployment feature policy", () => {
   })
 })
 
-describe("Store-updated bundled releases", () => {
+describe("bundled releases the retired Store updated", () => {
   afterEach(resetForTests)
   const identity = {source: "system_store", storePackageName: "com.mentra.store"}
   function configureOrganization(approved: string[] | null, managed = false) {
     configure({
       auth: {},
       config: {
-        bundledSystemMiniappPackages: ["com.mentra.notes", "com.mentra.store"],
-        bundledStoreMiniappPackages: ["com.mentra.store"],
-        bundledSystemMiniappStoreOwners: {"com.mentra.notes": "com.mentra.store"},
+        bundledSystemMiniappPackages: ["com.mentra.notes"],
         localMiniappPolicy: {
           systemPackageNames: approved,
           managed: managed

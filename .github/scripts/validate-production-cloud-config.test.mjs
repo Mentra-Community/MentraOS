@@ -348,3 +348,148 @@ test("key material is never mistaken for a placeholder, whatever its base64 body
     /placeholder or local value/,
   )
 })
+
+// Prod 3.3.0 deployed without any sign-in settings and passed this check, because they were optional; Core then turned
+// portal sign-in off. The production contract's own sign-in rule must pass a working configuration and stop each
+// configuration Core would refuse.
+function signInCase() {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+  const production = JSON.parse(
+    readFileSync(path.join(root, ".github/production-release/cloud-config-contract.json"), "utf8"),
+  )
+  const rule = production.required.CLOUD_CORE_OIDC_CLIENTS
+  const keys = [
+    "CLOUD_CORE_OIDC_CLIENTS",
+    ...Object.values(rule.clients).flatMap((client) => (client.siteKey ? [client.siteKey] : [])),
+  ]
+  const signInContract = {
+    schemaVersion: 1,
+    contractVersion: "test",
+    required: Object.fromEntries(keys.map((key) => [key, production.required[key]])),
+  }
+  const clients = [
+    {
+      clientId: "mentra-admin-prod",
+      kind: "admin_portal",
+      secretEnv: "CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET",
+      redirectUris: ["https://admin.example.com/api/admin/auth/callback"],
+    },
+    {
+      clientId: "mentra-portal-prod",
+      kind: "workspace_portal",
+      secretEnv: "CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET",
+      redirectUris: ["https://portal.example.com/api/portal/auth/callback"],
+    },
+    {clientId: "mentra-cli-prod", kind: "cli", redirectUris: ["http://127.0.0.1:53682/callback"]},
+    {
+      clientId: "mentra-console-prod",
+      kind: "console",
+      secretEnv: "CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET",
+      redirectUris: ["https://console.example.com/api/console/auth/callback"],
+    },
+  ]
+  const values = {
+    CLOUD_CORE_ADMIN_PORTAL_URL: "https://admin.example.com",
+    CLOUD_CORE_ENTERPRISE_PORTAL_URL: "https://portal.example.com",
+    CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET: "a".repeat(64),
+    CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET: "b".repeat(64),
+    CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET: "c".repeat(64),
+  }
+  return {signInContract, clients, values}
+}
+
+function validateSignIn(signInContract, clients, values) {
+  return validateProductionCloudConfig({
+    contract: signInContract,
+    environment: "prod",
+    values: {...values, CLOUD_CORE_OIDC_CLIENTS: JSON.stringify(clients)},
+  })
+}
+
+test("portal sign-in needs each portal's client, its secret and its callback", () => {
+  const {signInContract, clients, values} = signInCase()
+  assert.equal(validateContractCoverage(signInContract, []), true)
+  const evidence = validateSignIn(signInContract, clients, values)
+  assert.equal(evidence.checks.find((check) => check.id === "CLOUD_CORE_OIDC_CLIENTS").status, "pass")
+  assert.equal(JSON.stringify(evidence).includes("mentra-admin-prod"), false)
+
+  assert.throws(
+    () => validateSignIn(signInContract, [], values),
+    /CLOUD_CORE_OIDC_CLIENTS has no admin_portal client/,
+  )
+  assert.throws(
+    () =>
+      validateSignIn(
+        signInContract,
+        clients.filter((client) => client.kind !== "console"),
+        values,
+      ),
+    /has no console client/,
+  )
+  assert.throws(
+    () =>
+      validateSignIn(
+        signInContract,
+        clients.map((client) => (client.kind === "console" ? {...client, secretEnv: undefined} : client)),
+        values,
+      ),
+    /the console client names no secretEnv/,
+  )
+  assert.throws(
+    () => validateSignIn(signInContract, clients, {...values, CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET: ""}),
+    /workspace_portal client's CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET is missing/,
+  )
+  assert.throws(
+    () => validateSignIn(signInContract, clients, {...values, CLOUD_CORE_ADMIN_PORTAL_URL: "https://admin.other.com"}),
+    /admin_portal client does not register the CLOUD_CORE_ADMIN_PORTAL_URL callback/,
+  )
+  assert.throws(
+    () =>
+      validateProductionCloudConfig({
+        contract: signInContract,
+        environment: "prod",
+        values: {...values, CLOUD_CORE_OIDC_CLIENTS: "{}"},
+      }),
+    /not a JSON array of clients/,
+  )
+})
+
+test("a sign-in client's site must itself be a required key", () => {
+  const {signInContract} = signInCase()
+  const unchecked = structuredClone(signInContract)
+  delete unchecked.required.CLOUD_CORE_ADMIN_PORTAL_URL
+  assert.throws(() => validateContractCoverage(unchecked, []), /CLOUD_CORE_ADMIN_PORTAL_URL, which is not a required key/)
+})
+
+test("sign-in secrets and the issuer meet Core's startup rules", () => {
+  const {signInContract, clients, values} = signInCase()
+  assert.throws(
+    () => validateSignIn(signInContract, clients, {...values, CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET: "short"}),
+    /console client's CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET is shorter than 32 characters/,
+  )
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+  const production = JSON.parse(
+    readFileSync(path.join(root, ".github/production-release/cloud-config-contract.json"), "utf8"),
+  )
+  const issuerContract = {
+    schemaVersion: 1,
+    contractVersion: "test",
+    required: {
+      CLOUD_CORE_OIDC_ISSUER: production.required.CLOUD_CORE_OIDC_ISSUER,
+      CLOUD_CORE_OIDC_COOKIE_KEYS: production.required.CLOUD_CORE_OIDC_COOKIE_KEYS,
+    },
+  }
+  const issuerValues = {CLOUD_CORE_OIDC_ISSUER: "https://account.example.com", CLOUD_CORE_OIDC_COOKIE_KEYS: "k".repeat(64)}
+  const check = (overrides) =>
+    validateProductionCloudConfig({contract: issuerContract, environment: "prod", values: {...issuerValues, ...overrides}})
+  assert.doesNotThrow(() => check({}))
+  assert.doesNotThrow(() => check({CLOUD_CORE_OIDC_ISSUER: "https://account.example.com/"}))
+  assert.doesNotThrow(() => check({CLOUD_CORE_OIDC_COOKIE_KEYS: `${"n".repeat(32)}, ${"o".repeat(40)}`}))
+  assert.throws(() => check({CLOUD_CORE_OIDC_ISSUER: "https://account.example.com/oidc"}), /must be an origin/)
+  assert.throws(() => check({CLOUD_CORE_OIDC_ISSUER: "https://account.example.com?x=1"}), /must be an origin/)
+  assert.throws(() => check({CLOUD_CORE_OIDC_ISSUER: "http://account.example.com"}), /unsafe or unsupported URL shape/)
+  assert.throws(
+    () => check({CLOUD_CORE_OIDC_COOKIE_KEYS: `${"n".repeat(32)},short`}),
+    /CLOUD_CORE_OIDC_COOKIE_KEYS has an entry shorter than 32 characters/,
+  )
+})

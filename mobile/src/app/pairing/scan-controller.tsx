@@ -40,7 +40,9 @@ export default function SelectGlassesBluetoothScreen() {
     }
     engine.glasses.controller.disconnect()
     engine.glasses.controller.forget()
-    goBack()
+    // An event means iOS is already removing this screen; expo-router would run
+    // a goBack() here after that removal and pop the screen underneath too.
+    if (!event) goBack()
   }, true)
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 package com.mentra.glassesmedia.source
 
-import com.mentra.glassesmedia.network.Ipv4Prefix
+import com.mentra.bluetoothsdk.hotspot.Ipv4Prefix
 
 /**
  * Reads the path media is *actually* taking out of a WebRTC stats sample.

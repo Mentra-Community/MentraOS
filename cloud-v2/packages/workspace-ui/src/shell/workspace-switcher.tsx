@@ -1,4 +1,4 @@
-import { Check, ChevronsUpDown, Mail, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Mail } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Count, WorkspaceAvatar } from "../components/common";
 import { cn } from "../lib/utils";
@@ -13,8 +13,11 @@ export type SwitcherCurrent = {
   roleLabel: string | null;
 };
 
-/** One of the person's workspaces in the menu, and where choosing it goes: an address, or an action. */
-export type SwitcherWorkspace = SwitcherCurrent & ShellTarget;
+/**
+ * One of the person's workspaces in the menu, and where choosing it goes: an address, or an action. `note` is a
+ * short line under its role ("Manages your device").
+ */
+export type SwitcherWorkspace = SwitcherCurrent & ShellTarget & { note?: string | null };
 
 export type SwitcherInvitation = {
   key: string;
@@ -34,18 +37,36 @@ export const SWITCHER_ITEM_CLASS =
   "flex items-center gap-2.5 hover:bg-hover focus-visible:bg-hover rounded-[12px] px-2 py-1.5 text-sm focus-visible:outline-offset-[-3px]";
 
 /**
- * The workspace switcher at the top of the sidebar: the current workspace (initial, name, your role), and
- * a menu of your workspaces, the host's `extraItems`, "Create workspace" and the pending invitations. It
- * is presentational: data and actions come in through props, so it renders the same on the server and in
- * a test, whatever the host's router.
+ * A workspace as a static block at the top of a sidebar: its initial, name and the person's role, with no menu.
+ * `invitations` is whatever the host shows under it (a link to the pending invitations). A site whose people may
+ * switch between workspaces shows {@link WorkspaceSwitcher} instead.
+ */
+export function WorkspaceLabel({ current, invitations }: { current: SwitcherCurrent; invitations?: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <div data-slot="workspace-label" className="rounded-menu bg-background flex w-full items-center gap-3 border px-2.5 py-2">
+        <WorkspaceAvatar name={current.name} className="size-9 rounded-[10px] text-[15px]" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] leading-5 font-semibold">{current.name}</span>
+          {/* Two lines at most, so a longer role ("Member · Organization Admin") is read whole, not cut. */}
+          <span className="text-muted-foreground line-clamp-2 block text-xs leading-4">{current.roleLabel ?? " "}</span>
+        </span>
+      </div>
+      {invitations}
+    </div>
+  );
+}
+
+/**
+ * The workspace menu at the top of a sidebar: the current workspace (initial, name, your role), and a menu
+ * of your workspaces, the host's `extraItems` and the pending invitations. It is presentational: data and
+ * actions come in through props, so it renders the same on the server and in a test, whatever the host's
+ * router. A person may belong to several workspaces; the workspace portal shows it at the top of its sidebar.
  */
 export function WorkspaceSwitcher({
   current,
   workspaces,
   invitations,
-  canCreate,
-  createNotice,
-  onCreate,
   listFailed = false,
   onRetry,
   linkComponent: Link = PlainLink,
@@ -64,14 +85,10 @@ export function WorkspaceSwitcher({
   listFailed?: boolean;
   onRetry?(): void;
   invitations: readonly SwitcherInvitation[];
-  canCreate: boolean;
-  /** Why creating is not offered, shown in its place. */
-  createNotice: string | null;
-  onCreate(): void;
   /** The host's in-app link, for workspaces with an `href`. Defaults to a plain anchor. */
   linkComponent?: ShellLinkComponent;
   /**
-   * More menu items, under the workspaces and above Create workspace ("Manage workspace"). Style them with
+   * More menu items, under the workspaces ("Manage workspace"). Style them with
    * `SWITCHER_ITEM_CLASS`. A link closes the menu when clicked; so does a control marked `data-navigates`.
    */
   extraItems?: ReactNode;
@@ -190,6 +207,7 @@ export function WorkspaceSwitcher({
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-semibold">{workspace.name}</span>
                     {workspace.roleLabel ? <span className="text-muted-foreground block truncate text-xs">{workspace.roleLabel}</span> : null}
+                    {workspace.note ? <span className="text-muted-foreground block truncate text-xs">{workspace.note}</span> : null}
                   </span>
                   {selected ? <Check className="text-brand size-4 shrink-0" aria-label="Current workspace" /> : null}
                 </>
@@ -227,34 +245,13 @@ export function WorkspaceSwitcher({
             })
           )}
 
-          <MenuSeparator />
-          {extraItems}
-          {canCreate ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                onCreate();
-              }}
-              className="flex w-full cursor-pointer items-center gap-2.5 text-left font-semibold hover:bg-hover focus-visible:bg-hover rounded-[12px] px-2 py-1.5 text-sm focus-visible:outline-offset-[-3px]"
-            >
-              <span className="text-muted-foreground flex size-8 items-center justify-center rounded-[9px] border border-dashed">
-                <Plus className="size-4" />
-              </span>
-              Create workspace
-            </button>
-          ) : (
-            <div role="menuitem" aria-disabled="true" className="flex items-start gap-2.5 rounded-[12px] px-2 py-1.5 text-sm">
-              <span className="text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-[9px] border border-dashed opacity-45">
-                <Plus className="size-4" />
-              </span>
-              <span className="min-w-0">
-                <span className="text-muted-foreground block font-semibold">Create workspace</span>
-                {createNotice ? <span className="text-muted-foreground block text-xs leading-4">{createNotice}</span> : null}
-              </span>
-            </div>
-          )}
+          {/* A separator only before something: with no extra items it would close the menu on an empty strip. */}
+          {extraItems ? (
+            <>
+              <MenuSeparator />
+              {extraItems}
+            </>
+          ) : null}
 
           {invitations.length > 0 ? (
             <>

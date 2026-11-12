@@ -10,23 +10,33 @@
  */
 import {getConfigValues} from "../runtime/bootstrap"
 import appRegistry from "../services/AppRegistry"
+import {cloudClientService} from "../services/CloudClientService"
 import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
+import {normalizeCoreUrl} from "../services/fleet/coreUrl"
+import {installMiniapp, type InstallMiniappOptions, type InstallMiniappResult} from "../services/installMiniapp"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
+import {fetchMiniappBundle, fetchMiniappJson} from "../services/miniappFetch"
+import {registryStatusStore} from "../services/miniappRegistryStatusStore"
 import {installMiniappRelease} from "../services/miniappReleaseInstall"
-import {fetchHostedManifest, MiniappUrlUpdater} from "../services/miniappUrlUpdates"
+import {MiniappUrlUpdater} from "../services/miniappUrlUpdates"
 import {
   onRunningUpdateFailed,
   onRunningUpdatePrompt,
+  onRunningUpdatePromptDue,
   type PendingRunningUpdatePrompt,
   type RunningUpdateFailure,
 } from "../services/runningUpdatePrompt"
 import {isSystemMiniappPackage} from "../services/SystemMiniappPolicy"
 import {firstPartyMiniappUrl} from "../services/systemMiniappTrust"
-import {onMiniappOpenedByUser, useAppStatusStore} from "../stores/apps"
+import {launchesWithPairedGlasses, onMiniappOpenedByUser, useAppStatusStore} from "../stores/apps"
 import type {ClientApp} from "../types"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
 
 type AppsState = ReturnType<typeof useAppStatusStore.getState>
+
+// A named function alias lets declaration inference choose the excluded internal
+// barrel. Keep its identity, but describe this public member with public DTOs.
+const install: (url: string, options: InstallMiniappOptions) => Promise<InstallMiniappResult> = installMiniapp
 
 const urlUpdater = new MiniappUrlUpdater({
   installedPackages: async () =>
@@ -36,12 +46,34 @@ const urlUpdater = new MiniappUrlUpdater({
   isSystemPackage: isSystemMiniappPackage,
   firstPartyUrl: (packageName) => firstPartyMiniappUrl(getConfigValues(), packageName),
   hasDevelopmentSelection: (packageName) => localMiniappRuntime.hasDevelopmentSelection(packageName),
-  compatibilityPolicy: () => localMiniappRuntime.currentInstallCompatibilityPolicy(),
-  fetchManifest: fetchHostedManifest,
+  compatibilityPolicy: () => {
+    const policy = localMiniappRuntime.currentInstallCompatibilityPolicy()
+    return policy ? {hostVersion: policy.hostVersion, supportedSdkRange: policy.supportedSdkRange} : null
+  },
+  launchesWithPairedGlasses,
+  // Redirects come back to the updater, which follows moves itself.
+  fetchManifest: (url, {etag, packageName}) =>
+    fetchMiniappJson(url, {...(etag ? {etag} : {}), packageForChallenge: packageName, redirect: "manual"}),
+  fetchBundle: (url, options) => fetchMiniappBundle(url, options),
   install: installMiniappRelease,
   keepVersions: (packageName, versions) => appRegistry.gcReleaseVersions(packageName, versions),
   isRunningError: (error) => error instanceof MiniappRunningError,
   installSession: () => localMiniappRuntime.installSession(),
+  requireRegistry: () => getConfigValues().requireRegistry !== false,
+  // The Core this build is configured for, which the kept answer belongs to whether or not its client exists yet.
+  registryCore: () => {
+    try {
+      return normalizeCoreUrl(cloudClientService.getCoreUrl())
+    } catch {
+      return null
+    }
+  },
+  // Only that Core's client answers; before it exists, or while it speaks for another Core, nothing is asked.
+  registryStatus: (core, request) => cloudClientService.core.registry.statusAs(core, request),
+  register: (request) => cloudClientService.core.registry.register(request),
+  statusStore: registryStatusStore,
+  setReleaseSourceUrl: (packageName, version, fromUrl, sourceUrl) =>
+    appRegistry.setReleaseSourceUrl(packageName, version, fromUrl, sourceUrl),
   now: () => Date.now(),
   log: (message) => console.log(`MiniappUpdates: ${message}`),
   warn: (message, error) => console.warn(`MiniappUpdates: ${message}`, error ?? ""),
@@ -101,26 +133,47 @@ export const miniapps = {
    */
   checkOpenedForUpdate: (packageName: string): Promise<void> => urlUpdater.checkOpened(packageName),
   /**
-   * A person started a miniapp and it now runs. Automatic starts (restoring
-   * what ran before, an update's restart) are not announced. Returns an unsubscribe.
+   * A person opened a miniapp: started it themselves, or opened one again after answering Not now to its update.
+   * Automatic starts (restoring what ran before, an update's restart) are not announced. Returns an unsubscribe.
    */
-  onOpened: (listener: (packageName: string) => void): (() => void) => onMiniappOpenedByUser(listener),
+  onOpened: (listener: (packageName: string) => void): (() => void) => {
+    const unsubscribeStarted = onMiniappOpenedByUser(listener)
+    const unsubscribeDue = onRunningUpdatePromptDue(listener)
+    return () => {
+      unsubscribeStarted()
+      unsubscribeDue()
+    }
+  },
   /**
    * Render "update now?" prompts for running miniapps and answer each one. The
-   * engine decides when one may appear (foreground, one at a time, once per
-   * run of a miniapp). Returns an unsubscribe.
+   * engine decides when one may appear (foreground, one at a time; after Not
+   * now, only once the person opens that miniapp again). Returns an unsubscribe.
    */
   onUpdatePrompt: (listener: (prompt: PendingRunningUpdatePrompt) => void): (() => void) =>
     onRunningUpdatePrompt(listener),
   /** An accepted update failed; the installed version was started again. Returns an unsubscribe. */
   onUpdateFailed: (listener: (failure: RunningUpdateFailure) => void): (() => void) => onRunningUpdateFailed(listener),
-  /** A miniapp whose automatic update waited for it has stopped. Returns an unsubscribe. */
-  onDeferredUpdateReady: (listener: (packageName: string) => void): (() => void) =>
-    onDeferredMiniappUpdateReady(listener),
+  /**
+   * A miniapp whose automatic update waited for it has stopped, or was opened again after Not now so its update may
+   * ask again: run the updater for it. Returns an unsubscribe.
+   */
+  onDeferredUpdateReady: (listener: (packageName: string) => void): (() => void) => {
+    const unsubscribeStopped = onDeferredMiniappUpdateReady(listener)
+    const unsubscribeDue = onRunningUpdatePromptDue(listener)
+    return () => {
+      unsubscribeStopped()
+      unsubscribeDue()
+    }
+  },
   /** Stop all running miniapps. */
   stopAll: () => useAppStatusStore.getState().stopAll(),
-  /** Install a miniapp from a bundle URL. */
-  install: (...args: Parameters<AppsState["install"]>) => useAppStatusStore.getState().install(...args),
+  /**
+   * Install the miniapp at a miniapp URL: fetch its `miniapp.json` (answering a sign-in challenge), check the domain
+   * rule, register the URL, ask through `confirm` unless headless, check the phone can run it, then download, verify
+   * and install the ZIP. Resolves `installed`, `opened` (already installed) or `deferred`; throws
+   * `InstallMiniappError` with a code.
+   */
+  install,
   /** Uninstall a miniapp. */
   uninstall: (...args: Parameters<AppsState["uninstall"]>) => useAppStatusStore.getState().uninstall(...args),
   /** Persist a miniapp's captured screenshot (the switcher/card preview). */

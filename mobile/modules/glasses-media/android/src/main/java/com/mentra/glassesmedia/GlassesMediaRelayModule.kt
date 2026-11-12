@@ -1,12 +1,15 @@
 package com.mentra.glassesmedia
 
+import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
+import com.mentra.bluetoothsdk.hotspot.ScopedNetworkError
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Base64
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.network.*
 import com.mentra.glassesmedia.publisher.PhoneWhipPublisher
 import com.mentra.glassesmedia.publisher.RelayPcmInput
@@ -29,7 +32,9 @@ class GlassesMediaRelayModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("MentraGlassesMediaRelay")
-    Events("onRelayState")
+    Events("onRelayState", "onNativeLog")
+
+    OnCreate { MediaLog.sink = { message -> sendEvent("onNativeLog", mapOf("message" to message)) } }
 
     AsyncFunction("prepare") { options: Map<String, Any?>, promise: Promise ->
       worker.execute {
@@ -57,13 +62,7 @@ class GlassesMediaRelayModule : Module() {
             override fun onAvailable(network: android.net.Network, localIpv4: String) = Unit
             override fun onLost(error: ScopedNetworkError) { emit(id, "failed", "Glasses hotspot connection was lost") }
           }
-          try {
-            scoped.join(ssid, password, listener)
-          } catch (error: ScopedNetworkError.Unavailable) {
-            // Same recovery as ACS: the first specifier can reject while leaving office Wi-Fi.
-            Thread.sleep(ScopedSoftApNetwork.UNAVAILABLE_RETRY_SETTLE_MS)
-            scoped.join(ssid, password, listener)
-          }
+          scoped.join(ssid, password, listener)
           ScopedNetworkChangeDetector.registerRelayNetwork(scoped)
           val outgoing = PhoneWhipPublisher(context, endpoint, options["captureAudio"] != false,
             (options["bitrate"] as? Number)?.toInt() ?: 2_000_000) { state, reason -> emit(id, state, reason) }
@@ -108,7 +107,10 @@ class GlassesMediaRelayModule : Module() {
       }
     }
 
-    OnDestroy { worker.execute { runCatching { cleanup() }; worker.shutdown() } }
+    OnDestroy {
+      MediaLog.sink = null
+      worker.execute { runCatching { cleanup() }; worker.shutdown() }
+    }
   }
 
   private fun emit(id: String, state: String, reason: String) {

@@ -12,6 +12,10 @@
  *     WebView is the short-lived side and shouldn't drop user input).
  *   - Installs `window.__mentra.recv(envelope)` for the host to push
  *     background → WebView messages via `webview.injectJavaScript(...)`.
+ *   - Posts `{type:'page_loaded'}` on the window `load` event when it was
+ *     installed before any of the page's scripts, so the host can tell a
+ *     page that never called `mentra.ready()` from one the shim reached
+ *     too late.
  *   - Sends `__heartbeat__` every 5s; host considers the WebView gone
  *     after 15s of silence.
  *   - Maintains monotonic seq numbers; the host's per-WebView dedup window
@@ -55,9 +59,8 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   // is on iOS (postMessageScript is registered before atStartScript there). If
   // we captured rnPost once and the bridge object wasn't installed yet, every
   // postMessage — including {type:'ready'} — would be silently dropped and the
-  // splash would hang forever. Resolving per-call means we always pick up the
-  // bridge once it exists, which it reliably does by the time the bundle mounts
-  // and calls mentra.ready().
+  // splash would hang forever. Resolving per-call picks up the bridge once it
+  // exists, and postEnvelope holds anything posted before then (see wireQueue).
   function getRnPost() {
     try {
       return window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function'
@@ -98,9 +101,23 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   var pendingByChannel = Object.create(null);
   var PENDING_CAP_PER_CHANNEL = 32;
 
+  // Envelopes posted before window.ReactNativeWebView exists, in order. They
+  // go out ahead of the next envelope posted once it does — at the latest the
+  // page_loaded announcement — so a ready() that ran early is never lost.
+  // Bounded for a page whose bridge never appears; the newest envelopes are
+  // the ones dropped, so an early ready() always survives.
+  var wireQueue = [];
+  var WIRE_QUEUE_CAP = 256;
+
   function postEnvelope(envelope) {
     var rnPost = getRnPost();
-    if (!rnPost) return;
+    if (!rnPost) {
+      if (wireQueue.length < WIRE_QUEUE_CAP) wireQueue.push(envelope);
+      return;
+    }
+    while (wireQueue.length > 0) {
+      try { rnPost(JSON.stringify(wireQueue.shift())); } catch (_) {}
+    }
     try { rnPost(JSON.stringify(envelope)); } catch (_) {}
   }
 
@@ -364,6 +381,21 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
     if (type === 'ack') {
       return;
     }
+  }
+
+  // Tell the host the page finished loading with this bridge in place before
+  // any of its scripts ran. If ready() still hasn't come, the page never
+  // called it: reloading cannot fix that, so the host reports it instead of
+  // retrying. A shim that arrives after the page's scripts (Android's
+  // onPageStarted fallback losing its race) stays silent: the bundle may
+  // already have failed without window.mentra, and a reload can recover it.
+  var doc = window.document;
+  var installedBeforePageScripts = !!(doc && doc.scripts && doc.scripts.length === 0);
+  function announcePageLoaded() {
+    postEnvelope({ type: 'page_loaded' });
+  }
+  if (installedBeforePageScripts && typeof window.addEventListener === 'function') {
+    window.addEventListener('load', announcePageLoaded, { once: true });
   }
 
   window.mentra = {

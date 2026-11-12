@@ -1,0 +1,9 @@
+# Consume exact returned candidate observations independently of admission freshness
+
+A bounded selected phone check can close and return normally with UNKNOWN health, or its QUALIFIED observation can expire before Core consumes its immutable settlement. Retaining either pending attempt prevents the installed host from renewing the generic baseline and reaching its existing repair path.
+
+Preserve the no-reader UNKNOWN proof separately. A normally returned UNKNOWN must pass the same claim/return, job, app/source, controller, current subject generation and observation/closure/return chronology checks as other closed candidates. All exactly returned outcomes may become immutable completed history regardless of age. Keep the original result and observation timestamps.
+
+Completed stale QUALIFIED history retains the existing same-pair selection pointer only so the existing finite candidate renewal can create a distinct attempt with its predecessor identity and original deadline. Current backend qualification still gates every executable resource admission; final installed allocation additionally requires the full fresh generic baseline. UNKNOWN, stale, cancelled, foreign, unreturned or in-flight health never authorizes execution. Existing negative host/lane attempts remain non-repeatable.
+
+CPU evidence: original service regression failed for returned UNKNOWN and stale QUALIFIED while returned UNQUALIFIED passed; the corrected cases all pass. Full candidate, routing, reservation, prerequisite and lifecycle suites cover immutable return/CAS, cancellation/deadline, source/generation drift, stale reports and readiness boundaries. A separate installed-host proof joins actual child callbacks and return ACK to consumed metadata, then a new generic FAILED baseline queues retained repair; physical resource acceptance is separate.

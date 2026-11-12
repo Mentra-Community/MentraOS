@@ -80,6 +80,41 @@ The license routes, for the Store only, sit beside these at `/api/internal/licen
 Authorization decisions use current state. Display data (workspace names) may
 be cached for up to five minutes; a cached answer never authorizes a write.
 
+## Miniapp websites
+
+The Developer Console's **Websites** page lets a developer register their
+miniapp's website for Sign in with Mentra
+([Miniapp websites](signin.md#miniapp-websites)). The Store relays each call to
+`/api/internal/website-clients`, for the Store only, with `token`, the acting
+person's Core access token. The Store decides nothing: Core verifies the token,
+checks the package against its registry and every redirect URI against the
+package's own domain, and lets a person see and change only the websites they
+registered. The Store's signature alone registers nothing.
+
+| Route | Takes | Answers |
+| --- | --- | --- |
+| `POST /list` | `{token}` | `{clients, max}` |
+| `POST /create` | `{token, client}` | `201 {client, secret}` |
+| `POST /update` | `{token, clientId, changes}` | `{client}` |
+| `POST /regenerate-secret` | `{token, clientId}` | `{client, secret}` |
+| `POST /delete` | `{token, clientId}` | `{deleted: true}` |
+
+- `client` is `{packageName, type, environment, redirectUris}`: the miniapp's
+  package name, `browser` or `server`, `production` or `development`, and exact
+  redirect URIs. `changes` is any of `{redirectUris, status}`. The website's
+  name is the miniapp's own, from the registry.
+- A `server` client's `secret` is in the answer that creates or regenerates it
+  and nowhere else afterwards. Show it once.
+- Refusals the person can act on come back as `{error, error_description}` for
+  the Console to show: `422 not_in_registry` (nobody has installed the miniapp
+  yet), `422 archived`, `422 domain_mismatch` (a redirect URI off the package's
+  domain), `422 too_many_websites`, `404 not_found` (not theirs), `400
+  invalid_request`, `403 forbidden` with a `reason` (`email_unverified`, or a
+  key in place of a person), `401 invalid_token`.
+- `createCoreWorkspaceClient(...).websiteClients(token, call)` in
+  `@mentra/workspace-contract` makes these calls. It returns Core's answer for
+  the caller to relay, and throws only for an answer the Store can't trust.
+
 ## Deletion holds
 
 Core does not know which miniapps a workspace owns, so the Store tells it. While
@@ -89,6 +124,11 @@ portal, the API), to its owners and to Organization Admins alike, until the Stor
 clears the hold. Every miniapp counts, a draft and one never released as much as a
 published or suspended one, so a workspace is held from the moment its first
 miniapp is created until its last one is deleted.
+
+The Mentra Miniapp Store hosts no miniapps, so it holds no workspace: at startup
+and every hour it clears every hold it set, and it never sets one. The pattern
+below is for any service that keeps something a workspace must not lose, with a
+count of owned miniapps as the example.
 
 ```ts
 // Under the workspace's lock: an asOf later than the last one sent for this workspace, taken just
@@ -181,10 +221,39 @@ else await core.clearDeletionHold(workspaceId, {asOf})
   account never deletes a workspace, so a held workspace whose last owner deletes
   their account stays, with its hold, for an Organization Admin to recover.
 
+## The miniapp registry
+
+The directory reads [Core's registry](registry.md) and archives through it, at
+`/api/internal/registry/*`, signed the same way. It never reads a developer's
+URL itself. Both routes are the Store's only: Fleet is `403 forbidden`. The
+types and the client methods (`getRegistryEntry`, `archiveRegistry`) are in
+`@mentra/workspace-contract`.
+
+| Route | Answers |
+| --- | --- |
+| `GET /entries?url=` | `{entry}`: the registry's entry for a miniapp URL (in any spelling `normalizeMiniappUrl` accepts) and Core's verified `miniapp.json` as `manifest`, or `404 not_found`. |
+| `POST /archive` | `{rule, created, entriesArchived}`: archives `{rule: {kind, value}, reason, actorEmail}` for a staff member. |
+
+- **What an entry shows.** `entry` is a `RegistryEntryView` with `manifest`.
+  `status` is `archived` when an archive rule covers the entry, whatever the
+  entry's own status. A private entry, or one only a phone reported, comes with
+  its URL, package and dates only: its name, version, rating, icon and manifest
+  are null. So the directory never shows developer text Core didn't verify, or
+  the details of a miniapp whose server asks for sign-in.
+- **Archiving.** `kind` is `url`, `package`, `domain` (a registrable domain) or
+  `account` (a `mentraUserId`). Core stores the rule normalized and answers it.
+  A rule that exists already changes nothing (`created: false`). A rule that
+  can't name any entry, or an `actorEmail` that isn't an email address, is
+  `400 invalid_request`. The rule's author is `store:<actorEmail>`. Each call is
+  recorded in the admin audit log beside the admin portal's own archives, as
+  `miniapp_registry.archive` with the actor `store:<actorEmail>` and the Store
+  and staff member in its metadata. Unarchiving is for Organization Admins in
+  the admin portal.
+
 ## Signing people in to the Store
 
-The Developer Console and the `mentra` CLI sign in through the Core the Store
-belongs to ([`signin.md`](signin.md)):
+The Developer Console signs in through the Core the Store belongs to
+([`signin.md`](signin.md)):
 
 - **The Console** is that Core's `console` client. The Store's
   `MENTRA_STORE_OIDC_ISSUER` is the Core's `CLOUD_CORE_OIDC_ISSUER`;
@@ -194,13 +263,10 @@ belongs to ([`signin.md`](signin.md)):
   keeps the person's tokens on its side, passes the access token to
   `POST /principal` on every request, and ends the Console session when Core
   answers `401 invalid_token`.
-- **The CLI** is the Core's `cli` client. The Store answers
-  `GET /api/console/auth/cli-config` with `{issuer, clientId}` from
-  `MENTRA_STORE_OIDC_ISSUER` and `MENTRA_STORE_CLI_CLIENT_ID`; the CLI then signs
-  in on a loopback port and sends its Core access token to the Store as a bearer.
-  CI sends a workspace key (`msk_`) instead.
+- **The `mentra` CLI** signs in at Core itself (`GET /api/cli/config`) and
+  never calls the Store.
 
-Either way the Store passes what it was given to `/authorize` and `/principal`;
+The Store passes what it was given to `/authorize` and `/principal`;
 it never validates a person's token itself.
 
 ### Private miniapps
@@ -277,6 +343,7 @@ before the Store starts deferring to Core.
 | `keptLastOwners` | Unclaimed Owner memberships the Store removed or demoted, kept because the workspace would have no other Owner. An Organization Admin decides in Core; a later run ends them once the workspace has another Owner. |
 | `pendingCollisions` | Memberships not imported because the person already holds an unclaimed one in that workspace, with the keys bound to them. |
 | `duplicateMemberships` | People with several active memberships in one organization; the highest role was kept. |
+| `otherOrgMemberships` | Memberships not imported because their person keeps one in another organization (`keptOrgId`): one membership per person, the highest role, then the earliest. Keys bound to one are in `keysWithoutCreator`, an organization this leaves with no owner is in `ownerlessOrgs`, and a re-run ends one an earlier run imported. |
 
 The report never contains a key hash or an invitation token hash.
 

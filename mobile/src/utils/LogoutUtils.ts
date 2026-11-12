@@ -1,12 +1,15 @@
 import {SessionRevocationError} from "@mentra/cloud-client"
-import {engine} from "@mentra/engine"
+import {PHONE_WIDE_SETTING_KEYS, engine} from "@mentra/engine"
 
 import mantle from "@/services/MantleManager"
+import {closeAccountSettings} from "@/services/accountSettings"
 import {settleFrame} from "@/utils/settleFrame"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import {accountCredentials, hasStoredAccountSession} from "@/utils/auth/accountCredentials"
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
 import {cloudClient} from "@/services/cloudClient"
+import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 
 export class LogoutUtils {
   private static readonly TAG = "LogoutUtils"
@@ -15,7 +18,9 @@ export class LogoutUtils {
    * Comprehensive logout that completely nukes all user state and connections
    * This should be used for both regular logout and account deletion scenarios
    */
-  public static async performCompleteLogout(options: {skipAuthSignOut?: boolean} = {}): Promise<void> {
+  public static async performCompleteLogout(
+    options: {skipAuthSignOut?: boolean; deleteAccount?: boolean; keepGlasses?: boolean} = {},
+  ): Promise<void> {
     console.log(`${this.TAG}: Starting complete logout process...`)
 
     try {
@@ -65,14 +70,15 @@ export class LogoutUtils {
       // described above.
       await settleFrame()
 
-      // Step 3: Disconnect and forget any connected glasses
-      await this.disconnectAndForgetGlasses()
+      // Step 3: Unpair the saved glasses, unless the sign-out keeps them (a backend switch): the pairing
+      // belongs to the phone, so the next account finds them still paired.
+      if (!options.keepGlasses) await this.unpairGlasses()
 
       // Step 4: Stop island runtime services
       await this.stopToolkitRuntime()
 
-      // Step 5: Clear all app settings and user data
-      await this.clearAppSettings()
+      // Step 5: Close the account's settings and clear the user data
+      await this.clearAppSettings(options.deleteAccount ?? false)
 
       // Step 6: Clear any remaining auth-related storage
       await this.clearAuthStorage()
@@ -88,25 +94,21 @@ export class LogoutUtils {
   }
 
   /**
-   * Disconnect and forget any connected glasses
+   * Unpair the saved glasses
    */
-  private static async disconnectAndForgetGlasses(): Promise<void> {
-    console.log(`${this.TAG}: Disconnecting and forgetting glasses...`)
+  private static async unpairGlasses(): Promise<void> {
+    console.log(`${this.TAG}: Unpairing glasses...`)
 
+    // The same Unpair as Device Settings. It needs the link: disconnecting first would discard it,
+    // so the glasses would never hear the unpair and would keep their owner and bonds.
     try {
-      // First try to disconnect any connected glasses
-      await engine.glasses.disconnect()
-      console.log(`${this.TAG}: Disconnected glasses`)
+      await unpairSavedGlasses()
+      console.log(`${this.TAG}: Unpaired glasses`)
     } catch (error) {
-      console.warn(`${this.TAG}: Error disconnecting glasses:`, error)
-    }
-
-    try {
-      // Then forget the glasses completely
-      await engine.glasses.forget()
-      console.log(`${this.TAG}: Forgot glasses pairing`)
-    } catch (error) {
-      console.warn(`${this.TAG}: Error forgetting glasses:`, error)
+      console.warn(`${this.TAG}: Error unpairing glasses:`, error)
+      await engine.glasses.forget().catch((forgetError: unknown) => {
+        console.warn(`${this.TAG}: Error forgetting glasses:`, forgetError)
+      })
     }
   }
 
@@ -169,17 +171,22 @@ export class LogoutUtils {
   }
 
   /**
-   * Clear all app-specific settings from AsyncStorage
+   * Keep the account's settings for its next sign-in (or delete them with the account), and clear the rest of the
+   * app's storage except the phone-wide settings.
    */
-  private static async clearAppSettings(): Promise<void> {
+  private static async clearAppSettings(deleteAccount: boolean): Promise<void> {
     console.log(`${this.TAG}: Clearing app settings...`)
 
-    // burn it all:
     try {
-      engine.settings.resetAllLocal()
-      storage.clearAll()
+      closeAccountSettings({deleteAccount})
     } catch (error) {
       console.error(`${this.TAG}: Error clearing app settings:`, error)
+    }
+    // The account credentials live in the secure store, outside the app storage cleared above.
+    try {
+      await accountCredentials.clear()
+    } catch (error) {
+      console.error(`${this.TAG}: Error clearing the stored account credentials:`, error)
     }
   }
 
@@ -191,13 +198,15 @@ export class LogoutUtils {
 
     // Get all AsyncStorage keys and filter for user/auth related ones
     const allKeys = storage.getAllKeys()
+    // Phone-wide settings stay, such as glasses_user_disconnected when a backend switch keeps the glasses.
     const authKeys = allKeys.filter(
       (key: string) =>
-        key.startsWith("supabase.auth.") ||
-        key.includes("user") ||
-        key.includes("token") ||
-        key.includes("session") ||
-        key.includes("auth"),
+        !PHONE_WIDE_SETTING_KEYS.has(key) &&
+        (key.startsWith("supabase.auth.") ||
+          key.includes("user") ||
+          key.includes("token") ||
+          key.includes("session") ||
+          key.includes("auth")),
     )
 
     if (authKeys.length > 0) {
@@ -231,10 +240,8 @@ export class LogoutUtils {
    */
   public static async verifyLogoutSuccess(): Promise<boolean> {
     // The device only holds V2 account tokens now (issue 019); logged out
-    // means the MMKV token pair is gone.
-    const access = storage.load<string>("mentra.account.accessToken")
-    const refresh = storage.load<string>("mentra.account.refreshToken")
-    const isLoggedOut = (access.is_error() || !access.value) && (refresh.is_error() || !refresh.value)
+    // means the stored token pair is gone.
+    const isLoggedOut = !(await hasStoredAccountSession().catch(() => true))
 
     console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
     return isLoggedOut

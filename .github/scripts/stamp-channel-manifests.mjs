@@ -20,11 +20,11 @@
 // AFTER `bun install` (a frozen install would reject the changed version
 // fields) and before pack/publish.
 //
-// Usage: node stamp-channel-manifests.mjs   (branch from GITHUB_REF_NAME)
+// Usage: node stamp-channel-manifests.mjs   (branch from MENTRA_RELEASE_BRANCH, else GITHUB_REF_NAME)
 import {readFileSync, writeFileSync} from "node:fs"
 import {CHANNEL_MANIFESTS, deriveVersion, deriveRange} from "./npm-channel.mjs"
 
-const branch = process.env.GITHUB_REF_NAME || ""
+const branch = process.env.MENTRA_RELEASE_BRANCH || process.env.GITHUB_REF_NAME || ""
 const RANGE_FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"]
 
 const baseVersions = {}

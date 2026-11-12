@@ -30,6 +30,14 @@ config.resolver.sourceExts = [...config.resolver.sourceExts, "svg"]
 // Add HTML to asset extensions
 config.resolver.assetExts = [...config.resolver.assetExts, "html"]
 
+// Gradle replaces these directories during native builds. Watching them can
+// crash Metro with ENOENT while JavaScript development is running alongside Gradle.
+const previousBlockList = config.resolver.blockList
+config.resolver.blockList = [
+  ...(Array.isArray(previousBlockList) ? previousBlockList : previousBlockList ? [previousBlockList] : []),
+  /[/\\](?:android|ios)[/\\](?:[^/\\]+[/\\])?(?:build(?:Output_[^/\\]+)?|\.gradle|\.cxx|Pods)(?:[/\\]|$)/,
+]
+
 // Watch the local modules and Cloud V2 client/protocol sources for changes.
 config.watchFolders = [
   path.resolve(__dirname, "./modules/bluetooth-sdk"),
@@ -150,6 +158,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (moduleName === "@mentra/engine/ota") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "react/index"), platform)
+  }
+  if (moduleName === "@mentra/engine/pairing") {
+    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "react/pairing"), platform)
   }
   const miniappAlias = MINIAPP_ALIASES[moduleName]
   if (miniappAlias) return (baseResolveRequest ?? context.resolveRequest)(context, miniappAlias, platform)

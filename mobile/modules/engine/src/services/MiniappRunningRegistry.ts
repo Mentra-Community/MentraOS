@@ -17,43 +17,70 @@
 
 type Listener = () => void
 
-const running = new Set<string>()
-const listeners = new Set<Listener>()
+function packageSet(name: string) {
+  const members = new Set<string>()
+  const listeners = new Set<Listener>()
+  const removedListeners = new Set<(packageName: string) => void>()
 
-function notify(): void {
-  for (const fn of listeners) {
-    try {
-      fn()
-    } catch (e) {
-      console.warn("MiniappRunningRegistry: listener threw", e)
+  function notify(removed?: string): void {
+    for (const fn of listeners) {
+      try {
+        fn()
+      } catch (e) {
+        console.warn(`${name}: listener threw`, e)
+      }
     }
+    if (removed === undefined) return
+    for (const fn of removedListeners) {
+      try {
+        fn(removed)
+      } catch (e) {
+        console.warn(`${name}: listener threw`, e)
+      }
+    }
+  }
+
+  return {
+    add(packageName: string): void {
+      if (members.has(packageName)) return
+      members.add(packageName)
+      notify()
+    },
+
+    remove(packageName: string): void {
+      if (!members.delete(packageName)) return
+      notify(packageName)
+    },
+
+    has(packageName: string): boolean {
+      return members.has(packageName)
+    },
+
+    getAll(): string[] {
+      return Array.from(members)
+    },
+
+    subscribe(fn: Listener): () => void {
+      listeners.add(fn)
+      return () => {
+        listeners.delete(fn)
+      }
+    },
+
+    /** Calls `fn` with each package that leaves the set. */
+    onRemoved(fn: (packageName: string) => void): () => void {
+      removedListeners.add(fn)
+      return () => {
+        removedListeners.delete(fn)
+      }
+    },
   }
 }
 
-export const miniappRunningRegistry = {
-  add(packageName: string): void {
-    if (running.has(packageName)) return
-    running.add(packageName)
-    notify()
-  },
+export const miniappRunningRegistry = packageSet("MiniappRunningRegistry")
 
-  remove(packageName: string): void {
-    if (!running.delete(packageName)) return
-    notify()
-  },
-
-  has(packageName: string): boolean {
-    return running.has(packageName)
-  },
-
-  getAll(): string[] {
-    return Array.from(running)
-  },
-
-  subscribe(fn: Listener): () => void {
-    listeners.add(fn)
-    return () => {
-      listeners.delete(fn)
-    }
-  },
-}
+/**
+ * Every package with a live background JSContext, whether it projects as user activity or not (a hidden action
+ * wake). MentraJSRouter is the single writer: a registration adds, `unregister` removes; a crash respawn keeps it.
+ */
+export const miniappContextRegistry = packageSet("MiniappContextRegistry")

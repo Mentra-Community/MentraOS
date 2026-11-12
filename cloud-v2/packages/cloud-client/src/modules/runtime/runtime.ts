@@ -70,7 +70,7 @@ export type {
   RouteAvoidances,
   ReverseGeocodeResult,
 } from "./maps";
-export type { RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
+export type { RuntimeTtsFormat, RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
 export type { RuntimeAudioTransport } from "./audio-udp";
 export type { RuntimeStatus, RuntimeSnapshot } from "./status";
 

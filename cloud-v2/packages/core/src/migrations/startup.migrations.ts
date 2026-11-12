@@ -14,19 +14,14 @@ import { SigninIdentityModel } from "../models/signin-identity.model";
 import { AccountEmailModel } from "../models/account-email.model";
 import { ensureOidcCollections } from "../services/oidc/mongo-adapter";
 import { OemModel } from "../models/oem.model";
-import {TestHostStateModel} from "../models/test-host-state.model";
-import {TestRerunModel} from "../models/test-rerun.model";
-import {TestRequestModel} from "../models/test-request.model";
-import {RoutineDefinitionModel} from "../models/routine-definition.model";
-import {RoutinePreferenceModel} from "../models/routine-preference.model";
-import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model";
-import { reconcileTestRunIndexes, TestAssetModel, TestRunModel } from "../models/test-run.model";
-import { TestDispatchModel } from "../models/test-dispatch.model";
 import {ReportModel} from '../models/report.model';
 import {ReportAssetModel, reconcileReportAssetIndexes} from '../models/report-asset.model';
 import { AccessCredentialModel } from "../models/access-credential.model";
 import { LicenseSeatModel } from "../models/license-seat.model";
 import { LicenseModel } from "../models/license.model";
+import { WebsiteClientModel } from "../models/website-client.model";
+import { WorkspaceAssignedPackagesModel } from "../models/workspace-assigned-packages.model";
+import { MiniappRegistryArchiveRuleModel, MiniappRegistryEntryModel } from "../models/miniapp-registry.model";
 import { WorkspaceAuditCounterModel } from "../models/workspace-audit-counter.model";
 import { WorkspaceAuditEventModel } from "../models/workspace-audit-event.model";
 import { WorkspaceInvitationModel } from "../models/workspace-invitation.model";
@@ -34,7 +29,6 @@ import { WorkspaceMembershipModel } from "../models/workspace-membership.model";
 import { WorkspaceModel } from "../models/workspace.model";
 import { LegacyBrowserIdentityModel } from "../models/legacy-browser-identity.model";
 import { convertLegacyAdminKeys } from "../services/workspaces/legacy-admin-keys";
-import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
 
@@ -75,33 +69,9 @@ export async function runStartupMigrations(): Promise<void> {
   await AccountEmailModel.createIndexes();
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
-  // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.
-  await TestHostStateModel.createIndexes();
-  await TestRequestModel.createIndexes();
-  // Batch successor claims must be unique before admitting any linked rerun.
-  await TestRerunModel.createIndexes();
-  // Existing definitions were ordinary enrollments. Candidate metadata is explicit from this rollout onward.
-  await RoutineDefinitionModel.updateMany({ordinaryEnrolledAt: {$exists: false}, candidateBindings: {$exists: false}},
-    [{$set: {ordinaryEnrolledAt: '$createdAt'}}]);
-  await RoutineDefinitionModel.createIndexes();
-  await RoutinePreferenceModel.createIndexes();
-  await reconcileTestRunIndexes();
-  await TestRunModel.createIndexes();
-  await backfillTestSuiteStartedAt();
-  await TestSuiteModel.createIndexes();
-  await TestAssetModel.createIndexes();
-  // Native incident creation and shared diagnostic references must dedupe before completion ACK.
   await ReportModel.createIndexes();
   await reconcileReportAssetIndexes();
   await ReportAssetModel.createIndexes();
-  // No device execution grant is safe until request IDs are unique across all Core instances.
-  // The send receipt must be unique before any admin can submit a device request.
-  await TestDispatchModel.createIndexes();
-  // A state repair operation may be sent once; its receipt must be unique first.
-  // One compare-and-set row per host resource requires the unique key before any report.
-  // Passive host observations require idempotent identity and indexed, expiring history before ingestion.
-  await TestHostSampleModel.createIndexes();
-  await TestHostLatestModel.createIndexes();
   // Workspaces rely on unique indexes (one active membership per person, one
   // pending invitation per address, unique ids). Build them, and their
   // collections, before serving: a request in the first moments after boot must
@@ -109,7 +79,8 @@ export async function runStartupMigrations(): Promise<void> {
   // identities are among them: their collection is created here while it is
   // empty, so its unique index can be built on Azure Cosmos DB too. The change
   // feed's counter collection is new and built empty the same way, as are the
-  // licenses and their seats (one seat per license and membership); the feed's
+  // licenses and their seats (one seat per license and membership), and each
+  // workspace's assigned miniapps (one set per workspace); the feed's
   // `seq` index on the already populated audit events is not unique, because
   // Cosmos DB cannot add a unique index to a populated collection. An index the
   // database refuses (some databases a Private Cloud uses support only part of
@@ -126,6 +97,9 @@ export async function runStartupMigrations(): Promise<void> {
       LegacyBrowserIdentityModel,
       LicenseModel,
       LicenseSeatModel,
+      WorkspaceAssignedPackagesModel,
+      // Miniapp websites: one row per client ID (unique), looked up at every sign-in and refresh.
+      WebsiteClientModel,
     ].map(
       async (model) => {
         try {
@@ -140,9 +114,32 @@ export async function runStartupMigrations(): Promise<void> {
       },
     ),
   );
+  // The miniapp registry: one entry per URL and one archive rule per kind and value (both unique), built empty
+  // with their collections before the first registration. A refused index is logged, as above.
+  await Promise.all(
+    [MiniappRegistryEntryModel, MiniappRegistryArchiveRuleModel].map(async (model) => {
+      try {
+        await model.createCollection();
+        await model.createIndexes();
+      } catch (error) {
+        logger.error(
+          { collection: model.collection.collectionName, error: (error as Error)?.message },
+          "failed to create miniapp registry collection indexes",
+        );
+      }
+    }),
+  );
   // Allowlisted admin API keys keep working as operator keys, before any
   // request is served. A key that fails is logged and retried next start.
   await convertLegacyAdminKeys();
+  // A person may belong to several workspaces. The one-workspace guards an earlier release kept in the
+  // memberships collection (`_id` "ows:<mentraUserId>") no longer mean anything: remove them. Idempotent; a
+  // failure is logged and retried at the next start, and a guard left behind refuses nothing.
+  try {
+    await removeOneWorkspaceGuards();
+  } catch (error) {
+    logger.error({ error: (error as Error)?.message }, "failed to remove one-workspace guards");
+  }
   await ensureMentraAccountOem();
 }
 
@@ -296,4 +293,14 @@ async function dedupeUserIdentityRows(): Promise<void> {
       "deduped user identity rows before ensuring current unique index",
     );
   }
+}
+
+/**
+ * Delete the one-workspace guard documents an earlier release wrote into the memberships collection. They carry
+ * none of a membership's fields, so no listing ever read them; their `_id` is "ows:<mentraUserId>".
+ */
+export async function removeOneWorkspaceGuards(): Promise<number> {
+  const result = await WorkspaceMembershipModel.collection.deleteMany({ _id: { $regex: "^ows:" } } as any);
+  if (result.deletedCount > 0) logger.info({ deleted: result.deletedCount }, "removed one-workspace guards");
+  return result.deletedCount;
 }

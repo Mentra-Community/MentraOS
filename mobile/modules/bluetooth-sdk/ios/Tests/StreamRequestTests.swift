@@ -14,6 +14,24 @@ final class StreamRequestTests: XCTestCase {
         XCTAssertNil(request.values["tl"])
     }
 
+    func testWhipWithoutIceSendsTheDefaultStunServer() {
+        let request = StreamRequest(streamUrl: "https://example.com/whip", streamId: "s-1")
+        let ice = request.values["ice"] as? [String: Any]
+        XCTAssertEqual(ice?["stun"] as? String, "stun:stun.cloudflare.com:3478")
+    }
+
+    func testWhipKeepsHostOnlyAndNamedStunServers() {
+        let hostOnly = StreamRequest(values: ["streamUrl": "http://192.168.43.79:8080/whip", "ice": ["stun": ""]])
+        XCTAssertEqual((hostOnly.values["ice"] as? [String: Any])?["stun"] as? String, "")
+        let named = StreamRequest(values: ["streamUrl": "https://example.com/whip", "i": ["s": "stun:stun.example.com:3478"]])
+        XCTAssertEqual((named.values["ice"] as? [String: Any])?["stun"] as? String, "stun:stun.example.com:3478")
+    }
+
+    func testRtmpAndSrtSendNoIce() {
+        XCTAssertNil(StreamRequest(streamUrl: "rtmp://example.com/live", streamId: "s-1").values["ice"])
+        XCTAssertNil(StreamRequest(streamUrl: "srt://example.com:9000", streamId: "s-1").values["ice"])
+    }
+
     func testInitFromValuesPreservesOmissionWhenKeyAbsent() {
         let request = StreamRequest(values: [
             "streamUrl": "https://example.com/whip",

@@ -34,10 +34,24 @@
  *
  * Before each upload, the records the queue dropped or expired become one coverage gap, queued in the same tick.
  *
+ * The reporter also carries two things between Fleet and the reconciler (`fleetRevisionSignal`):
+ * - an ack that names a desired-state `revision` is passed on with `signalFleetRevision`, whatever else the ack says
+ *   (an ack without one signals nothing; the reconciler ignores a revision it already applied);
+ * - each assignment outcome the reconciler emits becomes an `assignment_outcome` record in the current run's
+ *   partition, once it is a valid payload. The outcome carries no account, so, like a launch, one heard while no run
+ *   is collecting is kept (the latest per assignment) for the next run, and a sign-in, sign-out or the engine's start
+ *   and stop discards it: it is never sent as anyone but the account running when it was heard.
+ *
  * Fleet is decided by the phone's Core alone. The reporter reads no deployment or telemetry setting, and nothing it
  * does can block the engine: every entry point catches its own failures.
  */
-import {FLEET_LIMITS, FLEET_SCHEMA_VERSION, type FleetRecord} from "@mentra/cloud-protocol"
+import {
+  FLEET_LIMITS,
+  FLEET_SCHEMA_VERSION,
+  FleetAssignmentOutcomePayloadSchema,
+  type FleetAssignmentOutcomePayload,
+  type FleetRecord,
+} from "@mentra/cloud-protocol"
 import {AppState, Platform} from "react-native"
 
 import {BgTimer} from "../../utils/timers"
@@ -51,6 +65,7 @@ import {createFleetCollector, type FleetCollector} from "./fleetCollector"
 import {fleetEvents} from "./fleetEvents"
 import {newId, phoneDeviceId} from "./fleetIds"
 import {createFleetQueue, partitionKey, type FleetLosses, type FleetQueue} from "./fleetQueue"
+import {onAssignmentOutcome, signalFleetRevision} from "./fleetRevisionSignal"
 
 export interface FleetReporter {
   /** Sweeps the queue, starts collecting for the signed-in account (at once when it is known) and starts uploading. */
@@ -94,6 +109,8 @@ const MIN_RETRY_MS = 1_000
 const SWEEP_INTERVAL_MS = 60 * 60_000
 /** A request still unanswered after this long is abandoned, and counts as no answer. */
 const REQUEST_TIMEOUT_MS = 60_000
+/** Outcomes heard while no run is collecting: one per assignment, so more than this are not one boot's worth. */
+const MAX_HELD_OUTCOMES = 64
 const NO_ANSWER: FleetSendOutcome = {kind: "unavailable", retryAfterSeconds: null}
 
 /** min(30 min, 30 s * 2^failures), times a jitter between 0.8 and 1.2. */
@@ -178,6 +195,8 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
   /** Resolutions in a row that could not tell: the n of their backoff. */
   let resolveFailures = 0
   let lastSweepAt = 0
+  /** Outcomes heard while no run was collecting, the latest per assignment, for the next run (see the header). */
+  const heldOutcomes = new Map<string, FleetAssignmentOutcomePayload>()
   const cleanups: Array<() => void> = []
 
   // The collector writes through this view of the queue, which wakes the uploader once 100 records wait. It
@@ -198,6 +217,8 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     clearPartition: (partition) => queue.clearPartition(partition),
     size: (partition) => queue.size(partition),
     nextSequence: (partition, collectorSessionId) => queue.nextSequence(partition, collectorSessionId),
+    noteTelemetryLoss: (partition, packageName, kind, count, at) => queue.noteTelemetryLoss(partition, packageName, kind, count, at),
+    takeTelemetryLosses: (partition, at) => queue.takeTelemetryLosses(partition, at),
   }
   const collector = (deps.createCollector ?? ((q: FleetQueue) => createFleetCollector({queue: q})))(collectorQueue)
 
@@ -231,6 +252,8 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     run = r
     collector.start({partition, collectorSessionId: r.collectorSessionId})
     collector.flushCheckpoint()
+    for (const outcome of [...heldOutcomes.values()]) recordOutcome(r, outcome)
+    heldOutcomes.clear()
     schedule(r, afterSend(r))
   }
 
@@ -314,7 +337,10 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
 
   function onSessionChanged(change: CoreSessionChange): void {
     if (!started) return
-    if (change.reason !== "reconnect") fleetEvents.discardUndeliveredLaunches()
+    if (change.reason !== "reconnect") {
+      fleetEvents.discardUndeliveredLaunches()
+      heldOutcomes.clear()
+    }
     if (change.reason === "signed_out") {
       // A resolution still under way, or one waiting to ask again, must not bring the account back.
       resolution += 1
@@ -405,6 +431,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     const at = now()
     // takeLosses clears the counts it returns, so their gap is queued before anything else can happen.
     recordLosses(r, queue.takeLosses(r.partition, at), at)
+    recordTelemetryLosses(r, at)
     const records = queue.nextBatch(r.partition, r.batchLimit, MAX_BATCH_BYTES)
     if (records.length === 0) return ASLEEP
     let outcome: FleetSendOutcome
@@ -465,6 +492,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
   function answered(r: Run, records: FleetRecord[], outcome: FleetSendOutcome): Next | typeof ASLEEP {
     switch (outcome.kind) {
       case "results":
+        guard("passing on the ack revision", () => passOnRevision(outcome.ack))
         return settle(r, records, outcome.ack.results)
       case "not_installed":
         stopForSession(r, true)
@@ -593,6 +621,52 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     return failed(r, null)
   }
 
+  // --- the reconciler ------------------------------------------------------------------------------------------
+
+  /** The ack's desired-state revision goes to the reconciler. The client may predate the field: read it defensively. */
+  function passOnRevision(ack: object): void {
+    const revision = (ack as {revision?: unknown}).revision
+    if (typeof revision === "number" && Number.isSafeInteger(revision) && revision >= 1) signalFleetRevision(revision)
+  }
+
+  /** An assignment's state changed on this phone: queue it for the run's account, or keep it for the next run. */
+  function onOutcome(outcome: FleetAssignmentOutcomePayload): void {
+    if (!started) return
+    const parsed = FleetAssignmentOutcomePayloadSchema.safeParse(outcome)
+    if (!parsed.success) {
+      console.warn("FleetReporter: an assignment outcome was not a valid record and was left out")
+      return
+    }
+    const r = run
+    if (r && !r.ended) {
+      recordOutcome(r, parsed.data)
+      return
+    }
+    // The newest state of an assignment replaces what was kept for it.
+    heldOutcomes.delete(parsed.data.assignmentId)
+    heldOutcomes.set(parsed.data.assignmentId, parsed.data)
+    if (heldOutcomes.size > MAX_HELD_OUTCOMES) heldOutcomes.delete(heldOutcomes.keys().next().value as string)
+  }
+
+  function recordOutcome(r: Run, payload: FleetAssignmentOutcomePayload): void {
+    try {
+      collectorQueue.enqueue(r.partition, {
+        schemaVersion: FLEET_SCHEMA_VERSION,
+        recordId: newId(),
+        phoneDeviceId: phoneDeviceId(),
+        collectorSessionId: r.collectorSessionId,
+        sequence: queue.nextSequence(r.partition, r.collectorSessionId),
+        observedAt: iso(now()),
+        // An outcome is the phone's own state, measured by no capability.
+        capabilities: [],
+        kind: "assignment_outcome",
+        payload,
+      })
+    } catch (error) {
+      warn("recording an assignment outcome", error)
+    }
+  }
+
   // --- coverage gaps -------------------------------------------------------------------------------------------
 
   function enqueueGap(r: Run, payload: GapPayload, at: number): void {
@@ -614,9 +688,46 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     }
   }
 
+  /**
+   * The miniapp telemetry lost since the last upload, per package, as one `telemetry_loss` record. Telemetry losses
+   * never become coverage gaps. Counts that cannot be queued are lost with the events they counted.
+   */
+  function recordTelemetryLosses(r: Run, at: number): void {
+    const losses = queue.takeTelemetryLosses(r.partition, at)
+    if (losses === null) return
+    const entries = Object.entries(losses.packages)
+      .map(([packageName, counts]) => ({packageName, ...counts}))
+      .filter((loss) => loss.overLimit + loss.evicted + loss.expired + loss.rejected > 0)
+      .slice(0, FLEET_LIMITS.maxTelemetryLossPackages)
+    if (entries.length === 0) return
+    const end = iso(at)
+    const from = losses.from !== null && timeOf(losses.from) !== null && timeOf(losses.from)! <= at ? losses.from : end
+    try {
+      queue.enqueue(r.partition, {
+        schemaVersion: FLEET_SCHEMA_VERSION,
+        recordId: newId(),
+        phoneDeviceId: phoneDeviceId(),
+        collectorSessionId: r.collectorSessionId,
+        sequence: queue.nextSequence(r.partition, r.collectorSessionId),
+        observedAt: end,
+        capabilities: ["miniapp_telemetry"],
+        kind: "telemetry_loss",
+        payload: {from, to: end, losses: entries},
+      })
+    } catch (error) {
+      warn("recording telemetry losses", error)
+    }
+  }
+
   function recordRejected(r: Run, record: FleetRecord, at: number): void {
     // A refused gap gets no gap of its own, so a rejection can never feed itself.
     if (record.kind === "coverage_gap") return
+    // Rejected telemetry is counted for its miniapp, never as a gap; a refused loss report is not counted again.
+    if (record.kind === "telemetry_event") {
+      queue.noteTelemetryLoss(r.partition, record.payload.packageName, "rejected", 1, at)
+      return
+    }
+    if (record.kind === "telemetry_loss") return
     const time = iso(timeOf(record.observedAt) ?? at)
     enqueueGap(r, {reason: "record_rejected", from: time, to: time, droppedRecordCount: 1}, at)
   }
@@ -664,9 +775,15 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
       started = true
       notInstalled = null
       fleetEvents.discardUndeliveredLaunches()
+      heldOutcomes.clear()
       guard("sweeping the queue", () => {
         lastSweepAt = now()
         queue.sweepExpired(lastSweepAt)
+      })
+      guard("listening for assignment outcomes", () => {
+        cleanups.push(
+          onAssignmentOutcome((outcome) => guard("recording an assignment outcome", () => onOutcome(outcome))),
+        )
       })
       guard("listening for account changes", () => {
         cleanups.push(
@@ -700,6 +817,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
       for (const cleanup of cleanups.splice(0)) guard("removing a listener", cleanup)
       notInstalled = null
       fleetEvents.discardUndeliveredLaunches()
+      heldOutcomes.clear()
     },
   }
 }

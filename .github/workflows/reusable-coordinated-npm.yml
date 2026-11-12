@@ -22,10 +22,6 @@ on:
       ota_manifest_sha256:
         required: false
         type: string
-      npm_tag:
-        description: Optional temporary dist-tag used to defer a coordinated stable latest pointer.
-        required: false
-        type: string
       dry_run:
         required: false
         default: false
@@ -100,9 +96,6 @@ jobs:
           if [[ -n "$OTA_MANIFEST_URL" || -n "$OTA_MANIFEST_SHA256" ]]; then
             args+=(--ota-manifest-url "$OTA_MANIFEST_URL" --ota-manifest-sha256 "$OTA_MANIFEST_SHA256")
           fi
-          if [[ -n "$NPM_TAG" ]]; then
-            args+=(--npm-tag "$NPM_TAG")
-          fi
           node .github/scripts/publish-release-npm.mjs "${args[@]}"
         env:
           DRY_RUN: ${{ inputs.dry_run }}
@@ -110,7 +103,6 @@ jobs:
           OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
           OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
           RELEASE_MEMBERS: ${{ inputs.members }}
-          NPM_TAG: ${{ inputs.npm_tag }}
 
       - name: Upload exact npm artifacts and publication records
         uses: actions/upload-artifact@v4

@@ -3,6 +3,70 @@ import CoreBluetooth
 import CoreLocation
 import Foundation
 
+/// A new manager's getter can precede Core Location's initial authorization callback.
+/// Keep the manager and delegate alive until that callback, without requesting consent or location updates.
+@MainActor
+private final class PassiveLocationAuthorization: NSObject, @preconcurrency CLLocationManagerDelegate {
+    private var manager: CLLocationManager?
+    private var completed: ((CLAuthorizationStatus) -> Void)?
+
+    func start(_ completed: @escaping (CLAuthorizationStatus) -> Void) {
+        self.completed = completed
+        let manager = CLLocationManager()
+        self.manager = manager
+        manager.delegate = self
+    }
+
+    func stop() {
+        manager?.delegate = nil
+        manager = nil
+        completed = nil
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard manager === self.manager else { return }
+        completed?(manager.authorizationStatus)
+    }
+}
+
+/// One finite initial callback. Missing initialization stays unknown, including when the task is canceled.
+@MainActor
+final class InitialLocationAuthorization {
+    private var continuation: CheckedContinuation<CLAuthorizationStatus?, Never>?
+    private var timeout: Task<Void, Never>?
+    private var stop: (() -> Void)?
+
+    func observe(timeoutMs: UInt64 = 5000,
+                 start: (@escaping (CLAuthorizationStatus) -> Void) -> Void,
+                 stop: @escaping () -> Void) async -> CLAuthorizationStatus? {
+        self.stop = stop
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+                if Task.isCancelled { finish(nil); return }
+                timeout = Task { @MainActor in
+                    do { try await Task.sleep(nanoseconds: timeoutMs * 1_000_000) }
+                    catch { return }
+                    self.finish(nil)
+                }
+                start { self.finish($0) }
+            }
+        } onCancel: {
+            Task { @MainActor in self.finish(nil) }
+        }
+    }
+
+    private func finish(_ status: CLAuthorizationStatus?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        timeout?.cancel()
+        timeout = nil
+        stop?()
+        stop = nil
+        continuation.resume(returning: status)
+    }
+}
+
 /// Passive app-owned observations. None of these getters requests consent,
 /// starts capture, creates a Bluetooth central, or joins a network.
 enum PermissionStatusReceipt {
@@ -43,10 +107,17 @@ enum PermissionStatusReceipt {
         }
     }
 
+    @MainActor
+    private static func initializedLocationStatus() async -> CLAuthorizationStatus? {
+        let source = PassiveLocationAuthorization()
+        return await InitialLocationAuthorization().observe(start: source.start, stop: source.stop)
+    }
+
     static func current() async -> [String: Any] {
         // The global service getter may block; only the manager's authorization
         // observation belongs to the main actor, which owns Core Location objects.
         let servicesEnabled = CLLocationManager.locationServicesEnabled()
+        let locationStatus = await initializedLocationStatus()
         return await MainActor.run {
             let bundle = Bundle.main
             let formatter = ISO8601DateFormatter()
@@ -65,7 +136,7 @@ enum PermissionStatusReceipt {
                 ] as [String: Any],
                 "locationServicesEnabled": servicesEnabled,
                 "permissions": [
-                    "location": location(CLLocationManager().authorizationStatus),
+                    "location": locationStatus.map(location) ?? state("initializationUnconfirmed", "unknown"),
                     "camera": capture(AVCaptureDevice.authorizationStatus(for: .video)),
                     "microphone": capture(AVCaptureDevice.authorizationStatus(for: .audio)),
                     "bluetooth": bluetooth(CBManager.authorization),

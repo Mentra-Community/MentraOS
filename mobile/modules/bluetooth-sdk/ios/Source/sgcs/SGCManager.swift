@@ -50,6 +50,9 @@ protocol SGCManager {
 
     var type: String { get set }
     var hasMic: Bool { get }
+    /// The driver publishes `GlassesStatus.audioSetup` itself. Otherwise the status layer
+    /// reports `not_applicable` while connected and `idle` otherwise.
+    var publishesAudioSetup: Bool { get }
 
     // MARK: - Audio Control
 
@@ -218,6 +221,8 @@ protocol SGCManager {
     // MARK: - Incident Reporting
 
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) throws
+    /// Tell the glasses Cloud recorded `reportId` for a BES crash incident (Mentra Live only).
+    func sendBesCrashReported(incidentKey: String, reportId: String) throws
 
     // MARK: - Gallery
 
@@ -278,7 +283,15 @@ extension SGCManager {
         false
     }
 
+    var publishesAudioSetup: Bool {
+        false
+    }
+
     func replayStreamControlReady() {}
+
+    func sendBesCrashReported(incidentKey _: String, reportId _: String) throws {
+        throw BluetoothSdkError(code: "unsupported_device", message: "BES crash reporting is not supported on \(type).")
+    }
 
     @discardableResult func requestSavedWifiNetworks(requestId _: String, sid _: String) -> Bool {
         false

@@ -1,6 +1,6 @@
 import {afterEach, expect, spyOn, test} from 'bun:test';
 import {ReportModel} from '../models/report.model';
-import {findDeviceIncidentReport, submitReport} from './report.service';
+import {submitReport} from './report.service';
 
 afterEach(() => {for (const mock of mocks.splice(0)) mock.mockRestore();});
 const mocks: Array<{mockRestore(): void}> = [];
@@ -22,26 +22,4 @@ test('report creation persists correlation atomically with the authenticated dev
   for (const changed of [{automationCorrelation: {...correlation, alertId: '../foreign'}},
     {trigger: {...input.trigger, source: 'unrelated-source'}}, {trigger: {...input.trigger, reason: 'unrelated-reason'}}])
     await expect(submitReport({...input, ...changed})).rejects.toThrow('Invalid automated incident correlation');
-});
-
-test('exact lookup keeps failed collection reports linkable and rejects duplicates or unrelated reports', async () => {
-  let rows: unknown[] = [], filter: unknown, limit: unknown;
-  mocks.push(spyOn(ReportModel, 'find').mockImplementation(((value: unknown) => {
-    filter = value;
-    const query = {select() {return query;}, limit(value: unknown) {limit = value; return query;},
-      read() {return query;}, readConcern() {return query;}, setOptions() {return query;}, async lean() {return rows;}};
-    return query;
-  }) as never));
-  const original = {reportId: 'rep_ORIGINAL', kind: 'automatic', trigger: input.trigger,
-    logCollection: {glasses: {state: 'failed'}}};
-  rows = [original];
-  expect(await findDeviceIncidentReport(correlation)).toBe('rep_ORIGINAL');
-  expect(filter).toEqual({'automationCorrelation.testRunId': 'exact-run', 'automationCorrelation.alertId': 'exact-alert'});
-  expect(limit).toBe(2);
-  for (const candidates of [[], [original, {...original, reportId: 'rep_COLLISION', mentraUserId: 'another-account'}],
-    [{...original, kind: 'bug'}], [{...original, trigger: {...input.trigger, source: 'unrelated'}}],
-    [{...original, trigger: {...input.trigger, reason: 'different'}}], [{...original, reportId: '../foreign'}]]) {
-    rows = candidates;
-    expect(await findDeviceIncidentReport(correlation)).toBeNull();
-  }
 });

@@ -67,22 +67,25 @@ data class StreamAudioConfig @JvmOverloads constructor(
     }
 }
 
+/** STUN server for a WHIP stream whose caller names none: the glasses have none of their own. */
+private const val DEFAULT_WHIP_STUN_SERVER = "stun:stun.cloudflare.com:3478"
+
 /** ICE overrides for a WHIP stream. Ignored by the RTMP and SRT paths. */
 data class StreamIceConfig @JvmOverloads constructor(
     /**
      * STUN server the glasses use while gathering candidates.
      *
-     * Null and empty are different answers, and both have to survive the BLE round trip. Null
-     * leaves the glasses on their default Cloudflare STUN server; an empty string is SoftAP
-     * calling's explicit request for host-only gathering, because the phone's WHIP server sits on
-     * the glasses' own hotspot where a reflexive candidate is meaningless and unreachable.
+     * Null and empty are different answers. Null sends the default Cloudflare STUN server; an
+     * empty string is SoftAP calling's explicit request for host-only gathering, because the
+     * phone's WHIP server sits on the glasses' own hotspot where a reflexive candidate is
+     * meaningless and unreachable.
      */
     val stun: String? = null,
 ) {
     fun toMap(): Map<String, Any> =
         buildMap {
             // Not filtered on blankness, unlike the other optional string fields here: "" is the
-            // host-only signal, so dropping it would silently restore the default STUN server.
+            // host-only signal, so dropping it would silently send the default STUN server.
             stun?.let { put("stun", it) }
         }
 
@@ -268,9 +271,17 @@ data class StreamRequest @JvmOverloads constructor(
             audio?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("audio", it) }
             authToken?.takeIf { it.isNotEmpty() }?.let { put("authToken", it) }
             if (!captureAudio) put("captureAudio", false)
-            ice?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("ice", it) }
+            iceToSend()?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("ice", it) }
             traceId?.takeIf { it.isNotEmpty() }?.let { put("traceId", it) }
             telemetry?.let { put("telemetry", it) }
+        }
+
+    /** The glasses read an http(s) URL as WHIP, the only protocol that uses ICE. */
+    private fun iceToSend(): StreamIceConfig? =
+        if (ice?.stun == null && (streamUrl.startsWith("https://") || streamUrl.startsWith("http://"))) {
+            StreamIceConfig(stun = DEFAULT_WHIP_STUN_SERVER)
+        } else {
+            ice
         }
 
     companion object {

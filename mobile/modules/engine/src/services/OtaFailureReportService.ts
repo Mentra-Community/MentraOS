@@ -1,5 +1,6 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 
+import type {OtaArtifactFailure} from "./OtaArtifactFailure"
 import {redactOtaDiagnosticError} from "../utils/otaDiagnosticRedaction"
 
 export type OtaFailureReason =
@@ -15,6 +16,7 @@ export interface OtaFailureEvidence {
   attemptId: string
   deviceRevision: number
   reason: OtaFailureReason
+  artifactFailure?: OtaArtifactFailure
   transport: "wifi" | "hotspot" | null
   hotspotPhase: string
   connected: boolean

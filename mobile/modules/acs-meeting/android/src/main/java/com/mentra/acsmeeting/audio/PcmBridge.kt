@@ -1,7 +1,7 @@
 package com.mentra.acsmeeting.audio
 
 import android.util.Base64
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer

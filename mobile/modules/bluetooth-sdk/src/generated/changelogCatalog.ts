@@ -2,6 +2,10 @@
 export const GENERATED_RELEASE_CHANGELOGS = Object.freeze(
 [
   {
+    "version": "3.4.0",
+    "markdown": "- **Pairing:** Pairing your glasses is simpler, with new voice prompts to guide you.\n- **Mentra Call:** Simpler call controls and a free first month.\n- **Miniapps:** Add miniapps from a link or QR code.\n- **Glasses updates:** Updates keep going when your phone switches networks, with clearer messages if something goes wrong.\n- **Photos and gallery:** More reliable photo syncing on iPhone. Your glasses now tell you when their storage is full.\n- **Livestreaming:** Smoother livestreams.\n- **Sound:** Better speaker sound on Mentra Live, and music no longer stays off after a call.\n- **Notes:** Short conversations now get notes too.\n- **Reliability:** Fewer glasses crashes and disconnects."
+  },
+  {
     "version": "3.3.0",
     "markdown": "- **Mentra Call:** Now available on iPhone, with a redesigned call screen and photo sharing during calls.\n- **Microphone:** Improved glasses microphone reliability, including after phone calls.\n- **Photos and gallery:** More reliable photo capture and gallery syncing.\n- **Glasses updates:** More reliable glasses updates, with clearer progress.\n- **Miniapps:** Miniapps now update automatically. Fixed miniapps getting stuck on loading screens.\n- **Mentra AI:** Reliability improvements and bug fixes.\n- **Notes:** Take photos with the glasses camera button, and add meeting and location details to your notes.\n- **Pairing and connections:** Improved glasses audio reconnection on Android.\n- **G1 and NIMO:** Improved text display, including accented letters.\n- **Android tablets:** The Mentra App now rotates to landscape."
   },

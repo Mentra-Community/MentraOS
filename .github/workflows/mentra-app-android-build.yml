@@ -3,46 +3,8 @@ run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}{3}', inputs.
 
 on:
   pull_request:
+    branches-ignore: [dev]
     # Select/repackage on glasses-only changes too. ASG triggers must cover these.
-    paths:
-      - "mobile/**"
-      - "android_core/**"
-      - "cloud-v2/packages/cloud-client/src/**"
-      - "cloud-v2/packages/cloud-client/react-native/**"
-      - "cloud-v2/packages/cloud-client/package.json"
-      - "cloud-v2/packages/protocol/src/**"
-      - "cloud-v2/packages/protocol/package.json"
-      - "cloud-v2/packages/runtime/src/protocol/**"
-      - "cloud-v2/bun.lock"
-      - "package.json"
-      - "bun.lock"
-      - "asg_client/**"
-      - ".github/workflows/mentra-app-android-build.yml"
-      - ".github/workflows/mentra-asg-client-build.yml"
-      - ".github/actions/inject-signing/**"
-      - ".github/scripts/pr-mobile-build*"
-      - ".github/scripts/mobile-build-inputs*"
-      - ".github/scripts/ensure-android-ndk*"
-      - ".github/scripts/install-android-sdk*"
-      - ".github/scripts/pr_mobile_config.py"
-      - ".github/scripts/prepare-pr-mobile.mjs"
-      - ".github/scripts/repackage-pr-apk*"
-      - ".github/scripts/test_repackage_pr_apk.py"
-      - ".github/scripts/notify-pr-builds*"
-      - ".github/workflows/mentra-app-ios-build.yml"
-      - ".github/workflows/reusable-pr-build-notification.yml"
-      - ".github/scripts/pr-ios-artifacts*"
-      - ".github/scripts/ios-*"
-      - ".github/actions/disk-guard/**"
-      - ".github/scripts/pr-android-artifacts*"
-      - ".github/scripts/select-pr-asg.mjs"
-      - ".github/scripts/compute-asg-build-identity.mjs"
-      - ".github/scripts/allocate-asg-version.mjs"
-      - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
-  push:
-    branches:
-      - main
-      - dev
     paths:
       - "mobile/**"
       - "android_core/**"
@@ -80,6 +42,10 @@ on:
       - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
   workflow_dispatch:
     inputs:
+      nimo_diagnostic:
+        description: Build the explicit self-contained NIMO commissioning diagnostic (never ordinary inventory)
+        type: boolean
+        default: false
       routine_pr:
         description: Trusted routine coverage PR number
         type: string
@@ -109,7 +75,7 @@ on:
 # Scoped per-ref so branches never cancel each other; keeps the runner
 # queue from filling with superseded builds.
 concurrency:
-  group: android-build-${{ github.workflow }}-${{ inputs.routine_pr && format('routine-pr-{0}-{1}', inputs.routine_pr, inputs.routine_base) || github.ref }}
+  group: android-build-${{ github.workflow }}-${{ inputs.routine_pr && format('routine-pr-{0}-{1}', inputs.routine_pr, inputs.routine_base) || github.ref }}${{ inputs.nimo_diagnostic && '-nimo-diagnostic' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -158,6 +124,7 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      MENTRA_NIMO_DIAGNOSTIC: ${{ inputs.nimo_diagnostic && 'true' || 'false' }}
       MENTRA_PR_BUILD_SHA: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
       MENTRA_PR_BASE_REF: ${{ inputs.routine_base || github.base_ref }}
       MENTRA_PR_HEAD_REF: ${{ needs.routine-pr.outputs.head_ref || github.head_ref }}
@@ -179,6 +146,10 @@ jobs:
         # before prebuild instead of letting getBuildNumber() truncate it.
         run: |
           set -euo pipefail
+          if [[ "$MENTRA_NIMO_DIAGNOSTIC" == true && ( "$GITHUB_EVENT_NAME" != workflow_dispatch || -z "$PR_NUMBER" ) ]]; then
+            echo "::error::NIMO diagnostics require an explicit pinned PR dispatch"
+            exit 1
+          fi
           if [[ -n "$MENTRAOS_PINNED_BUILD_NUMBER" ]]; then
             if [[ ! "$MENTRAOS_PINNED_BUILD_NUMBER" =~ ^[1-9][0-9]{0,9}$ ]] \
               || (( MENTRAOS_PINNED_BUILD_NUMBER > 2100000000 )); then
@@ -268,7 +239,7 @@ jobs:
 
       - name: Verify PR packaging and notification contracts
         run: |
-          node --test .github/scripts/install-android-sdk.test.mjs .github/scripts/ensure-android-ndk.test.mjs .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs
+          node --test .github/scripts/install-android-sdk.test.mjs .github/scripts/ensure-android-ndk.test.mjs .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs mobile/scripts/nimo-diagnostic-build.test.mjs
           python3 .github/scripts/test_repackage_pr_apk.py
 
       - name: Setup environment
@@ -300,7 +271,7 @@ jobs:
             # base, not PR-controlled input. The backend is part of the reuse
             # fingerprint, so a dev binary is never repackaged as staging.
             case "${MENTRA_PR_BASE_REF:-$GITHUB_BASE_REF}" in
-              staging) CLOUD_ENV="staging" ;;
+              staging | main) CLOUD_ENV="staging" ;;
               *) CLOUD_ENV="dev" ;;
             esac
           else
@@ -314,21 +285,25 @@ jobs:
               CLOUD_CORE="https://core.dev.us-west-2.mentraglass.com"
               CLOUD_RT="https://runtime.dev.us-west-2.mentraglass.com"
               CLOUD_MINIAPPS="https://miniapps.dev.mentraglass.com/"
+              CLOUD_DIRECTORY="https://api.apps.dev.mentraglass.com/"
               ;;
             staging)
               CLOUD_CORE="https://core.staging.us-west-2.mentraglass.com"
               CLOUD_RT="https://runtime.staging.us-west-2.mentraglass.com"
               CLOUD_MINIAPPS="https://miniapps.staging.mentraglass.com/"
+              CLOUD_DIRECTORY="https://api.apps.staging.mentraglass.com/"
               ;;
             prod)
               CLOUD_CORE="https://core.us-west-2.mentraglass.com"
               CLOUD_RT="https://runtime.us-west-2.mentraglass.com"
               CLOUD_MINIAPPS="https://miniapps.mentraglass.com/"
+              CLOUD_DIRECTORY="https://api.apps.mentraglass.com/"
               ;;
             *)
               CLOUD_CORE=""
               CLOUD_RT=""
               CLOUD_MINIAPPS=""
+              CLOUD_DIRECTORY=""
               ;;
           esac
           if [ -n "$CLOUD_CORE" ]; then
@@ -336,6 +311,7 @@ jobs:
                 -e "s|^EXPO_PUBLIC_CLOUD_CORE_URL=.*|EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE|" \
                 -e "s|^EXPO_PUBLIC_CLOUD_RUNTIME_URL=.*|EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT|" \
                 -e "s|^EXPO_PUBLIC_MINIAPPS_URL=.*|EXPO_PUBLIC_MINIAPPS_URL=$CLOUD_MINIAPPS|" \
+                -e "s|^EXPO_PUBLIC_DIRECTORY_URL=.*|EXPO_PUBLIC_DIRECTORY_URL=$CLOUD_DIRECTORY|" \
                 .env > .env.tmp && mv .env.tmp .env
             # Make the pin authoritative for every later step. release:android /
             # release:ios call setBuildEnv(), which keeps any value already
@@ -347,12 +323,13 @@ jobs:
             # inherited endpoint, and validateReleaseArchive() would compare the
             # bundle against that same inherited process env and pass. GITHUB_ENV
             # takes precedence over the runner's inherited environment, so the
-            # four keys agree from here on.
+            # pinned keys agree from here on.
             {
               echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"
               echo "EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE"
               echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
               echo "EXPO_PUBLIC_MINIAPPS_URL=$CLOUD_MINIAPPS"
+              echo "EXPO_PUBLIC_DIRECTORY_URL=$CLOUD_DIRECTORY"
             } >> "$GITHUB_ENV"
             echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
           elif [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then
@@ -440,7 +417,7 @@ jobs:
 
       - name: Select a matching signed PR APK
         id: select-apk
-        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
+        if: ${{ !inputs.nimo_diagnostic && (github.event_name == 'pull_request' || inputs.routine_pr != '') }}
         uses: actions/github-script@v7
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
@@ -483,6 +460,10 @@ jobs:
         if: steps.select-apk.outputs.reused != 'true'
         run: node --test mobile/scripts/app-config-pr-build.test.mjs
 
+      - name: Test the WebView's miniapp origins
+        if: steps.select-apk.outputs.reused != 'true'
+        run: mobile/scripts/test-webview-miniapp-origin-android.sh
+
       - name: Install Android toolchain with download retries
         if: steps.select-apk.outputs.reused != 'true'
         run: node .github/scripts/install-android-sdk.mjs --mobile mobile
@@ -513,7 +494,14 @@ jobs:
         # / lintVitalReport*: assembleRelease still runs lintVitalRelease, which
         # then fails looking for those tasks' output files. Android lint stays
         # on this job; Mobile App Quality Checks is TypeScript/Jest only.
-        run: ./gradlew assembleRelease --build-cache --parallel --max-workers=8 -x test
+        run: |
+          if [[ "$MENTRA_NIMO_DIAGNOSTIC" == true ]]; then
+            ./gradlew assembleNimoDiagnostic --build-cache --parallel --max-workers=8 -x test
+            mkdir -p app/build/outputs/apk/release
+            cp app/build/outputs/apk/nimoDiagnostic/app-nimoDiagnostic.apk app/build/outputs/apk/release/app-release.apk
+          else
+            ./gradlew assembleRelease --build-cache --parallel --max-workers=8 -x test
+          fi
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
           # Mapbox Downloads:Read secret token (sk.…). Authenticates the private
@@ -587,6 +575,7 @@ jobs:
         run: |
           set -euo pipefail
           node .github/scripts/pr-android-artifacts.mjs mobile/android/app/build/outputs/apk/release/app-release.apk
+          if [[ "$MENTRA_NIMO_DIAGNOSTIC" == true ]]; then exit 0; fi
           release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/pr-builds" --jq .id)
           name="mobile-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
           node .github/scripts/publish-immutable-release-asset.mjs \
@@ -691,4 +680,3 @@ jobs:
       pull-requests: write
     secrets:
       SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}
-      TEST_RUN_INGEST_TOKEN_DEV: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}

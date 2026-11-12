@@ -8,11 +8,14 @@ import type {AppEnv} from "../../types/hono.types"
 import * as session from "../../services/session.service"
 import * as trustedEmail from "../../services/account/trusted-email.service"
 import * as featuresService from "../../services/licenses/features.service"
+import * as assignedPackages from "../../services/workspaces/assigned-packages.service"
 
 const SIGNING_ENV = ["MENTRA_MINIAPP_JWT_PRIVATE_KEY", "MENTRA_MINIAPP_JWT_PUBLIC_KEY"] as const
 const savedEnv = Object.fromEntries(SIGNING_ENV.map((key) => [key, process.env[key]]))
 const mocks: Array<{mockRestore(): void}> = []
 let featuresFor: ReturnType<typeof spyOn<typeof featuresService, "featuresFor">>
+let assigningWorkspace: ReturnType<typeof spyOn<typeof assignedPackages, "assigningMembership">>
+let workspaceName: ReturnType<typeof spyOn<typeof assignedPackages, "workspaceNameOf">>
 
 beforeEach(() => {
   const {privateKey, publicKey} = crypto.generateKeyPairSync("ed25519")
@@ -22,6 +25,12 @@ beforeEach(() => {
   // A person with no license: the lookup that reads the database answers nothing unless a test says so.
   featuresFor = spyOn(featuresService, "featuresFor").mockResolvedValue([])
   mocks.push(featuresFor)
+  // A person whose workspace assigned nothing, unless a test says otherwise.
+  assigningWorkspace = spyOn(assignedPackages, "assigningMembership").mockResolvedValue(null)
+  mocks.push(assigningWorkspace)
+  // A workspace with no name to read, unless a test says otherwise.
+  workspaceName = spyOn(assignedPackages, "workspaceNameOf").mockResolvedValue(null)
+  mocks.push(workspaceName)
   mocks.push(
     spyOn(session, "verifyAccessToken").mockResolvedValue({
       mentraUserId: "mu_01TEST",
@@ -243,6 +252,141 @@ describe("POST /miniapp-token features", () => {
     // The route throws the RFC 400 for the app's error handler, which this bare router does not mount.
     expect((await postMiniappToken({})).status).not.toBe(200)
     expect(featuresFor).not.toHaveBeenCalled()
+  })
+})
+
+describe("POST /miniapp-token workspace and local-build claims", () => {
+  beforeEach(() => {
+    mocks.push(spyOn(trustedEmail, "trustedAccountEmail").mockResolvedValue(null))
+  })
+
+  test("names the workspace that assigned the package, as the lookup answers it for this person and package", async () => {
+    assigningWorkspace.mockImplementation(async (mentraUserId, packageName) =>
+      mentraUserId === "mu_01TEST" && packageName === "com.acme.tools" ? {workspaceId: "ws_acme", role: "admin"} : null,
+    )
+    workspaceName.mockImplementation(async (workspaceId) => (workspaceId === "ws_acme" ? "Acme Fleet" : null))
+
+    expect(await verifiedClaims(await mint("com.acme.tools"), "com.acme.tools")).toMatchObject({
+      sub: "mu_01TEST",
+      aud: "com.acme.tools",
+      tenantId: "mentra",
+      workspaceId: "ws_acme",
+      // The person's role there, from the same lookup.
+      workspaceRole: "admin",
+      // And the workspace's name, for the miniapp to show.
+      workspaceName: "Acme Fleet",
+    })
+    const unassigned = await verifiedClaims(await mint("com.example.notes"), "com.example.notes")
+    expect("workspaceId" in unassigned).toBe(false)
+    expect("workspaceRole" in unassigned).toBe(false)
+    expect("workspaceName" in unassigned).toBe(false)
+    expect(workspaceName.mock.calls).toEqual([["ws_acme"]])
+    expect(assigningWorkspace.mock.calls).toEqual([
+      ["mu_01TEST", "com.acme.tools"],
+      ["mu_01TEST", "com.example.notes"],
+    ])
+  })
+
+  test("a workspace name that can't be read leaves the token without it, never without the token", async () => {
+    assigningWorkspace.mockResolvedValue({workspaceId: "ws_acme", role: "owner"})
+    workspaceName.mockRejectedValue(new Error("Mongo timed out"))
+
+    const claims = await verifiedClaims(await mint("com.acme.tools"), "com.acme.tools")
+    expect(claims).toMatchObject({workspaceId: "ws_acme", workspaceRole: "owner"})
+    expect("workspaceName" in claims).toBe(false)
+  })
+
+  test("an unassigned, installed miniapp's token has exactly the claims it always had", async () => {
+    const claims = await verifiedClaims(await mint("com.example.notes"), "com.example.notes")
+    expect(Object.keys(claims).sort()).toEqual(["aud", "exp", "iat", "iss", "jti", "sub", "tenantId"])
+  })
+
+  test("marks a local build's token and never looks up, or names, a workspace", async () => {
+    assigningWorkspace.mockResolvedValue({workspaceId: "ws_acme", role: "admin"})
+    featuresFor.mockResolvedValue(["tools.pro"])
+
+    const response = await postMiniappToken({packageName: "com.acme.tools", localBuild: true})
+    expect(response.status).toBe(200)
+    const claims = await verifiedClaims(((await response.json()) as {token: string}).token, "com.acme.tools")
+    expect(claims).toMatchObject({sub: "mu_01TEST", aud: "com.acme.tools", localBuild: true, features: ["tools.pro"]})
+    expect("workspaceId" in claims).toBe(false)
+    expect("workspaceRole" in claims).toBe(false)
+    expect("workspaceName" in claims).toBe(false)
+    expect(assigningWorkspace).not.toHaveBeenCalled()
+    expect(workspaceName).not.toHaveBeenCalled()
+  })
+
+  test("localBuild false is an installed miniapp's token", async () => {
+    assigningWorkspace.mockResolvedValue({workspaceId: "ws_acme", role: "admin"})
+
+    const response = await postMiniappToken({packageName: "com.acme.tools", localBuild: false})
+    expect(response.status).toBe(200)
+    const claims = await verifiedClaims(((await response.json()) as {token: string}).token, "com.acme.tools")
+    expect(claims.workspaceId).toBe("ws_acme")
+    expect("localBuild" in claims).toBe(false)
+  })
+
+  test("refuses a localBuild that is not a boolean, and looks nothing up", async () => {
+    const issue = spyOn(session, "issueMiniappToken")
+    mocks.push(issue)
+    for (const localBuild of ["true", 1, {}, null]) {
+      // The route throws the RFC 400 for the app's error handler, which this bare router does not mount.
+      expect((await postMiniappToken({packageName: "com.acme.tools", localBuild})).status).not.toBe(200)
+    }
+    expect(assigningWorkspace).not.toHaveBeenCalled()
+    expect(featuresFor).not.toHaveBeenCalled()
+    expect(issue).not.toHaveBeenCalled()
+  })
+
+  test("answers 503 workspace_unavailable and mints nothing when the workspace lookup fails", async () => {
+    assigningWorkspace.mockRejectedValue(new Error("mongo unavailable"))
+    const issue = spyOn(session, "issueMiniappToken")
+    mocks.push(issue)
+
+    const response = await postMiniappToken({packageName: "com.acme.tools"})
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({error: "workspace_unavailable"})
+    expect(issue).not.toHaveBeenCalled()
+  })
+
+  test("answers 503 workspace_unavailable at the deadline when the workspace lookup never settles", async () => {
+    assigningWorkspace.mockImplementation(() => new Promise(() => {}))
+    const issue = spyOn(session, "issueMiniappToken")
+    mocks.push(issue)
+
+    const started = Date.now()
+    const response = await postMiniappToken({packageName: "com.acme.tools"})
+    const elapsed = Date.now() - started
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({error: "workspace_unavailable"})
+    // The same 1.5 s the other lookups get, run beside them rather than after them.
+    expect(elapsed).toBeGreaterThanOrEqual(1_400)
+    expect(elapsed).toBeLessThan(3_000)
+    expect(issue).not.toHaveBeenCalled()
+  })
+
+  test("a local build's token does not wait on a workspace lookup that would fail", async () => {
+    assigningWorkspace.mockRejectedValue(new Error("mongo unavailable"))
+
+    const response = await postMiniappToken({packageName: "com.acme.tools", localBuild: true})
+    expect(response.status).toBe(200)
+  })
+
+  test("runs the features and workspace lookups side by side", async () => {
+    let releaseFeatures: (features: string[]) => void = () => {}
+    featuresFor.mockImplementation(() => new Promise((resolve) => (releaseFeatures = resolve)))
+    let workspaceAsked = false
+    assigningWorkspace.mockImplementation(async () => {
+      workspaceAsked = true
+      return {workspaceId: "ws_acme", role: "member" as const}
+    })
+
+    const pending = postMiniappToken({packageName: "com.acme.tools"})
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(workspaceAsked).toBe(true)
+    releaseFeatures([])
+    expect((await pending).status).toBe(200)
   })
 })
 

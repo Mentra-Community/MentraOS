@@ -7,7 +7,8 @@
     "build": "bun run build.ts",
     "release": "mentra-miniapp release",
     "pack": "mentra-miniapp pack",
-    "test": "bun test"
+    "test": "bun test ./src",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@mentra/miniapp": "workspace:*",

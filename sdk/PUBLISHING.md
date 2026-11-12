@@ -25,8 +25,10 @@ selects its published channel:
 | `staging` | `0.2.0-beta.3`    | `beta`   |
 | `main`    | `0.2.0`           | `latest` |
 
-The workflow is manually dispatched on the selected branch after that channel's
-coordinated `@mentra/miniapp` version is publicly readable. This prevents the
+The workflow runs from a manual dispatch on the selected branch, or from a
+`release-developer-tools` repository dispatch naming the branch and commit (sent
+automatically when a tool's version changes), after that channel's coordinated
+`@mentra/miniapp` version is publicly readable. This prevents the
 scaffolder from racing the coordinated publisher and capturing a stale template
 pin. The workflow is registry-state driven and idempotent: it publishes only
 versions that are absent from npm, in dependency order. First-time package
@@ -39,18 +41,22 @@ package; it does not publish it.
 
 ## Required Setup
 
-The workflow requires the repository secret `NPM_TOKEN` with publish access to
-the `@mentra` organization. Every public package must also have public npm access
-configured. Use a dry-run dispatch to inspect package contents before
-publication:
+The workflow publishes with npm trusted publishing, without a token. On each
+package's npm settings page, a package owner adds a trusted publisher: GitHub
+Actions, organization `Mentra-Community`, repository `MentraOS`, workflow
+`developer-tools-release.yml`, no environment. Every public package must also
+have public npm access configured. Use a dry-run dispatch to inspect package
+contents before publication:
 
 ```bash
 gh workflow run developer-tools-release.yml --ref dev \
   -f dry_run=true -f force_release=false
 ```
 
-To bootstrap a package that has never existed on npm, rerun deliberately with
-`dry_run=false` and `force_release=true` after reviewing the dry run.
+A package that has never existed on npm cannot have a trusted publisher yet: a
+package owner publishes its first version by hand, then adds the trusted
+publisher. (`force_release=true` still admits a first publish here, for a
+package whose trusted publisher already exists.)
 
 For an ordinary release, rerun with `dry_run=false` and
 `force_release=false`. Do not dispatch until `npm view @mentra/miniapp

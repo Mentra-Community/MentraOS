@@ -74,6 +74,8 @@ mock.module("../utils/timers", () => ({
     clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
   },
 }))
+// The relay's hotspot join watches the glasses link through the public SDK.
+mock.module("@mentra/bluetooth-sdk", () => ({default: {subscribeGlassesStatus: () => () => {}}}))
 mock.module("../../utils/timers", () => ({
   BgTimer: {
     setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
@@ -661,7 +663,7 @@ describe("PhoneStreamCoordinator", () => {
               stop: async () => {},
               cancel() {},
               owns: () => false,
-              handleGlassesStatus() {},
+              handleGlassesStatus: () => false,
             }
           },
         },
@@ -1294,6 +1296,25 @@ describe("managed relay ownership", () => {
     expect(setHotspotState).toHaveBeenCalledWith(false)
     expect(link.listenerCount()).toBe(0)
   })
+
+  test("a deferred hotspot shutdown is dropped once another owner holds the hotspot", async () => {
+    const {acquireGlassesHotspot} = await import("../GlassesHotspotLease")
+    const link = fakeLink()
+    const setHotspotState = mock(async () => ({state: "disabled"}))
+    bluetoothSdk.setHotspotState = setHotspotState
+    const coord = new PhoneStreamCoordinator({}, {linkSource: link.source})
+    await coord.startManaged("com.a", {ingest: "whip"})
+    link.set(false)
+    await coord.stop("com.a")
+    // Gallery takes the hotspot and enables its own AP before BLE returns.
+    const releaseGallery = acquireGlassesHotspot()
+    link.set(true)
+    await settle()
+    expect(stopStream).toHaveBeenCalledTimes(1)
+    expect(setHotspotState).not.toHaveBeenCalled()
+    expect(link.listenerCount()).toBe(0)
+    releaseGallery()
+  })
 })
 
 describe("relay stop while playback is warming up", () => {
@@ -1356,4 +1377,60 @@ test("automatic timeout reports native cleanup failure and keeps its owner until
   expect(coord.getDiagnosticSnapshot().active).toBe(true)
   await coord.stop("com.a")
   expect(coord.getDiagnosticSnapshot().active).toBe(false)
+})
+
+describe("glasses status in WHIP relay mode", () => {
+  test("the live attempt's glasses status reaches miniapps under the managed streamId", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const updates: Array<{source: string; status: string; streamId: string; data?: Record<string, unknown>}> = []
+    coord.setStatusSubscriber((_pkg, update) => updates.push(update))
+    const {streamId} = await coord.startManaged("com.a", {ingest: "whip"})
+    try {
+      coord.handleGlassesStatus({
+        type: "stream_status",
+        kind: "reconnect",
+        status: "reconnecting",
+        streamId: `${streamId}-relay-1`,
+        attempt: 1,
+        maxAttempts: 5,
+      } as never)
+      // A late status from an attempt that is not live stays internal.
+      coord.handleGlassesStatus({
+        type: "stream_status",
+        kind: "lifecycle",
+        status: "streaming",
+        streamId: `${streamId}-relay-0`,
+      } as never)
+
+      const glasses = updates.filter((u) => u.source === "glasses")
+      expect(glasses).toHaveLength(1)
+      expect(glasses[0]).toMatchObject({
+        streamId,
+        status: "reconnecting",
+        data: {streamId, kind: "reconnect", attempt: 1, maxAttempts: 5},
+      })
+    } finally {
+      await coord.stop("com.a")
+    }
+  })
+
+  test("a glasses stop is reported as the relay reconnecting, not as the stream stopping", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const updates: Array<{source: string; status: string}> = []
+    coord.setStatusSubscriber((_pkg, update) => updates.push(update))
+    const {streamId} = await coord.startManaged("com.a", {ingest: "whip"})
+    try {
+      coord.handleGlassesStatus({
+        type: "stream_status",
+        kind: "lifecycle",
+        status: "stopped",
+        streamId: `${streamId}-relay-1`,
+      } as never)
+      await settle()
+      expect(updates.some((u) => u.source === "glasses" && u.status === "stopped")).toBe(false)
+      expect(updates).toContainEqual(expect.objectContaining({source: "coordinator", status: "reconnecting"}))
+    } finally {
+      await coord.stop("com.a")
+    }
+  })
 })

@@ -25,12 +25,21 @@
  *   none unless configured.
  * - The Developer Console and the CLI get refresh tokens; the portals do not.
  *
- * `findClient` is the one lookup the provider and Core's token checks use. A
- * later client source (miniapp websites, registered by the Store) plugs in
- * there; first-party clients never see a consent screen.
+ * `findClient` is the one lookup the provider and Core's token checks use. It
+ * answers:
+ *  - the configured first-party clients, which never see a consent screen;
+ *  - the registered miniapp websites (`website-clients.service.ts`), which are
+ *    third-party: the person consents, and their tokens are miniapp tokens for
+ *    one package;
+ *  - the sign-in site's own client (`ACCOUNT_CLIENT_ID`), which exists so a
+ *    person can sign in to the site's Connected apps page. It needs no
+ *    configuration, redirects only to that page, and no token issued to it is
+ *    accepted anywhere.
  */
 
 import {ConfigurationError, isDeployedEnvironment} from "../signin/config"
+import {oidcIssuer} from "./config"
+import {activeWebsiteClient, isWebsiteClientId} from "./website-clients.service"
 
 export const CLIENT_KINDS = ["admin_portal", "workspace_portal", "console", "cli"] as const
 export type ClientKind = (typeof CLIENT_KINDS)[number]
@@ -42,18 +51,38 @@ const DEFAULT_NAMES: Record<ClientKind, string> = {
   cli: "Mentra CLI",
 }
 
+/** The sign-in site's own client, and the page it signs a person in to. */
+export const ACCOUNT_CLIENT_ID = "mentra-account"
+export const CONNECTIONS_PATH = "/connections"
+
 const CLIENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 /** Client secrets live in variables named `CLOUD_CORE_OIDC_<CLIENT>_CLIENT_SECRET`, which the configuration contract classifies. */
 const ENV_NAME = /^CLOUD_CORE_OIDC_[A-Z0-9_]{1,64}_CLIENT_SECRET$/
 const MIN_SECRET_LENGTH = 32
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
 
+/** What a registered miniapp website adds to a client. */
+export interface WebsiteBinding {
+  /** The one package it acts for: the audience of its tokens. */
+  packageName: string
+  access: "public" | "private"
+  /** For a private client: the workspaces whose active members may sign in. */
+  accessWorkspaceIds: string[]
+  /** A developer's development client signs in nobody but that developer; null for every other client. */
+  onlyUserId: string | null
+  /** A server client's secret, as stored: its SHA-256. Core's relay hashes the presented secret before the provider compares. */
+  secretHash: string | null
+}
+
 export interface OidcClient {
   clientId: string
-  kind: ClientKind
+  /** `website` for a registered miniapp website, `account` for the sign-in site's own client; a configured kind otherwise. */
+  kind: ClientKind | "website" | "account"
   name: string
-  /** Every client from configuration is first-party: no consent screen. */
+  /** First-party clients (every configured one, and the sign-in site's own) see no consent screen. A miniapp website is never one. */
   firstParty: boolean
+  /** Set for a miniapp website, null for a first-party client. */
+  website: WebsiteBinding | null
   /** Confidential clients authenticate with `client_secret_post`; the CLI is public. */
   confidential: boolean
   secretEnv: string | null
@@ -104,6 +133,9 @@ function parseClient(value: unknown, index: number): OidcClient {
   const entry = value as Record<string, unknown>
   const clientId = typeof entry.clientId === "string" ? entry.clientId.trim() : ""
   if (!CLIENT_ID.test(clientId)) fail(`entry ${index} clientId must be 1-64 letters, digits, "_" or "-"`)
+  // That prefix is the registered websites': a configured client must never answer for one.
+  if (isWebsiteClientId(clientId)) fail(`entry ${index} clientId must not start with "mwc_"`)
+  if (clientId === ACCOUNT_CLIENT_ID) fail(`entry ${index} clientId "${ACCOUNT_CLIENT_ID}" is the sign-in site's own`)
   const label = `client "${clientId}"`
   const kind = entry.kind
   if (typeof kind !== "string" || !(CLIENT_KINDS as readonly string[]).includes(kind)) {
@@ -134,6 +166,7 @@ function parseClient(value: unknown, index: number): OidcClient {
     kind: clientKind,
     name,
     firstParty: true,
+    website: null,
     confidential,
     secretEnv,
     redirectUris,
@@ -160,9 +193,11 @@ export function configuredClients(): OidcClient[] {
     const kinds = new Set<ClientKind>()
     for (const client of clients) {
       if (ids.has(client.clientId)) fail(`client "${client.clientId}" is listed twice`)
-      if (kinds.has(client.kind)) fail(`at most one client of kind ${client.kind}`)
+      // Configured clients are always of a configured kind.
+      const kind = client.kind as ClientKind
+      if (kinds.has(kind)) fail(`at most one client of kind ${kind}`)
       ids.add(client.clientId)
-      kinds.add(client.kind)
+      kinds.add(kind)
     }
   }
   cached = {raw, clients}
@@ -171,6 +206,8 @@ export function configuredClients(): OidcClient[] {
 
 /** A confidential client's secret, read from the variable it names at use time; null when unset. */
 export function clientSecret(client: OidcClient): string | null {
+  // A website's secret is known only as its hash; the relay hashes what the site presents (`api/oidc/oidc.api.ts`).
+  if (client.website) return client.website.secretHash
   if (!client.secretEnv) return null
   const value = (process.env[client.secretEnv] ?? "").trim()
   return value || null
@@ -182,10 +219,58 @@ export function clientSecret(client: OidcClient): string | null {
  * treated as unknown, so it can neither sign in nor have its tokens accepted.
  */
 export async function findClient(clientId: string): Promise<OidcClient | null> {
+  if (clientId === ACCOUNT_CLIENT_ID) return accountClient()
   const client = configuredClients().find(entry => entry.clientId === clientId) ?? null
-  if (!client) return null
+  if (!client) return findWebsiteClient(clientId)
   if (client.confidential && !clientSecret(client)) return null
   return client
+}
+
+/**
+ * The sign-in site's own client: a public client whose one redirect is the site's Connected apps page. The
+ * page never redeems the code, and a token issued to this client is refused everywhere
+ * (`core-access-token.ts`): signing in through it only starts the person's session at the sign-in server.
+ */
+function accountClient(): OidcClient | null {
+  const issuer = oidcIssuer()
+  if (!issuer) return null
+  return {
+    clientId: ACCOUNT_CLIENT_ID,
+    kind: "account",
+    name: "Mentra account",
+    firstParty: true,
+    website: null,
+    confidential: false,
+    secretEnv: null,
+    redirectUris: [`${issuer}${CONNECTIONS_PATH}`],
+    postLogoutRedirectUris: [],
+    grantTypes: ["authorization_code"],
+  }
+}
+
+/** A registered, active miniapp website as a client; null for anything else. A disabled website is no client. */
+async function findWebsiteClient(clientId: string): Promise<OidcClient | null> {
+  const website = await activeWebsiteClient(clientId)
+  if (!website) return null
+  return {
+    clientId: website.clientId,
+    kind: "website",
+    name: website.name,
+    firstParty: false,
+    website: {
+      packageName: website.packageName,
+      access: website.access,
+      accessWorkspaceIds: website.accessWorkspaceIds,
+      onlyUserId: website.environment === "development" ? website.ownerUserId : null,
+      secretHash: website.secretHash,
+    },
+    confidential: website.type === "server",
+    secretEnv: null,
+    redirectUris: website.redirectUris,
+    // A site signs the person out of itself; it is not sent back from the sign-in server's sign-out.
+    postLogoutRedirectUris: [],
+    grantTypes: ["authorization_code", "refresh_token"],
+  }
 }
 
 /** The configured client of a kind (for example the admin portal's), or null. */
@@ -200,6 +285,8 @@ export function providerClientMetadata(client: OidcClient): Record<string, unkno
     client_id: client.clientId,
     client_name: client.name,
     ...(client.confidential ? {client_secret: secret, token_endpoint_auth_method: "client_secret_post"} : {token_endpoint_auth_method: "none"}),
+    // A website's development client stays a web application, so the provider matches its loopback redirect
+    // exactly, port included; for a native one it would ignore the port.
     application_type: client.kind === "cli" ? "native" : "web",
     redirect_uris: client.redirectUris,
     post_logout_redirect_uris: client.postLogoutRedirectUris,

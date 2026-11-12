@@ -24,7 +24,7 @@ const harness: CredentialView = {
   name: "Routine harness",
   display: "mak_prod_…wxyz",
   workspaceId: null,
-  scopes: ["organization.testing.read", "organization.testing.manage"],
+  scopes: ["organization.incidents.read", "organization.supportProfiles.read"],
   packageNames: [],
   createdByEmail: "sam@acme.test",
   issuedByService: null,
@@ -64,8 +64,6 @@ describe("operator keys page", () => {
     expect(SCOPE_LABELS).toEqual({
       "organization.incidents.read": "Read incident reports",
       "organization.supportProfiles.read": "Look up support profiles",
-      "organization.testing.read": "View test runs",
-      "organization.testing.manage": "Manage test runs",
     });
     // Every scope a key may carry has a label.
     for (const scope of OPERATOR_KEY_SCOPES) expect(SCOPE_LABELS[scope]).toBeTruthy();
@@ -95,7 +93,7 @@ describe("operator keys page", () => {
     expect(markup).toContain("Created by sam@acme.test");
     expect(markup).toContain("Never used");
     // The labels appear in the list as well as in the form.
-    expect(markup.match(/View test runs/g)!.length).toBeGreaterThanOrEqual(2);
+    expect(markup.match(/Look up support profiles/g)!.length).toBeGreaterThanOrEqual(2);
     expect(markup.match(/Look up support profiles/g)!.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -142,7 +140,7 @@ describe("the one-time token", () => {
       const held: { secret: SecretState } = { secret: { status: "hidden" } };
       expect(gate(held.secret)).toBe("");
 
-      await createOperatorKeyAndReveal({ name: "Routine harness", scopes: ["organization.testing.read"] }, revealed => {
+      await createOperatorKeyAndReveal({ name: "Routine harness", scopes: ["organization.supportProfiles.read"] }, revealed => {
         held.secret = secretReducer(held.secret, { type: "created", ...revealed });
       });
       expect(held.secret).toEqual({ status: "shown", name: "Routine harness", token: TOKEN });
@@ -176,7 +174,7 @@ describe("the one-time token", () => {
 
 describe("creating an operator key", () => {
   test("a name and at least one scope are required", () => {
-    expect(parseCreateKeyForm({ name: "  ", scopes: ["organization.testing.read"], expires: "" })).toEqual({
+    expect(parseCreateKeyForm({ name: "  ", scopes: ["organization.supportProfiles.read"], expires: "" })).toEqual({
       ok: false,
       message: "Enter a name for the key.",
     });
@@ -190,23 +188,23 @@ describe("creating an operator key", () => {
     expect(
       parseCreateKeyForm({
         name: "  CI  ",
-        scopes: ["organization.testing.manage", "organization.incidents.read", "organization.testing.manage"],
+        scopes: ["organization.supportProfiles.read", "organization.incidents.read", "organization.supportProfiles.read"],
         expires: "",
       }),
     ).toEqual({
       ok: true,
-      input: { name: "CI", scopes: ["organization.incidents.read", "organization.testing.manage"] },
+      input: { name: "CI", scopes: ["organization.incidents.read", "organization.supportProfiles.read"] },
     });
   });
 
   test("an expiry date becomes the end of that local day, and an unusable one is refused", () => {
-    const ok = parseCreateKeyForm({ name: "CI", scopes: ["organization.testing.read"], expires: "2027-03-04" });
+    const ok = parseCreateKeyForm({ name: "CI", scopes: ["organization.supportProfiles.read"], expires: "2027-03-04" });
     expect(ok.ok).toBe(true);
     if (ok.ok) {
       const expiry = new Date(ok.input.expiresAt!);
       expect([expiry.getFullYear(), expiry.getMonth(), expiry.getDate(), expiry.getHours()]).toEqual([2027, 2, 4, 23]);
     }
-    expect(parseCreateKeyForm({ name: "CI", scopes: ["organization.testing.read"], expires: "2027-02-31" })).toEqual({
+    expect(parseCreateKeyForm({ name: "CI", scopes: ["organization.supportProfiles.read"], expires: "2027-02-31" })).toEqual({
       ok: false,
       message: "Choose a valid expiry date.",
     });
@@ -217,7 +215,7 @@ describe("creating an operator key", () => {
     const revealed: Array<{ name: string; token: string }> = [];
     try {
       const result = await createOperatorKeyAndReveal(
-        { name: "Routine harness", scopes: ["organization.testing.read"] },
+        { name: "Routine harness", scopes: ["organization.supportProfiles.read"] },
         secret => revealed.push(secret),
       );
       expect(result).toEqual(harness);
@@ -228,7 +226,7 @@ describe("creating an operator key", () => {
       expect(init).toMatchObject({ method: "POST" });
       expect(JSON.parse(String((init as RequestInit).body))).toEqual({
         name: "Routine harness",
-        scopes: ["organization.testing.read"],
+        scopes: ["organization.supportProfiles.read"],
       });
     } finally {
       spy.mockRestore();
@@ -241,7 +239,7 @@ describe("creating an operator key", () => {
     const revealed: string[] = [];
     try {
       const observer = new MutationObserver(client, createKeyMutationOptions(client, secret => revealed.push(secret.token)));
-      const result = await observer.mutate({ name: "Routine harness", scopes: ["organization.testing.read"] });
+      const result = await observer.mutate({ name: "Routine harness", scopes: ["organization.supportProfiles.read"] });
       expect(result).toEqual(harness);
       expect(revealed).toEqual([TOKEN]);
       const held = JSON.stringify([

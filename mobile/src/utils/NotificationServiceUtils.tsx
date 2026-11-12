@@ -2,6 +2,7 @@ import {AppState, Platform} from "react-native"
 import CrustModule from "@mentra/crust"
 
 import showAlert from "@/utils/AlertUtils"
+import {logPermissionAlert} from "@/utils/permissionLog"
 
 import {checkPermissionAfterSettingsReturn} from "./notificationPermissionFlow"
 
@@ -49,6 +50,11 @@ export async function checkAndRequestNotificationAccessSpecialPermission(): Prom
       }
     }
 
+    logPermissionAlert(
+      "notifications",
+      `hasNotificationListenerPermission=${hasAccess}`,
+      "notification_access_explanation",
+    )
     showAlert(
       "Enable Notification Access",
       "MentraOS needs permission to read your phone notifications to display them on your smart glasses.\n\n" +

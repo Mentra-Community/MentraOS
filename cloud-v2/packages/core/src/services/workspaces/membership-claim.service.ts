@@ -17,7 +17,8 @@
  * Claiming an identity, in one transaction for everything the person can claim:
  *  - marks it claimed (`claimedAt`, `claimedBy`); a claimed identity is never
  *    claimed by anyone else, so a second Core user with the same email gets nothing;
- *  - moves its pending memberships to the person (`claimPendingMemberships`). A
+ *  - gives the person every membership pending under all of their identities
+ *    (`claimPendingMemberships`): a person may belong to several workspaces. A
  *    pending membership in a workspace where the person already holds one merges
  *    into it: the kept membership takes the higher role, the imported one ends
  *    (`removed`), and its live keys and pending invitations move to the kept one
@@ -25,8 +26,8 @@
  *  - moves enterprise org ownership (`enterprise_orgs.ownerUserId`) from the
  *    WorkOS user id to the person.
  * Each move is audited (`membership.claimed`, `membership.merged_duplicate`, as
- * the system) and bumps its workspace's authorization revision once, as every
- * change to who holds a role does. Keys and invitations the claimed memberships
+ * the system) and bumps its
+ * workspace's authorization revision once, as every change to who holds a role does. Keys and invitations the claimed memberships
  * made are stamped with the person's user id, so deleting their account later
  * finds them.
  *
@@ -67,51 +68,61 @@ export interface ClaimInput {
   emailVerified: boolean
 }
 
-// --- Claiming one WorkOS user's memberships -------------------------------
+// --- Claiming the memberships waiting under a person's WorkOS users -----------
+
+/** What one claim did to the pending memberships it found. */
+export interface ClaimedMemberships {
+  claimed: number
+  merged: number
+}
+
+/** The import's pick: highest role, then the earliest join, then the smallest membership id. */
+function pickOrder(a: MembershipRow, b: MembershipRow): number {
+  return (
+    rank(b.role) - rank(a.role) ||
+    a.startedAt.getTime() - b.startedAt.getTime() ||
+    (a.membershipId < b.membershipId ? -1 : a.membershipId > b.membershipId ? 1 : 0)
+  )
+}
 
 /**
- * Hand the active memberships pending under `workosUserId` to `mentraUserId`, inside the caller's
- * transaction. A pending membership in a workspace where the person already holds an active one is
- * merged into it (see the file header); any other is claimed in place. Returns how many of each.
+ * Hand the active memberships pending under `workosUserIds` (every WorkOS user the person claims) to
+ * `mentraUserId`, inside the caller's transaction. A person may belong to several workspaces, so every one
+ * is claimed:
+ *  - a pending membership in a workspace where the person already holds an active one merges into it;
+ *  - an automatic workspace of theirs that holds nothing gives way first (`yieldAutomaticWorkspace`), as it
+ *    does when they join any other workspace;
+ *  - each other one is claimed in place, in the import's order (`pickOrder`), and the others in that
+ *    workspace merge into it.
  */
 export async function claimPendingMemberships(
   session: ClientSession,
-  workosUserId: string,
+  workosUserIds: string[],
   mentraUserId: string,
-): Promise<{claimed: number; merged: number}> {
-  const result = {claimed: 0, merged: 0}
-  if (!isId(workosUserId) || !isId(mentraUserId)) return result
-  // Highest role first: if one person has two pending memberships in a workspace, the higher one is
-  // claimed and the other merges into it.
+): Promise<ClaimedMemberships> {
+  const result: ClaimedMemberships = {claimed: 0, merged: 0}
+  const ids = workosUserIds.filter(isId)
+  if (ids.length === 0 || !isId(mentraUserId)) return result
   const pending = (
-    await WorkspaceMembershipModel.find({pendingWorkosUserId: workosUserId, status: "active"})
+    await WorkspaceMembershipModel.find({pendingWorkosUserId: {$in: ids}, status: "active"})
       .session(session)
       .lean<MembershipRow[]>()
-  ).sort(
-    (a, b) =>
-      rank(b.role) - rank(a.role) ||
-      a.startedAt.getTime() - b.startedAt.getTime() ||
-      (a.membershipId < b.membershipId ? -1 : 1),
-  )
+  ).sort(pickOrder)
   if (pending.length === 0) return result
 
-  const held = await WorkspaceMembershipModel.find({
-    mentraUserId,
-    status: "active",
-    workspaceId: {$in: [...new Set(pending.map(row => row.workspaceId))]},
-  })
-    .session(session)
-    .lean<MembershipRow[]>()
+  const held = await WorkspaceMembershipModel.find({mentraUserId, status: "active"}).session(session).lean<MembershipRow[]>()
   const heldByWorkspace = new Map(held.map(row => [row.workspaceId, row]))
   const bumped = new Map<string, WorkspaceRow | null>()
   const now = new Date()
   let yielded = false
 
   for (const row of pending) {
+    const workosUserId = row.pendingWorkosUserId as string
     // Every change to who holds a role writes the workspace document first, once per workspace: it
     // invalidates cached authorization and serializes this claim with any other change there.
     if (!bumped.has(row.workspaceId)) bumped.set(row.workspaceId, await bumpWorkspace(session, row.workspaceId))
-    const revision = bumped.get(row.workspaceId)?.authorizationRevision ?? 0
+    const workspace = bumped.get(row.workspaceId) ?? null
+    const revision = workspace?.authorizationRevision ?? 0
     const kept = heldByWorkspace.get(row.workspaceId)
     if (kept) {
       if (await mergeDuplicate(session, {duplicate: row, kept, workosUserId, mentraUserId, revision, now})) {
@@ -124,13 +135,16 @@ export async function claimPendingMemberships(
     }
 
     // The person is about to hold a workspace of their own accord: an empty automatic one gives way, once.
-    if (!yielded && bumped.get(row.workspaceId)) {
+    if (!yielded && workspace) {
       yielded = true
-      await yieldAutomaticWorkspace(session, SYSTEM_ACTOR, mentraUserId, {except: row.workspaceId})
+      for (const gone of await yieldAutomaticWorkspace(session, SYSTEM_ACTOR, mentraUserId, {except: row.workspaceId})) {
+        heldByWorkspace.delete(gone)
+      }
     }
+
     const claimed = await WorkspaceMembershipModel.updateOne(
       {membershipId: row.membershipId, pendingWorkosUserId: workosUserId, status: "active"},
-      {$set: {mentraUserId, pendingWorkosUserId: null}},
+      {$set: {mentraUserId, pendingWorkosUserId: null, claimedAt: now}},
       {session},
     )
     if (claimed.modifiedCount !== 1) continue
@@ -329,7 +343,8 @@ export async function claimLegacyIdentities(input: ClaimInput): Promise<{claimed
       .session(session)
       .lean()
     let claimedIdentities = 0
-    const moved = {claimed: 0, merged: 0, enterpriseOrgs: 0}
+    let enterpriseOrgs = 0
+    const mine: string[] = []
     for (const identity of identities) {
       const {workosUserId} = identity
       if (!identity.claimedAt) {
@@ -343,18 +358,21 @@ export async function claimLegacyIdentities(input: ClaimInput): Promise<{claimed
       } else if (identity.claimedBy !== mentraUserId) {
         continue
       }
-      const memberships = await claimPendingMemberships(session, workosUserId, mentraUserId)
-      moved.claimed += memberships.claimed
-      moved.merged += memberships.merged
+      mine.push(workosUserId)
       const owned = await EnterpriseOrgModel.updateMany(
         {ownerUserId: workosUserId},
         {$set: {ownerUserId: mentraUserId}},
         {session},
       )
-      moved.enterpriseOrgs += owned.modifiedCount
+      enterpriseOrgs += owned.modifiedCount
     }
-    if (claimedIdentities + moved.claimed + moved.merged + moved.enterpriseOrgs > 0) {
-      logger.info({mentraUserId, claimedIdentities, ...moved}, "claimed Store-imported access")
+    // One pick across every identity with the email, so the person's one membership is the best of them all.
+    const moved = await claimPendingMemberships(session, mine, mentraUserId)
+    if (claimedIdentities + moved.claimed + moved.merged + enterpriseOrgs > 0) {
+      logger.info(
+        {mentraUserId, claimedIdentities, ...moved, enterpriseOrgs},
+        "claimed Store-imported access",
+      )
     }
     return {claimedIdentities}
   })

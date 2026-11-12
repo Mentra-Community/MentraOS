@@ -1,6 +1,7 @@
 import AzureCommunicationCalling
 import CoreVideo
 import Foundation
+import GlassesMedia
 
 /// Fresh Swift sender on ACS iOS RawOutgoingVideoStream + CVPixelBuffer.
 /// No RealWear code (they have no iOS equivalent).
@@ -48,7 +49,7 @@ final class AcsFrameSender: NSObject {
             // Keep the source pixels alive until ACS finishes reading the frame.
             withExtendedLifetime(pixelBuffer) { frame.dispose() }
             sendGate.release(token)
-            if let error { NSLog("ACS-SPIKE send frame failed: \(error)") }
+            if let error { MediaLog.log("ACS-SPIKE send frame failed: \(error)") }
         }
         return true
     }
@@ -84,6 +85,6 @@ extension AcsFrameSender: VirtualOutgoingVideoStreamDelegate {
         defer { stateLock.unlock() }
         guard virtualOutgoingVideoStream === stream else { return }
         running = virtualOutgoingVideoStream.state == .started
-        NSLog("ACS-SPIKE iOS raw video state=\(virtualOutgoingVideoStream.state)")
+        MediaLog.log("ACS-SPIKE iOS raw video state=\(virtualOutgoingVideoStream.state)")
     }
 }

@@ -208,6 +208,18 @@ describe("parseLicenseWrite", () => {
       ])
     }
   })
+
+  test("endedReason is absent or lapsed, the one reason billing ends a license with", () => {
+    expect(parseLicenseWrite({...workspaceWrite(), endedReason: "lapsed"}, LICENSE_ID)).toEqual({
+      ...workspaceWrite(),
+      endedReason: "lapsed",
+    })
+    expect("endedReason" in parseLicenseWrite(workspaceWrite(), LICENSE_ID)).toBe(false)
+    // Core ends the rest itself: billing cannot write them.
+    for (const reason of ["workspace_deleted", "", "Lapsed", null, 1, true]) {
+      expect(refused({...workspaceWrite(), endedReason: reason}).message).toContain("endedReason")
+    }
+  })
 })
 
 describe("parseSeatAssignments", () => {

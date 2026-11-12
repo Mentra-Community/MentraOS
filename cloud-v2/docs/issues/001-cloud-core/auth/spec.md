@@ -73,6 +73,25 @@ that takes longer than 1.5 s, answers `503 {"error":"features_unavailable"}` and
 issues no token. See
 [Licenses](../../../licenses.md#features-in-miniapp-tokens).
 
+Optional `workspaceId`: the user's workspace, only when that workspace assigned
+this audience's package through Fleet. A company's miniapp can then admit
+exactly its own workspace's members, and no other miniapp learns which
+workspace anyone belongs to. Core learns each workspace's assigned packages
+from Fleet's pushes ([Fleet integration](../../../fleet-integration.md#assigned-miniapps)),
+never by asking Fleet at mint time. The claim leaves the user's next token when
+they leave the workspace or Fleet withdraws the miniapp. A failed lookup, or
+one that takes longer than 1.5 s (run beside the features lookup), answers
+`503 {"error":"workspace_unavailable"}` and issues no token.
+
+Optional `localBuild: true`: the token is for a local or development build,
+whose package name no domain vouches for. Such a token never carries
+`workspaceId`. `@mentra/auth` refuses it unless the backend allows local
+builds, so a local build claiming another miniapp's package name gets nothing
+that miniapp's production backend accepts.
+
+A token with neither claim has exactly the claims a miniapp token has always
+had, so backends that verify tokens offline keep working unchanged.
+
 ## Endpoints
 
 ### `POST /api/client/auth/exchange`
@@ -101,7 +120,7 @@ refresh token (the old one is invalidated). The OEM backend is not in this path.
 
 ```
 Authorization: Bearer <cloud-core token>
-{ "packageName": "com.dev.app" }
+{ "packageName": "com.dev.app", "localBuild": true }
 ->  { "token": "<ed25519 jwt>", "expiresAt": <unix seconds> }
 ```
 
@@ -109,8 +128,11 @@ Verifies the Core token, reads `mentraUserId` + `tenantId`, and mints the
 miniapp-scoped token with `aud = packageName`. **No install or entitlement
 check**: a valid Core token plus the requested packageName is sufficient, and
 the on-device Runtime enforces that a bundle can only request its own packageName.
+`localBuild` is optional (a boolean; anything else is `400 invalid_request`):
+the phone sends `true` for a local or development build, and the token says so.
 TTL is configurable (default 1h) so tests can shorten it. This is what
-`cloud.auth.getMiniappToken` calls.
+`cloud.auth.getMiniappToken(packageName, {localBuild})` calls; it caches an
+installed miniapp's token and a local build's apart.
 
 ### `POST /api/client/auth/runtime-token`
 

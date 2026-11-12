@@ -85,8 +85,10 @@ class Bridge {
         Bridge.sendTypedMessage("head_up", body: data)
     }
 
-    static func sendPairFailureEvent(_ error: String) {
-        let data = ["error": error]
+    /// `code` is the machine-readable reason (`pair_failure.code`), e.g. `ios_forget_pairing`.
+    static func sendPairFailureEvent(_ error: String, code: String? = nil) {
+        var data: [String: Any] = ["error": error]
+        if let code { data["code"] = code }
         Bridge.sendTypedMessage("pair_failure", body: data)
     }
 
@@ -95,15 +97,21 @@ class Bridge {
         pairingCode: String? = nil,
         classicBondReady: Bool = false,
         securePairingCapable: Bool = true,
-        protocolVersion: Int = 1
+        protocolVersion: Int = 1,
+        ownershipTransfer: Bool = false,
+        ownerCommitted: Bool = false,
+        autoAudio: Bool? = nil
     ) {
         var body: [String: Any] = [
             "had_previous_bond": hadPreviousBond,
             "classic_bond_ready": classicBondReady,
             "secure_pairing_capable": securePairingCapable,
             "protocol_version": protocolVersion,
+            "ownership_transfer": ownershipTransfer,
+            "owner_committed": ownerCommitted,
         ]
         if let pairingCode { body["pairing_code"] = pairingCode }
+        if let autoAudio { body["auto_audio"] = autoAudio }
         Bridge.sendTypedMessage("pairing_info", body: body)
     }
 
@@ -241,6 +249,20 @@ class Bridge {
                     fallbackModel: deviceModel
                 )
                 DeviceStore.shared.set("bluetooth", "searchResults", uniqueResults)
+            }
+        }
+    }
+
+    /// Drops glasses from the search results, for example when their pairing window closed.
+    static func removeDiscoveredDevice(_ deviceModel: String, _ deviceName: String) {
+        Task {
+            await MainActor.run {
+                let searchResults = DeviceStore.shared.get("bluetooth", "searchResults") as? [[String: Any]] ?? []
+                let remaining = searchResults.filter {
+                    !($0["model"] as? String == deviceModel && $0["name"] as? String == deviceName)
+                }
+                if remaining.count == searchResults.count { return }
+                DeviceStore.shared.set("bluetooth", "searchResults", remaining)
             }
         }
     }

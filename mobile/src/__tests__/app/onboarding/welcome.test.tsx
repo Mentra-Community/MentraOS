@@ -1,6 +1,7 @@
 import {DeviceTypes} from "@mentra/engine"
 import {act, fireEvent, render} from "@testing-library/react-native"
 import type {ReactNode} from "react"
+import {Platform} from "react-native"
 
 import OnboardingWelcome from "@/app/onboarding/welcome"
 import en from "@/i18n/en"
@@ -8,11 +9,14 @@ import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPo
 import {useNavigationStore} from "@/stores/navigation"
 
 const mockSetOnboardingCompleted = jest.fn()
+const mockBondedGlasses = jest.fn(() => Promise.resolve<unknown>(null))
 
 jest.mock("@mentra/engine", () => ({
   DeviceTypes: {
+    LIVE: "Mentra Live",
     SIMULATED: "Simulated Glasses",
   },
+  engine: {pairing: {bondedGlasses: () => mockBondedGlasses()}},
   SETTINGS: {
     onboarding_completed: {
       key: "onboarding_completed",
@@ -23,6 +27,11 @@ jest.mock("@mentra/engine", () => ({
 
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
+}))
+
+jest.mock("@/utils/PermissionsUtils", () => ({
+  PermissionFeatures: {BLUETOOTH: "bluetooth"},
+  requestFeaturePermissions: jest.fn(() => Promise.resolve(true)),
 }))
 
 jest.mock("@/services/deployment/glassesPolicy", () => ({
@@ -124,6 +133,27 @@ describe("onboarding welcome", () => {
       expect(push).toHaveBeenCalledWith("/pairing/prep", {deviceModel: DeviceTypes.SIMULATED})
       expect(goHomeAndPush).not.toHaveBeenCalled()
     }
+  })
+
+  it("asks its question and goes to the model choice even when the phone is still bonded with Mentra Live", async () => {
+    mockBondedGlasses.mockResolvedValue({id: "a", model: "Mentra Live", name: "Mentra_Live_000B", address: "a"})
+    const os = Platform.OS
+    Platform.OS = "android"
+    try {
+      const {getByTestId} = render(<OnboardingWelcome />)
+      await act(async () => {})
+      expect(goHomeAndPush).not.toHaveBeenCalled()
+      await act(async () => {
+        fireEvent.press(getByTestId("onboarding-setup-with-glasses"))
+      })
+    } finally {
+      Platform.OS = os
+      mockBondedGlasses.mockResolvedValue(null)
+    }
+
+    expect(mockBondedGlasses).not.toHaveBeenCalled()
+    expect(goHomeAndPush).toHaveBeenCalledTimes(1)
+    expect(goHomeAndPush).toHaveBeenCalledWith("/pairing/select-glasses-model", {onboarding: true})
   })
 
   it("hides phone-only setup when the deployment disallows simulated glasses", () => {

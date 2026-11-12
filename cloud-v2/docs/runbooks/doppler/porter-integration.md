@@ -2,7 +2,7 @@
 
 Doppler owns application secrets and settings. Porter apps attach only their direct Doppler environment group. Do not use `porter env set`, app-level `env`, or GitHub secret bundles to mirror application configuration. Porter v2 ignores service-level `env`; it must not be used to configure applications either. Listening ports, resource limits, domains, and deployment commands remain in Porter YAML. Porter also retains the scoped integration credential and platform-generated environment variables.
 
-The complete managed-app inventory is in [doppler-porter-contract.json](../../../../.github/production-release/doppler-porter-contract.json). Kubernetes sync health, linked groups, and app overrides are checked hourly by the Doppler Porter health workflow using reviewed default-branch code. Pull requests run tests and the deployment source guard without credentials; manual live audit runs are allowed only on the default branch. Run the same read-only check locally:
+The complete managed-app inventory is in [doppler-porter-contract.json](../../../../.github/production-release/doppler-porter-contract.json). Each group's keys and Doppler scope, linked groups, and app overrides are checked hourly by the Doppler Porter health workflow using reviewed default-branch code. Pull requests run tests and the deployment source guard without credentials; manual live audit runs are allowed only on the default branch. Run the same read-only check locally:
 
 ```bash
 node .github/scripts/porter-doppler-health.mjs
@@ -25,6 +25,8 @@ Always specify project 15081 and the intended cluster: 5690 (legacy east), 5692 
 | Staging Store (miniapp-store-staging)                 | store_staging                | miniapp-store-staging-doppler |
 | Development Store (miniapp-store-development)         | store_dev                    | miniapp-store-dev-doppler     |
 | MFM development (mfm-development)                     | mfm_dev                      | mfm-dev-doppler               |
+| MFM staging (mfm-staging)                             | mfm_staging                  | mfm-staging-doppler           |
+| MFM production (mfm-production)                       | mfm_prod                     | mfm-prod-doppler              |
 
 Store is production despite its historical `dev` resource names. Its isolated Doppler environment preserves its existing production database, storage, auth, and URLs. The staging and development Stores are separate apps paired with staging and dev Core, with their own `store_staging` and `store_dev` configs in the same `store` environment, and their own databases and buckets. All three Store manifests (production, staging and development, in the private `miniapp-store` repository) link only their group and set no Porter `env`; the Store's deployment checks the group's settings before applying. Do not copy the main cloud config into a Store config. Legacy east has different regional/database/auth settings. Its application services were retired at the owner’s request: both have zero replicas, and their existing settings and image are preserved with the native Doppler group attached. The separate database infrastructure was preserved. Repair its invalid Mongo/Redis settings before any restart; configuration ownership is still monitored while the app is stopped. The contract also documents the unused, failing `peg-merge-prod-doppler` AWS resources, whose deletion requires a Porter administrator.
 
@@ -72,4 +74,4 @@ Only detach manual groups and clear app overrides after proving their required e
 
 The audit found invalid service-token authentication on Call and Notes; the status does not establish who revoked or regenerated those tokens. Rotating a token in Doppler does not update Porter's saved credential automatically. Several other apps never had a native connection: their deploy scripts copied secrets into manual groups. App overrides and multiple competing groups then masked Doppler changes. Deployment manifests and scripts must therefore enforce the same ownership as the live configuration.
 
-The health workflow reports invalid/missing stores, stale refreshes, unexpected groups, and app overrides without printing secret values. Its GitHub failure status is the notification surface; no Slack notification is configured.
+The health workflow reports missing keys, wrong Doppler scopes, unexpected groups, and app overrides without printing secret values. Its token cannot read sync status, so check a stalled sync by hand as described above. Its GitHub failure status is the notification surface; no Slack notification is configured.

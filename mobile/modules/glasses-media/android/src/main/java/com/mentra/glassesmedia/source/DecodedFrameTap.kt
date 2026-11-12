@@ -1,6 +1,6 @@
 package com.mentra.glassesmedia.source
 
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 
 /**
  * A second, optional consumer of decoded glasses video, sitting beside the ACS sender.

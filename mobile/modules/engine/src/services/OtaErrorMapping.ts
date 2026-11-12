@@ -8,8 +8,8 @@ import type {OtaProgress, OtaStatus} from "../facades/ota"
  * The glasses-side producers are `sendProgressToPhone(..., "FAILED", errorCode)` in the
  * ASG client's OtaHelper (download classification, install failures, and the downgrade
  * handoff to the recovery worker). Keep this table in sync with those codes; anything
- * else falls back to `OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY` and the raw code is shown in a
- * secondary line so support can still identify it.
+ * else falls back to `OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY`. Raw codes remain in private
+ * incident evidence rather than the product failure page.
  */
 export const OTA_GLASSES_ERROR_COPY_KEYS: Readonly<Record<string, string>> = {
   dns_failed: "ota:errorDnsFailed",
@@ -36,11 +36,63 @@ export const OTA_GLASSES_ERROR_COPY_KEYS: Readonly<Record<string, string>> = {
   downgrade_handoff_refused: "ota:errorDowngradeHandoffRefused",
   downgrade_handoff_failed: "ota:errorDowngradeHandoffFailed",
   downgrade_transaction_stalled: "ota:errorDowngradeTransactionStalled",
+  bes_not_started: "ota:errorBesNotStarted",
 }
 
 export const OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY = "ota:errorGlassesUnknown"
 export const OTA_ERROR_GENERIC_COPY_KEY = "ota:errorGeneric"
 export const OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY = "ota:errorBesRestartRequired"
+/**
+ * The glasses could not start the BES install: mh_ota was never sent, so the BES stayed in normal
+ * mode and a retry is safe without restarting the glasses.
+ */
+export const OTA_BES_NOT_STARTED_ERROR = "bes_not_started"
+
+const PHONE_ARTIFACT_COPY_KEYS: Readonly<Record<string, string>> = {
+  internet: "ota:errorPhoneInternet",
+  connection: "ota:errorPhoneConnection",
+  server: "ota:errorPhoneDownloadServer",
+  timeout: "ota:errorPhoneDownloadTimeout",
+  storage: "ota:errorPhoneStorage",
+  save: "ota:errorPhoneSave",
+  secure_connection: "ota:errorPhoneSecureConnection",
+  download: "ota:errorPhoneDownload",
+  verify: "ota:errorPhoneVerify",
+}
+
+/**
+ * A known failed stage is useful; it is not evidence of an internet outage. `os` picks the iOS
+ * join copy: iOS cannot read the Wi-Fi radio, so its join failure is where we point at it.
+ */
+export function phoneOtaErrorCopyKey(error: unknown, os?: string): string {
+  if (typeof error !== "object" || error === null) return OTA_ERROR_GENERIC_COPY_KEY
+  const detail = error as {code?: unknown; failure?: {category?: unknown}}
+  switch (detail.code) {
+    case "artifact_download_failed":
+    case "artifact_verify_failed": {
+      const category = detail.failure?.category
+      if (typeof category === "string" && hasOwn(PHONE_ARTIFACT_COPY_KEYS, category))
+        return PHONE_ARTIFACT_COPY_KEYS[category]
+      return detail.code === "artifact_verify_failed" ? "ota:errorPhoneVerify" : "ota:errorPhoneDownload"
+    }
+    case "manifest_invalid":
+      return "ota:errorPhoneVerify"
+    case "hotspot_wifi_permission_denied":
+      return "ota:errorPhoneNearbyPermission"
+    case "hotspot_wifi_disabled":
+      return "ota:errorPhoneWifiOff"
+    case "hotspot_start_failed":
+      return "ota:errorGlassesHotspotStart"
+    case "hotspot_join_failed":
+      return os === "ios" ? "ota:errorPhoneHotspotJoinIos" : "ota:errorPhoneHotspotJoin"
+    case "hotspot_other_glasses":
+      return "ota:errorPhoneOtherGlasses"
+    case "hotspot_server_failed":
+      return "ota:errorPhoneShareUpdate"
+    default:
+      return OTA_ERROR_GENERIC_COPY_KEY
+  }
+}
 
 /** English copy for every OTA error key above. Mirrored in the Mentra App's `ota` i18n namespace. */
 export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
@@ -63,12 +115,12 @@ export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
   "ota:errorNoInternet": "Glasses Wi-Fi has no internet connection",
   "ota:errorClockSkew": "Glasses clock is wrong — syncing time from your phone, then retrying update check",
   "ota:errorSslError": "Secure connection failed — try a different Wi-Fi network",
-  "ota:errorDownloadFailed": "Download failed — check glasses Wi-Fi connection",
+  "ota:errorDownloadFailed": "The update could not be downloaded to your glasses. Please try again.",
   "ota:errorInsufficientStorage": "Not enough storage on your glasses — free up space before trying again",
   "ota:errorFirmwareTooLarge": "Firmware file is unexpectedly large — please contact support",
   "ota:errorFirmwareVerifyFailed": "Firmware verification failed — please try again or contact support",
   "ota:errorApkVerifyFailed": "Update verification failed — please try again or contact support",
-  "ota:errorInstallFailed": "Install failed — please try again",
+  "ota:errorInstallFailed": "The update could not be installed on your glasses. Please try again.",
   "ota:errorApkRestartGuardNotPersisted":
     "Your glasses could not save the update before restarting. Restart your glasses and try again.",
   "ota:errorDowngradeHandoffRefused":
@@ -77,9 +129,30 @@ export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
     "The recovery service on your glasses did not respond. Restart your glasses and try again.",
   "ota:errorDowngradeTransactionStalled":
     "The version change on your glasses did not finish. Restart your glasses and try again.",
-  "ota:errorGlassesUnknown": "Your glasses reported an unexpected error. Restart your glasses and try again.",
-  "ota:errorGeneric": "Update failed",
+  "ota:errorGlassesUnknown": "Something went wrong. Please try again.",
+  "ota:errorGeneric": "Something went wrong. Please try again.",
+  "ota:errorPhoneInternet": "Your phone could not connect to the internet. Check its connection and try again.",
+  "ota:errorPhoneConnection": "Your phone could not reach the update server. Check its connection and try again.",
+  "ota:errorPhoneDownloadServer": "The update server could not provide the download. Please try again later.",
+  "ota:errorPhoneDownloadTimeout": "The update download took too long. Please try again.",
+  "ota:errorPhoneStorage": "There is not enough space on your phone for the update. Free up space and try again.",
+  "ota:errorPhoneSave": "Your phone could not save the update. Please try again.",
+  "ota:errorPhoneSecureConnection":
+    "Your phone could not make a secure connection to the update server. Please try again later.",
+  "ota:errorPhoneDownload": "The update could not be downloaded to your phone. Please try again.",
+  "ota:errorPhoneVerify": "The update file could not be verified. Please try again later.",
+  "ota:errorPhoneNearbyPermission": "Allow nearby devices access so your phone can connect to your glasses.",
+  "ota:errorPhoneWifiOff": "Turn on your phone’s Wi-Fi so it can connect to your glasses, then try again.",
+  "ota:errorGlassesHotspotStart":
+    "Your glasses could not start the connection needed for the update. Please try again.",
+  "ota:errorPhoneHotspotJoin": "Your phone could not connect to your glasses for the update. Please try again.",
+  "ota:errorPhoneOtherGlasses":
+    "Your phone reached another pair of glasses instead of yours. Move away from other glasses or turn them off, then try again.",
+  "ota:errorPhoneHotspotJoinIos":
+    "Your phone could not connect to your glasses for the update. Make sure your phone’s Wi-Fi is on, then try again.",
+  "ota:errorPhoneShareUpdate": "Your phone could not send the update to your glasses. Please try again.",
   "ota:errorBesRestartRequired": "Restart your glasses to safely exit firmware update mode before trying again",
+  "ota:errorBesNotStarted": "Your glasses could not start the firmware update. Keep them nearby and try again.",
   "ota:errorCode": "Error code: {{code}}",
 }
 
@@ -148,9 +221,10 @@ export function getOtaErrorMessage(error?: string | null): string {
 }
 
 /**
- * Once a BES install has started, any failure conservatively requires a glasses restart. This
- * avoids adding a BES-specific error code to the wire protocol and, more importantly, never offers
- * an unsafe retry when a generic failure or silence may mean BES entered its raw OTA parser.
+ * Once a BES install has started, any failure conservatively requires a glasses restart, since a
+ * generic failure or silence may mean BES entered its raw OTA parser. The one exception is the
+ * glasses reporting `bes_not_started`: they never asked the BES to enter OTA mode, so a retry is
+ * safe.
  */
 export function shouldRequireGlassesRebootForBesFailure(
   otaStatus: OtaStatus | null | undefined,
@@ -158,6 +232,9 @@ export function shouldRequireGlassesRebootForBesFailure(
   localErrorMessage: string,
 ): boolean {
   if (otaStatus?.stepType !== "bes" || otaStatus.phase !== "install") {
+    return false
+  }
+  if (otaStatus.status === "failed" && otaStatus.error === OTA_BES_NOT_STARTED_ERROR) {
     return false
   }
   return otaStatus.status === "failed" || Boolean(localErrorMessage)

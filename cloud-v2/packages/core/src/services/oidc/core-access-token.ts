@@ -10,7 +10,10 @@
  * - `iss` is this Core's `CLOUD_CORE_OIDC_ISSUER` (so another environment's
  *   tokens are refused) and `aud` is Core's API (`urn:mentra:core`);
  * - `exp` and `iat` are within 30 seconds of tolerance;
- * - `client_id` names an active first-party client;
+ * - `client_id` names an active first-party client. A miniapp website's
+ *   token is refused: what the sign-in server issues it is traded for the
+ *   package's miniapp token before it leaves Core (`website-tokens.ts`), and
+ *   only that trade asks for one (`website: true`), accepting nothing else;
  * - the person exists, is not deleted, signed in through a source that is
  *   still configured, and the token was issued no earlier than their
  *   `webSignInsRevokedAt`.
@@ -39,6 +42,8 @@ export interface CoreAccessIdentity {
   emailVerified: boolean
   name: string | null
   clientId: string
+  /** The package a miniapp website's token is for; null for a first-party client. */
+  packageName: string | null
   scopes: Set<string>
   issuedAt: Date
 }
@@ -48,7 +53,10 @@ function stringClaim(value: unknown): string | null {
 }
 
 /** The person behind a Core access token, or null for any token Core does not accept. */
-export async function verifyCoreAccessToken(token: string, opts: {now?: Date} = {}): Promise<CoreAccessIdentity | null> {
+export async function verifyCoreAccessToken(
+  token: string,
+  opts: {now?: Date; website?: boolean} = {},
+): Promise<CoreAccessIdentity | null> {
   const issuer = oidcIssuer()
   if (!issuer || typeof token !== "string" || !token) return null
   let header: jose.ProtectedHeaderParameters
@@ -82,7 +90,11 @@ export async function verifyCoreAccessToken(token: string, opts: {now?: Date} = 
   if (!clientId || !subject || typeof payload.iat !== "number") return null
   if (payload.iat > now.getTime() / 1000 + CLOCK_TOLERANCE_SEC) return null
   const client = await findClient(clientId)
-  if (!client?.firstParty) return null
+  if (!client) return null
+  // The sign-in site's own client exists only to start a session there: its tokens open nothing.
+  if (client.kind === "account") return null
+  // A first-party client's token and a miniapp website's are never interchangeable.
+  if (opts.website ? !client.website : !client.firstParty) return null
 
   // A deleted account, a token issued before the person's revocation, or a source no longer configured: refused.
   const identity = await loadAccount(subject, payload.iat)
@@ -97,6 +109,7 @@ export async function verifyCoreAccessToken(token: string, opts: {now?: Date} = 
     emailVerified: identity.emailVerified,
     name: identity.name ?? null,
     clientId,
+    packageName: client.website?.packageName ?? null,
     scopes: new Set(typeof payload.scope === "string" ? payload.scope.split(" ").filter(Boolean) : []),
     issuedAt: new Date(payload.iat * 1000),
   }

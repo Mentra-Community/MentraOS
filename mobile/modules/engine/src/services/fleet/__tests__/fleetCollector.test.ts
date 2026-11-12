@@ -2,11 +2,12 @@
 
 import {afterEach, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 import {readdirSync, readFileSync} from "node:fs"
-import {FLEET_CAPABILITIES, FleetRecordSchema, type FleetRecord} from "@mentra/cloud-protocol"
+import {FLEET_CAPABILITIES, FLEET_LIMITS, FleetRecordSchema, type FleetRecord} from "@mentra/cloud-protocol"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
 import {reactNative, reactNativeAppState} from "../../__tests__/reactNativeTestMock"
+import type {InstalledMiniapp, InventorySource, PhoneBatteryReading, PhoneBatterySource} from "../fleetCollector"
 import {fakeCreateMMKV, resetFakeMmkv} from "./fakeMmkv"
 import {MemoryFleetStore} from "./memoryFleetStore"
 
@@ -123,6 +124,25 @@ function disconnectLive(): void {
   glassesStore.setState({connection: {state: "disconnected"}, ...IDENTITY_CLEARED})
 }
 
+/** The phone's battery as the app's source would hold it: `land` is a new reading arriving after a refresh. */
+const phoneBattery = {
+  value: {level: 64, charging: false} as PhoneBatteryReading | "unsupported" | null,
+  refreshes: 0,
+  listeners: new Set<() => void>(),
+  land(value: PhoneBatteryReading | "unsupported" | null): void {
+    this.value = value
+    for (const listener of [...this.listeners]) listener()
+  },
+}
+const phoneBatterySource: PhoneBatterySource = {
+  read: () => phoneBattery.value,
+  refresh: () => void (phoneBattery.refreshes += 1),
+  subscribe(listener) {
+    phoneBattery.listeners.add(listener)
+    return () => void phoneBattery.listeners.delete(listener)
+  },
+}
+
 let appStateListener: ((state: string) => void) | null = null
 function setAppState(state: string, notify = true): void {
   reactNativeAppState.currentState = state
@@ -134,7 +154,7 @@ const {nativeMiniappExecution} = await import("../../NativeMiniappExecution")
 const {createFleetQueue} = await import("../fleetQueue")
 const {phoneDeviceId} = await import("../fleetIds")
 const {fleetEvents} = await import("../fleetEvents")
-const {createFleetCollector} = await import("../fleetCollector")
+const {createFleetCollector, setFleetInventorySource} = await import("../fleetCollector")
 
 const ENGINE_VERSION = (require("../../../../package.json") as {version: string}).version
 const SDK_VERSION = (require("@mentra/bluetooth-sdk/package.json") as {version: string}).version
@@ -193,8 +213,16 @@ beforeEach(() => {
       },
     }
   }) as never
+  phoneBattery.value = {level: 64, charging: false}
+  phoneBattery.refreshes = 0
+  phoneBattery.listeners.clear()
   queue = createFleetQueue(new MemoryFleetStore(), {now: () => clock.wall})
-  collector = createFleetCollector({queue, now: () => clock.wall, monotonic: () => clock.mono})
+  collector = createFleetCollector({
+    queue,
+    now: () => clock.wall,
+    monotonic: () => clock.mono,
+    phoneBattery: phoneBatterySource,
+  })
 })
 
 afterEach(() => {
@@ -1080,6 +1108,7 @@ describe("snapshots", () => {
         appBuild: "345",
         engineVersion: ENGINE_VERSION,
         sdkVersion: SDK_VERSION,
+        battery: {state: "measured", observedAt: iso(clock.wall), level: 64, charging: false},
       },
     })
     expect(snapshot.deviceBinding).toBeUndefined()
@@ -1415,8 +1444,10 @@ describe("glasses that are away", () => {
     disconnectLive()
     retry(60)
     const sinceLeaving = all().filter((record) => Date.parse(record.observedAt) >= leftAt)
-    // The disconnect's snapshot, the checkpoint that ends the connection, and a checkpoint every 15 minutes.
+    // The disconnect itself (Phase 12: one event, however many attempts follow), the disconnect's snapshot, the
+    // checkpoint that ends the connection, and a checkpoint every 15 minutes.
     expect(sinceLeaving.map((record) => record.kind)).toEqual([
+      "connection_event",
       "usage_checkpoint",
       "snapshot",
       "usage_checkpoint",
@@ -1483,8 +1514,158 @@ describe("glasses that are away", () => {
   })
 })
 
+describe("the phone's battery", () => {
+  const phoneBatteryOf = (record: Kind<"snapshot"> | undefined) => record?.payload.phone.battery
+
+  test("is asked for at start and on each checkpoint wake-up, with no timer of its own", () => {
+    start()
+    expect(phoneBattery.refreshes).toBe(1)
+    expect(timers.size).toBe(1)
+    advance(60 * 60_000)
+    expect(phoneBattery.refreshes).toBe(5)
+    expect(timers.size).toBe(1)
+  })
+
+  test("no reading yet is unknown, with no level, and keeps the time it was first seen", () => {
+    phoneBattery.value = null
+    start()
+    const seenAt = clock.wall
+    expect(phoneBatteryOf(snapshots()[0])).toEqual({state: "unknown", observedAt: iso(seenAt)})
+    setAppState("active")
+    advance(15 * 60_000)
+    expect(snapshots().length).toBeGreaterThan(1)
+    expect(phoneBatteryOf(snapshots().at(-1))).toEqual({state: "unknown", observedAt: iso(seenAt)})
+  })
+
+  test.each([
+    ["not a number", Number.NaN],
+    ["below 0", -1],
+    ["above 100", 150],
+  ])("a level %s is unknown, never a number", (_name, level) => {
+    phoneBattery.value = {level, charging: false}
+    start()
+    expect(phoneBatteryOf(snapshots()[0])).toEqual({state: "unknown", observedAt: iso(clock.wall)})
+  })
+
+  test("the first reading after an unknown one is worth a snapshot", () => {
+    phoneBattery.value = null
+    start()
+    advance(60_000)
+    phoneBattery.land({level: 0, charging: true})
+    advance(2_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(phoneBatteryOf(snapshots()[1])).toEqual({
+      state: "measured",
+      observedAt: iso(clock.wall - 2_000),
+      level: 0,
+      charging: true,
+    })
+  })
+
+  test("a phone that cannot report one is unsupported, and no record claims phone_battery", () => {
+    phoneBattery.value = "unsupported"
+    connectLive()
+    start()
+    collector.flushCheckpoint()
+    expect(phoneBatteryOf(snapshots()[0])).toEqual({state: "unsupported", observedAt: iso(clock.wall)})
+    for (const record of all()) expect(record.capabilities).not.toContain("phone_battery")
+  })
+
+  test("a phone that reports one claims phone_battery on every record, with or without glasses", () => {
+    start()
+    collector.flushCheckpoint()
+    connectLive()
+    advance(5_000)
+    collector.flushCheckpoint()
+    for (const record of all()) expect(record.capabilities).toContain("phone_battery")
+  })
+
+  test("a move of under 5 points is not worth a snapshot; 5 points and a charging change are", () => {
+    start()
+    phoneBattery.land({level: 60, charging: false})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(1)
+    phoneBattery.land({level: 59, charging: false})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(phoneBatteryOf(snapshots()[1])).toMatchObject({level: 59})
+    phoneBattery.land({level: 59, charging: true})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(3)
+    expect(phoneBatteryOf(snapshots()[2])).toMatchObject({level: 59, charging: true})
+  })
+
+  test("a reading that lands in a burst is one snapshot", () => {
+    start()
+    phoneBattery.land({level: 50, charging: false})
+    phoneBattery.land({level: 50, charging: true})
+    phoneBattery.land({level: 51, charging: true})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(phoneBatteryOf(snapshots()[1])).toMatchObject({level: 51, charging: true})
+  })
+
+  test("with only the engine active, a phone draining all day writes a snapshot per 5 points, not per reading", () => {
+    phoneBattery.value = {level: 100, charging: false}
+    start()
+    for (let quarter = 1; quarter <= 96; quarter++) {
+      advance(15 * 60_000)
+      phoneBattery.land({level: 100 - quarter, charging: false})
+    }
+    advance(5_000)
+    expect(checkpoints()).toHaveLength(96)
+    // The one at start, then one for each 5 points down to 4%.
+    expect(snapshots()).toHaveLength(1 + Math.floor(96 / 5))
+  })
+
+  test("a later snapshot does not make an old phone reading look fresh", () => {
+    setAppState("active", false)
+    start()
+    const measuredAt = clock.wall
+    advance(15 * 60_000)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.observedAt).toBe(iso(clock.wall))
+    expect(phoneBatteryOf(latest)).toMatchObject({level: 64, observedAt: iso(measuredAt)})
+  })
+
+  test("a reading that lands after stop changes nothing", () => {
+    start()
+    collector.stop("engine_stopped")
+    const before = all().length
+    phoneBattery.land({level: 10, charging: true})
+    advance(5_000)
+    expect(all()).toHaveLength(before)
+  })
+
+  test("a source that throws is unknown, and nothing breaks", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    const fragile = createFleetCollector({
+      queue,
+      now: () => clock.wall,
+      monotonic: () => clock.mono,
+      phoneBattery: {
+        read: () => {
+          throw new Error("boom")
+        },
+        refresh: () => {
+          throw new Error("boom")
+        },
+        subscribe: () => () => {},
+      },
+    })
+    try {
+      expect(() => fragile.start({partition: PARTITION, collectorSessionId: SESSION})).not.toThrow()
+      expect(phoneBatteryOf(snapshots()[0])).toEqual({state: "unknown", observedAt: iso(clock.wall)})
+      expect(() => advance(15 * 60_000)).not.toThrow()
+    } finally {
+      fragile.stop("engine_stopped")
+      warn.mockRestore()
+    }
+  })
+})
+
 describe("capabilities", () => {
-  test("with glasses connected the phone measures all seven", () => {
+  test("with glasses connected the phone measures all of them", () => {
     connectLive()
     start()
     expect([...snapshots()[0].capabilities].sort()).toEqual([...FLEET_CAPABILITIES].sort())
@@ -1639,6 +1820,205 @@ describe("launches", () => {
     collector.stop("engine_stopped")
     start(PARTITION, "COLLECTOR-SESSION-2")
     expect(ofKind("miniapp_launch")).toHaveLength(1)
+  })
+})
+
+/** An inventory source the tests drive. `listing` null is a phone whose registry has not been read yet. */
+function fakeInventory(initial: InstalledMiniapp[] | null) {
+  const source = {
+    listing: initial,
+    listeners: new Set<() => void>(),
+    list: () => source.listing,
+    subscribe(listener: () => void) {
+      source.listeners.add(listener)
+      return () => void source.listeners.delete(listener)
+    },
+    change(listing: InstalledMiniapp[] | null) {
+      source.listing = listing
+      for (const listener of [...source.listeners]) listener()
+    },
+  }
+  return source satisfies InventorySource & Record<string, unknown>
+}
+
+const NOTES: InstalledMiniapp = {
+  packageName: "com.mentra.notes",
+  versionName: "1.0.30",
+  digest: "sha256:aaaa",
+  reasons: ["bundled"],
+}
+const WEATHER: InstalledMiniapp = {
+  packageName: "com.acme.weather",
+  versionName: "2.1.0",
+  digest: "sha256:bbbb",
+  reasons: ["explicit", "assignment"],
+}
+
+describe("the miniapp inventory", () => {
+  const inventories = (partition = PARTITION) => ofKind("miniapp_inventory", partition)
+  function collectorFor(source: InventorySource): void {
+    collector.stop("engine_stopped")
+    collector = createFleetCollector({queue, now: () => clock.wall, monotonic: () => clock.mono, inventory: source})
+  }
+
+  test("is sent when the collector starts, sorted by package, with each miniapp's version, digest and reasons", () => {
+    collectorFor(fakeInventory([NOTES, WEATHER]))
+    start()
+    const [inventory] = inventories()
+    expect(inventory.payload.miniapps).toEqual([
+      {
+        packageName: "com.acme.weather",
+        versionName: "2.1.0",
+        digest: "sha256:bbbb",
+        reasons: ["explicit", "assignment"],
+      },
+      {packageName: "com.mentra.notes", versionName: "1.0.30", digest: "sha256:aaaa", reasons: ["bundled"]},
+    ])
+    expect(inventory.observedAt).toBe(iso(clock.wall))
+  })
+
+  test("is not part of any snapshot", () => {
+    collectorFor(fakeInventory([NOTES]))
+    start()
+    advance(20 * 60_000)
+    connectLive()
+    advance(10_000)
+    expect(snapshots().length).toBeGreaterThan(1)
+    for (const snapshot of snapshots()) expect(Object.keys(snapshot.payload)).not.toContain("miniapps")
+    expect(inventories()).toHaveLength(1)
+  })
+
+  test("is sent again when the inventory changes, once for a burst, and not when nothing in it changed", () => {
+    const source = fakeInventory([NOTES])
+    collectorFor(source)
+    start()
+    source.change([NOTES, WEATHER])
+    source.change([NOTES, {...WEATHER, digest: "sha256:cccc"}])
+    expect(inventories()).toHaveLength(1)
+    advance(2_000)
+    expect(inventories()).toHaveLength(2)
+    expect(inventories()[1].payload.miniapps.map((app) => app.digest)).toEqual(["sha256:cccc", "sha256:aaaa"])
+    // A change that lists the same thing, in another order, says nothing new.
+    source.change([{...WEATHER, digest: "sha256:cccc"}, NOTES])
+    advance(5_000)
+    expect(inventories()).toHaveLength(2)
+    // A removal is a change too, down to an empty phone.
+    source.change([])
+    advance(2_000)
+    expect(inventories()[2].payload.miniapps).toEqual([])
+  })
+
+  test("a new reason is a change; reasons are kept apart from each other and in the contract's order", () => {
+    const source = fakeInventory([{...WEATHER, reasons: ["assignment", "explicit", "assignment"]}])
+    collectorFor(source)
+    start()
+    expect(inventories()[0].payload.miniapps[0].reasons).toEqual(["explicit", "assignment"])
+    source.change([{...WEATHER, reasons: ["explicit"]}])
+    advance(2_000)
+    expect(inventories()[1].payload.miniapps[0].reasons).toEqual(["explicit"])
+  })
+
+  test("a new run is told again, even if nothing changed since the last one", () => {
+    collectorFor(fakeInventory([NOTES]))
+    start()
+    collector.stop("account_changed")
+    start(OTHER_PARTITION, "COLLECTOR-SESSION-2")
+    expect(inventories(PARTITION)).toHaveLength(1)
+    expect(inventories(OTHER_PARTITION)).toHaveLength(1)
+  })
+
+  test("a source that does not know yet sends nothing, and the first listing is sent when it arrives", () => {
+    const source = fakeInventory(null)
+    collectorFor(source)
+    start()
+    expect(inventories()).toHaveLength(0)
+    source.change([NOTES])
+    advance(2_000)
+    expect(inventories()).toHaveLength(1)
+  })
+
+  test("the app's source, once set, is read by the collector and counts as a change", () => {
+    collector.stop("engine_stopped")
+    collector = createFleetCollector({queue, now: () => clock.wall, monotonic: () => clock.mono})
+    start()
+    expect(inventories()).toHaveLength(0)
+    const source = fakeInventory([NOTES])
+    setFleetInventorySource(source)
+    try {
+      advance(2_000)
+      expect(inventories()).toHaveLength(1)
+      source.change([NOTES, WEATHER])
+      advance(2_000)
+      expect(inventories()).toHaveLength(2)
+    } finally {
+      setFleetInventorySource(null)
+    }
+    advance(10_000)
+    expect(source.listeners.size).toBe(0)
+  })
+
+  test("a miniapp that cannot be described is left out, not allowed to sink the rest", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      collectorFor(
+        fakeInventory([
+          NOTES,
+          {...WEATHER, packageName: "  "},
+          {...WEATHER, packageName: "com.a", reasons: []},
+          {...WEATHER, packageName: "com.b", digest: ""},
+          {...WEATHER, packageName: "com.c", reasons: ["unknown" as never]},
+        ]),
+      )
+      start()
+      expect(inventories()[0].payload.miniapps.map((app) => app.packageName)).toEqual(["com.mentra.notes"])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("one entry per package, and no more than the contract's 500", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const many = Array.from({length: 520}, (_, i) => ({
+        ...NOTES,
+        packageName: `com.example.app${String(i).padStart(4, "0")}`,
+      }))
+      collectorFor(fakeInventory([...many, {...many[0], versionName: "9.9.9"}]))
+      start()
+      const [inventory] = inventories()
+      expect(inventory.payload.miniapps).toHaveLength(FLEET_LIMITS.maxInventoryMiniapps)
+      expect(inventory.payload.miniapps[0].versionName).toBe("9.9.9")
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("a source that throws never breaks the collector", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const source = fakeInventory([NOTES])
+      source.list = () => {
+        throw new Error("registry unavailable")
+      }
+      collectorFor(source)
+      expect(() => start()).not.toThrow()
+      expect(snapshots()).toHaveLength(1)
+      expect(() => source.change([NOTES])).not.toThrow()
+      expect(() => advance(2_000)).not.toThrow()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("stopping cancels a pending inventory and the subscription", () => {
+    const source = fakeInventory([NOTES])
+    collectorFor(source)
+    start()
+    source.change([NOTES, WEATHER])
+    collector.stop("engine_stopped")
+    advance(10_000)
+    expect(inventories()).toHaveLength(1)
+    expect(source.listeners.size).toBe(0)
   })
 })
 
@@ -2385,4 +2765,87 @@ describe("what Fleet reads", () => {
       }
     },
   )
+})
+
+describe("Phase 12: telemetry, crashes, installs and connection", () => {
+  const CALL = "com.mentra.call"
+
+  test("a miniapp's event is queued with its execution session and version, within the limits", () => {
+    miniappRunningRegistry.add(CALL)
+    start()
+    fleetEvents.telemetry({
+      packageName: CALL,
+      versionName: "2.1.73",
+      event: "call_ended",
+      properties: {platform: "teams", duration_s: 312, Bad: 1, long: "x".repeat(70), nested: {a: 1}},
+    })
+    const [event] = ofKind("telemetry_event")
+    expect(event!.recordId.startsWith("tel.")).toBe(true)
+    expect(event!.payload).toEqual({
+      packageName: CALL,
+      versionName: "2.1.73",
+      executionSessionId: expect.any(String),
+      event: "call_ended",
+      properties: {platform: "teams", duration_s: 312, long: "x".repeat(64)},
+      droppedProperties: 2,
+      cutValues: 1,
+    })
+    collector.flushCheckpoint()
+    const execution = checkpoints().flatMap((record) => record.payload.sessions).find((s) => s.activity === "miniapp_execution")
+    expect(event!.payload.executionSessionId).toBe(execution?.activitySessionId)
+    expect(event!.capabilities).toContain("miniapp_telemetry")
+  })
+
+  test("an event over a limit or the rate is dropped and counted as the miniapp's loss", () => {
+    start()
+    fleetEvents.telemetry({packageName: CALL, event: "Not Valid", properties: {}})
+    for (let i = 0; i < 61; i += 1) fleetEvents.telemetry({packageName: CALL, event: "tick", properties: {}})
+    expect(ofKind("telemetry_event")).toHaveLength(60)
+    expect(queue.takeTelemetryLosses(PARTITION, clock.wall)?.packages[CALL]).toEqual({overLimit: 2, evicted: 0, expired: 0, rejected: 0})
+    advance(61_000)
+    fleetEvents.telemetry({packageName: CALL, event: "tick", properties: {}})
+    expect(ofKind("telemetry_event")).toHaveLength(61)
+  })
+
+  test("a failed launch keeps its reason", () => {
+    start()
+    fleetEvents.launch({packageName: CALL, start: "user", outcome: "failed", failureReason: "spawn_failed"})
+    expect(ofKind("miniapp_launch")[0]!.payload).toMatchObject({outcome: "failed", failureReason: "spawn_failed"})
+  })
+
+  test("a crash and an install attempt are queued as they happened, with no text", () => {
+    miniappRunningRegistry.add(CALL)
+    start()
+    fleetEvents.crash({packageName: CALL, versionName: "2.1.73", surface: "context", category: "unresponsive", outcome: "crash_loop_stopped", crashesInWindow: 4})
+    fleetEvents.install({packageName: CALL, operation: "update", source: "assignment", fromVersion: "2.1.70", toVersion: "2.1.73", outcome: "failed", reason: "storage_full"})
+    expect(ofKind("miniapp_crash")[0]!.payload).toMatchObject({packageName: CALL, category: "unresponsive", outcome: "crash_loop_stopped", crashesInWindow: 4, executionSessionId: expect.any(String)})
+    expect(ofKind("miniapp_install")[0]!.payload).toEqual({packageName: CALL, operation: "update", source: "assignment", fromVersion: "2.1.70", toVersion: "2.1.73", outcome: "failed", reason: "storage_full"})
+  })
+
+  test("a lost link, its reconnect with the time it took, and a disconnect the person asked for", () => {
+    connectLive()
+    start()
+    advance(60_000)
+    disconnectLive()
+    advance(9_000)
+    connectLive()
+    advance(60_000)
+    fleetEvents.userDisconnect()
+    disconnectLive()
+    const events = ofKind("connection_event").map((record) => [record.payload.event, record.payload.category, record.payload.reconnectMs, record.deviceBinding?.kind])
+    expect(events).toEqual([
+      ["disconnected", "link_lost", undefined, "serial"],
+      ["reconnected", "unknown", 9_000, "serial"],
+      ["disconnected", "user_action", undefined, "serial"],
+    ])
+  })
+
+  test("one failed connection between connected spells, however many attempts", () => {
+    start()
+    for (let i = 0; i < 3; i += 1) {
+      glassesStore.setState({connection: {state: "connecting"}})
+      glassesStore.setState({connection: {state: "disconnected"}})
+    }
+    expect(ofKind("connection_event").map((record) => record.payload.event)).toEqual(["connect_failed"])
+  })
 })

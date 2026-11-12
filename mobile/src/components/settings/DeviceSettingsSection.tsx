@@ -1,5 +1,5 @@
 import {useEffect, useState} from "react"
-import {Image, View} from "react-native"
+import {Image, Platform, View} from "react-native"
 
 import {ConnectDeviceButton} from "@/components/glasses/ConnectDeviceButton"
 import {NotConnectedInfo} from "@/components/glasses/info/NotConnectedInfo"
@@ -14,6 +14,8 @@ import {useNavigationStore} from "@/stores/navigation"
 import {deploymentStore} from "@/services/deployment"
 import {SETTINGS, useSetting, Capabilities, DeviceTypes, getModelCapabilities, engine} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
+import {askToForgetIosPairing} from "@/utils/pairing/iosStaleBond"
+import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
@@ -78,7 +80,6 @@ export function DeviceSettingsSection() {
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   const otaProgress = otaSnapshot.legacyProgress
-  const isMentraLive = defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)
   const showAr99OtaEntry =
     deploymentStore.getActive().kind === "consumer" &&
     glassesConnected &&
@@ -103,12 +104,15 @@ export function DeviceSettingsSection() {
       return
     }
     try {
-      await engine.glasses.unpair()
-      await engine.settings.set(SETTINGS.default_wearable.key, "", false)
-      await engine.settings.set(SETTINGS.device_name.key, "", false)
-      await engine.settings.set(SETTINGS.device_address.key, "", false)
-      await engine.settings.set(SETTINGS.pending_wearable.key, "", false)
+      const forget = askToForgetIosPairing(
+        Platform.OS,
+        defaultWearable,
+        engine.settings.get<string>(SETTINGS.device_name.key) ?? "",
+        "home",
+      )
+      await unpairSavedGlasses()
       useNavigationStore.getState().clearHistoryAndGoHome()
+      if (forget) push(forget.route, forget.params)
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String((error as {code?: unknown}).code) : ""
       // Native used to refuse forget() during CTKD bonding; Unpair now proceeds anyway.
@@ -221,14 +225,6 @@ export function DeviceSettingsSection() {
         label={translate("deviceSettings:microphone")}
         onPress={() => push("/miniapps/settings/microphone")}
       />
-
-      {superMode && isMentraLive && (
-        <RouteButton
-          label="Wear Detection"
-          subtitle="Tune the don/doff vote window (cs_weartun)."
-          onPress={() => push("/miniapps/settings/wear-tuning")}
-        />
-      )}
 
       {/* WiFi — connected glasses that support WiFi */}
       {showAr99OtaEntry && (

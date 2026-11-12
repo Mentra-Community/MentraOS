@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.streaming.StreamSessionState
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
@@ -93,6 +94,7 @@ class MentraBluetoothSdk private constructor(
     private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
     private val hotspotMutex = Mutex()
     private var pendingVersionInfo: PendingVersionInfoRequest? = null
+    private val besCrashReports = BesCrashReportWaiters()
     private val wifiSessionCapabilities = WifiSessionCapabilities()
     @Volatile private var configuredOtaVersionUrl: String? = null
 
@@ -147,6 +149,7 @@ class MentraBluetoothSdk private constructor(
         private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
         private const val STREAM_STOP_TIMEOUT_MS = 15_000L
+        private const val BES_CRASH_REPORTED_TIMEOUT_MS = 10_000L
         private const val OTA_BES_VERSION_WAIT_MS = 5_000L
         private const val OTA_MTK_VERSION_WAIT_MS = 2_000L
         private const val OTA_VERSION_POLL_MS = 100L
@@ -347,7 +350,7 @@ class MentraBluetoothSdk private constructor(
         dispatchDefaultDeviceChanged()
     }
 
-    fun clearDefaultDevice() {
+    private fun clearDefaultDevice() {
         suppressDefaultDeviceEvents = true
         try {
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", "")
@@ -549,6 +552,12 @@ class MentraBluetoothSdk private constructor(
     fun forget() {
         analytics.noteDisconnectRequested(BluetoothSdkAnalyticsTracker.DISCONNECT_FORGET)
         deviceManager.forget()
+    }
+
+    /** Unpair the glasses: disconnect, forget the default device and, on Mentra Live, remove the phone's Bluetooth bond. */
+    suspend fun unpair() {
+        analytics.noteDisconnectRequested(BluetoothSdkAnalyticsTracker.DISCONNECT_FORGET)
+        deviceManager.unpair()
     }
 
     @JvmOverloads
@@ -1119,8 +1128,9 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun setWifiAdbState(enabled: Boolean) {
-        deviceManager.setWifiAdbState(enabled)
+    @JvmOverloads
+    fun setWifiAdbState(enabled: Boolean, expectedBluetoothMac: String? = null) {
+        deviceManager.setWifiAdbState(enabled, expectedBluetoothMac)
     }
 
     fun setSystemTime(timestampMs: Long) {
@@ -1675,6 +1685,14 @@ class MentraBluetoothSdk private constructor(
         deviceManager.sendIncidentId(incidentId, apiBaseUrl)
     }
 
+    /** Resolves on the glasses' matching `ok:true` ack; throws on `ok:false`, disconnect or timeout. */
+    internal suspend fun sendBesCrashReported(incidentKey: String, reportId: String) {
+        requireGlassesConnected("report the BES crash")
+        besCrashReports.await(incidentKey, reportId, BES_CRASH_REPORTED_TIMEOUT_MS) {
+            deviceManager.sendBesCrashReported(incidentKey, reportId)
+        }
+    }
+
     override fun close() {
         resetWifiProtocolSession("", "sdk_closed")
         if (activityLifecycleCallbacksRegistered) {
@@ -1695,6 +1713,12 @@ class MentraBluetoothSdk private constructor(
             "glasses" -> {
                 if (changes["connected"] == false) {
                     resetWifiProtocolSession("", "wifi_session_disconnected")
+                    besCrashReports.rejectAll(
+                        BluetoothSdkException(
+                            "glasses_not_connected",
+                            "Glasses disconnected before acknowledging bes_crash_reported.",
+                        )
+                    )
                 }
                 analytics.observeGlassesStatus(getRawGlassesStatus(), ::isPhoneBluetoothOff)
                 val state = getState()
@@ -2056,6 +2080,12 @@ class MentraBluetoothSdk private constructor(
                 }
                 dispatchToListeners { it.onOtaStatus(event) }
             }
+            "bes_crash_detected" -> {
+                val event = BesCrashDetectedEvent(data + mapOf("type" to "bes_crash_detected"))
+                dispatchToListeners { it.onBesCrashDetected(event) }
+            }
+            // Request-scoped: consumed by the waiting sendBesCrashReported call, never a listener event.
+            "bes_crash_reported_ack" -> besCrashReports.onAck(data)
             "mic_health" -> {
                 dispatchToListeners { it.onMicHealth(MicHealthEvent.fromMap(data)) }
             }
@@ -2102,6 +2132,7 @@ class MentraBluetoothSdk private constructor(
                         BluetoothError(
                             code = "pair_failure",
                             message = data["error"] as? String ?: data.toString(),
+                            failureCode = data["code"] as? String,
                         )
                     )
                 }

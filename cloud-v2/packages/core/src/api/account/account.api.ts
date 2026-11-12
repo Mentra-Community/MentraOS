@@ -2,6 +2,7 @@
  * @fileoverview Mentra first-party account endpoints (issue 019).
  * Mounted at /api/account. Contract: docs/issues/019-mentra-account-auth/spec.md.
  */
+import { DECLARED_AGE_MAX, DECLARED_AGE_MIN, DeclaredAgeRequestSchema } from "@mentra/cloud-protocol";
 import { Hono } from "hono";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
@@ -9,6 +10,7 @@ import { userAuth } from "../middleware/user-auth.middleware";
 import { UserModel } from "../../models/user.model";
 import * as account from "../../services/account/account.service";
 import { AccountError } from "../../services/account/account-error";
+import { readDeclaredAge, setDeclaredAge } from "../../services/account/declared-age.service";
 import { accountRateLimit } from "./rate-limit";
 import {
   revokeSession,
@@ -104,8 +106,37 @@ app.post(
 app.get("/me", userAuth, async (c) => {
   const u = c.var.user!;
   const tenantUserId = await tenantUserIdFor(u.mentraUserId);
-  return c.json(await account.me(u.mentraUserId, tenantUserId));
+  const [identity, declared] = await Promise.all([
+    account.me(u.mentraUserId, tenantUserId),
+    readDeclaredAge(u.mentraUserId),
+  ]);
+  // It carries the declared age, which no cache may keep past a later answer or the account's deletion.
+  c.header("cache-control", "no-store");
+  return c.json({ ...identity, ...declared });
 });
+
+// The age the person declared, with when they declared it (`declared-age.ts` in @mentra/cloud-protocol). An app asks
+// once, when a miniapp rated above its own App Store rating first installs or opens. Any signed-in account may keep
+// one, a Mentra account or not, since every app built on the engine gates the same way. It is never put in a token
+// or sent to a miniapp.
+app.get("/declared-age", userAuth, async (c) => {
+  c.header("cache-control", "no-store");
+  return c.json(await readDeclaredAge(c.var.user!.mentraUserId));
+});
+
+app.put(
+  "/declared-age",
+  accountRateLimit({ scope: "declaredage", limit: 10, windowSec: 60 }),
+  userAuth,
+  async (c) => {
+    const parsed = DeclaredAgeRequestSchema.safeParse(await json(c));
+    if (!parsed.success) {
+      throw new InvalidRequest(`age must be a whole number from ${DECLARED_AGE_MIN} to ${DECLARED_AGE_MAX}`);
+    }
+    c.header("cache-control", "no-store");
+    return c.json(await setDeclaredAge(c.var.user!.mentraUserId, parsed.data.age));
+  },
+);
 
 // The device's cloud-client fetches a fresh short-lived subject token from here
 // (authenticated by the current V2 session) and exchanges it at the public

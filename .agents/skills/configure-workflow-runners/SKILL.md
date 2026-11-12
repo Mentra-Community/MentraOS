@@ -18,14 +18,33 @@ each job's `runs-on` must select a Blacksmith runner.
   heavier builds/tests; follow existing 8-vCPU Android build examples when needed.
   Preserve an intentionally pinned Ubuntu 22.04 environment with the corresponding
   `ubuntu-2204` Blacksmith label. Choose ARM only when the job supports it.
-- macOS: use `runs-on: [self-hosted, macOS, ARM64]`, as in
+- macOS: use `runs-on: [self-hosted, macOS, ARM64, shared]`, as in
   [the Mentra App iOS build](../../../.github/workflows/mentra-app-ios-build.yml).
-  Preserve its concurrency pattern so newer commits can cancel superseded builds
+  The three Mac runners (big-bob, big-bob-2, big-bob-3) share one Mac mini;
+  `shared` is on big-bob-2 and big-bob-3 only, so big-bob stays free for
+  published staging releases, which get their labels from release.yml's
+  `channel` job (`mac_runner`). Never leave `shared` off a PR or dev job.
+  Preserve the iOS build's concurrency pattern so newer commits can cancel superseded builds
   without cancelling another branch's work. Check the runner's repository access
   and required Xcode/toolchain before relying on it in another repo.
+- In the monorepo's pr.yml, pick by job size and signing:
+  - a short Mac job (a few minutes: Swift tests, SwiftPM exports) asks for
+    plan's `mac_light` (`runs-on: ${{ fromJSON(needs.plan.outputs.mac_light) }}`),
+    or `[light, mac-mini]` when it needs a logged-in macOS user (a
+    simulator) or secrets. The light runners (labels `light`, plus `mac-mini`
+    on the Mac mini's big-bob-light) have no `self-hosted`, `macOS` or
+    `shared` label, so no build lands on them; never put a build there.
+  - an unsigned build asks for plan's `mac_build`: `unsigned` (big-bob-2,
+    big-bob-3, and lab Mac CI runners without signing secrets) for
+    same-repository code, the `shared` runners for imported MentraOS PRs and
+    forks.
+  - a signing job keeps `[self-hosted, macOS, ARM64, shared]`.
 
 Hardware/device-test jobs must stay on the configured self-hosted runner that
-owns their attached devices. Use Blacksmith for general Linux CI compute.
+owns their attached devices. In the monorepo that's `runs-on: [lab]`:
+pro-1-lab, the lab's main machine as its own user, which runs suites across the
+lab from its clone (`testing/agent`), one job at a time. Give it no secrets and
+no checkout; it never builds. Use Blacksmith for general Linux CI compute.
 
 Do not introduce `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, or another
 GitHub-hosted Linux label unless the user explicitly requests an exception.

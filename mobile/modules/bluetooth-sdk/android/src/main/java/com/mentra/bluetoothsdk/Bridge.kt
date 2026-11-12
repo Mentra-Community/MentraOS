@@ -125,9 +125,10 @@ public class Bridge private constructor() {
 
         /** Send pair failure event */
         @JvmStatic
-        fun sendPairFailureEvent(error: String) {
+        fun sendPairFailureEvent(error: String, code: String? = null) {
             val data = HashMap<String, Any>()
             data["error"] = error
+            if (code != null) data["code"] = code
             sendTypedMessage("pair_failure", data as Map<String, Any>)
         }
 
@@ -138,6 +139,9 @@ public class Bridge private constructor() {
             classicBondReady: Boolean = false,
             securePairingCapable: Boolean = true,
             protocolVersion: Int = 1,
+            ownershipTransfer: Boolean = false,
+            ownerCommitted: Boolean = false,
+            autoAudio: Boolean = false,
         ) {
             val data = HashMap<String, Any>()
             data["had_previous_bond"] = hadPreviousBond
@@ -145,6 +149,9 @@ public class Bridge private constructor() {
             data["classic_bond_ready"] = classicBondReady
             data["secure_pairing_capable"] = securePairingCapable
             data["protocol_version"] = protocolVersion
+            data["ownership_transfer"] = ownershipTransfer
+            data["owner_committed"] = ownerCommitted
+            data["auto_audio"] = autoAudio
             sendTypedMessage("pairing_info", data as Map<String, Any>)
         }
 
@@ -248,6 +255,33 @@ public class Bridge private constructor() {
             sendTypedMessage("speaking_status", body as Map<String, Any>)
         }
 
+        /**
+         * Send a phone-side speech activity transition from the on-device Silero detector.
+         * [silentForMs] is 0 while speaking; on a silence transition, how long it has been quiet.
+         */
+        @JvmStatic
+        fun sendSpeechActivity(speaking: Boolean, silentForMs: Long) {
+            val body = HashMap<String, Any>()
+            body["speaking"] = speaking
+            body["silentForMs"] = silentForMs
+            body["timestamp"] = System.currentTimeMillis()
+            sendTypedMessage("speech_activity", body as Map<String, Any>)
+        }
+
+        /**
+         * Send on-device keyword spotter state or a detection. [kind] is "loading", "ready",
+         * "detected" or "error"; it describes only the wake-word model.
+         */
+        @JvmStatic
+        fun sendWakeWord(kind: String, phrase: String, message: String? = null) {
+            val body = HashMap<String, Any>()
+            body["kind"] = kind
+            body["phrase"] = phrase
+            body["timestamp"] = System.currentTimeMillis()
+            if (message != null) body["message"] = message
+            sendTypedMessage("wake_word", body as Map<String, Any>)
+        }
+
         /** Send battery status */
         @JvmStatic
         fun sendBatteryStatus(level: Int, charging: Boolean) {
@@ -300,6 +334,20 @@ public class Bridge private constructor() {
             // Duplicate discoveries refresh their existing row; only new glasses append.
             val uniqueResults = mergeStableSearchResults(searchResults, newResult, deviceModel)
             DeviceStore.set("bluetooth", "searchResults", uniqueResults)
+        }
+
+        /** Drop glasses from the search results, for example when their pairing window closed. */
+        @JvmStatic
+        fun removeDiscoveredDevice(deviceModel: String, deviceName: String) {
+            val searchResults =
+                    DeviceStore.store.getCategory("bluetooth")["searchResults"] as? List<*> ?: return
+            val remaining =
+                    searchResults.filterNot { result ->
+                        val values = result as? Map<*, *>
+                        values?.get("model") == deviceModel && values["name"] == deviceName
+                    }
+            if (remaining.size == searchResults.size) return
+            DeviceStore.set("bluetooth", "searchResults", remaining)
         }
 
         private fun mergeStableSearchResults(

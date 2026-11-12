@@ -109,4 +109,10 @@ export const OTA_PREVIEW_PAGES = [
     screen: "failed",
     error: {code: "bes_restart_required", copyKey: "ota:errorBesRestartRequired", message: ""},
   }),
+  page("Bluetooth firmware update not started", {
+    screen: "failed",
+    step: "bes",
+    canRetry: true,
+    error: {code: "install_failed", copyKey: "ota:errorBesNotStarted", message: "", glassesCode: "bes_not_started"},
+  }),
 ]

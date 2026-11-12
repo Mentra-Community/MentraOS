@@ -149,6 +149,8 @@ export type MentraLiveOtaController = {
   install: () => void
   retryInstall: () => void
   finish: () => void
+  /** Leaves the update screens after a failed optional update, as the offer's Later does. */
+  dismiss: () => void
   discard: () => void
   openWifiSetup: () => void
 }
@@ -681,11 +683,21 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       installSnapshot.otaProgress,
       installSnapshot.errorMsg,
     )
-    if (requiresGlassesReboot) stopOtaAutoChain()
+    // Leaving a failed pass ends an approved chain: the check that follows only offers the change again.
+    if (requiresGlassesReboot || installSnapshot.displayState === "failed") stopOtaAutoChain()
     await ota.installSession.finish()
     if (deviceRevision !== otaDeviceSessionRevision()) return
     returnToCheck()
   }, [deviceRevision, installSnapshot, page, returnToCheck])
+
+  const dismiss = useCallback(async () => {
+    if (deviceRevision !== otaDeviceSessionRevision()) return
+    if (page !== "progress" || installSnapshot.displayState !== "failed" || isUpdateRequired) return
+    stopOtaAutoChain()
+    await ota.installSession.finish()
+    if (deviceRevision !== otaDeviceSessionRevision()) return
+    onFinishedRef.current?.()
+  }, [deviceRevision, installSnapshot.displayState, isUpdateRequired, page])
 
   const discard = useCallback(async () => {
     if (deviceRevision !== otaDeviceSessionRevision()) return
@@ -838,7 +850,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     // phone-side copy outranks it. Only a failed ota_status carries a current code.
     const glassesCode = installSnapshot.otaStatus?.status === "failed" ? installSnapshot.otaStatus.error || null : null
     // Precedence mirrors the legacy screen: the BES restart instruction, then a phone-side
-    // watchdog/preflight message (English-only, no copy key), then the glasses code mapped to
+    // watchdog/preflight message (translated when a copy key is available), then the glasses code mapped to
     // copy (unknown codes get the generic glasses-error copy rather than the raw code).
     let displayedError: string
     let copyKey: string | null
@@ -847,7 +859,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       copyKey = OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY
     } else if (installSnapshot.errorMsg) {
       displayedError = installSnapshot.errorMsg
-      copyKey = null
+      copyKey = installSnapshot.errorCopyKey ?? null
     } else {
       displayedError = getOtaErrorMessage(glassesCode)
       copyKey = otaErrorCopyKey(glassesCode)
@@ -895,7 +907,8 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       canInstall: false,
       canRetry: screen === "failed" && !requiresGlassesReboot,
       canFinish: screen === "complete" || (screen === "failed" && requiresGlassesReboot),
-      canDismiss: false,
+      // Upgrades are required; an optional one (a downgrade, or for developers) can be left after a failure.
+      canDismiss: screen === "failed" && !requiresGlassesReboot && !isUpdateRequired,
       canDiscard: screen === "disconnected",
       canOpenWifiSetup: screen === "failed" && !hotspotSupported && showChangeWifi,
       continueDisabled: installSnapshot.continueButtonDisabled,
@@ -923,8 +936,19 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     deviceRevision,
   ])
 
+  // The failure screen shows copy, never the glasses' raw code; keep the code in the app log so
+  // reports can tell which glasses-side failure the person saw.
+  const failedGlassesCode = state.screen === "failed" ? (state.error?.glassesCode ?? null) : null
+  const failedCopyKey = state.screen === "failed" ? (state.error?.copyKey ?? null) : null
+  useEffect(() => {
+    if (!failedGlassesCode) return
+    console.warn(
+      `[OTA_PROGRESS] failure screen hides glasses code ${failedGlassesCode} (copy ${failedCopyKey ?? "none"})`,
+    )
+  }, [failedGlassesCode, failedCopyKey])
+
   return useMemo(
-    () => ({state, check, retryCheck: check, install, retryInstall, finish, discard, openWifiSetup}),
-    [check, discard, finish, install, openWifiSetup, retryInstall, state],
+    () => ({state, check, retryCheck: check, install, retryInstall, finish, dismiss, discard, openWifiSetup}),
+    [check, discard, dismiss, finish, install, openWifiSetup, retryInstall, state],
   )
 }

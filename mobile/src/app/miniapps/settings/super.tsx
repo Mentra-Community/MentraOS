@@ -9,7 +9,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {micSessionManager} from "@mentra/engine-host-internal"
 import {SettingsCommandButton} from "@/components/glasses/settings/SettingsCommandButton"
-import {UnwornPowerOffSetting} from "@/components/glasses/settings/UnwornPowerOffSetting"
+import {WifiAdbCommands} from "@/components/glasses/settings/WifiAdbCommands"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useDeployment} from "@/services/deployment"
 import {isMiniappDevelopmentAllowed} from "@/services/deployment/miniappDevelopmentPolicy"
@@ -40,7 +40,7 @@ export default function SuperSettingsScreen() {
     <Screen preset="fixed">
       <Header title="Super Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
-      <ScrollView className="flex px-6 -mx-6">
+      <ScrollView testID="glasses.settings.super" className="flex px-6 -mx-6">
         <View className="flex gap-6 mt-6">
           <Group title="Settings">
             <ToggleSetting
@@ -82,7 +82,7 @@ export default function SuperSettingsScreen() {
           </Group>
 
           <Group title="Mentra Live">
-            <UnwornPowerOffSetting />
+            {superMode && <WifiAdbCommands />}
             <RouteButton label="Mic Tuning" onPress={() => push("/miniapps/settings/mic-tuning")} />
             <SettingsCommandButton
               label="Call gain sweep 15 → 14 → 15 → 13"

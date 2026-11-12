@@ -1,12 +1,13 @@
 {
   "name": "mentraos",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
   "main": "index.js",
   "workspaces": [
     "modules/*",
     "../cloud-v2/packages/cloud-client",
-    "../cloud-v2/packages/protocol"
+    "../cloud-v2/packages/protocol",
+    "../cloud-v2/packages/workspace-contract"
   ],
   "scripts": {
     "preinstall": "zx ./scripts/preinstall.mjs",
@@ -61,7 +62,7 @@
     "@config-plugins/react-native-webrtc": "^13.0.0",
     "@craftzdog/react-native-buffer": "^6.1.2",
     "@douglowder/expo-av-route-picker-view": "^0.0.5",
-    "@dr.pogodin/react-native-fs": ">=2.37.0 <2.41.0",
+    "@dr.pogodin/react-native-fs": "2.38.2",
     "@expo-google-fonts/red-hat-display": "^0.4.1",
     "@expo-google-fonts/space-grotesk": "^0.4.1",
     "@expo/metro-runtime": "~55.0.11",
@@ -124,6 +125,7 @@
     "expo-notifications": "~55.0.23",
     "expo-router": "~55.0.14",
     "expo-screen-capture": "~55.0.14",
+    "expo-secure-store": "~55.0.14",
     "expo-splash-screen": "~55.0.21",
     "expo-squircle-view": "^1.1.0",
     "expo-status-bar": "~55.0.6",
@@ -211,18 +213,20 @@
     }
   },
   "patchedDependencies": {
+    "react-native@0.83.6": "patches/react-native@0.83.6.patch",
     "react-native-draggable-masonry@1.3.0": "patches/react-native-draggable-masonry@1.3.0.patch",
     "react-native-executorch@0.7.2": "patches/react-native-executorch@0.7.2.patch",
     "expo-speech-transcriber@0.1.9": "patches/expo-speech-transcriber@0.1.9.patch",
     "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
     "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
+    "expo@55.0.26": "patches/expo@55.0.26.patch",
     "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch",
     "@livekit/react-native-webrtc@137.0.3": "patches/@livekit%2Freact-native-webrtc@137.0.3.patch",
     "@dr.pogodin/react-native-fs@2.38.2": "patches/@dr.pogodin%2Freact-native-fs@2.38.2.patch",
     "expo-router@55.0.16": "patches/expo-router@55.0.16.patch",
     "react-native-udp@4.1.7": "patches/react-native-udp@4.1.7.patch",
-    "react-native-wifi-reborn@4.13.6": "patches/react-native-wifi-reborn@4.13.6.patch",
-    "react-native-gesture-handler@2.30.1": "patches/react-native-gesture-handler@2.30.1.patch"
+    "react-native-gesture-handler@2.30.1": "patches/react-native-gesture-handler@2.30.1.patch",
+    "react-native-reanimated@4.2.1": "patches/react-native-reanimated@4.2.1.patch"
   },
   "trustedDependencies": [
     "@sentry/cli",

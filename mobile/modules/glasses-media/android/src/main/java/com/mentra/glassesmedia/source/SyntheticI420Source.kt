@@ -1,6 +1,6 @@
 package com.mentra.glassesmedia.source
 
-import android.util.Log
+import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.telemetry.PipelineStats
 import com.mentra.glassesmedia.video.I420Packer
 import java.nio.ByteBuffer

@@ -12,6 +12,7 @@
 // standalone build); jest moduleNameMapper + tsconfig both resolve it.
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {ButtonPressEvent, ConnectOptions, Device, TouchEvent} from "@mentra/bluetooth-sdk"
+import {fleetEvents} from "../services/fleet/fleetEvents"
 import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
@@ -36,6 +37,8 @@ function projectStatus() {
     micEnabled: s.micEnabled,
     vadEnabled: s.voiceActivityDetectionEnabled,
     btClassic: s.bluetoothClassicConnected,
+    // SDK-owned Mentra Live pairing state, mirrored as-is; the app renders from it.
+    pairingState: s.pairingState ?? ({state: "normal"} as const),
   }
 }
 
@@ -76,6 +79,10 @@ export type GlassesStatusSnapshot = ReturnType<typeof projectStatus>
 export type ControllerStatusSnapshot = ReturnType<typeof projectControllerStatus>
 export type GlassesInfoSnapshot = ReturnType<typeof projectInfo>
 
+const userDisconnected = async (value: boolean) => {
+  await useSettingsStore.getState().setSetting(SETTINGS.glasses_user_disconnected.key, value, false)
+}
+
 export const glasses = {
   // --- connection (bluetooth-sdk passthrough) ---
   /**
@@ -85,6 +92,7 @@ export const glasses = {
    */
   connectDefault: async (): Promise<void> => {
     try {
+      await userDisconnected(false)
       await pushAllBluetoothSettings()
       await BluetoothSdk.connectDefault()
     } catch (error) {
@@ -92,19 +100,50 @@ export const glasses = {
       throw error
     }
   },
-  disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
-  forget: (): Promise<void> => BluetoothSdk.forget(),
+  // Fleet counts a disconnect the person asked for as theirs, not as a connection problem (Phase 12).
+  // It stays disconnected: automatic reconnects skip it until the person connects again.
+  disconnect: async (): Promise<void> => {
+    fleetEvents.userDisconnect()
+    await userDisconnected(true)
+    await BluetoothSdk.disconnect()
+  },
+  forget: async (): Promise<void> => {
+    fleetEvents.userDisconnect()
+    await userDisconnected(false)
+    await BluetoothSdk.forget()
+  },
   /** Explicit user Unpair; NIMO is reset before its local pairing is cleared. */
-  unpair: (): Promise<void> => BluetoothSdk.unpair(),
+  unpair: async (): Promise<void> => {
+    fleetEvents.userDisconnect()
+    await userDisconnected(false)
+    await BluetoothSdk.unpair()
+  },
+  /** Whether the person disconnected the glasses in the app and hasn't connected them since. */
+  userDisconnected: (): boolean => !!useSettingsStore.getState().getSetting(SETTINGS.glasses_user_disconnected.key),
   /** Connect to a specific (discovered) device. */
   connect: async (device: Device, options?: ConnectOptions): Promise<void> => {
     try {
+      await userDisconnected(false)
       await pushAllBluetoothSettings(device.model)
       await BluetoothSdk.connect(device, options)
     } catch (error) {
       recordSupportProfileConnectionFailure(error, "connect")
       throw error
     }
+  },
+  /**
+   * Connect the saved glasses while they are in pairing mode. Automatic reconnects wait for the window to end;
+   * this is the person choosing those glasses, so they take this phone back over its bond, leave pairing mode
+   * and stay connected.
+   */
+  connectInPairingMode: async (): Promise<void> => {
+    const device = await BluetoothSdk.getDefaultDevice()
+    if (!device) throw new Error("No saved glasses to connect")
+    // Only glasses with secure pairing tell the phone about a pairing window.
+    await glasses.connect(
+      {...device, securePairingCapable: true},
+      {saveAsDefault: false, cancelExistingConnectionAttempt: true},
+    )
   },
   /** Connect the built-in simulated glasses (dev/testing). */
   connectSimulated: (): Promise<void> => BluetoothSdk.connectSimulated(),

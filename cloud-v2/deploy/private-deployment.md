@@ -56,9 +56,10 @@ repository.
 | `CLOUD_CORE_OIDC_CLIENTS` | Public | The sign-in server's clients as JSON: the admin portal, with its callback on Core's origin. |
 | `CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET` | Secret | The admin portal's client secret at Core's sign-in server (at least 32 characters). |
 | `ENTRA_BROWSER_CLIENT_SECRET` (the name in `browser.clientSecretEnv`) | Secret | Core's sign-in server's client secret at the provider. |
-| `CLOUD_CORE_ENABLED_FEATURES` | Public | Optional. The first-party features this deployment has bought, as comma-separated `feature[:package+package]` entries. Names are case-sensitive; Fleet needs `fleet.managed`. An entry with packages (`call.unlimited:com.mentra.call`) also grants that feature to every signed-in person, in those packages' miniapp tokens only. Blank leaves a feature to its own settings. See [Fleet integration](../docs/fleet-integration.md) and [Licenses](../docs/licenses.md#features-in-miniapp-tokens). |
-| `CLOUD_CORE_FLEET_URL` | Public | Optional. Fleet's base URL. Unset means Fleet is not installed. The size and time limits (`CLOUD_CORE_FLEET_MAX_BODY_BYTES`, `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`, `CLOUD_CORE_FLEET_MAX_ASSET_BYTES`, `CLOUD_CORE_FLEET_TIMEOUT_MS`) are in [Fleet integration](../docs/fleet-integration.md). |
+| `CLOUD_CORE_ENABLED_FEATURES` | Public | Optional. The first-party features this deployment has bought, as comma-separated `feature[:package+package]` entries. Names are case-sensitive; Fleet needs `fleet.managed`. An entry with packages (`call.unlimited:com.mentra.call`) also grants that feature to every signed-in person, in those packages' miniapp tokens only. Blank leaves a feature to its own settings. See [Fleet integration](../docs/fleet-integration.md) and [Licenses and seats](../docs/licenses.md#features-in-miniapp-tokens). |
+| `CLOUD_CORE_FLEET_URL` | Public | Optional. Fleet's base URL. Unset means Fleet is not installed. The size and time limits (`CLOUD_CORE_FLEET_MAX_BODY_BYTES`, `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`, `CLOUD_CORE_FLEET_MAX_ASSET_BYTES`, `CLOUD_CORE_FLEET_TIMEOUT_MS`, and the membership history lookback `CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`) are in [Fleet integration](../docs/fleet-integration.md). |
 | `CLOUD_CORE_FLEET_SECRET` | Secret | Optional. The secret that signs what Core forwards to Fleet. Required when `CLOUD_CORE_FLEET_URL` is set. |
+| `CLOUD_CORE_REGISTRY_STATUS_TTL_SEC` | Public | Optional. How long the Mentra App keeps the miniapp registry's status answer, in seconds, from 1 to 604800 (a week). Default `21600` (6 hours). See [The miniapp registry](../docs/registry.md). |
 | `CLOUD_CORE_BILLING_URL` | Public | Optional, hosted Core only: a Private Cloud leaves it unset, and billing is not installed. The billing portal module's base URL. See [Portal modules](../docs/portal-modules.md). |
 | `CLOUD_CORE_BILLING_SECRET` | Secret | Optional. The secret that signs what Core forwards to the billing module. Required when `CLOUD_CORE_BILLING_URL` is set. |
 
@@ -95,6 +96,12 @@ configured explicitly:
 Core issues an opaque Mentra user id. It retains provider metadata only for host
 integrations such as proving an ACS token belongs to the same Entra employee.
 Miniapp tokens never contain the federated identity.
+
+A person signed in through a configured provider is a verified account for the
+miniapp registry: installing a miniapp URL from their phone registers it in
+this Core's registry, with the same limit of 120 registrations an hour per
+person. No Mentra account or email is involved. See
+[The miniapp registry](../docs/registry.md#verified-accounts).
 
 ### Admin portal sign-in
 

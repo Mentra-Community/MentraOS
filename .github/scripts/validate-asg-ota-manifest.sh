@@ -15,9 +15,8 @@ jq -e '
     if type != "string" then false
     else split(".") as $parts
       | ($parts | length == 4)
-        and all($parts[];
-          test("^[0-9]{1,3}$")
-          and (tonumber <= 255))
+        and all($parts[0:3][]; test("^[0-9]{1,3}$") and (tonumber <= 255))
+        and ($parts[3] | test("^[0-9]{1,4}$"))
     end;
 
   .apps["com.mentra.asg_client"] as $app

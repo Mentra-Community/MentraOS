@@ -3,6 +3,15 @@ package com.mentra.bluetoothsdk.sgcs
 internal data class MentraLivePairingAdvertisement(
     val pairingMode: Boolean,
     val pairingCode: String,
+    /**
+     * The glasses' `window_id`: moves on each pairing-mode entry. Null when the byte is absent.
+     */
+    val pairingGeneration: Int? = null,
+    /**
+     * Trailer flag `OWNER_CHANGED`: the window [pairingGeneration] committed a different phone.
+     * Unauthenticated, so it only triggers one verification reconnect.
+     */
+    val ownerChanged: Boolean = false,
 )
 
 internal object MentraLivePairingAdvertisementParser {
@@ -14,9 +23,11 @@ internal object MentraLivePairingAdvertisementParser {
     private const val CODE_HIGH_OFFSET = CODE_LOW_OFFSET + 1
     private const val MAGIC_FIRST_OFFSET = CODE_HIGH_OFFSET + 1
     private const val MAGIC_SECOND_OFFSET = MAGIC_FIRST_OFFSET + 1
+    private const val PAIRING_GENERATION_OFFSET = MAGIC_SECOND_OFFSET + 1
     private const val PROTOCOL_VERSION_MIN = 2
     private const val PROTOCOL_VERSION_MAX = 15
     private const val SECURE_PAIRING_CAPABILITY = 0x01
+    private const val OWNER_CHANGED_FLAG = 0x04
     private const val MAGIC_FIRST = 0x4D // M
     private const val MAGIC_SECOND = 0x50 // P
 
@@ -46,9 +57,17 @@ internal object MentraLivePairingAdvertisementParser {
 
         val codeLow = manufacturerData[CODE_LOW_OFFSET].toInt() and 0xFF
         val codeHigh = manufacturerData[CODE_HIGH_OFFSET].toInt() and 0xFF
+        val pairingGeneration =
+                if (manufacturerData.size > PAIRING_GENERATION_OFFSET) {
+                    manufacturerData[PAIRING_GENERATION_OFFSET].toInt() and 0xFF
+                } else {
+                    null
+                }
         return MentraLivePairingAdvertisement(
             pairingMode = manufacturerData[PAIRING_FLAG_OFFSET] == PAIRING_DISCOVERABLE,
             pairingCode = String.format("%02X%02X", codeHigh, codeLow),
+            pairingGeneration = pairingGeneration,
+            ownerChanged = (capability and OWNER_CHANGED_FLAG) != 0,
         )
     }
 }

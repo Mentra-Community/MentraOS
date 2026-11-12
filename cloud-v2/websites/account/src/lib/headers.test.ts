@@ -19,7 +19,7 @@ describe("_headers", () => {
     expect(all).toContain("  X-Content-Type-Options: nosniff");
     expect(all).not.toContain("no-store");
     for (const route of NO_STORE_ROUTES) expect(section(file, route)).toContain("  Cache-Control: no-store");
-    expect(NO_STORE_ROUTES).toEqual(["/login", "/consent", "/signup", "/reset", "/signout"]);
+    expect(NO_STORE_ROUTES).toEqual(["/login", "/consent", "/connections", "/signup", "/reset", "/signout"]);
     expect(file).not.toContain("/oauth/");
 
     expect(contentSecurityPolicy(undefined)).toContain(`connect-src 'self' ${DEFAULT_SUPABASE_URL};`);

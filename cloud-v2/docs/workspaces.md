@@ -8,7 +8,8 @@ Core owns who belongs to which team and what they may do there.
   (`ws_…`), name, memberships, invitations, keys and audit trail.
 - A person is a Core user (`mentraUserId`), the same one the Mentra App has. A
   person can belong to any number of workspaces, with an independent role in
-  each.
+  each. One of them manages their device ([The managing
+  workspace](#the-managing-workspace)).
 
 ## Roles and capabilities
 
@@ -46,24 +47,27 @@ Roles are cumulative: each holds everything the one before it holds.
 `CLOUD_CORE_ADMIN_EMAILS` or in a domain on `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`.
 They hold every organization capability (`organization.workspaces.administer`,
 `organization.credentials.manage`, `organization.incidents.read`,
-`organization.supportProfiles.read`, `organization.testing.read`,
-`organization.testing.manage`, `organization.fleet.administer`,
-`organization.licenses.read`) and act as Owner in every workspace, which is how
-they recover a workspace whose Owners are gone. Recovery names an existing
-account; a deleted account is refused (`404 user_not_found`).
+`organization.supportProfiles.read`, `organization.fleet.administer`,
+`organization.licenses.read`, `organization.registry.administer`) and act as
+Owner in every workspace, which is how they recover a workspace whose Owners
+are gone. Recovery names an existing account; a deleted account is refused
+(`404 user_not_found`).
 
 ## The workspace portal
 
 The workspace portal (`websites/portal`) is centred on the current workspace. A switcher at
 the top of the sidebar shows it and your role (your membership's; "Member · Organization
-Admin" when an Organization Admin's powers go beyond it), and lists your other workspaces,
-**Create workspace** and your pending invitations with **Accept** and **Dismiss**.
+Admin" when an Organization Admin's powers go beyond it), and its menu lists your workspaces,
+each with your role, the one that manages your device marked "Manages your device". Choosing one
+opens it (`/?workspace=<workspaceId>`, which then becomes the bare address). Under the switcher,
+"Pending invitations" links to `/invitation` while you have any.
 
 **Addresses.** Your own workspace is never in the address: `/licenses`
 ([Licenses](licenses.md#in-the-workspace-portal)), `/members` (members, with pending
-invitations under them), `/settings` and `/audit` are its pages. The sidebar lists Licenses,
-Members and Settings, in that order, and offers only what your role opens; the audit log has no
-sidebar item and opens only at `/audit`. `/` opens the current workspace's first sidebar page. Another workspace is named
+invitations under them) and `/settings` are its pages. The sidebar lists Licenses, Members and
+Settings, in that order, and offers only what your role opens; Fleet Management (`/fleet`), where
+Fleet is installed, is its own group under them. `/` opens the current workspace's first sidebar
+page. Another workspace is named
 by `?workspace=<workspaceId>` on any of them, which is how an Organization Admin opens a
 customer's; the sidebar's links carry it exactly when the workspace is not the one the bare
 address opens, and a `?workspace=` that names the bare address is dropped from the address in
@@ -173,8 +177,30 @@ licenses are assigned from the Licenses page.
   both are on the change feed or neither is. The workspace being joined is never
   the one deleted. A workspace that holds anything is kept, as is any the person
   did not make for themselves: one where they are a Member or share ownership,
-  or one made with `POST /`. The join then succeeds as it would for anyone, and
-  the person has both memberships.
+  or one made with `POST /`. A workspace that is kept stays beside the one
+  joined: a person may belong to several, so nothing refuses the join and a
+  claim takes every imported membership. (Before multiple workspaces, Core
+  refused such a join with `409 already_in_workspace`; an older Core still
+  does.)
+- <a id="the-managing-workspace"></a>**The managing workspace.** A person's
+  phone is managed by at most one of their workspaces: Fleet installs that
+  workspace's miniapps, and a miniapp token names it first. It is the
+  earliest-joined membership (when the person took it up: `claimedAt` for an
+  imported membership, else `startedAt`; then the membership id) in a
+  workspace that is not the person's own automatic workspace, else their own
+  automatic workspace, else none. So the first real workspace someone joins
+  keeps managing them until they leave it; a later join never takes it over;
+  leaving passes it to the next by the same rule; and someone else's automatic
+  workspace that a person joined is a real one to them. Nothing is stored: it
+  follows from the memberships (`managing-workspace.service`). The Mentra App's
+  `GET /api/client/workspaces/mine` answers it, with `automatic: true` when it
+  is the person's own automatic workspace (a workspace they join then manages
+  the phone instead), `GET /` marks it
+  `managesDevice: true`, and Fleet reads it from
+  `GET /api/internal/workspaces/users/:mentraUserId/managing-workspace`
+  ([Fleet integration](fleet-integration.md#the-managing-workspace)). The
+  automatic workspace yields to any other only while Fleet is on for every
+  workspace.
 - An invitation names an email, a role and an expiry (14 days). Admins invite
   Members and Developers, Owners anyone. Core stores only a hash of the
   invitation token; the link carries the token. The email names the inviter.
@@ -202,7 +228,8 @@ licenses are assigned from the Licenses page.
   change or remove them like any other member, and the keys they created
   validate.
 - Deleting a workspace ends its memberships and revokes its keys and
-  invitations at once. It is refused (`409 workspace_has_holds`) while a
+  invitations at once, and forgets the miniapps it assigned through Fleet
+  ([Fleet integration](fleet-integration.md#assigned-miniapps)). It is refused (`409 workspace_has_holds`) while a
   service holds the workspace, whoever asks, Organization Admins included: the
   Mentra Miniapp Store holds a workspace while it owns any miniapp that is not
   deleted, a draft included, and the portals say so where the delete is ("This
@@ -238,8 +265,7 @@ environment labels it is configured for.
 - **Operator keys** (`mak_…`) are for tools that read organization data, such as
   `scripts/fetch-incident-logs.sh`. An Organization Admin creates one in the
   admin portal's **Operator keys** page with some of
-  `organization.incidents.read`, `organization.supportProfiles.read`,
-  `organization.testing.read` and `organization.testing.manage`. It works only
+  `organization.incidents.read` and `organization.supportProfiles.read`. It works only
   while its creator's email stays on the Organization Admin allowlist, so create
   shared keys from an admin who will stay. A key whose creator is admitted by
   `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` keeps working while the domain is listed:
@@ -280,10 +306,8 @@ manages operator keys. Those need the matching organization capability and a
 person.
 
 `/api/admin/*` checks a capability per area: incidents
-(`organization.incidents.read`), support profiles
-(`organization.supportProfiles.read`), test runs, the routine catalog and
-system health (`organization.testing.read`, and `organization.testing.manage`
-to write). `/api/admin/me` answers any caller with its capabilities and whether
+(`organization.incidents.read`) and support profiles
+(`organization.supportProfiles.read`). `/api/admin/me` answers any caller with its capabilities and whether
 Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwards
 to the optional Fleet service for a person holding `organization.fleet.administer`
 (an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).

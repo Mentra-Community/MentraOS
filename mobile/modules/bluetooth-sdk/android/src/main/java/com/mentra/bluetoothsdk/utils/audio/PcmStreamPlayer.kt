@@ -3,6 +3,7 @@ package com.mentra.bluetoothsdk.utils.audio
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Build
 import android.util.Base64
 import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import java.util.ArrayDeque
@@ -24,12 +25,19 @@ import kotlin.math.max
  * track underruns (queue empty), AudioTrack plays silence and playback resumes
  * seamlessly on the next chunk; no stop/start pops.
  */
-class PcmStreamPlayer(
+class PcmStreamPlayer
+@JvmOverloads
+constructor(
         private val streamId: String,
         private val sampleRate: Int,
         channels: Int,
         volume: Float,
         jitterMs: Int = TRACK_BUFFER_MS,
+        /**
+         * Abort this stream if the audio route changes before its first write (see
+         * [PcmStreamManager.abortStreamsWithoutAudio]). False for streams fed natively.
+         */
+        internal val abortOnRouteChangeBeforeAudio: Boolean = true,
 ) {
     companion object {
         private const val TAG = "PcmStreamPlayer"
@@ -40,8 +48,8 @@ class PcmStreamPlayer(
         /** Hard cap — writes that would exceed this are rejected outright. */
         private const val MAX_BACKLOG_MS = 10_000L
 
-        /** AudioTrack buffer: max(4x minimum, 500ms) of jitter headroom. */
-        private const val TRACK_BUFFER_MS = 500
+        /** Default playout headroom, which is also how much audio is queued before playback starts. */
+        internal const val TRACK_BUFFER_MS = 500
 
         /**
          * Floor on the requested headroom.
@@ -85,8 +93,15 @@ class PcmStreamPlayer(
     private var finalPlayedFrames: Long? = null
     private var endedError: String? = null
 
+    /** False until the first chunk is accepted. Guarded by [lock]. */
+    private var receivedAudio = false
+
+    /** Route generation when the stream opened ([AudioRouteWatcher]). */
+    internal val openedRouteGeneration: Long = AudioRouteWatcher.currentGeneration()
+
     private val audioTrack: AudioTrack
     private val feeder: Thread
+    @Volatile private var playbackStarted = false
 
     init {
         val minBuf =
@@ -119,8 +134,8 @@ class PcmStreamPlayer(
             throw IllegalStateException("AudioTrack failed to initialize (rate=$sampleRate)")
         }
         audioTrack.setVolume(volume.coerceIn(0f, 1f))
-        audioTrack.play()
-
+        // An allocated cue may wait silently for a wake. Start only when its
+        // first PCM arrives, so prewarming does not activate Bluetooth output.
         feeder =
                 Thread({ feedLoop() }, "PcmStreamPlayer-$streamId").apply {
                     isDaemon = true
@@ -144,8 +159,17 @@ class PcmStreamPlayer(
      * Append base64-encoded 16-bit LE PCM. Blocks while the backlog is above
      * the backpressure ceiling. Returns the backlog in ms after this chunk.
      */
-    fun write(base64: String): Long {
-        val bytes = Base64.decode(base64, Base64.DEFAULT)
+    fun write(base64: String): Long = writePcm(Base64.decode(base64, Base64.DEFAULT))
+
+    /** Whether any audio has been written yet. */
+    val hasReceivedAudio: Boolean
+        get() = lock.withLock { receivedAudio }
+
+    /**
+     * Append raw 16-bit LE PCM. Blocks while the backlog is above the backpressure
+     * ceiling. Returns the backlog in ms after this chunk.
+     */
+    fun writePcm(bytes: ByteArray): Long {
         require(bytes.isNotEmpty()) { "PCM chunk is empty" }
         require(bytes.size % bytesPerFrame == 0) {
             "PCM chunk length ${bytes.size} is not aligned to a $bytesPerFrame-byte frame"
@@ -158,6 +182,7 @@ class PcmStreamPlayer(
             }
             queue.add(bytes)
             queuedBytes += bytes.size
+            receivedAudio = true
             queueChanged.signalAll()
             // Backpressure: hold the caller until the feeder drains below the
             // ceiling. Caller is a background dispatcher, never the UI thread.
@@ -172,6 +197,10 @@ class PcmStreamPlayer(
     /**
      * Drain everything queued, then stop. Blocks until played out. Returns the
      * total played duration in ms.
+     *
+     * Playback starts once the track's buffer (the jitter headroom) is full. A
+     * stream shorter than that is topped up with silence here, so a short sound
+     * still plays instead of waiting for audio that will never come.
      */
     fun close(): Long {
         lock.withLock {
@@ -182,6 +211,17 @@ class PcmStreamPlayer(
             while ((queue.isNotEmpty() || writeInProgress) && endedError == null && !aborted) {
                 queueChanged.await()
             }
+            if (aborted) return playedMsLocked()
+        }
+        if (!playbackStarted) {
+            // Nothing was ever written (a prewarmed stream closed unused).
+            releaseInternals()
+            return 0
+        }
+        try {
+            startShortStream()
+        } catch (e: Exception) {
+            Log.w(TAG, "[$streamId] could not start a short stream", e)
         }
         // ...then for the track to play it out while AudioTrack is still in
         // PLAYSTATE_PLAYING. Calling stop() first flushes pending MODE_STREAM
@@ -203,18 +243,63 @@ class PcmStreamPlayer(
         } finally {
             releaseInternals()
         }
-        return playedMsLocked()
+        // Silence padding a short stream may have played past the real audio.
+        return lock.withLock { minOf(playedMsLocked(), framesWritten * 1000L / sampleRate) }
+    }
+
+    /**
+     * Write silence up to the track's start threshold when less audio than that was
+     * written, so the track starts. Only called from [close] once the feeder is done.
+     */
+    private fun startShortStream() {
+        val written = lock.withLock { framesWritten }
+        val threshold =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    audioTrack.startThresholdInFrames
+                } else {
+                    audioTrack.bufferSizeInFrames
+                }.toLong()
+        val padFrames = threshold - written
+        if (written <= 0 || padFrames <= 0) return
+        val silence = ByteArray((padFrames * bytesPerFrame).toInt())
+        var off = 0
+        while (off < silence.size) {
+            val n = audioTrack.write(silence, off, silence.size - off)
+            if (n <= 0) break
+            off += n
+        }
+    }
+
+    /**
+     * Abort if no audio has been written yet (for example a prewarmed stream when the
+     * audio route changes). Returns whether it aborted.
+     */
+    internal fun abortIfNoAudio(): Boolean {
+        lock.withLock {
+            if (receivedAudio || closing || aborted) return false
+            markAbortedLocked()
+        }
+        stopAndRelease()
+        return true
     }
 
     /** Stop now, dropping the backlog. Idempotent. */
     fun abort() {
         lock.withLock {
             if (aborted) return
-            aborted = true
-            queue.clear()
-            queuedBytes = 0
-            queueChanged.signalAll()
+            markAbortedLocked()
         }
+        stopAndRelease()
+    }
+
+    private fun markAbortedLocked() {
+        aborted = true
+        queue.clear()
+        queuedBytes = 0
+        queueChanged.signalAll()
+    }
+
+    private fun stopAndRelease() {
         try {
             audioTrack.pause()
             audioTrack.flush()
@@ -251,6 +336,12 @@ class PcmStreamPlayer(
                             if (queue.isEmpty() && closing) return
                             queue.poll()!!.also { writeInProgress = true }
                         }
+                // The track can be allocated ahead of time without starting an
+                // empty output stream or elevating the glasses microphone gate.
+                if (!playbackStarted) {
+                    audioTrack.play()
+                    playbackStarted = true
+                }
                 // Blocking write OUTSIDE the lock so write()/abort() stay responsive.
                 var off = 0
                 while (off < chunk.size) {
@@ -310,17 +401,32 @@ class PcmStreamPlayer(
  * Registry of active [PcmStreamPlayer] sessions, keyed by streamId. All
  * methods are safe to call with unknown ids (write throws, abort no-ops) so
  * races with teardown resolve cleanly.
+ *
+ * A stream that hasn't received audio yet (for example one prewarmed before a
+ * wake word) is aborted when the audio route changes, so its next write fails
+ * with "not open" and the caller reopens on the current route instead of
+ * playing on a stale one. See [AudioRouteWatcher].
  */
 object PcmStreamManager {
+    private const val TAG = "PcmStreamManager"
     private val players = java.util.concurrent.ConcurrentHashMap<String, PcmStreamPlayer>()
+    private val urlPlaybacks = java.util.concurrent.ConcurrentHashMap<String, PcmUrlPlayback>()
 
-    fun open(streamId: String, sampleRate: Int, channels: Int, volume: Float, jitterMs: Int? = null) {
+    private fun validate(streamId: String, sampleRate: Int, channels: Int) {
         require(streamId.isNotBlank()) { "streamId is required" }
         require(sampleRate == 16000 || sampleRate == 24000 || sampleRate == 48000) {
             "unsupported PCM sample rate $sampleRate"
         }
         require(channels == 1) { "only mono PCM is supported" }
+    }
+
+    private fun notOpen(streamId: String) = IllegalStateException("pcm stream $streamId is not open")
+
+    fun open(streamId: String, sampleRate: Int, channels: Int, volume: Float, jitterMs: Int? = null) {
+        validate(streamId, sampleRate, channels)
+        AudioRouteWatcher.ensureStarted()
         // Replacing an id is a caller bug, but never leak the old track.
+        urlPlaybacks.remove(streamId)?.cancel()
         players.remove(streamId)?.abort()
         players[streamId] =
                 if (jitterMs == null) {
@@ -331,15 +437,25 @@ object PcmStreamManager {
     }
 
     fun write(streamId: String, base64: String): Long {
-        val player =
-                players[streamId] ?: throw IllegalStateException("pcm stream $streamId is not open")
+        val player = players[streamId] ?: throw notOpen(streamId)
+        // A route change since open that no listener reported yet (for example a call
+        // starting on Android < 12) still invalidates a stream that has no audio.
+        if (player.abortOnRouteChangeBeforeAudio &&
+                        !player.hasReceivedAudio &&
+                        AudioRouteWatcher.currentGeneration() != player.openedRouteGeneration &&
+                        player.abortIfNoAudio()
+        ) {
+            players.remove(streamId, player)
+            Log.d(TAG, "[$streamId] aborted before its first write: the audio route changed")
+            throw notOpen(streamId)
+        }
         return player.write(base64)
     }
 
     fun close(streamId: String): Long {
         val player =
                 players[streamId]
-                        ?: throw IllegalStateException("pcm stream $streamId is not open")
+                        ?: throw notOpen(streamId)
         return try {
             player.close()
         } finally {
@@ -351,12 +467,61 @@ object PcmStreamManager {
     }
 
     fun abort(streamId: String) {
+        urlPlaybacks.remove(streamId)?.cancel()
         players.remove(streamId)?.abort()
     }
 
     fun abortAll() {
+        val playbacks = urlPlaybacks.values.toList()
+        urlPlaybacks.clear()
+        playbacks.forEach { it.cancel() }
         val active = players.values.toList()
         players.clear()
         active.forEach { it.abort() }
+    }
+
+    /** Abort every stream that hasn't received audio yet. Called on an audio route change. */
+    internal fun abortStreamsWithoutAudio(reason: String) {
+        for ((streamId, player) in players) {
+            if (player.abortOnRouteChangeBeforeAudio && player.abortIfNoAudio()) {
+                players.remove(streamId, player)
+                Log.d(TAG, "[$streamId] aborted before its first write: $reason")
+            }
+        }
+    }
+
+    /**
+     * Fetch [url] and play its body (raw 16-bit LE mono PCM at [sampleRate]) as it
+     * arrives, through a [PcmStreamPlayer] registered under [streamId]. Blocks the
+     * calling (background) thread until the whole body has played and returns the
+     * played duration in ms. Throws [PcmUrlPlaybackException]: code "aborted" after
+     * [abort], "http_error" on a non-2xx response, "unsupported_format" for
+     * compressed audio, "network_error" when the connection fails (audio already
+     * received still plays out first).
+     */
+    fun playUrl(streamId: String, url: String, sampleRate: Int, volume: Float, jitterMs: Int?): Long {
+        validate(streamId, sampleRate, 1)
+        val playback =
+                PcmUrlPlayback(url) { player ->
+                    // Register so pcmStreamAbort(streamId) and teardown reach the player.
+                    players.put(streamId, player)?.abort()
+                }
+        urlPlaybacks.put(streamId, playback)?.cancel()
+        players.remove(streamId)?.abort()
+        try {
+            return playback.run {
+                PcmStreamPlayer(
+                        streamId,
+                        sampleRate,
+                        1,
+                        volume,
+                        jitterMs ?: PcmStreamPlayer.TRACK_BUFFER_MS,
+                        abortOnRouteChangeBeforeAudio = false,
+                )
+            }
+        } finally {
+            urlPlaybacks.remove(streamId, playback)
+            playback.player?.let { players.remove(streamId, it) }
+        }
     }
 }

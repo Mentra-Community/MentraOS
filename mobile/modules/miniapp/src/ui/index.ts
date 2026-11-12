@@ -71,10 +71,13 @@ export interface MentraUiGlobal<TChannels extends object = Record<string, unknow
   onClose(cb: () => void): () => void
 
   /**
-   * MUST be called once on UI bootstrap. Tells the host the WebView is
-   * mounted and ready to receive messages from background. Idempotent
-   * — subsequent calls no-op. Background's `session.ui.onOpen` handlers
-   * fire after this lands.
+   * Tells the host the WebView is mounted and ready to receive messages
+   * from background. `<MentraProvider>` calls it once the app has mounted;
+   * call it yourself only without the provider (or with `autoReady={false}`).
+   * The host's splash stays up until it lands, and a page that loads
+   * without calling it is reported as failed. Idempotent — subsequent
+   * calls no-op. Background's `session.ui.onOpen` handlers fire after this
+   * lands.
    */
   ready(): void
 }

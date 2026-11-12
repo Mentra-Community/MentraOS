@@ -1,19 +1,22 @@
-import {afterEach, describe, expect, test} from "bun:test"
+import {afterEach, describe, expect, spyOn, test} from "bun:test"
 
 import {ConfigurationError} from "../signin/config"
 import {
+  ACCOUNT_CLIENT_ID,
   assertClientConfiguration,
   clientOfKind,
   configuredClients,
   findClient,
   providerClientMetadata,
 } from "./clients"
+import * as websiteClients from "./website-clients.service"
 
 const NAMES = [
   "CLOUD_CORE_OIDC_CLIENTS",
   "CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET",
   "CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET",
   "CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET",
+  "CLOUD_CORE_OIDC_ISSUER",
   "CLOUD_CORE_ENVIRONMENT",
   "NODE_ENV",
 ] as const
@@ -131,6 +134,8 @@ describe("first-party client registry", () => {
     ["a bad client ID", [{...admin, clientId: "a b"}], "clientId"],
     ["an unknown kind", [{...admin, kind: "miniapp_website"}], "kind must be one of"],
     ["a duplicate client ID", [admin, {...admin, kind: "workspace_portal"}], "listed twice"],
+    ["a client ID in the websites' range", [{...admin, clientId: "mwc_01hzy"}], "mwc_"],
+    ["the sign-in site's own client ID", [{...admin, clientId: "mentra-account"}], "sign-in site's own"],
     ["two clients of one kind", [admin, {...admin, clientId: "other"}], "at most one client of kind admin_portal"],
     ["a secret variable outside the contract's names", [{...admin, secretEnv: "DATABASE_PASSWORD"}], "CLOUD_CORE_OIDC_<CLIENT>_CLIENT_SECRET"],
     ["a confidential client without secretEnv", [{...admin, secretEnv: undefined}], "secretEnv"],
@@ -160,5 +165,90 @@ describe("first-party client registry", () => {
     expect(configuredClients()[0]!.redirectUris).toContain("http://[::1]:53682/callback")
     configure([{...admin, redirectUris: ["http://[::1]:4001/api/admin/auth/callback"]}], {CLOUD_CORE_ENVIRONMENT: undefined})
     expect(configuredClients()).toHaveLength(1)
+  })
+})
+
+describe("miniapp websites and the sign-in site's own client", () => {
+  const mocks: Array<{mockRestore(): void}> = []
+  afterEach(() => {
+    for (const mock of mocks.splice(0)) mock.mockRestore()
+  })
+
+  const website: NonNullable<Awaited<ReturnType<typeof websiteClients.activeWebsiteClient>>> = {
+    clientId: "mwc_01hzy3v8n0f2e9gq4t6kxh5rd0",
+    name: "Paperwork",
+    type: "server",
+    environment: "production",
+    redirectUris: ["https://paperwork.example.com/auth/callback"],
+    packageName: "com.mentra.paperwork",
+    ownerUserId: null,
+    access: "private",
+    accessWorkspaceIds: ["ws_1"],
+    status: "active",
+    secretLast4: "aaaa",
+    createdAt: "2026-11-11T00:00:00.000Z",
+    updatedAt: "2026-11-11T00:00:00.000Z",
+    secretHash: "a".repeat(64),
+  }
+
+  test("a registered website is a third-party client bound to its package, known by its secret's hash", async () => {
+    configure([admin])
+    const lookup = spyOn(websiteClients, "activeWebsiteClient").mockImplementation(async id => (id === website.clientId ? website : null))
+    mocks.push(lookup)
+    const client = await findClient(website.clientId)
+    expect(client).toMatchObject({
+      kind: "website",
+      name: "Paperwork",
+      firstParty: false,
+      confidential: true,
+      website: {packageName: "com.mentra.paperwork", access: "private", accessWorkspaceIds: ["ws_1"]},
+      grantTypes: ["authorization_code", "refresh_token"],
+      postLogoutRedirectUris: [],
+    })
+    expect(providerClientMetadata(client!)).toMatchObject({
+      client_secret: "a".repeat(64),
+      token_endpoint_auth_method: "client_secret_post",
+      application_type: "web",
+      redirect_uris: website.redirectUris,
+    })
+    // A configured client is never looked up among the websites.
+    await findClient("mentra-admin-dev")
+    expect(lookup.mock.calls.map(call => call[0])).toEqual([website.clientId])
+  })
+
+  test("a browser-type website is a public client, and a development one stays a web application so its port is matched", async () => {
+    configure([])
+    mocks.push(
+      spyOn(websiteClients, "activeWebsiteClient").mockResolvedValue({...website, type: "browser", secretHash: null, redirectUris: ["http://127.0.0.1:5173/callback"]}),
+    )
+    const client = await findClient(website.clientId)
+    expect(client).toMatchObject({confidential: false, firstParty: false})
+    const metadata = providerClientMetadata(client!)
+    expect(metadata).toMatchObject({token_endpoint_auth_method: "none", application_type: "web"})
+    expect(metadata.client_secret).toBeUndefined()
+  })
+
+  test("a disabled or unknown website is no client", async () => {
+    configure([])
+    mocks.push(spyOn(websiteClients, "activeWebsiteClient").mockResolvedValue(null))
+    expect(await findClient(website.clientId)).toBeNull()
+  })
+
+  test("the sign-in site's own client needs no configuration and redirects only to Connected apps", async () => {
+    configure([], {CLOUD_CORE_OIDC_ISSUER: "https://account.dev.mentraglass.com/"})
+    const client = await findClient(ACCOUNT_CLIENT_ID)
+    expect(client).toMatchObject({
+      kind: "account",
+      firstParty: true,
+      confidential: false,
+      website: null,
+      redirectUris: ["https://account.dev.mentraglass.com/connections"],
+      grantTypes: ["authorization_code"],
+    })
+    expect(providerClientMetadata(client!)).toMatchObject({token_endpoint_auth_method: "none", application_type: "web", grant_types: ["authorization_code"]})
+    // It is not among the configured clients, and is no client at all when the sign-in server is off.
+    expect(configuredClients()).toEqual([])
+    configure([], {CLOUD_CORE_OIDC_ISSUER: undefined})
+    expect(await findClient(ACCOUNT_CLIENT_ID)).toBeNull()
   })
 })

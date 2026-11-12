@@ -108,6 +108,7 @@ export type {
   SpeakerStreamWriteResult,
 } from "./modules/speaker"
 export {SpeakerStreamWriter, SPEAKER_STREAM_MAX_BUFFERED_MS, SPEAKER_WRITE_CHUNK_BYTES} from "./modules/speaker"
+export type {SpeechProcessing} from "./modules/speechProcessing"
 export type {
   CameraFovPreset,
   CameraFovRequest,
@@ -129,7 +130,9 @@ export type {
   StreamAudioConfig,
   StreamResolvedConfig,
   StreamResult,
+  StreamLiveStats,
   StreamStatus,
+  StreamStatusSource,
   StreamVideoConfig,
   StreamPreviewOptions,
   PreviewHandle,
@@ -156,8 +159,7 @@ export type {
   InstallMiniappCompatibilityRequest,
   InstallMiniappRequest,
   InstallMiniappResult,
-  InstallMiniappPhase,
-  InstallMiniappProgress,
+  InstallMiniappFailureReason,
   MiniappHardwareRequirement,
 } from "./modules/miniapps"
 export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/actions"
@@ -167,6 +169,7 @@ export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/action
 export type {DisplayManager} from "./modules/display"
 export type {MiniappsModule} from "./modules/miniapps"
 export type {ActionsModule} from "./modules/actions"
+export type {TelemetryModule, TelemetryProperties, TelemetryValue} from "./modules/telemetry"
 export type {GlassesModule} from "./modules/glasses"
 export type {HeadingModule} from "./modules/heading"
 export type {ImuModule} from "./modules/imu"
@@ -201,7 +204,12 @@ export type {
 } from "./modules/navigation"
 export type {PermissionsModule, PermissionErrorEvent} from "./modules/permissions"
 export type {PhoneModule, PhoneNotificationsModule, PhoneCalendarModule} from "./modules/phone"
-export type {TranscriptionModule, TranscriptionConfig, TranscriptionOptions} from "./modules/transcription"
+export type {
+  TranscriptionModule,
+  TranscriptionConfig,
+  TranscriptionModelStatus,
+  TranscriptionOptions,
+} from "./modules/transcription"
 export type {TranslationModule} from "./modules/translation"
 export type {SpeakerModule} from "./modules/speaker"
 export type {
@@ -248,3 +256,5 @@ export {
 
 // Permission types
 export type {PermissionType, PermissionRecord} from "./session"
+
+export type {WakeWordEvent} from "./modules/mic"

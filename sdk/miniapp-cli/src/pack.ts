@@ -10,7 +10,8 @@ import {
   writeFileSync,
 } from 'fs';
 import { createHash } from 'node:crypto';
-import { isAbsolute, resolve, join, relative, sep } from 'path';
+import { basename, dirname, isAbsolute, resolve, join, relative, sep } from 'path';
+import JSZip from 'jszip';
 import { buildProduction } from './build.js';
 import { signBundleArchive, verifySignedBundleArchive } from './bundle-signing.js';
 import { warnIfPlaceholderIcon } from './icon.js';
@@ -22,7 +23,7 @@ export interface PackOptions {
   cwd?: string;
   /** Run the production build before zipping. Defaults to false. */
   build?: boolean;
-  /** Where to write the resulting zip. Defaults to build/. */
+  /** The folder to write, ready to upload to the miniapp's URL. Defaults to build/. */
   outDir?: string;
   /** Quiet stdout. The `release` command swallows pack output and prints
    * its own progress; standalone `pack` calls leave it on. */
@@ -51,6 +52,14 @@ export interface PackOptions {
 /**
  * Validate manifest, copy manifest+icon into dist/, zip dist/ into
  * `build/<packageName>-<version>.zip`. Returns the absolute path of the zip.
+ *
+ * `build/` is then ready to upload as is to the miniapp's URL. It holds what a
+ * miniapp URL serves, the same files Mentra's first-party publisher puts on its
+ * host:
+ *
+ *   <packageName>-<version>.zip   the ZIP; older versions' ZIPs stay beside it
+ *   <icon>                        the icon miniapp.json names, from the ZIP
+ *   miniapp.json                  the ZIP's miniapp.json plus bundle: {url, sha256}
  *
  * `build/` is self-ignoring: a `.gitignore` containing `*` is written into
  * it on creation (the Cargo `target/` trick), so packed zips stay out of
@@ -97,6 +106,11 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
     for (const err of errors) {
       console.error(`  - ${err}`);
     }
+    process.exit(1);
+  }
+  // The served copy names its ZIP; the ZIP can't name itself.
+  if ('bundle' in manifest) {
+    console.error('Error: miniapp.json must not declare bundle. pack writes it into the miniapp.json it serves.');
     process.exit(1);
   }
 
@@ -174,6 +188,8 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
 
   // Build beside the destination and atomically replace it only after zip
   // succeeds. A failed pack must never destroy the last publishable artifact.
+  const staged: StagedFile[] = [];
+  let staleIcon: string | null = null;
   const zipProc = Bun.spawn([opts.zipCommand ?? 'zip', '-r', temporaryPath, '.'], {
     cwd: distDir,
     stdout: opts.silent ? 'ignore' : 'inherit',
@@ -184,31 +200,137 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
     const exitCode = await zipProc.exited;
     if (exitCode !== 0) throw new Error('zip command failed');
     const wantsSignature = opts.sign === true || Boolean(opts.signingKey) || Boolean(opts.signingKeyPath);
+    let archive: Uint8Array = readFileSync(temporaryPath);
     if (wantsSignature) {
       const signingKey =
         opts.signingKey ?? (await resolvePackageSigningKey(packageName, { inputPath: opts.signingKeyPath }));
       if (!signingKey) throw missingSigningKeyError(packageName);
-      const signedArchive = await signBundleArchive(readFileSync(temporaryPath), signingKey);
-      const verified = await verifySignedBundleArchive(signedArchive);
+      archive = await signBundleArchive(archive, signingKey);
+      const verified = await verifySignedBundleArchive(archive);
       if (verified.packageName !== packageName || verified.version !== version) {
         throw new Error('Signed bundle identity does not match miniapp.json');
       }
       publisherFingerprint = verified.publisherKeyFingerprint;
-      bundleSha256 = createHash('sha256').update(signedArchive).digest('hex');
-      writeFileSync(temporaryPath, signedArchive);
-    } else {
-      bundleSha256 = createHash('sha256').update(readFileSync(temporaryPath)).digest('hex');
+      writeFileSync(temporaryPath, archive);
     }
-    renameSync(temporaryPath, outputPath);
+    bundleSha256 = createHash('sha256').update(archive).digest('hex');
+    const icon = await iconFromArchive(archive, manifest.icon, opts.silent);
+    const served = { ...manifest, bundle: { url: outputName, sha256: bundleSha256 } };
+    // What the miniapp's URL serves, every file written before any is
+    // replaced, then swapped in in the order a host should receive them: the
+    // ZIP, the icon, and last the miniapp.json that names them.
+    if (icon) staged.push(stageFile(outDir, join(outDir, icon.path), icon.bytes));
+    staged.push(stageFile(outDir, join(outDir, 'miniapp.json'), `${JSON.stringify(served, null, 2)}\n`));
+    replaceFiles([{ temporary: temporaryPath, path: outputPath }, ...staged]);
+    if (!icon) staleIcon = staleIconPath(outDir, manifest.icon);
   } catch (error) {
     rmSync(temporaryPath, { force: true });
+    for (const file of staged) rmSync(file.temporary, { force: true });
     throw error;
+  }
+  // An earlier pack's icon at that path would be uploaded as this release's.
+  if (staleIcon) {
+    try {
+      rmSync(staleIcon);
+    } catch {
+      console.warn(`Warning: could not remove ${staleIcon}, an icon this release doesn't have`);
+    }
   }
 
   if (!opts.silent) {
     console.log(`\nPacked: ${outputPath}`);
     console.log(publisherFingerprint ? `Publisher key: ${publisherFingerprint}` : 'Publisher key: unsigned');
     console.log(`SHA-256: ${bundleSha256}`);
+    console.log(`Upload the ${relative(cwd, outDir) || '.'} folder to your miniapp's URL.`);
   }
   return outputPath;
+}
+
+/** An icon path the host serves beside miniapp.json, as Mentra's publisher accepts one. */
+const SAFE_RELATIVE_PATH = /^(?!\/)(?!.*\.\.)[A-Za-z0-9._/-]+$/;
+
+/**
+ * The icon miniapp.json names, read from the ZIP. Null when it is on another
+ * host or isn't in the ZIP; the latter is warned about, since the served
+ * miniapp.json would name a file the folder doesn't have.
+ */
+async function iconFromArchive(
+  archive: Uint8Array,
+  icon: unknown,
+  silent: boolean | undefined,
+): Promise<{ path: string; bytes: Uint8Array } | null> {
+  if (typeof icon !== 'string' || /^[a-z][a-z0-9+.-]*:/i.test(icon)) return null;
+  const entry = SAFE_RELATIVE_PATH.test(icon) ? (await JSZip.loadAsync(archive)).file(icon) : null;
+  if (!entry) {
+    if (!silent) {
+      console.warn(`Warning: miniapp.json's icon "${icon}" is not in the bundle, so there is no icon to upload.`);
+    }
+    return null;
+  }
+  return { path: icon, bytes: await entry.async('uint8array') };
+}
+
+/** A file an earlier pack left at the icon path, when this release's ZIP has no icon there. */
+function staleIconPath(outDir: string, icon: unknown): string | null {
+  if (typeof icon !== 'string' || !SAFE_RELATIVE_PATH.test(icon)) return null;
+  const path = join(outDir, icon);
+  // Never one of the folder's own files, however the path spells it, and on
+  // case-insensitive disks too.
+  const name = relative(outDir, path).toLowerCase();
+  if (name === 'miniapp.json' || name === '.gitignore' || name.endsWith('.zip')) return null;
+  return existsSync(path) && lstatSync(path).isFile() ? path : null;
+}
+
+interface StagedFile {
+  /** The new content, beside the destination in the output folder. */
+  temporary: string;
+  path: string;
+}
+
+function stageFile(outDir: string, path: string, data: string | Uint8Array): StagedFile {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = join(outDir, `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
+  writeFileSync(temporary, data);
+  return { temporary, path };
+}
+
+/**
+ * Move staged files into place, in order. If one can't be moved, the ones
+ * already replaced get their previous content back, so the folder never pairs
+ * a miniapp.json with a ZIP it doesn't describe.
+ */
+function replaceFiles(files: StagedFile[]): void {
+  for (const { path } of files) {
+    if (existsSync(path) && lstatSync(path).isDirectory()) {
+      throw new Error(`${path} is a folder, so pack can't write a file there`);
+    }
+  }
+  const replaced: { path: string; previous: string | null }[] = [];
+  try {
+    for (const { temporary, path } of files) {
+      const previous = existsSync(path) ? `${temporary}.previous` : null;
+      if (previous) renameSync(path, previous);
+      replaced.push({ path, previous });
+      renameSync(temporary, path);
+    }
+  } catch (error) {
+    for (const { path, previous } of replaced.reverse()) {
+      try {
+        if (previous) renameSync(previous, path);
+        else rmSync(path, { force: true });
+      } catch {
+        // Keep going: restore as much of the previous folder as possible.
+      }
+    }
+    throw error;
+  }
+  // The new files are in place; a leftover copy of an old one is only clutter.
+  for (const { previous } of replaced) {
+    if (!previous) continue;
+    try {
+      rmSync(previous, { force: true });
+    } catch {
+      console.warn(`Warning: could not remove ${previous}`);
+    }
+  }
 }

@@ -37,7 +37,14 @@ export async function startConsent(deps: ConsentDeps, search: string): Promise<C
   const details = await deps.api.details(interactionId);
   if (details.kind === "expired") return { kind: "expired" };
   if (details.kind === "error" || details.prompt !== "consent") return { kind: "error" };
-  return { kind: "consent", interactionId, consent: { clientName: details.clientName || "This app", scopes: details.scopes } };
+  return {
+    kind: "consent",
+    interactionId,
+    consent: {
+      clientName: details.clientName || "This app",
+      scopes: details.scopes,
+    },
+  };
 }
 
 export async function decideConsent(deps: ConsentDeps, interactionId: string, decision: ConsentDecision): Promise<ConsentState> {

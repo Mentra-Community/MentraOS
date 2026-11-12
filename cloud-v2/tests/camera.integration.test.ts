@@ -11,6 +11,12 @@
  * serves itself) so it needs no third-party credentials. The same flow runs
  * against Cloudflare R2 when STORAGE_S3_* creds are present, where completion
  * instead arrives via the storage-events webhook (exercised below too).
+ *
+ * Safety: Mongo comes from `localTestMongoUrl` (loopback only, random database
+ * name, ignores `MONGO_URL`), checked before any destructive call and dropped
+ * afterwards. Redis comes from `localTestRedisUrl` (loopback only; refuses to
+ * run when `REDIS_URL` is set), so the keys this suite deletes are on a local
+ * server even under `doppler run`. Override with `CLOUD_V2_TEST_MONGO_URL` / `CLOUD_V2_TEST_REDIS_URL`.
  */
 
 import crypto from "node:crypto";
@@ -42,8 +48,7 @@ const TEST_OEM_PORT = 13130;
       oemIdClaim: "oem_id",
     },
   ]);
-  process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-camera-test";
-  process.env.REDIS_URL ??= "redis://127.0.0.1:6379/5";
+  process.env.REDIS_URL = localTestRedisUrl(5);
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
   process.env.AUDIO_UDP_ADVERTISED_PORT = String(AUDIO_UDP_PORT);
   // Real local-fs storage provider (runtime serves its own blobs).
@@ -52,6 +57,8 @@ const TEST_OEM_PORT = 13130;
 }
 
 import { startCore, type CoreHandle } from "../packages/core/src/index";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { localTestRedisUrl } from "./support/local-redis";
 import { startAudio, type AudioHandle } from "../packages/runtime/src/index";
 import { startTestOem, type TestOemHandle } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
@@ -68,6 +75,11 @@ let testOemHandle: TestOemHandle;
 
 const BASE = () => `http://localhost:${AUDIO_HTTP_PORT}`;
 
+const databaseUrl = localTestMongoUrl("camera");
+// Set only once the live connection is confirmed to be our random database;
+// every destructive call is gated on it.
+let verified = false;
+
 beforeAll(async () => {
   const { resetMentraKeyCache } = await import("../packages/shared/src/auth");
   const { resetSigningKeyCache } = await import(
@@ -77,7 +89,9 @@ beforeAll(async () => {
   resetSigningKeyCache();
 
   testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
-  coreHandle = await startCore({ port: CORE_PORT });
+  coreHandle = await startCore({ port: CORE_PORT, mongoUrl: databaseUrl });
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
   await Promise.all([
     OemModel.syncIndexes(),
     UserModel.syncIndexes(),
@@ -94,12 +108,17 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (verified && UserModel.db.readyState === 1) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   await audioHandle?.stop();
   await coreHandle?.stop();
   await testOemHandle?.stop();
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, UserModel.db.name);
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),

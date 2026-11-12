@@ -30,6 +30,7 @@ import java.nio.ByteOrder
 import java.util.Calendar
 import java.util.TimeZone
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -43,6 +44,9 @@ internal object NimoBLE {
     val CHAR_TX: UUID = UUID.fromString("00002021-0000-1000-8000-00805F9B34FB")
     val CHAR_RX: UUID = UUID.fromString("00002022-0000-1000-8000-00805F9B34FB")
     val CHAR_MIC: UUID = UUID.fromString("00002025-0000-1000-8000-00805F9B34FB")
+    // Firmware update channel on the same service (see NimoOtaProtocol).
+    val CHAR_OTA_TX: UUID = UUID.fromString("00002001-0000-1000-8000-00805F9B34FB")
+    val CHAR_OTA_RX: UUID = UUID.fromString("00002002-0000-1000-8000-00805F9B34FB")
     val CLIENT_CHARACTERISTIC_CONFIG: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
     const val NAME_PREFIX = "nimo"
@@ -641,6 +645,8 @@ private class NimoAudioClient(
     private var decoder: NimoOpusDecoder? = null
     @Volatile private var started = false
     private val pendingCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private val retiringWorkers = AtomicInteger(0)
+    fun lifecyclePending(): Int = pendingCount.get() + retiringWorkers.get() + (if (started) 1 else 0)
     private var droppedCount = 0
     private var lastRightPacketMs = 0L
     private var preferRight = true
@@ -676,7 +682,7 @@ private class NimoAudioClient(
         sendCommand(byteArrayOf(0x52, 0x01, 0x00, 0x00))
     }
 
-    fun stop() {
+    @Synchronized fun stop() {
         if (!started) return
         // Halt processing and drop in-flight frames BEFORE releasing the decoder —
         // the glasses keep sending a few frames after the stop command, and decoding
@@ -692,9 +698,9 @@ private class NimoAudioClient(
         thread = null
         decoder = null
         if (h != null) {
+            retiringWorkers.incrementAndGet()
             h.post {
-                d?.release()
-                t?.quitSafely()
+                try { d?.release(); t?.quitSafely() } finally { retiringWorkers.decrementAndGet() }
             }
         } else {
             d?.release()
@@ -717,7 +723,7 @@ private class NimoAudioClient(
         }
         pendingCount.incrementAndGet()
         h.post {
-            pendingCount.decrementAndGet()
+            pendingCount.updateAndGet { if (it > 0) it - 1 else 0 }
             process(bytes)
         }
     }
@@ -768,8 +774,8 @@ private class NimoAudioClient(
             }
             return
         }
-        // Any parsed opus packet counts as glasses-audio activity for the watchdog.
-        onActivity()
+        // The owning session may stop while a decoder callback is already running.
+        synchronized(this) { if (!started) return; onActivity() }
 
         val now = System.currentTimeMillis()
         when (packet.type) {
@@ -807,7 +813,7 @@ private class NimoAudioClient(
             }
             statsFrames++
             statsPcmBytes += pcm16.size
-            onPcm(pcm16)
+            synchronized(this) { if (!started) return; onPcm(pcm16) }
         }
     }
 
@@ -847,12 +853,15 @@ private class NimoReconnectionManager(
     private var runnable: Runnable? = null
     private var attempts = 0
 
+    fun pending(): Boolean = runnable != null
+
     fun start(onAttempt: () -> Boolean) {
         stop()
         attempts = 0
         val r =
                 object : Runnable {
                     override fun run() {
+                        if (runnable !== this) return
                         if (maxAttempts > 0 && attempts >= maxAttempts) {
                             Bridge.log("NIMO: Max reconnection attempts ($maxAttempts) reached")
                             stop()
@@ -865,7 +874,7 @@ private class NimoReconnectionManager(
                             stop()
                             return
                         }
-                        handler.postDelayed(this, intervalMs)
+                        if (runnable === this) handler.postDelayed(this, intervalMs)
                     }
                 }
         runnable = r
@@ -921,6 +930,16 @@ class Nimo : SGCManager() {
         private const val BATTERY_POLL_MS = 30_000L
         private const val SET_TIME_MAX_ATTEMPTS = 3
         private const val SET_TIME_RETRY_DELAY_MS = 500L
+        // Version replies normally arrive within a few hundred ms of the handshake.
+        private const val VERSION_WAIT_MS = 3_000L
+        // Let the wearer read the update notice before the display goes away.
+        private const val UPDATE_NOTICE_MS = 2_000L
+        private const val OTA_PREPARE_TIMEOUT_MS = 15_000L
+        // The glasses reboot after the update; force a reconnect if they never drop the link.
+        private const val POST_UPDATE_RECONNECT_MS = 120_000L
+        // Per app process, so a failing update cannot loop forever.
+        private const val MAX_UPDATE_ATTEMPTS = 3
+        private var updateAttempts = 0
     }
 
     init {
@@ -928,10 +947,14 @@ class Nimo : SGCManager() {
         hasMic = true
     }
 
+    private fun closeGatt() {
+        val original = gatt ?: return
+        try { original.disconnect() } catch (error: Exception) { Bridge.log("NIMO: disconnect failed: ${error.javaClass.simpleName}") }
+        try { original.close() } catch (error: Exception) { Bridge.log("NIMO: close failed: ${error.javaClass.simpleName}") }
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val mainScheduler = handlerScheduler(mainHandler)
-    // Variant-specific: release has no receiver or framebuffer protocol implementation.
-    private var diagnostics: NimoDiagnostics? = null
     private val canvasEncoderThread = HandlerThread("NimoCanvasEncoder").apply { start() }
     private val canvasEncoder = NimoCanvasEncoder(mainScheduler,
         handlerScheduler(Handler(canvasEncoderThread.looper)),
@@ -939,8 +962,7 @@ class Nimo : SGCManager() {
         { Bridge.log("NIMO: canvas validation/encoding failed; retaining last valid scene: ${it.message}") })
     private val canvas = NimoCanvasCoordinator(mainScheduler,
         { (negotiatedMtu - 3).coerceIn(20, 512) }, ::enqueueFrames, ::abortTransport,
-        { Bridge.log("NIMO: canvas rejected status=$it; not a render ACK") },
-        { diagnostics?.cancelHeldCapture("Canvas scope takeover preempted held capture", resumeCanvas = false) })
+        { Bridge.log("NIMO: canvas rejected status=$it; not a render ACK") })
 
     private fun handlerScheduler(handler: Handler) = NimoScheduler { delay, task ->
         val runnable = Runnable(task)
@@ -956,6 +978,8 @@ class Nimo : SGCManager() {
     private var txChar: BluetoothGattCharacteristic? = null
     private var rxChar: BluetoothGattCharacteristic? = null
     private var micChar: BluetoothGattCharacteristic? = null
+    private var otaTxChar: BluetoothGattCharacteristic? = null
+    private var otaRxChar: BluetoothGattCharacteristic? = null
     private var isDisconnecting = false
     private var negotiatedMtu = 23
     // Device search
@@ -1006,7 +1030,11 @@ class Nimo : SGCManager() {
     // One queue owns characteristic writes and CCCD callbacks, including non-canvas commands.
     private val writes = NimoGattQueue<BluetoothGattCharacteristic>(mainScheduler,
         { characteristic, bytes ->
-            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            characteristic.writeType =
+                if (characteristic === otaTxChar &&
+                    characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
+                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             characteristic.value = bytes
             gatt?.writeCharacteristic(characteristic) ?: false
         }, ::abortTransport, NimoBLE.INTER_FRAME_DELAY_MS)
@@ -1021,6 +1049,16 @@ class Nimo : SGCManager() {
     // Version info
     private var firmwareVersionPacked: String = ""
     private var firmwareVersionDetail: String = ""
+    private var versionPackedReceived = false
+    private var versionDetailReceived = false
+
+    // Firmware gate: the canvas only runs on the supported firmware; anything else is updated first.
+    private enum class FirmwareState { UNKNOWN, CURRENT, UPDATING }
+    private var firmwareState = FirmwareState.UNKNOWN
+    private var firmwareUpdater: NimoFirmwareUpdater? = null
+    private var cancelFirmwareTimer: (() -> Unit)? = null
+    private var otaMtuPending: (() -> Unit)? = null
+    private val updating get() = firmwareState == FirmwareState.UPDATING
 
     // Mic audio (vendor GlassesAudioClient structure)
     private val audioClient =
@@ -1099,12 +1137,13 @@ class Nimo : SGCManager() {
         reconnectionManager.stop()
         failAllPendingAcks()
 
-        gatt?.disconnect()
-        gatt?.close()
+        closeGatt()
         gatt = null
         txChar = null
         rxChar = null
         micChar = null
+        otaTxChar = null
+        otaRxChar = null
         resetSessionState()
 
         DeviceStore.apply("glasses", "connected", false)
@@ -1156,8 +1195,6 @@ class Nimo : SGCManager() {
         }
         canvasEncoder.close()
         disconnect()
-        diagnostics?.close()
-        diagnostics = null
         audioClient.stop()
     }
 
@@ -1178,6 +1215,10 @@ class Nimo : SGCManager() {
         Bridge.log("NIMO: setMicEnabled($enabled)")
         if (micChar == null) {
             Bridge.log("NIMO: mic characteristic not available")
+            return
+        }
+        if (enabled && updating) {
+            Bridge.log("NIMO: mic stays off during the firmware update")
             return
         }
         DeviceStore.apply("glasses", "micEnabled", enabled)
@@ -1390,7 +1431,6 @@ class Nimo : SGCManager() {
     override fun exit() {
         canvasEncoder.invalidate()
         mainHandler.post {
-            diagnostics?.cancelHeldCapture("Explicit host exit preempted held capture", resumeCanvas = false)
             canvas.exit()
         }
     }
@@ -1617,12 +1657,7 @@ class Nimo : SGCManager() {
             bluetoothAdapter?.cancelDiscovery()
         } catch (_: Exception) {}
 
-        val bondState =
-                try {
-                    device.bondState
-                } catch (e: SecurityException) {
-                    android.bluetooth.BluetoothDevice.BOND_NONE
-                }
+        val bondState = try { device.bondState } catch (_: SecurityException) { android.bluetooth.BluetoothDevice.BOND_NONE }
         if (bondState != android.bluetooth.BluetoothDevice.BOND_BONDED) {
             // Bond over classic first, then open the Companion bearer on completion.
             startBond(device)
@@ -1637,12 +1672,7 @@ class Nimo : SGCManager() {
      * called both on the initial attempt and from the BOND_NONE handler.
      */
     private fun startBond(device: android.bluetooth.BluetoothDevice) {
-        val bondState =
-                try {
-                    device.bondState
-                } catch (e: SecurityException) {
-                    android.bluetooth.BluetoothDevice.BOND_NONE
-                }
+        val bondState = try { device.bondState } catch (_: SecurityException) { android.bluetooth.BluetoothDevice.BOND_NONE }
         // A previous (apparently failed) attempt may have bonded in the background.
         if (bondState == android.bluetooth.BluetoothDevice.BOND_BONDED) {
             Bridge.log("NIMO: already bonded with ${device.address} — connecting")
@@ -1691,13 +1721,12 @@ class Nimo : SGCManager() {
         // for system-paired dual-mode accessories).
         Bridge.log("NIMO: connecting GATT over BR/EDR to ${device.address}")
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
-        gatt =
-                device.connectGatt(
-                        context,
-                        false,
-                        gattCallback,
-                        android.bluetooth.BluetoothDevice.TRANSPORT_BREDR
-                )
+        gatt = try {
+            device.connectGatt(context, false, gattCallback, android.bluetooth.BluetoothDevice.TRANSPORT_BREDR)
+        } catch (error: SecurityException) {
+            Bridge.log("NIMO: connectGatt SecurityException: ${error.message}")
+            null
+        }
         gatt?.let { writes.connected(it) }
     }
 
@@ -1826,9 +1855,12 @@ class Nimo : SGCManager() {
             object : BluetoothGattCallback() {
                 override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                     mainHandler.post {
-                        if (g !== gatt) return@post
+                        if (g !== gatt) {
+                            return@post
+                        }
                         Bridge.log("NIMO: onConnectionStateChange status=$status newState=$newState")
                         if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
+                            if (isDisconnecting) return@post
                             Bridge.log("NIMO: Connected to ${g.device?.name ?: "unknown"}")
                             lastDeviceAddress = g.device?.address
                             // Do NOT request a large MTU here: the vendor transport warns that
@@ -1849,6 +1881,8 @@ class Nimo : SGCManager() {
                             txChar = null
                             rxChar = null
                             micChar = null
+                            otaTxChar = null
+                            otaRxChar = null
                             resetSessionState()
 
                             DeviceStore.apply("glasses", "connected", false)
@@ -1864,8 +1898,9 @@ class Nimo : SGCManager() {
                 override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
                     Bridge.log("NIMO: onMtuChanged mtu=$mtu status=$status")
                     mainHandler.post {
-                        if (g !== gatt || status != BluetoothGatt.GATT_SUCCESS) return@post
-                        negotiatedMtu = mtu.coerceIn(23, 517)
+                        if (g !== gatt) return@post
+                        if (status == BluetoothGatt.GATT_SUCCESS) negotiatedMtu = mtu.coerceIn(23, 517)
+                        otaMtuPending?.let { otaMtuPending = null; it() }
                     }
                 }
 
@@ -1877,6 +1912,7 @@ class Nimo : SGCManager() {
                     }
                     mainHandler.post {
                         if (g !== gatt) return@post
+                        if (isDisconnecting) return@post
                         val service = g.getService(NimoBLE.SERVICE_UUID)
                         if (service == null) {
                             // Dump everything so a UUID mismatch is diagnosable from logs.
@@ -1894,8 +1930,11 @@ class Nimo : SGCManager() {
                         txChar = service.getCharacteristic(NimoBLE.CHAR_TX)
                         rxChar = service.getCharacteristic(NimoBLE.CHAR_RX)
                         micChar = service.getCharacteristic(NimoBLE.CHAR_MIC)
+                        otaTxChar = service.getCharacteristic(NimoBLE.CHAR_OTA_TX)
+                        otaRxChar = service.getCharacteristic(NimoBLE.CHAR_OTA_RX)
                         Bridge.log(
-                                "NIMO: chars tx=${txChar != null} rx=${rxChar != null} mic=${micChar != null}"
+                                "NIMO: chars tx=${txChar != null} rx=${rxChar != null} mic=${micChar != null} " +
+                                        "ota=${otaTxChar != null && otaRxChar != null}"
                         )
                         if (txChar == null || rxChar == null) {
                             Bridge.log("NIMO: required characteristics missing")
@@ -1922,7 +1961,10 @@ class Nimo : SGCManager() {
                             NimoBLE.CHAR_RX -> if (characteristic.service?.uuid == NimoBLE.SERVICE_UUID) {
                                 handleRxPacket(data)
                             }
-                            NimoBLE.CHAR_MIC -> audioClient.enqueue(data)
+                            NimoBLE.CHAR_MIC -> {
+                                if (!updating) audioClient.enqueue(data)
+                            }
+                            NimoBLE.CHAR_OTA_RX -> firmwareUpdater?.receive(data)
                         }
                     }
                 }
@@ -1970,6 +2012,8 @@ class Nimo : SGCManager() {
     // ---------- Write Queue ----------
 
     private fun enqueueWrite(char: BluetoothGattCharacteristic, bytes: ByteArray) {
+        // The firmware update owns the link; ordinary commands wait for the next connection.
+        if (updating) return
         val expectedGatt = gatt ?: return
         mainHandler.post {
             if (gatt !== expectedGatt) return@post
@@ -1984,6 +2028,7 @@ class Nimo : SGCManager() {
 
     private fun enqueueFrames(frames: List<ByteArray>, finalStarted: () -> Unit,
                               completed: () -> Unit): Boolean {
+        if (updating) return false
         val tx = txChar ?: return false
         val connection = gatt ?: return false
         // Coordinator and GATT callbacks are Main-confined: enqueue the complete chain atomically.
@@ -1992,11 +2037,10 @@ class Nimo : SGCManager() {
 
     private fun abortTransport(reason: String) {
         Bridge.log("NIMO: resetting transport: $reason")
-        val old = gatt
+        closeGatt()
         gatt = null
-        txChar = null; rxChar = null; micChar = null
+        txChar = null; rxChar = null; micChar = null; otaTxChar = null; otaRxChar = null
         resetSessionState()
-        try { old?.disconnect(); old?.close() } catch (_: Exception) {}
         DeviceStore.apply("glasses", "connected", false)
         DeviceStore.apply("glasses", "fullyBooted", false)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
@@ -2050,6 +2094,7 @@ class Nimo : SGCManager() {
     // ---------- Handshake ----------
 
     private fun startHandshake() {
+        if (isDisconnecting) return
         Bridge.log("NIMO: starting handshake (awaiting TWS service-connection state)")
         handshakeState = HandshakeState.AWAITING_TWS
         if (twsConnected) {
@@ -2075,6 +2120,11 @@ class Nimo : SGCManager() {
     }
 
     private var setTimeAttempts = 0
+    private var setTimeRetryRunnable: Runnable? = null
+    private fun cancelSetTimeRetry() {
+        setTimeRetryRunnable?.let(mainHandler::removeCallbacks)
+        setTimeRetryRunnable = null
+    }
 
     private fun proceedToTimeSync() {
         if (handshakeState != HandshakeState.AWAITING_TWS) return
@@ -2104,7 +2154,12 @@ class Nimo : SGCManager() {
                 // The firmware can answer "busy" right after the link comes up —
                 // give it a moment and retry instead of dropping the connection.
                 Bridge.log("NIMO: setTime attempt $setTimeAttempts failed — retrying")
-                mainHandler.postDelayed({ if (gatt === expectedGatt) attemptSetTime() }, SET_TIME_RETRY_DELAY_MS)
+                val retry = Runnable {
+                    setTimeRetryRunnable = null
+                    if (gatt === expectedGatt) attemptSetTime()
+                }
+                setTimeRetryRunnable = retry
+                mainHandler.postDelayed(retry, SET_TIME_RETRY_DELAY_MS)
             } else {
                 Bridge.log("NIMO: setTime failed after $setTimeAttempts attempts — handshake failed")
                 handshakeFailed()
@@ -2135,20 +2190,145 @@ class Nimo : SGCManager() {
         DeviceStore.apply("glasses", "fullyBooted", true)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         startTimers()
-        if (diagnostics == null) {
-            diagnostics = NimoDiagnostics(
-                context,
-                mainHandler,
-                { frame, completed -> enqueueFrames(listOf(frame), {}, completed) },
-                { ready -> canvas.hold(ready) },
-                { resume -> canvas.releaseHold(resume) },
-            )
+        // The canvas starts once the reported firmware is the supported one.
+        cancelFirmwareTimer = mainScheduler.post(VERSION_WAIT_MS) {
+            cancelFirmwareTimer = null
+            checkFirmware(waited = true)
         }
-        diagnostics?.connected((negotiatedMtu - 3).coerceIn(20, 512))
+    }
+
+    // ---------- Firmware check and update ----------
+
+    private fun canvasReadiness(ready: Boolean) {
+        if (firmwareState == FirmwareState.CURRENT) canvas.readiness(ready)
+    }
+
+    /**
+     * Runs once per connection after the version replies (or [VERSION_WAIT_MS]). The supported
+     * firmware starts the canvas; anything else gets the bundled image, after a plain-text notice
+     * that the stock firmware can show.
+     */
+    private fun checkFirmware(waited: Boolean = false) {
+        if (handshakeState != HandshakeState.READY || firmwareState != FirmwareState.UNKNOWN) return
+        if (!waited && !(versionPackedReceived && versionDetailReceived)) return
+        cancelFirmwareTimer?.invoke(); cancelFirmwareTimer = null
+        if (!versionPackedReceived ||
+                NimoFirmwareTarget.isCurrent(firmwareVersionPacked, firmwareVersionDetail)) {
+            if (!versionPackedReceived) Bridge.log("NIMO: no firmware version reply; starting normally")
+            startCanvas()
+            return
+        }
+        Bridge.log("NIMO: firmware $firmwareVersionPacked '$firmwareVersionDetail' is not " +
+                "${NimoFirmwareTarget.PACKED_VERSION}-${NimoFirmwareTarget.BUILD_TAG}")
+        val firmware = if (updateAttempts < MAX_UPDATE_ATTEMPTS) loadFirmware() else null
+        val connection = gatt
+        if (firmware == null || connection == null || otaTxChar == null || otaRxChar == null) {
+            Bridge.log("NIMO: firmware update unavailable (attempts=$updateAttempts); starting normally")
+            startCanvas()
+            return
+        }
+        updateAttempts++
+        Bridge.log("NIMO: starting firmware update attempt $updateAttempts")
+        showUpdateNotice(connection)
+        audioClient.stop() // Its stop command must be queued before ordinary writes close.
+        firmwareState = FirmwareState.UPDATING
+        stopTimers()
+        DeviceStore.apply("glasses", "micEnabled", false)
+        // Prepare the channel after the notice frames drain and the wearer has had time to read it.
+        cancelFirmwareTimer = mainScheduler.post(UPDATE_NOTICE_MS) {
+            cancelFirmwareTimer = mainScheduler.post(OTA_PREPARE_TIMEOUT_MS) {
+                cancelFirmwareTimer = null
+                abortTransport("NIMO firmware update channel did not become ready")
+            }
+            prepareUpdateChannel(connection, firmware)
+        }
+    }
+
+    private fun startCanvas() {
+        firmwareState = FirmwareState.CURRENT
         // Launch checks peer readiness in firmware; do not wait up to a minute for
         // the first unsolicited heartbeat just because peer status is still unknown.
         canvas.activate()
         canvas.readiness(twsConnected && peerCompanionReady != false)
+    }
+
+    /** The pre-canvas text page (ASR note app); it renders on the stock firmware too. */
+    private fun showUpdateNotice(connection: BluetoothGatt) {
+        val tx = txChar ?: return
+        val enter = NimoFrameCodec.encodeFrame(
+                NimoProtocol.CMD_CONTROL_INSTRUCTION,
+                NimoProtocol.CTRL_ENTER_APP,
+                byteArrayOf(NimoProtocol.APP_ID_ASR_NOTE.toByte(), NimoProtocol.APP_MODE_STANDALONE.toByte()))
+        val text = NimoFrameCodec.updateContentFrames(
+                appId = NimoProtocol.APP_ID_ASR_NOTE,
+                layoutId = 0,
+                resId = 0,
+                resType = NimoProtocol.WIDGET_TEXT_NEW,
+                content = NimoFirmwareTarget.UPDATING_TEXT.toByteArray(Charsets.UTF_8))
+        writes.enqueue(connection, tx, listOf(enter) + text)
+    }
+
+    private fun loadFirmware(): ByteArray? = try {
+        val bytes = context.assets.open(NimoFirmwareTarget.ASSET_PATH).use { it.readBytes() }
+        if (NimoFirmwareTarget.sha256(bytes) == NimoFirmwareTarget.SHA256) bytes
+        else { Bridge.log("NIMO: bundled firmware hash mismatch"); null }
+    } catch (error: Exception) {
+        Bridge.log("NIMO: bundled firmware unavailable: ${error.message}")
+        null
+    }
+
+    /** Waits for queued writes to finish, raises the MTU and subscribes to the OTA replies. */
+    private fun prepareUpdateChannel(connection: BluetoothGatt, firmware: ByteArray) {
+        if (gatt !== connection || !updating) return
+        if (writes.pendingCount() > 0) {
+            mainScheduler.post(20) { prepareUpdateChannel(connection, firmware) }
+            return
+        }
+        val subscribe = {
+            val rx = otaRxChar
+            if (gatt === connection && updating && rx != null) {
+                enableNotifications(connection, rx) { startUpdater(connection, firmware) }
+            }
+        }
+        if (negotiatedMtu - 3 > 20) { subscribe(); return }
+        // The vendor warns against MTU requests during connect; now normal traffic is stopped.
+        otaMtuPending = subscribe
+        val started = try { connection.requestMtu(517) } catch (_: SecurityException) { false }
+        if (!started) {
+            otaMtuPending = null
+            abortTransport("NIMO firmware update MTU request did not start")
+        }
+    }
+
+    private fun startUpdater(connection: BluetoothGatt, firmware: ByteArray) {
+        if (gatt !== connection || !updating) return
+        cancelFirmwareTimer?.invoke(); cancelFirmwareTimer = null
+        val capacity = (negotiatedMtu - 3).coerceIn(20, 512)
+        if (capacity <= 20) { abortTransport("NIMO firmware update needs a larger MTU"); return }
+        Bridge.log("NIMO: firmware transfer starting (${firmware.size} bytes, write capacity $capacity)")
+        val updater = NimoFirmwareUpdater(
+                firmware, capacity, mainScheduler,
+                write = { bytes, done ->
+                    val tx = otaTxChar
+                    if (gatt !== connection || tx == null ||
+                            !writes.enqueue(connection, tx, listOf(bytes), completed = { done(true) })) done(false)
+                },
+                progress = { Bridge.log("NIMO: firmware update $it%") },
+                finished = finished@{ error ->
+                    if (gatt !== connection) return@finished
+                    firmwareUpdater = null
+                    if (error != null) {
+                        abortTransport("NIMO firmware update failed: $error")
+                    } else {
+                        Bridge.log("NIMO: firmware update sent; glasses are rebooting")
+                        cancelFirmwareTimer = mainScheduler.post(POST_UPDATE_RECONNECT_MS) {
+                            cancelFirmwareTimer = null
+                            if (gatt === connection) abortTransport("NIMO did not reboot after the firmware update")
+                        }
+                    }
+                })
+        firmwareUpdater = updater
+        updater.start()
     }
 
     private fun handshakeFailed() {
@@ -2158,13 +2338,19 @@ class Nimo : SGCManager() {
     }
 
     private fun resetSessionState() {
-        diagnostics?.disconnected()
         handshakeState = HandshakeState.IDLE
         cancelTwsTimeout()
+        cancelSetTimeRetry()
         twsConnected = false
         peerCompanionReady = null
         canvasEncoder.invalidate()
         canvas.disconnected()
+        cancelFirmwareTimer?.invoke(); cancelFirmwareTimer = null
+        firmwareUpdater?.cancel(); firmwareUpdater = null
+        otaMtuPending = null
+        firmwareState = FirmwareState.UNKNOWN
+        versionPackedReceived = false
+        versionDetailReceived = false
         audioClient.stop()
         // Nimo's decoder/stream belongs to this GATT session. Consumer demand
         // remains in bluetooth.should_send_*; readiness must start a fresh stream
@@ -2221,7 +2407,6 @@ class Nimo : SGCManager() {
 
     private fun handleRxPacket(packet: ByteArray) {
         // Diagnostic packets must retain their original wire CRC and framing.
-        if (diagnostics?.onPacket(packet) == true) return
         if (packet.size >= 10 && packet[8].toInt() == 7 && (packet[9].toInt() and 255) in listOf(1, 3, 4)) {
             val response = NimoCanvasCodec.response(packet) ?: return
             if (response.first == 1) Bridge.log("NIMO: canvas Launch response status=${response.second.firstOrNull()?.toInt()}")
@@ -2253,15 +2438,9 @@ class Nimo : SGCManager() {
                     Bridge.log("NIMO: app state report appId=$appId phase=$phase")
                     when (phase) {
                         NimoProtocol.STATE_ENTER -> {
-                            if (appId != NimoCanvasCodec.APP_ID) {
-                                diagnostics?.cancelHeldCapture("Native app takeover preempted held capture", resumeCanvas = false)
-                            }
                             canvas.nativeApp(appId, true)
                         }
                         NimoProtocol.STATE_EXIT -> {
-                            if (appId == NimoCanvasCodec.APP_ID) {
-                                diagnostics?.cancelHeldCapture("Canvas exit preempted held capture", resumeCanvas = false)
-                            }
                             canvas.nativeApp(appId, false)
                         }
                     }
@@ -2293,7 +2472,7 @@ class Nimo : SGCManager() {
                     onTwsState((v[8].toInt() and 0xFF) >= 1)
                     // Both predicates were sampled by this device report. TWS-only
                     // reports and cached state cannot release a status-7 wait.
-                    if (handshakeState == HandshakeState.READY) {
+                    if (handshakeState == HandshakeState.READY && firmwareState == FirmwareState.CURRENT) {
                         canvas.confirmedReadiness(twsConnected && peerCompanionReady != false)
                     }
                 }
@@ -2320,7 +2499,7 @@ class Nimo : SGCManager() {
         if (!connected && handshakeState == HandshakeState.READY) {
             Bridge.log("NIMO: TWS service dropped mid-session (arm removed/off?)")
         }
-        if (handshakeState == HandshakeState.READY) canvas.readiness(connected && peerCompanionReady != false)
+        if (handshakeState == HandshakeState.READY) canvasReadiness(connected && peerCompanionReady != false)
     }
 
     private fun handleInputEvent(code: Int) {
@@ -2385,14 +2564,18 @@ class Nimo : SGCManager() {
                     val micro = (v ushr 12) and 0x1FF
                     val build = v and 0xFFF
                     firmwareVersionPacked = "$major.$minor.$micro.$build"
+                    versionPackedReceived = true
                     emitVersionInfo()
+                    checkFirmware()
                 }
             }
             NimoProtocol.GET_VERSION_DETAIL -> {
                 var end = data.size
                 while (end > 0 && data[end - 1].toInt() == 0) end--
                 firmwareVersionDetail = String(data, 0, end, Charsets.UTF_8).trim()
+                versionDetailReceived = true
                 emitVersionInfo()
+                checkFirmware()
             }
             NimoProtocol.GET_TWS_STATUS -> {
                 if (data.isNotEmpty()) onTwsState((data[0].toInt() and 0xFF) >= 1)

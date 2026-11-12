@@ -3,7 +3,8 @@ import {useEffect, useRef, useState} from "react"
 import {useNavigationStore} from "@/stores/navigation"
 import {Capabilities, getModelCapabilities, SETTINGS, useSetting} from "@mentra/engine"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
-import showAlert from "@/utils/AlertUtils"
+import showAlert, {type AlertButton, dismissAlert} from "@/utils/AlertUtils"
+import {hasAlertHost} from "@/contexts/ModalContext"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
 import {BgTimer, engine, type VersionInfo} from "@mentra/engine"
@@ -32,6 +33,30 @@ export function getPendingUpdatePromptAction(
   if (!wifiStatusKnown) return null
   if (!returnedHome && !wifiConnected && !hotspotOtaSupported) return null
   return wifiConnected || hotspotOtaSupported ? "install" : "wifi_setup"
+}
+
+/**
+ * Offers an update on the app's alert sheet, never as a system alert. Returns false, showing nothing,
+ * when the offer can't go on the sheet: the checker that found the update has unmounted (the Android
+ * activity was recreated, and the new checker runs its own check and offers it), or the sheet isn't
+ * mounted. The caller keeps the update pending so the offer comes back on the sheet.
+ */
+export function offerUpdateOnSheet(
+  checkerMounted: boolean,
+  title: string,
+  message: string,
+  buttons: AlertButton[],
+): boolean {
+  if (!checkerMounted) {
+    console.log("OTA: update found by an unmounted checker - not offering it")
+    return false
+  }
+  if (!hasAlertHost()) {
+    console.log("OTA: update found before the alert sheet mounted - keeping it pending")
+    return false
+  }
+  void showAlert(title, message, buttons)
+  return true
 }
 
 // How often to re-fetch the OTA manifest while glasses stay connected, so a
@@ -75,6 +100,23 @@ export function OtaUpdateChecker() {
     isDowngrade: boolean
   } | null>(null)
   const otaCheckTimeoutRef = useRef<number | null>(null)
+  // A check outlives its checker when the Root remounts on a live JS runtime (Android recreates the
+  // activity). Its result must not reach the screen: the new checker offers the update itself.
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+  // The offer this checker put on the sheet. A later check can find nothing to install, as when the
+  // glasses reported their BES version only after the first check assumed an update: then it closes.
+  const shownOfferRef = useRef<{title: string; message: string} | null>(null)
+  const offer = (title: string, message: string, buttons: AlertButton[]) => {
+    const offered = offerUpdateOnSheet(mountedRef.current, title, message, buttons)
+    if (offered) shownOfferRef.current = {title, message}
+    return offered
+  }
 
   // Bumped when the OTA manifest changes server-side; re-arms the main check
   // effect the same way a fresh glasses connection does.
@@ -242,8 +284,7 @@ export function OtaUpdateChecker() {
     if (promptAction === "wifi_setup") {
       if (hasPromptedOtaWifiSetup.current) return
       console.log("OTA: User returned home with a pending update but no glasses WiFi - prompting WiFi setup")
-      hasPromptedOtaWifiSetup.current = true
-      showAlert(
+      const offered = offer(
         translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
         `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`,
         [
@@ -258,18 +299,27 @@ export function OtaUpdateChecker() {
           {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
         ],
       )
+      if (offered) hasPromptedOtaWifiSetup.current = true
+      else wasAwayFromHomeRef.current = true
       return
     }
 
     console.log("OTA: User returned to home with pending update - showing install alert")
+    const offered = offer(
+      translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
+      updateMessage,
+      [
+        {text: translate("ota:updateLater"), style: "cancel"},
+        {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
+      ],
+    )
+    if (!offered) {
+      wasAwayFromHomeRef.current = true
+      return
+    }
     pendingUpdate.current = null
     hasPromptedOta.current = true
     hasPromptedOtaWifiSetup.current = false
-
-    showAlert(translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}), updateMessage, [
-      {text: translate("ota:updateLater"), style: "cancel"},
-      {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
-    ])
   }, [
     pathname,
     glassesConnected,
@@ -339,7 +389,20 @@ export function OtaUpdateChecker() {
           refreshVersionInfo: false,
         })
         .then(
-          ({updateAvailable, latestVersionInfo, updates, isApkDowngrade, skippedReason, manifestUrl, manifestBody}) => {
+          ({
+            updateAvailable,
+            latestVersionInfo,
+            updates,
+            isApkDowngrade,
+            skippedReason,
+            manifestUrl,
+            manifestBody,
+            hasCheckCompleted,
+          }) => {
+            if (!mountedRef.current) {
+              console.log("OTA: check finished after its checker unmounted - dropping the result")
+              return
+            }
             if (skippedReason) {
               console.log(`OTA: check skipped - ${skippedReason}`)
               return
@@ -355,6 +418,14 @@ export function OtaUpdateChecker() {
 
             if (updates.length === 0 || !latestVersionInfo) {
               console.log("OTA: check result: No updates available")
+              // Only a check that compared versions shows there is nothing to install. One that couldn't
+              // fetch the manifest proves nothing: its offer stays.
+              const shown = shownOfferRef.current
+              if (shown && hasCheckCompleted) {
+                console.log("OTA: glasses are up to date - closing the earlier update offer")
+                dismissAlert(shown.title, shown.message)
+                shownOfferRef.current = null
+              }
               return
             }
 
@@ -402,10 +473,7 @@ export function OtaUpdateChecker() {
                   currentOtaSnapshot.wifiConnected ? "glasses are on WiFi" : "hotspot OTA is supported"
                 } - prompting install`,
               )
-              pendingUpdate.current = null
-              hasPromptedOta.current = true
-              hasPromptedOtaWifiSetup.current = false
-              showAlert(
+              const offered = offer(
                 translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
                 updateMessage,
                 [
@@ -413,6 +481,13 @@ export function OtaUpdateChecker() {
                   {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
                 ],
               )
+              if (!offered) {
+                wasAwayFromHomeRef.current = true
+                return
+              }
+              pendingUpdate.current = null
+              hasPromptedOta.current = true
+              hasPromptedOtaWifiSetup.current = false
               return
             }
 
@@ -426,8 +501,7 @@ export function OtaUpdateChecker() {
               superMode && !isApkDowngrade
                 ? `Updates available: ${updateList}\n\nConnect your ${deviceName} to WiFi to install.`
                 : `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`
-            hasPromptedOtaWifiSetup.current = true
-            showAlert(
+            const offered = offer(
               translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
               wifiMessage,
               [
@@ -442,6 +516,8 @@ export function OtaUpdateChecker() {
                 {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
               ],
             )
+            if (offered) hasPromptedOtaWifiSetup.current = true
+            else wasAwayFromHomeRef.current = true
           },
         )
         .catch((error) => {

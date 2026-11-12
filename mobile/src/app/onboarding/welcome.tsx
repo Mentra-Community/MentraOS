@@ -54,8 +54,9 @@ export default function OnboardingWelcome() {
   const [_onboarding, setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const simulatedGlassesAllowed = isGlassesModelAllowedByDeployment(DeviceTypes.SIMULATED)
 
-  // User has smart glasses - go to glasses selection screen
-  const handleHasGlasses = async () => {
+  // User has smart glasses - go to glasses selection screen. Glasses the phone is still bonded with, as after a
+  // reinstall, pair the same way as new ones: the person chooses them, and nothing pairs by itself.
+  const handleHasGlasses = () => {
     // TODO: Track analytics event - user has glasses
     // analytics.track('onboarding_has_glasses_selected')
     setOnboardingCompleted(true)

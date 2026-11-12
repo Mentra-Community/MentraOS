@@ -1,6 +1,6 @@
 ---
 title: "Microphone"
-description: "Raw audio frames and voice-activity detection from the glasses mic."
+description: "Raw audio frames, voice-activity detection, and the \"Hey Mentra\" wake word."
 icon: "microphone"
 ---
 
@@ -8,12 +8,12 @@ import BetaNote from '/snippets/beta-note.mdx'
 
 <BetaNote />
 
-`session.mic` is the low-level audio input: raw frames and a voice-activity
-signal. If you want text, use [`session.transcription`](/app-devs/core-concepts/microphone/speech-to-text)
+`session.mic` is the low-level audio input: raw frames, a voice-activity
+signal, and the "Hey Mentra" wake word. If you want text, use [`session.transcription`](/app-devs/core-concepts/microphone/speech-to-text)
 instead. Reach for `mic` when you need the audio itself, like recording a clip or
 running your own audio processing.
 
-Both subscriptions need the `MICROPHONE` permission in your
+All of these subscriptions need the `MICROPHONE` permission in your
 [manifest](/app-devs/core-concepts/miniapp-manifest), or the phone rejects them
 with `PERMISSION_NOT_DECLARED`.
 
@@ -37,18 +37,60 @@ Each `AudioChunkData` has:
 ## Voice activity
 
 `onVoiceActivity` fires when the user starts and stops speaking, without giving
-you the audio:
+you the audio. The phone runs voice detection on-device and sends one event per
+change:
 
 ```typescript
-session.mic.onVoiceActivity(({ status }) => {
-  // status: true while speaking, false when silent.
+session.mic.onVoiceActivity(({ status, silentForMs }) => {
+  // status: true when speech starts, false when it stops.
   if (status) session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Listening…"}]);
+  // On a silence event, silentForMs says how long the audio has already been quiet.
+  else if (silentForMs !== undefined) scheduleEndOfTurn(1250 - silentForMs);
 });
 ```
 
+| Field         | Type      | Notes                                                                     |
+| ------------- | --------- | ------------------------------------------------------------------------- |
+| `status`      | `boolean` | `true` when speech starts, `false` when it stops.                         |
+| `silentForMs` | `number?` | `0` while speaking; on a silence event, how long it has already been quiet. |
+| `timestamp`   | `number?` | Unix epoch milliseconds of the change.                                    |
+
+A gap in microphone audio counts as silence, so you still get the "stopped"
+event when the glasses stop sending audio during quiet. Silence is reported
+after a short pause (a few hundred milliseconds); apply your own longer
+end-of-turn rule on top using `silentForMs`.
+
+## Wake word
+
+`onWakeWord` listens for "Hey Mentra" on the phone, without sending audio
+anywhere:
+
+```typescript
+session.mic.onWakeWord((event) => {
+  if (event.kind === "detected") startListening();
+  if (event.kind === "error") console.warn("Wake word unavailable:", event.message);
+});
+```
+
+Each `WakeWordEvent` has:
+
+| Field       | Type                                             | Notes                                        |
+| ----------- | ------------------------------------------------ | -------------------------------------------- |
+| `kind`      | `"loading" \| "ready" \| "detected" \| "error"` | The detector's state, or a detection.        |
+| `phrase`    | `string`                                         | Currently always `"Hey Mentra"`.             |
+| `timestamp` | `number`                                         | Unix epoch milliseconds.                     |
+| `message`   | `string?`                                        | Why it is loading or failed, when known.     |
+
+You get the detector's current state right away, then every change. While any
+miniapp subscribes, the phone loads the wake-word model (downloading it first
+if needed; it is listed on the phone's Speech page) and every subscriber
+receives every detection. When no miniapp subscribes, the model is unloaded.
+These events describe only the wake-word model; for the speech-to-text model,
+use [`transcription.onModelStatus`](/app-devs/core-concepts/microphone/speech-to-text#model-status).
+
 ## Cleaning up
 
-Both methods return an unsubscribe function, and `stop()` tears down everything
+Every method returns an unsubscribe function, and `stop()` tears down everything
 this module owns:
 
 ```typescript

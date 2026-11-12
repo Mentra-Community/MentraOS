@@ -12,7 +12,7 @@ mentra-miniapp <command>
 | ------------------------------------------------- | ------------------------------------------------------------------------- |
 | [`dev`](#dev)                                     | Starts the dev server (hot reload unless `--no-hot-reload`), prints a QR to load it on a phone  |
 | [`release`](#release)                             | Builds, packs, and serves a QR to install the release on a phone over LAN |
-| [`pack`](#pack)                                   | Validates the manifest and zips `dist/` into `<pkg>-<version>.zip`        |
+| [`pack`](#pack)                                   | Writes `build/`, ready to upload to your miniapp's URL                    |
 | [`manifest`](#manifest)                           | Interactive top-level wizard for editing `miniapp.json`                   |
 | [`permission list \| add \| remove`](#permission) | Object-verb manifest edits for permissions                                |
 | [`hardware list \| add \| remove`](#hardware)     | Object-verb manifest edits for hardware requirements                      |
@@ -36,9 +36,9 @@ What it does:
 1. Reads + validates `miniapp.json` (hard-fails on bad permissions / hardware types so you don't have to debug it on the phone).
 2. Runs the project's `build.ts` so `dist/background/index.js` and `dist/ui/*` are current.
 3. Picks the first free adjacent port pair starting at `port`: one for static files and the next for the dev sidecar.
-4. Starts a static server that serves `miniapp.json`, `icon.png`, and project files.
+4. Starts a static server at the miniapp URL. It serves `miniapp.json` the way any miniapp URL does, as the project's `miniapp.json` plus `bundle: {url: "bundle.zip", sha256}`, and adds a `development` field, `{reload: "ws://<host>:<port + 1>/__mentra_dev", mdns: "<name>.local"}`, which the Mentra App reads only from a local-network URL. It also serves `bundle.zip`, built from the current `dist/`, plus `icon.png` and the project files. The same files always make the same ZIP, so the hash holds until a rebuild changes them.
 5. Starts a **dev sidecar** on `port + 1` — a WebSocket the phone connects to for live reload + console-log forwarding back to your terminal. Failure here is non-fatal; the miniapp still runs without live reload. `--no-hot-reload` keeps the log bridge and `bundle.zip` endpoint but skips the filesystem watcher, so saves no longer remount the WebView or respawn the background JSContext.
-6. Detects the LAN IP (or sets up USB tunnels with `--usb`), builds a `miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
+6. Detects the LAN IP (or sets up USB tunnels with `--usb`) and prints the miniapp URL, `http://<lan-ip>:<port>/`, and its terminal QR. The Mentra App installs it like any other miniapp URL, as a local-network miniapp: it isn't registered, keeps its own data, and its tokens say it is a local build.
 7. Watches for LAN-IP changes (Wi-Fi switch) every 2s and reprints the QR. Skipped under `--usb`, where the QR host is a fixed loopback address.
 
 Default `port` is `3000`; override the starting point with a `"port": <n>` field in `miniapp.json`. If that port or its sidecar neighbor is busy, `dev` scans upward until it finds a free adjacent pair.
@@ -58,12 +58,12 @@ that works without the computer.
 
 `--usb` runs `adb reverse` for the static port and the sidecar port, which
 publishes them on the phone's own loopback address over the USB cable. The QR
-then advertises `http://127.0.0.1:<port>` instead of a LAN IP, so the phone and
+then advertises `http://127.0.0.1:<port>/` instead of a LAN IP, so the phone and
 the laptop no longer need to share a network. This is the fix when you're on
 guest Wi-Fi, on a network with AP client isolation, or on no Wi-Fi at all.
 
 Everything else behaves the same: live reload and console forwarding ride the
-same tunnel, and the QR still carries the mDNS hint as a fallback.
+same tunnel, and the served `miniapp.json` still names the mDNS name as a fallback.
 
 Notes:
 
@@ -119,22 +119,33 @@ A release install is a fixed snapshot, like a React Native release build: each c
 
 ```bash
 mentra-miniapp pack
-mentra-miniapp pack --no-build    # zip dist/ as-is, skip the build
+mentra-miniapp pack --no-build                # zip dist/ as-is, skip the build
+mentra-miniapp pack --sign                    # sign with the package's stored publisher key
+mentra-miniapp pack --signing-key key.json    # sign with a key file (not stored)
 ```
 
-Produces a distributable ZIP. Use this when you want the artifact only — `release` calls `pack` internally.
+Writes `build/`, a folder ready to upload as is to your miniapp's URL. `release` calls `pack` internally.
 
 Steps:
 
 1. Runs `<pm> run build` with `NODE_ENV=production` (same as `release`), so the zip always contains a production bundle — never a stale dev build left behind by `dev`. Pass `--no-build` to skip this and zip whatever is already in `dist/`.
 2. Verifies `dist/` exists.
-3. Validates `miniapp.json`.
+3. Validates `miniapp.json`. It must not declare `bundle`; `pack` fills that in.
 4. Copies `miniapp.json` and `icon.png` into `dist/`.
-5. Runs the system `zip -r` command to produce `build/<packageName>-<version>.zip` and prints the absolute path.
+5. Runs the system `zip -r` command to produce `build/<packageName>-<version>.zip`, signed with `--sign` or `--signing-key`, and prints its path and SHA-256.
+6. Writes the icon and `miniapp.json` beside the ZIP.
 
-`build/` is self-ignoring — the CLI writes a `.gitignore` containing `*` into it on creation, so packed zips stay out of version control in any repo without touching the project's own `.gitignore`.
+`build/` then holds what your miniapp's URL serves:
 
-The resulting ZIP is the artifact you'd upload to the miniapp store.
+| File                            | What it is                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------- |
+| `miniapp.json`                  | Your `miniapp.json` plus `bundle: {url: "<packageName>-<version>.zip", sha256}`, naming the ZIP |
+| `<packageName>-<version>.zip`   | The bundle. ZIPs of earlier versions stay beside it.                                        |
+| the icon, such as `icon.png`    | The file `miniapp.json`'s `icon` names, taken from the ZIP. An icon URL on another host is left to that host. |
+
+Upload the folder to any static host, such as GitHub Pages, Cloudflare Pages or R2, or S3, at your miniapp's URL. For each release, bump `version`, and upload the ZIP before `miniapp.json`, so the URL never names a ZIP that isn't there yet.
+
+`build/` is self-ignoring — the CLI writes a `.gitignore` containing `*` into it on creation, so packed zips stay out of version control in any repo without touching the project's own `.gitignore`. Leave that `.gitignore` out if you deploy the folder by committing it to git.
 
 > Requires the `zip` binary on `PATH` (preinstalled on macOS and most Linux distros). On Windows, install `zip` via WSL or use a Unix-like shell.
 

@@ -97,10 +97,10 @@ public struct StreamAudioConfig {
 public struct StreamIceConfig {
     /// STUN server the glasses use while gathering candidates.
     ///
-    /// `nil` and empty are different answers, and both have to survive the BLE round trip. `nil`
-    /// leaves the glasses on their default Cloudflare STUN server; an empty string is an explicit
-    /// request for host-only gathering, which is what a WHIP server on the glasses' own hotspot
-    /// needs, since a reflexive candidate there is meaningless and unreachable.
+    /// `nil` and empty are different answers. `nil` sends the default Cloudflare STUN server; an
+    /// empty string is an explicit request for host-only gathering, which is what a WHIP server on
+    /// the glasses' own hotspot needs, since a reflexive candidate there is meaningless and
+    /// unreachable.
     public let stun: String?
 
     public init(stun: String? = nil) {
@@ -110,7 +110,7 @@ public struct StreamIceConfig {
     var dictionary: [String: Any] {
         var values: [String: Any] = [:]
         // Not filtered on emptiness, unlike the other optional string fields here: "" is the
-        // host-only signal, so dropping it would silently restore the default STUN server.
+        // host-only signal, so dropping it would silently send the default STUN server.
         if let stun { values["stun"] = stun }
         return values
     }
@@ -386,6 +386,15 @@ public struct StreamRequest {
         )
     }
 
+    /// The glasses read an http(s) URL as WHIP, the only protocol that uses ICE, and have no STUN
+    /// server of their own.
+    private var iceToSend: StreamIceConfig? {
+        if ice?.stun == nil, streamUrl.hasPrefix("https://") || streamUrl.hasPrefix("http://") {
+            return StreamIceConfig(stun: "stun:stun.cloudflare.com:3478")
+        }
+        return ice
+    }
+
     public var values: [String: Any] {
         var values: [String: Any] = [:]
         values["type"] = "start_stream"
@@ -404,7 +413,7 @@ public struct StreamRequest {
         if !captureAudio {
             values["captureAudio"] = false
         }
-        if let iceValues = ice?.dictionary, !iceValues.isEmpty {
+        if let iceValues = iceToSend?.dictionary, !iceValues.isEmpty {
             values["ice"] = iceValues
         }
         if let traceId, !traceId.isEmpty {

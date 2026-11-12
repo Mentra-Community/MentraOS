@@ -45,8 +45,13 @@ interface ImageItemProps {
   photo: PhotoInfo
   setImageDimensions: (dimensions: {width: number; height: number}) => void
   isActive: boolean // Whether this is the currently visible image
+  showFullResolution: boolean // Whether the user has zoomed this image past 1x
   onDimensions: (dimensions: MediaDimensions) => void
 }
+
+// The gallery reports every scale strictly inside this range, so a zoom past 1x
+// (pinch or double tap) requests the full-size image.
+const ZOOMED_SCALE_RANGE = {start: 1, end: Number.POSITIVE_INFINITY}
 
 /**
  * Video player component for gallery items
@@ -381,7 +386,13 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
 /**
  * Image component for gallery items
  */
-const ImageItem = memo(function ImageItem({photo, setImageDimensions, isActive, onDimensions}: ImageItemProps) {
+const ImageItem = memo(function ImageItem({
+  photo,
+  setImageDimensions,
+  isActive,
+  showFullResolution,
+  onDimensions,
+}: ImageItemProps) {
   const {width: screenWidth, height: screenHeight} = useWindowDimensions()
   const hasReportedDimensions = useRef(false)
 
@@ -393,6 +404,10 @@ const ImageItem = memo(function ImageItem({photo, setImageDimensions, isActive, 
 
   // Memoize styles to prevent expo-image from restarting loads on iOS
   const imageStyle = useMemo(() => ({width: screenWidth, height: screenHeight}), [screenWidth, screenHeight])
+  const fullResolutionStyle = useMemo(
+    () => ({position: "absolute" as const, top: 0, left: 0, width: screenWidth, height: screenHeight}),
+    [screenWidth, screenHeight],
+  )
 
   return (
     <View
@@ -403,26 +418,44 @@ const ImageItem = memo(function ImageItem({photo, setImageDimensions, isActive, 
         alignItems: "center",
         paddingTop: screenHeight * 0.05,
       }}>
-      <Image
-        source={{uri: imageUri}}
-        style={imageStyle}
-        contentFit="contain"
-        priority={isActive ? "high" : "normal"}
-        cachePolicy="memory-disk"
-        transition={0}
-        allowDownscaling
-        onLoad={(e) => {
-          // Report dimensions back to Gallery for proper scaling - only once
-          if (e.source?.width && e.source?.height && !hasReportedDimensions.current) {
-            hasReportedDimensions.current = true
-            setImageDimensions({
-              width: e.source.width,
-              height: e.source.height,
-            })
-            onDimensions({width: e.source.width, height: e.source.height})
-          }
-        }}
-      />
+      <View style={imageStyle}>
+        <Image
+          source={{uri: imageUri}}
+          style={imageStyle}
+          contentFit="contain"
+          priority={isActive ? "high" : "normal"}
+          cachePolicy="memory-disk"
+          transition={0}
+          allowDownscaling
+          onLoad={(e) => {
+            // Report dimensions back to Gallery for proper scaling - only once
+            if (e.source?.width && e.source?.height && !hasReportedDimensions.current) {
+              hasReportedDimensions.current = true
+              setImageDimensions({
+                width: e.source.width,
+                height: e.source.height,
+              })
+              onDimensions({width: e.source.width, height: e.source.height})
+            }
+          }}
+        />
+        {/* The preview is decoded at screen size, so zooming only magnifies those pixels.
+            While zoomed, layer the original over it, as the system galleries do. The preview
+            stays visible until the original paints, and memory-only caching keeps full-size
+            re-encodes out of the Android disk cache. */}
+        {showFullResolution && (
+          <Image
+            testID="gallery-full-resolution-image"
+            source={{uri: imageUri}}
+            style={fullResolutionStyle}
+            contentFit="contain"
+            priority="high"
+            cachePolicy="memory"
+            transition={0}
+            allowDownscaling={false}
+          />
+        )}
+      </View>
     </View>
   )
 })
@@ -436,14 +469,18 @@ interface CustomOverlayProps {
   total: number
   onDetails: () => void
   onShare?: () => void
+  onHeightChange?: (height: number) => void
 }
 
-export function CustomOverlay({onClose, currentIndex, total, onDetails, onShare}: CustomOverlayProps) {
+export function CustomOverlay({onClose, currentIndex, total, onDetails, onShare, onHeightChange}: CustomOverlayProps) {
   const insets = useSaferAreaInsets()
   const {theme, themed} = useAppTheme()
 
   return (
-    <View style={[themed($header), {paddingTop: insets.top}]}>
+    <View
+      testID="media-viewer-header"
+      style={[themed($header), {paddingTop: insets.top}]}
+      onLayout={onHeightChange ? (event) => onHeightChange(event.nativeEvent.layout.height) : undefined}>
       <TouchableOpacity
         accessibilityLabel="Close media viewer"
         accessibilityRole="button"
@@ -488,6 +525,8 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
   const [isVideoSeeking, setIsVideoSeeking] = useState(false)
   const [isMetadataOpen, setIsMetadataOpen] = useState(false)
   const [mediaDimensions, setMediaDimensions] = useState<Record<string, MediaDimensions>>({})
+  const [fullResolutionPhotoName, setFullResolutionPhotoName] = useState<string | null>(null)
+  const [headerHeight, setHeaderHeight] = useState(0)
   const galleryRef = useRef<GalleryRef>(null)
   const metadataSheetRef = useRef<BottomSheet>(null)
 
@@ -496,6 +535,7 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
     if (visible) {
       setCurrentIndex(initialIndex)
       setIsMetadataOpen(false)
+      setFullResolutionPhotoName(null)
       metadataSheetRef.current?.close()
       // Reset gallery to initial position
       const resetTimer = setTimeout(() => {
@@ -505,6 +545,12 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
     }
     return undefined
   }, [visible, initialIndex])
+
+  // Release the full-size image once the viewer moves to another item. Unzoomed
+  // swiping must stay on screen-sized decodes to keep Android smooth.
+  useEffect(() => {
+    setFullResolutionPhotoName(null)
+  }, [currentIndex])
 
   const recordDimensions = useCallback((name: string, dimensions: MediaDimensions) => {
     setMediaDimensions((current) => {
@@ -547,11 +593,12 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
           photo={item}
           setImageDimensions={setImageDimensions}
           isActive={isActiveItem}
+          showFullResolution={isActiveItem && item.name === fullResolutionPhotoName}
           onDimensions={(dimensions) => recordDimensions(item.name, dimensions)}
         />
       )
     },
-    [currentIndex, recordDimensions],
+    [currentIndex, fullResolutionPhotoName, recordDimensions],
   )
 
   // Memoized keyExtractor
@@ -559,6 +606,10 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
   const handleIndexChange = useCallback((newIndex: number) => {
     setCurrentIndex((previousIndex) => (previousIndex === newIndex ? previousIndex : newIndex))
   }, [])
+  const handleZoom = useCallback(() => {
+    const photo = photos[currentIndex]
+    if (photo) setFullResolutionPhotoName(photo.name)
+  }, [currentIndex, photos])
   const handleSwipeToClose = useCallback(() => {
     onClose()
   }, [onClose])
@@ -593,6 +644,8 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
           emptySpaceWidth={16}
           maxScale={3}
           doubleTapScale={2}
+          onScaleChange={handleZoom}
+          onScaleChangeRange={ZOOMED_SCALE_RANGE}
           pinchEnabled
           swipeEnabled={!isVideoSeeking && !isMetadataOpen}
           doubleTapEnabled
@@ -608,12 +661,14 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
           total={photos.length}
           onDetails={handleDetails}
           onShare={onShare ? handleShare : undefined}
+          onHeightChange={setHeaderHeight}
         />
 
         <MediaMetadataSheet
           bottomSheetRef={metadataSheetRef}
           photo={photos[currentIndex]}
           dimensions={mediaDimensions[photos[currentIndex].name]}
+          topInset={headerHeight}
           onChange={handleMetadataChange}
         />
       </GestureHandlerRootView>

@@ -399,7 +399,9 @@ export function createReleasePlan({
       releasePlan: `mentra-release-plan-${releaseIdentity}.json`,
       releaseManifest: `mentra-release-${releaseIdentity}.json`,
       otaManifest: `mentra-live-ota-${releaseIdentity}.json`,
-      otaBundle: `mentra-live-ota-bundle-${releaseIdentity}.zip`,
+      // Dev releases publish no portable OTA bundle. Beta releases build one;
+      // production publishes a byte-identical copy of the promoted beta's.
+      ...(channel === "dev" ? {} : {otaBundle: `mentra-live-ota-bundle-${releaseIdentity}.zip`}),
       asgSelection: `mentra-live-asg-selection-${releaseIdentity}.json`,
       androidApp: `mentraos-${releaseIdentity}-android.apk`,
       androidStoreApp: `mentraos-${releaseIdentity}-android.aab`,
@@ -528,7 +530,14 @@ function requiredArtifactCoordinates(plan) {
   const keys =
     plan.channel === "production"
       ? ["enginePackage"]
-      : ["otaBundle", "asgSelection", "androidApp", "androidStoreApp", "iosApp", "enginePackage"]
+      : [
+          ...(plan.channel === "beta" ? ["otaBundle"] : []),
+          "asgSelection",
+          "androidApp",
+          "androidStoreApp",
+          "iosApp",
+          "enginePackage",
+        ]
   return keys.map((key) => {
     const coordinate = plan.artifactNames?.[key]
     if (typeof coordinate !== "string" || coordinate.length === 0) {

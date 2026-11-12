@@ -3,6 +3,8 @@
  * unit-testable in isolation (see blobPaths.test.ts).
  */
 
+import {boundFileName, safeFileName} from "./miniappPaths"
+
 /** Filesystem-safe path segment. Strips traversal + unsafe chars; never empty. */
 export function sanitizeSegment(s: string): string {
   const cleaned = (s || "").replace(/[^A-Za-z0-9._-]/g, "_")
@@ -20,27 +22,19 @@ export function sanitizeSegment(s: string): string {
  * lacks one.
  */
 export function shareFileName(meta: {name?: string; fileName: string; mimeType: string}): string {
-  const raw = (meta.name || meta.fileName).trim()
-  // Replace path separators + characters illegal on common filesystems (keep
-  // spaces, hyphens, dots, etc. — they're valid and keep names readable).
-  // eslint-disable-next-line no-control-regex
-  let safe = raw.replace(/[/\\<>:"|?*\x00-\x1f]/g, "_").trim()
-  if (!safe) safe = meta.fileName
+  // One safe file name: separators and characters illegal on common
+  // filesystems become "_" (spaces, hyphens and dots stay, for readable names),
+  // and it is never empty, "." or "..", so the copy stays in its directory.
+  const safe = safeFileName(meta.name?.trim() || meta.fileName, meta.fileName)
   // Split base + extension: use an extension already on the name, else derive
   // one from the mimeType.
   const dot = safe.lastIndexOf(".")
   const hasExt = dot > 0 && dot < safe.length - 1
-  let base = hasExt ? safe.slice(0, dot) : safe
+  const base = hasExt ? safe.slice(0, dot) : safe
   const ext = hasExt ? safe.slice(dot + 1) : extForMime(meta.mimeType)
-  const suffix = ext ? `.${ext}` : ""
-  // Bound the total length: common filesystems reject names over ~255 bytes, so
-  // a huge app-provided name would make the share's file copy throw. Truncate
-  // the base while preserving the extension (mirrors sanitizeSegment's ceiling).
-  const MAX_LEN = 120
-  if (base.length + suffix.length > MAX_LEN) {
-    base = base.slice(0, Math.max(1, MAX_LEN - suffix.length))
-  }
-  return base + suffix
+  // Common filesystems reject names over 255 bytes, so a huge app-provided name
+  // would make the share's file copy throw: shorten the base, keep the extension.
+  return boundFileName(base + (ext ? `.${ext}` : ""))
 }
 
 /**

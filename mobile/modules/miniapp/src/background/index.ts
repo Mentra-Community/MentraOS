@@ -55,13 +55,13 @@ export type {LanguageHint, TranscriptionLanguage} from "../modules/languages"
 // (the registering side lives in the background JSContext). `InvokeOptions` is
 // for system miniapps that call other apps' actions via `session.actions.invoke`.
 export type {ActionContext, ActionHandler, InvokeOptions} from "../modules/actions"
+export type {TelemetryModule, TelemetryProperties, TelemetryValue} from "../modules/telemetry"
 export type {
   InstallMiniappCompatibility,
   InstallMiniappCompatibilityRequest,
   InstallMiniappRequest,
   InstallMiniappResult,
-  InstallMiniappPhase,
-  InstallMiniappProgress,
+  InstallMiniappFailureReason,
   ListMiniappsOptions,
   MiniappActionInfo,
   MiniappCompatibility,
@@ -173,7 +173,8 @@ export type {
   ScanQrOptions,
   ScanQrResult,
 } from "../modules/system"
-export type {TranscriptionConfig, TranscriptionOptions} from "../modules/transcription"
+export type {TranscriptionConfig, TranscriptionModelStatus, TranscriptionOptions} from "../modules/transcription"
+export type {SpeechProcessing} from "../modules/speechProcessing"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
   AuthUpdatePayload,
@@ -216,3 +217,5 @@ export type {
   ComputedRoute,
   ComputeRouteResult,
 } from "../modules/navigation"
+
+export type {WakeWordEvent} from "../modules/mic"

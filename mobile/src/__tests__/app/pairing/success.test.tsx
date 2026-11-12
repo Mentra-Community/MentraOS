@@ -46,13 +46,21 @@ jest.mock("@/components/onboarding/OnboardingGuide", () => {
     endButtonFn,
     endButtonText,
     startButtonText,
+    steps = [],
   }: {
     endButtonFn: () => void
     endButtonText: string
     startButtonText: string
+    steps?: {title?: string; subtitle?: string}[]
   }) {
     return (
       <View>
+        {steps.map((step, index) => (
+          <View key={index}>
+            <Text>{step.title}</Text>
+            <Text>{step.subtitle}</Text>
+          </View>
+        ))}
         <Text>{startButtonText}</Text>
         <TouchableOpacity onPress={endButtonFn}>
           <Text>{endButtonText}</Text>
@@ -85,35 +93,6 @@ describe("pairing success screen", () => {
 
   afterEach(() => {
     setPlatformOS(originalPlatformOS)
-  })
-
-  it("stacks missing Mentra Live setup steps in the expected order", async () => {
-    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(false)
-
-    const {getAllByText} = render(<PairingSuccessScreen />)
-
-    await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
-    fireEvent.press(getAllByText("onboarding:continueSetup")[1])
-
-    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
-    expect(push).toHaveBeenCalledWith("/pairing/btclassic")
-    expect(pushUnder).toHaveBeenCalledTimes(1)
-    expect(pushUnder).toHaveBeenCalledWith("/ota/check-for-updates")
-    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
-  })
-
-  it("uses connected Mentra Live state to skip btclassic setup", async () => {
-    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
-
-    const {getAllByText} = render(<PairingSuccessScreen />)
-
-    await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
-    fireEvent.press(getAllByText("onboarding:continueSetup")[1])
-
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
-    expect(pushUnder).not.toHaveBeenCalled()
-    expect(push).not.toHaveBeenCalledWith("/pairing/btclassic")
-    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
   it("finishes non-Live pairing without adding setup routes", async () => {

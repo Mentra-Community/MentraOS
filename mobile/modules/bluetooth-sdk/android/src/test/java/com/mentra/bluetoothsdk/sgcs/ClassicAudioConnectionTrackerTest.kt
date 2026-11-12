@@ -19,6 +19,32 @@ class ClassicAudioConnectionTrackerTest {
             ClassicAudioProfile.HEADSET to false))).isEmpty()
     }
 
+    private val both = setOf(ClassicAudioProfile.A2DP, ClassicAudioProfile.HEADSET)
+
+    @Test
+    fun `android Disconnect drops every connected profile together`() {
+        val at = mapOf(ClassicAudioProfile.HEADSET to 1_000L, ClassicAudioProfile.A2DP to 1_001L)
+        assertThat(wholeClassicDeviceDisconnecting(both, at, 1_001L, 3_000L)).isTrue()
+    }
+
+    @Test
+    fun `turning off Media or Call audio is not a disconnect`() {
+        assertThat(wholeClassicDeviceDisconnecting(both, mapOf(ClassicAudioProfile.A2DP to 1_000L), 1_000L, 3_000L)).isFalse()
+        assertThat(wholeClassicDeviceDisconnecting(both, mapOf(ClassicAudioProfile.HEADSET to 1_000L), 1_000L, 3_000L)).isFalse()
+    }
+
+    @Test
+    fun `unworn glasses with only A2DP up are disconnected by that profile alone`() {
+        val a2dp = setOf(ClassicAudioProfile.A2DP)
+        assertThat(wholeClassicDeviceDisconnecting(a2dp, mapOf(ClassicAudioProfile.A2DP to 1_000L), 1_000L, 3_000L)).isTrue()
+    }
+
+    @Test
+    fun `two profile toggles far apart are not one disconnect`() {
+        val at = mapOf(ClassicAudioProfile.HEADSET to 1_000L, ClassicAudioProfile.A2DP to 10_000L)
+        assertThat(wholeClassicDeviceDisconnecting(both, at, 10_000L, 3_000L)).isFalse()
+    }
+
     private val address = "AA:BB:CC:DD:EE:FF"
 
     private fun snapshot(tracker: ClassicAudioConnectionTracker, vararg profiles: ClassicAudioProfile) {

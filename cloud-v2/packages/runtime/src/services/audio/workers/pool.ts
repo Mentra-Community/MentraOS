@@ -27,6 +27,7 @@
  */
 
 import { createLogger } from "@mentra/cloud-shared";
+import type { WorkerBootData } from "./identity";
 import type {
   AudioCodec,
   SetCodecMessage,
@@ -258,19 +259,22 @@ function pickLeastLoaded(p: WorkerPoolState): WorkerSlot {
   return best;
 }
 
-function spawnWorkerSlot(id: string): WorkerSlot {
-  const env = {
-    ...(process.env as Record<string, string>),
-    WORKER_ID: id,
-    POD_ID: pool?.podId ?? process.env.POD_ID ?? "pod",
-  };
-  // Bun.Worker honors options including `env` on a per-worker basis.
+/**
+ * Options for `new Worker`. Identity travels in `workerData` (reliable), not
+ * the `env` option, which Bun does not apply to keys the parent already has.
+ * Exported for tests.
+ */
+export function buildWorkerOptions(workerId: string, podId: string): WorkerOptions {
   // Type cast keeps lib.dom WebWorker types from complaining about the
-  // Bun-specific options object.
-  const worker = new Worker(WORKER_URL, {
+  // Bun-specific `workerData` option.
+  return {
     type: "module",
-    env,
-  } as WorkerOptions);
+    workerData: { workerId, podId } satisfies WorkerBootData,
+  } as WorkerOptions;
+}
+
+function spawnWorkerSlot(id: string): WorkerSlot {
+  const worker = new Worker(WORKER_URL, buildWorkerOptions(id, pool?.podId ?? process.env.POD_ID ?? "pod"));
 
   const slot: WorkerSlot = {
     id,
@@ -287,7 +291,7 @@ function spawnWorkerSlot(id: string): WorkerSlot {
     const msg = e.data;
     if (msg.type === "WORKER_READY") {
       slot.ready = true;
-      logger.info({ workerId: id, pendingAttaches: slot.pendingAttaches.length }, "worker ready");
+      logger.info({ workerId: id, podId: msg.podId, consumerName: msg.consumerName, pendingAttaches: slot.pendingAttaches.length }, "worker ready");
       // Drain queued attaches and any subscriptions that arrived before ready.
       for (const userId of slot.pendingAttaches) {
         worker.postMessage({ type: "ATTACH_USER", mentraUserId: userId } satisfies WorkerInMessage);

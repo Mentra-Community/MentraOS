@@ -5,9 +5,13 @@ the Mentra App and shows an organization its devices and activity. Core stores
 none of its data. It authenticates the caller, decides who the caller is and what
 the request covers, forwards the request to Fleet with a signed statement of
 that, and relays Fleet's answer. Fleet follows Core's change feed to learn when
-Core deletes an account. This page is the contract between the two; the
-behavior is implemented and tested in
-`packages/core/src/api/fleet/fleet-forwarding.ts`, with the configuration in
+Core deletes an account, tells Core which miniapps each workspace assigns, so a
+member's miniapp tokens can name the workspace, and asks Core's miniapp registry
+whether a workspace may receive a miniapp URL and what to call it. This page is
+the contract between the two; the behavior is implemented and tested in
+`packages/core/src/api/fleet/fleet-forwarding.ts`,
+`packages/core/src/api/internal/fleet.api.ts` and
+`packages/core/src/api/internal/registry.api.ts`, with the configuration in
 `packages/core/src/services/fleet/fleet-config.ts` and the signing in
 `packages/workspace-contract`.
 
@@ -58,8 +62,22 @@ every Core variable.
   (see [Fleet UI assets](#fleet-ui-assets)). A larger one is a
   `503 {"error":"fleet_unavailable"}`. Default `26214400` (25 MiB); the JSON
   routes' response limit does not apply to assets.
+- `CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`: how far back Core's membership interval
+  history reaches (`GET /api/internal/workspaces/membership-intervals`, read by
+  Fleet only). Default `90`; a whole number of days from 1 to 3650. Fleet's
+  Overview calculates over up to 114 days, so a deployment that runs Fleet sets
+  at least `120`; Fleet refuses a query window longer than the lookback its last
+  bootstrap was given. An open membership older than the window is still
+  returned, with its real start. Each interval carries `roles`, the role
+  intervals within it that overlap the window (a role held before the
+  membership's claim is never counted), and `ownAutomatic`, true when the
+  workspace is that person's own automatic workspace. Fleet uses it to work out
+  which workspace managed each person when ([The managing
+  workspace](#the-managing-workspace)), and backfills it once on intervals it
+  copied before Core sent it.
 - `CLOUD_CORE_SERVICE_SECRETS`: its `fleet` list holds the secrets Fleet signs
-  its calls to Core with (below), for example
+  its calls to Core with ([Following Core's changes](#following-cores-changes)
+  and [Assigned miniapps](#assigned-miniapps)), for example
   `{"store": ["<newest>", "<older>"], "fleet": ["<newest>", "<older>"]}`. Without
   a `fleet` list, Core refuses every call from Fleet.
 
@@ -90,6 +108,13 @@ setting above allows it. Core has no capabilities endpoint:
 | -------------------------- | ------------------------------------------ | ------------------------------------------------ |
 | `/api/client/fleet/<rest>` | `${CLOUD_CORE_FLEET_URL}/v1/client/<rest>` | A signed-in phone                                |
 | `/api/admin/fleet/<rest>`  | `${CLOUD_CORE_FLEET_URL}/v1/admin/<rest>`  | An Organization Admin (`organization.fleet.administer`) |
+| `/api/portal/fleet/workspaces/<workspaceId>/<rest>` | `${CLOUD_CORE_FLEET_URL}/v1/portal/workspaces/<workspaceId>/<rest>` | A person on the workspace portal's session cookie (never a bearer) who `authorize` allows `fleet.read` (GET, HEAD) or `miniapps.assign` (every other method) in that workspace; an Organization Admin counts as Owner |
+| `/api/portal/fleet/workspaces/<workspaceId>/ui/<rest>` | `${CLOUD_CORE_FLEET_URL}/v1/portal/ui/<rest>` | The workspace's UI assets: a person on the portal's session cookie whom `authorize` allows `fleet.read` in that workspace, whatever the method; `GET` and `HEAD` only (any other is `405`), signed with `scope: {kind: "person"}`. Only that exact `ui` segment; another spelling (`UI`, `%75i`) is 404 |
+
+The workspace portal's principal is signed with `scope: {kind: "workspace", workspaceId}` taken from the
+path only; nothing in the query, headers or body can change it. Any other path under `/api/portal/fleet` is 404,
+the old unscoped `/api/portal/fleet/ui/*` included: the portal loads its module from the workspace route above, so a
+person who may not read Fleet in a workspace cannot fetch its UI either.
 
 The method, query string and body are forwarded. Fleet's URL may carry a path
 prefix; Core joins it to `/v1/...` the same way with or without a trailing slash
@@ -170,6 +195,26 @@ signs.
   `503 fleet_unavailable` and its body is dropped. Fleet's `Retry-After` on that
   `5xx`, when it is a whole number of seconds, is repeated on Core's `503`, so
   send one when Fleet is down or shutting down.
+- **A `503` may name what is down.** When Fleet answers `503` with a JSON body
+  whose `error` is one of its own codes, Core relays the `503` with that code:
+  `{"error":"directory_unavailable"}` reaches the caller, not
+  `fleet_unavailable`, so a page can say what still works (the listed miniapps
+  are down, but a pasted URL can still be added). The rules:
+  - the status is exactly `503`; every other `5xx` is `fleet_unavailable`;
+  - the `content-type` is `application/json` (as above, a single value, with or
+    without parameters) and the body, at most 4 KiB, is a JSON object;
+  - its `error` is 1 to 64 lowercase letters, digits and `_`, starting with a
+    letter (`^[a-z][a-z0-9_]{0,63}$`).
+
+  Core answers `{"error":"<code>"}`, its own body, with the labels every JSON
+  answer carries and the `Retry-After` rule above. The rest of Fleet's body (an
+  `error_description`, a stack) and every other header of the answer are
+  dropped, Fleet's `x-request-id` among them: the caller gets Core's, which
+  Core's log line ties to Fleet's. Anything less (no code, a code that does not match, a body that is
+  not JSON, too large or late, a timeout or no connection) is
+  `503 fleet_unavailable`. This holds on every JSON route (phones, the admin
+  portal and the workspace portal); the [UI asset route](#fleet-ui-assets)
+  relays no code. A phone reads every `503` as "try later", whatever its code.
 
 ### Correlation
 
@@ -181,9 +226,10 @@ returns one, and its own otherwise.
 Core logs every request that reaches Fleet once, with its request id, Fleet's
 request id, the status Core answered, Fleet's status and the time taken. A
 success is logged at debug, an answer Fleet gives that is not a success (a `403`,
-a `429`, a `404`) at info, and what Core could not relay as Fleet said it (a
-network error, a timeout, a `5xx`, a redirect, an oversized body, a `401`, a
-success that is not JSON) at warn. So a secret that does not match Fleet's, which Fleet refuses with `403`,
+a `429`, a `404`, a `503` whose code Core relays) at info, and what Core could
+not relay as Fleet said it (a network error, a timeout, a `5xx`, a redirect, an
+oversized body, a `401`, a success that is not JSON, a `503` whose code it did
+not relay, with the reason `error_code_not_relayed`) at warn. So a secret that does not match Fleet's, which Fleet refuses with `403`,
 shows in the log at the production level. Core never logs a body, a header, a
 query, an email or a secret.
 
@@ -523,6 +569,7 @@ that was offline can catch up:
 | `membership.ownership_recovered` | `{membershipId, mentraUserId, email}` | `{role}` (null when there was no membership) | `{role: "owner"}` |
 | `invitation.created` | `{invitationId, email}` | null | `{email, role, expiresAt}` |
 | `invitation.accepted` | `{invitationId, membershipId, email}` | `{status: "pending"}` | `{status: "accepted"}` |
+| `invitation.declined` | `{invitationId, email}` | `{status: "pending", role}` | `{status: "declined"}`. The invitee turned it down; no membership changes, so Fleet's membership intervals are untouched |
 | `invitation.revoked` | `{invitationId, email}` | `{status: "pending", role}` | `{status: "revoked"}`, with `reason: "superseded", supersededBy` when a new invitation replaced it and `reason: "inviter_account_deleted"` when the inviter's account was deleted |
 | `credential.created` | `{credentialId, prefix, credentialKind, workspaceId, name}` | null | `{scopes, packageNames, expiresAt, createdByMembershipId, issuedByService}` |
 | `credential.revoked` | `{credentialId, prefix, credentialKind, workspaceId, name}` | `{revokedAt: null}` | `{revokedAt}` |
@@ -579,6 +626,165 @@ stay valid, since they name an address and not an account. The operator keys the
 person created are revoked outside the feed, and their identity is cleared from
 the rows that stay as history.
 
+## Assigned miniapps
+
+A miniapp token names the person's workspace (its `workspaceId` claim) only for
+a miniapp that workspace assigned through Fleet. A company's miniapp can then
+admit exactly its own workspace's members, and no other miniapp learns which
+workspace anyone belongs to. Core learns each workspace's assigned miniapps
+from Fleet, and keeps the last set Fleet sent, so minting a token never waits
+on Fleet.
+
+```http
+PUT /api/internal/fleet/workspaces/:workspaceId/assigned-packages
+{"packageNames": ["com.acme.tools", "com.example.notes"], "revision": 12}
+
+200 {"workspaceId": "ws_...", "packageNames": ["com.acme.tools", "com.example.notes"], "revision": 12, "applied": true}
+```
+
+- **Who.** Fleet only, signed as service `fleet` like the calls above. Any
+  other service is `403 {"error":"forbidden"}`; a missing or bad signature is
+  `401 {"error":"service_unauthorized"}`. A body over 64 KiB is
+  `413 {"error":"payload_too_large"}`.
+- **When.** After each assign or withdraw commits, with the workspace's whole
+  active set, and again for every workspace when Fleet starts, so a push that
+  never arrived is made good. Retry a push that failed for any reason but the
+  three refusals below.
+- **The body.** `packageNames` is every package the workspace assigns now (at
+  most 500, each 1 to 128 characters with no whitespace; Core keeps them
+  unique and sorted). An empty list assigns nothing. `revision` is Fleet's
+  revision of the set, a whole number, zero or more, that grows with each
+  change. Anything else is `400 invalid_request`.
+- **Revisions.** A push replaces Core's set only when its revision is newer.
+  A repeat of Core's revision answers `200` with `applied: false` and the set
+  Core keeps. An older one is `409 {"error":"stale_revision", "revision": n}`,
+  with Core's revision: Core already has something newer, so drop the push.
+- **Workspaces.** A workspace Core never had is
+  `404 {"error":"workspace_not_found"}`, and a deleted one is
+  `410 {"error":"workspace_deleted"}`. Deleting a workspace deletes its set, and
+  a push never lands after the deletion. Drop the push in both cases.
+- **What it changes.** A member's next token for a package in the set names the
+  workspace; a token already minted keeps what it was minted with until it
+  expires (an hour by default). Leaving the workspace, or a push without the
+  package, takes the workspace out of the next token. A local build's token
+  never names a workspace.
+- **Several workspaces.** A person may belong to several. When more than one
+  of them assigns the package, the token names the one managing their device
+  (below), else the one they joined first. A workspace that does not manage
+  the device still names itself for its own miniapps, so its members can use
+  them.
+
+## The managing workspace
+
+A person may belong to several workspaces, but their phone is managed by at
+most one: Fleet's desired state is that workspace's assignments, never a merge
+of several. Core decides which ([Workspaces](workspaces.md#the-managing-workspace)):
+the earliest-joined membership in a workspace that is not the person's own
+automatic workspace, else their own automatic workspace.
+
+```http
+GET /api/internal/workspaces/users/:mentraUserId/managing-workspace
+
+200 {"managing": {"workspaceId": "ws_...", "name": "Acme", "role": "member", "automatic": false}}
+200 {"managing": null}
+```
+
+- **Who.** Fleet only, signed as service `fleet`; any other service is
+  `403 {"error":"forbidden"}`.
+- **The answer.** `managing` is null for a person in no workspace and for a
+  deleted account. Core answers from its memberships now, so a join the change
+  feed has not delivered yet is already managed.
+- **Fleet's views** see a member only while their workspace managed them.
+  Fleet decides this from its own interval copy with the same rule, judging
+  each moment by the memberships open then, so the first real workspace someone
+  joined keeps their usage and devices, and another workspace they are in sees
+  none of it. When they leave it, the next workspace sees them from the leave.
+- **Fleet.** `GET /v1/client/desired-state` asks this for the phone's account
+  (`managingWorkspace` on the contract client). Against a Core that predates the
+  route (`404`), Fleet falls back to confirming the account's open memberships
+  with `POST /memberships/check` and keeping the highest role, then the
+  earliest join.
+
+## The miniapp registry
+
+A workspace may receive any miniapp URL that [Core's registry](registry.md)
+hasn't archived. Fleet asks the registry when an admin assigns a URL, and for
+the names its views show. It never asks the Store. Both calls are Fleet's only,
+signed as service `fleet` like the calls above: any other service is
+`403 {"error":"forbidden"}`, a missing or bad signature is
+`401 {"error":"service_unauthorized"}`, a body over 64 KiB is
+`413 {"error":"payload_too_large"}`, and a body that isn't what the call takes
+is `400 {"error":"invalid_request"}`. The types and the client methods
+(`checkRegistry`, `lookupRegistry`) are in `@mentra/workspace-contract`.
+
+### Checking URLs
+
+```http
+POST /api/internal/registry/check
+{"urls": ["https://miniapps.acme.example/com.acme.tools/"], "workspaceId": "ws_...", "mentraUserId": "mu_..."}
+
+200 {"results": [{"url": "https://miniapps.acme.example/com.acme.tools/", "status": "accepted",
+                  "packageName": "com.acme.tools", "name": "Acme Tools",
+                  "iconUrl": "https://miniapps.acme.example/com.acme.tools/icon.png",
+                  "private": true, "checkedAt": "2026-10-24T08:00:00.000Z"}]}
+```
+
+- **The body.** 1 to 50 `urls`, each normalized as `normalizeMiniappUrl`
+  does; `workspaceId`, the assigning workspace; and `mentraUserId`, the admin
+  assigning. The workspace must be active and the admin a live account, or the
+  call is `403 {"error":"not_a_member"}`. Fleet has already checked that they may
+  assign miniapps there, an Organization Admin included.
+- **Registering.** Core answers a URL its registry holds from the entry, without
+  reading it. It registers a URL it doesn't know as the admin's own install
+  would, with the admin as the person registering: the same archive rules (an
+  account rule for the admin covers it), the same domain rule and the same 120
+  registrations an hour, shared with the admin's phones. No verified email is
+  needed: Fleet is acting for an admin of the workspace. A sign-in challenge gets
+  the admin's miniapp token for that package. When the admin is an active member
+  of the workspace, it names `workspaceId`, because that workspace is assigning
+  it. Anyone else, such as an Organization Admin who isn't a member, gets their
+  ordinary token, which never names a workspace they aren't in: a server that
+  admits only the workspace's members refuses it, and the URL is
+  `accepted_unverified` with its package only. A private entry is read again on
+  every check, with that check's token.
+- **Time.** Core reads at most 8 URLs at once and answers within 10 seconds. A
+  URL it hasn't finished is `unknown`; the read finishes in the background, so
+  asking again soon finds the entry.
+- **The answer.** One result per URL, in the order asked, with each URL as it
+  was sent. `checkedAt` is when Core answered for it.
+
+| `status` | Means | Fleet |
+| --- | --- | --- |
+| `accepted` | Core read a valid `miniapp.json` whose package passes the domain rule. | Assign. |
+| `accepted_unverified` | Core couldn't read the URL and holds a phone's report of it, or its server asks for sign-in and refused the admin's token. | Assign; the phone's own request decides whether it installs. |
+| `archived` | An archive rule covers it. | Refuse. |
+| `not_a_miniapp` | An invalid `miniapp.json`, a package its domain doesn't own, or not a public HTTPS URL. | Refuse. |
+| `unreachable` | Core couldn't read it, and no phone has reported it. Nothing is recorded. | Refuse; it can be assigned once a phone has installed it. |
+| `unknown` | Core didn't finish in time, or the admin has used this hour's registrations. Never a yes. | Ask again later. |
+
+`packageName` is null when Core doesn't know the package. `name` and `iconUrl`
+are null when Core doesn't know them, and for a private miniapp whose server
+refused the admin's token. `private` says the URL's server asks for sign-in.
+
+### Naming miniapps
+
+```http
+POST /api/internal/registry/lookup
+{"workspaceId": "ws_...", "packageNames": ["com.acme.tools", "com.example.gone"]}
+
+200 {"entries": {"com.acme.tools": {"name": "Acme Tools", "iconUrl": "https://...", "private": true, "archived": false},
+                 "com.example.gone": null}}
+```
+
+- 1 to 500 `packageNames`. The answer has every name asked about, null for one
+  the registry has no entry for.
+- One package can have several URLs. Core names it from its most recently
+  verified active entry, or a phone-reported one when none is verified. When
+  every entry is archived, it answers the most recent one with `archived: true`.
+- A private miniapp's `name` and `iconUrl` are null unless the workspace's
+  assigned set, as Fleet last pushed it ([Assigned miniapps](#assigned-miniapps)),
+  holds the package. Everywhere else it is a "Private miniapp".
+
 ## Not installed versus unavailable
 
 Clients can tell the two apart and should: one means "hide Fleet" or "stop
@@ -593,6 +799,10 @@ sending", the other "try again".
   than `304`, a response body over the limit, or a `2xx` that is not JSON (on the
   JSON routes), or an asset that fails the checks of the
   [UI asset route](#fleet-ui-assets). Never an empty success. Retry later.
+- `503` with another code, such as `directory_unavailable` or
+  `registry_unavailable`: Fleet answered, and named the part of it that is down
+  ([A `503` may name what is down](#paths-and-bodies)). Retry later; a page may
+  say what still works.
 - `401 {"error":"unauthorized"}`: the caller is not signed in. A phone treats it
   as an expired session and refreshes.
 - `403 {"error":"forbidden"}`: the admin caller is a key, or lacks

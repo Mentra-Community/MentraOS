@@ -7,6 +7,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
+import {logPermissionAlert} from "@/utils/permissionLog"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {MediaLibraryPermissions} from "@mentra/engine"
 import {
@@ -64,6 +65,11 @@ export function GalleryCameraRollSetting() {
         const hasPermission = await MediaLibraryPermissions.checkPermission()
         const granted = hasPermission || (await MediaLibraryPermissions.requestPermission())
         if (!granted) {
+          logPermissionAlert(
+            "photo_library",
+            `media library checkPermission=${hasPermission} requestPermission=${granted}`,
+            "camera_roll_auto_save",
+          )
           showAlert(
             "Camera Roll Access Required",
             "Allow photo-library access in Settings before enabling automatic saving.",

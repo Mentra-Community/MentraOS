@@ -1,0 +1,17 @@
+diff --git a/ios/Platform/Platform.h b/ios/Platform/Platform.h
+index e5dc7ecd36c1c7ae358fa318de291d520bc38e92..537a04db5bcc656dd5a8fbccc47482eb83f6a4ec 100644
+--- a/ios/Platform/Platform.h
++++ b/ios/Platform/Platform.h
+@@ -17,7 +17,11 @@
+ @compatibility_alias UIHostingController NSHostingController;
+ @compatibility_alias UIImage NSImage;
+ 
+-#ifndef UIApplication
++// `@compatibility_alias` doesn't define a preprocessor macro, so `#ifndef
++// UIApplication` never detects that `React/RCTUIKit.h` already declares this
++// alias; under Swift explicit modules the duplicate is a Clang conflict.
++// Backport of the upstream expo-modules-core fix.
++#if !__has_include(<React/RCTUIKit.h>)
+ @compatibility_alias UIApplication NSApplication;
+ #endif
+ 

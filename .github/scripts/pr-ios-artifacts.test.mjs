@@ -196,6 +196,7 @@ test("publishes installation files before receipt and preserves their bytes on p
   await publishIosArtifacts(directory, env, {exec})
   const first = JSON.parse(await readFile(path.join(directory, name(1)), "utf8"))
   assert.equal(first.schemaVersion, 2)
+  assert.match(first.packagingFingerprint, /^[a-f0-9]{64}$/)
   assert.deepEqual(uploaded, [...Object.values(first.artifacts).map((a) => a.name), name(1)])
   assert.deepEqual(first.artifacts.iphone, input.artifacts.iphone)
   for (const asset of Object.values(first.artifacts)) {

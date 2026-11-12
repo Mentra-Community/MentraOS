@@ -9,6 +9,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {completeQrScan, getQrScanRequest, requestPhoneQrScan, subscribeQrScan} from "@/services/qrScanRequest"
 import showAlert from "@/utils/AlertUtils"
+import {logPermissionAlert} from "@/utils/permissionLog"
 
 function useQrScanRequest() {
   return useSyncExternalStore(subscribeQrScan, getQrScanRequest, getQrScanRequest)
@@ -83,6 +84,11 @@ export function QrScanOverlay() {
               try {
                 await Linking.openSettings()
               } catch {
+                logPermissionAlert(
+                  "camera",
+                  {status: permission.status, canAskAgain: permission.canAskAgain},
+                  "qr_scan_permission_denied",
+                )
                 showAlert(translate("qrScan:permissionDeniedTitle"), translate("qrScan:permissionDeniedBody"), [
                   {text: "OK"},
                 ])

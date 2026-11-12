@@ -9,9 +9,11 @@
  * - An alert answers once its sheet has slid away, so a button that opens a native surface (a link, a
  *   permission prompt, a picker) never races the sheet.
  * - Swiping the sheet down, tapping outside it and Android back answer with the cancel button, and only
- *   when the alert has one and allows dismissal. Otherwise the sheet waits for a button.
+ *   when the alert has one and allows dismissal; with `dismissWithoutAnswer`, they close it with no answer
+ *   (`NO_ANSWER`), so the person decides later. Otherwise the sheet waits for a button.
  * - Buttons follow iOS alerts: two buttons sit side by side with the main action on the right, unless a
  *   label wouldn't fit on one line. Then, and with three or more buttons, they stack, main action on top.
+ * - A sheet whose content has a text field rides above the keyboard while it's open.
  */
 import {StatusBar} from "expo-status-bar"
 import {type ReactNode, useCallback, useEffect, useReducer, useRef, useState} from "react"
@@ -26,6 +28,7 @@ import {
   View,
 } from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
+import {useReanimatedKeyboardAnimation} from "react-native-keyboard-controller"
 import Animated, {Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming} from "react-native-reanimated"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {scheduleOnRN} from "react-native-worklets"
@@ -47,6 +50,8 @@ export interface AlertOptions {
   content?: ReactNode
   /** Swipe down, tap outside and Android back answer with the cancel button. Needs a cancel button. */
   allowDismiss?: boolean
+  /** With `allowDismiss`, they close the sheet with no answer (`NO_ANSWER`) instead, and no cancel button is needed. */
+  dismissWithoutAnswer?: boolean
 }
 
 interface AlertRequest {
@@ -76,20 +81,33 @@ export const NO_ANSWER = -1
 
 interface AlertHost {
   present: (request: AlertRequest) => Promise<number>
-  dismiss: (title: string) => void
+  dismiss: (title: string, message?: string) => void
 }
 
 let host: AlertHost | null = null
+/** Callers of `waitForAlertHost` that came before the sheet was mounted. */
+let hostWaiters: Array<() => void> = []
 
 /** Whether the sheet is mounted. Before it is (early startup, some tests) callers fall back on their own. */
 export const hasAlertHost = () => host !== null
 
 /**
- * Closes the alert titled `title` without running any of its buttons, and drops queued alerts with that
- * title. For alerts whose condition resolved on its own. Their callers get `NO_ANSWER`.
+ * Resolves once the sheet is mounted, at once when it already is. A caller that must not fall back on a
+ * system alert (the Fleet sheets, which run at startup, before the provider mounts) waits here, then
+ * calls `showAlert`.
  */
-export function dismissAlert(title: string): void {
-  host?.dismiss(title)
+export function waitForAlertHost(): Promise<void> {
+  if (host) return Promise.resolve()
+  return new Promise<void>((resolve) => hostWaiters.push(resolve))
+}
+
+/**
+ * Closes the alert titled `title` without running any of its buttons, and drops queued alerts with that
+ * title. With `message`, only the alerts with that message too. For alerts whose condition resolved on its
+ * own. Their callers get `NO_ANSWER`.
+ */
+export function dismissAlert(title: string, message?: string): void {
+  host?.dismiss(title, message)
 }
 
 export interface SheetButton {
@@ -230,10 +248,12 @@ export function ModalProvider({children}: {children: ReactNode}) {
 
   const offset = useSharedValue(windowHeight)
   const backdrop = useSharedValue(0)
+  // The keyboard's height, negative while it's open: a text field in the content stays above it.
+  const keyboard = useReanimatedKeyboardAnimation()
 
   const current = queue.current[0]
   const cancelIndex = current ? current.buttons.findIndex((button) => button.style === "cancel") : -1
-  const dismissible = !!current?.options.allowDismiss && cancelIndex !== -1
+  const dismissible = !!current?.options.allowDismiss && (cancelIndex !== -1 || !!current.options.dismissWithoutAnswer)
 
   const finish = useCallback(() => {
     const answered = closing.current
@@ -251,6 +271,8 @@ export function ModalProvider({children}: {children: ReactNode}) {
       if (!alert || closing.current) return
       closing.current = {id: alert.id, index}
       rerender()
+      // A field in the sheet goes with it: the keyboard closes as the sheet slides away.
+      Keyboard.dismiss()
       backdrop.value = withTiming(0, HIDE)
       // Finish however the slide ends: nothing else animates the sheet while it closes.
       offset.value = withTiming(windowHeight, HIDE, () => scheduleOnRN(finish))
@@ -260,8 +282,10 @@ export function ModalProvider({children}: {children: ReactNode}) {
 
   const cancel = useCallback(() => {
     const alert = queue.current[0]
-    const index = alert ? alert.buttons.findIndex((button) => button.style === "cancel") : -1
-    if (alert?.options.allowDismiss && index !== -1) close(index)
+    if (!alert?.options.allowDismiss) return
+    if (alert.options.dismissWithoutAnswer) return close(NO_ANSWER)
+    const index = alert.buttons.findIndex((button) => button.style === "cancel")
+    if (index !== -1) close(index)
   }, [close])
 
   useEffect(() => {
@@ -284,18 +308,23 @@ export function ModalProvider({children}: {children: ReactNode}) {
           queue.current = [...queue.current, {...request, id: nextId.current++, waiters: [answer]}]
           rerender()
         }),
-      dismiss: (title) => {
+      dismiss: (title, message) => {
+        const matches = (alert: QueuedAlert) =>
+          alert.title === title && (message === undefined || alert.message === message)
         const [first, ...rest] = queue.current
         const kept = rest.filter((alert) => {
-          if (alert.title !== title) return true
+          if (!matches(alert)) return true
           settle(alert, NO_ANSWER)
           return false
         })
         queue.current = first ? [first, ...kept] : kept
-        if (first?.title === title) close(NO_ANSWER)
+        if (first && matches(first)) close(NO_ANSWER)
         else rerender()
       },
     }
+    const waiting = hostWaiters
+    hostWaiters = []
+    waiting.forEach((resolve) => resolve())
     return () => {
       host = null
     }
@@ -344,7 +373,12 @@ export function ModalProvider({children}: {children: ReactNode}) {
     })
 
   const backdropStyle = useAnimatedStyle(() => ({opacity: backdrop.value}))
-  const sheetStyle = useAnimatedStyle(() => ({transform: [{translateY: offset.value}]}))
+  // The keyboard lifts the sheet only as far as the sheet is on screen, so a sheet sliding away or in is never held
+  // up by a keyboard that is still closing.
+  const sheetStyle = useAnimatedStyle(() => {
+    const shown = windowHeight > 0 ? Math.max(0, 1 - offset.value / windowHeight) : 1
+    return {transform: [{translateY: offset.value + keyboard.height.value * shown}]}
+  })
 
   return (
     <>
@@ -370,7 +404,7 @@ export function ModalProvider({children}: {children: ReactNode}) {
               className="absolute bottom-0 left-0 right-0 rounded-t-3xl bg-background px-6"
               testID="alert.sheet">
               <View className="h-6 items-center justify-center">
-                {dismissible && <View className="h-1.5 w-10 rounded-full bg-border" />}
+                {dismissible && <View className="h-1.5 w-10 rounded-full bg-border" testID="alert.handle" />}
               </View>
               <ScrollView
                 className="grow-0"

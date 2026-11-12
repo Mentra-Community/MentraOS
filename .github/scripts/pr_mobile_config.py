@@ -18,8 +18,8 @@ def read_build(config):
 
 
 def pr_backend(base_ref):
-    """Match prBackend in pr-mobile-build.mjs: only staging-targeted PRs use staging."""
-    return 'staging' if base_ref == 'staging' else 'dev'
+    """Match prBackend in pr-mobile-build.mjs: PRs into staging or main use staging."""
+    return 'staging' if base_ref in ('staging', 'main') else 'dev'
 
 
 def build_info(env=os.environ):

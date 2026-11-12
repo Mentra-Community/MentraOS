@@ -203,8 +203,8 @@ engine.speech.stt.currentLanguage()
 engine.speech.stt.languages()
 engine.speech.stt.languageInfo()
 await engine.speech.stt.download(/* model args */)
-engine.speech.stt.activate(code)
-engine.speech.stt.cancelDownload()
+await engine.speech.stt.activate(code)               // select it and persist its native path
+engine.speech.stt.cancelDownload(code?)              // that download, or the most recent one
 await engine.speech.stt.deleteModel(/* model args */)
 engine.speech.stt.status()                       // offline-model auto-download status
 engine.speech.stt.onStatusChanged((s) => { … })  // subscribe; returns unsubscribe
@@ -347,7 +347,7 @@ await engine.miniapps.stop(packageName)
 await engine.miniapps.setForeground(packageName)
 engine.miniapps.clearForeground()
 await engine.miniapps.stopAll()
-await engine.miniapps.install(url, opts?)
+const {status} = await engine.miniapps.install(miniappUrl, {source: "link", confirm}) // "installed" | "opened" | "deferred"
 await engine.miniapps.uninstall(packageName, version?)
 await engine.miniapps.invokeAction(packageName, actionId, params?, timeoutMs?) // host-only actions included
 const offPrompt = engine.miniapps.onUpdatePrompt((prompt) => {
@@ -355,11 +355,55 @@ const offPrompt = engine.miniapps.onUpdatePrompt((prompt) => {
   prompt.answer(userChoseUpdate ? "update" : "not_now")
 })
 const offFailure = engine.miniapps.onUpdateFailed(({displayName, installedVersion}) => { … })
-const offDeferred = engine.miniapps.onDeferredUpdateReady((packageName) => { … }) // run Store maintenance again
+const offDeferred = engine.miniapps.onDeferredUpdateReady((packageName) => { … }) // check for updates again
 ```
 
-`onUpdatePrompt` is how the host renders the question before a bundled Store's
-update closes a running miniapp. The engine decides when a prompt may appear:
+`install` takes a miniapp URL (the HTTPS base that serves `miniapp.json`). It fetches
+`miniapp.json`, answering the miniapp server's sign-in challenge with that package's
+token, checks that the URL's domain owns the package name, registers the URL in Core's
+registry, then calls your `confirm(preview)` to show an install sheet (omit it for a
+headless install), checks the phone can run the miniapp (its `minHostVersion` and
+`sdkVersion`), and downloads, verifies and installs its ZIP. A miniapp's
+`hardwareRequirements` describe the glasses and never stop an install or an update:
+the preview's `missingHardware` lists the required hardware the paired glasses (or
+none) lack, for the sheet to show, as "Needs glasses with a camera." `opened` means it was already installed from that URL. A failure
+throws `InstallMiniappError`, whose `code` is one of `not_a_miniapp`,
+`domain_mismatch`, `archived`, `needs_newer_app`, `access_denied`, `age_restricted`,
+`network`, `cancelled`, `integrity` or `signature_invalid`.
+
+A URL at a local-network address (`localhost`, a private IPv4 or IPv6 address, or a
+`.local` name), such as the one `mentra dev` prints, installs as a development build,
+over HTTP or HTTPS, where the deployment allows miniapp development. Nothing registers
+it or checks its package name against a domain, so it keeps its data apart from any other
+install of that name, its miniapp tokens are marked as a local build's (a backend accepts
+them only when it allows local builds), it never gets system privileges, and it never
+updates from its URL; its development server reloads it instead. Only a person installs
+one: a `system` or `assignment` install of a local URL fails with `not_a_miniapp`. The
+preview's `local` is `true`: show "From your local network" with the address.
+
+Every install registers its URL unless `config.requireRegistry` is `false`. The engine's
+update checks also ask Core which installed URLs are archived, and never update those;
+installed copies keep running. Off, the engine installs any miniapp URL without
+registering it and asks Core nothing; the domain rule still applies. A host app that
+turns it off answers to the app stores' rules itself.
+
+Pass `config.isHostLink(url)` to name your own app's links: its URL schemes and the
+addresses it claims as app links. A miniapp's `session.system.openUrl` never opens
+them, so no miniapp can open your install sheet, your sign-in callbacks or anything
+else your link handling does. Refuse the same links in the miniapp WebView you host.
+
+Set `config.hostAgeRating` to your app's own App Store age rating, for example `"12+"`.
+A miniapp whose `ageRating` is above it installs or opens only for a person whose
+declared age is old enough. The first time that comes up, the engine calls
+`ui.askDeclaredAge()` (resolve the whole number of years the person gives, or `null`
+when they cancel) and keeps the answer, with the date, on their Core account. It never
+sends it to a miniapp. When the gate stops a miniapp the person is installing or
+opening, the engine calls `ui.showAgeRestricted(notice)` so you can say why. An install
+with a sheet is checked before `confirm`; a headless install is checked when the
+miniapp first opens. Without `hostAgeRating`, nothing is gated.
+
+`onUpdatePrompt` is how the host renders the question before an update closes a
+running miniapp. The engine decides when a prompt may appear:
 only while the app is in the foreground, one at a time, and at most once a day
 per miniapp. If the update fails after the user accepts, the engine starts the
 installed version again and calls `onUpdateFailed`.
@@ -383,6 +427,12 @@ optional **config** — engine owns the entire runtime. The only required seam i
 `auth.getSubjectToken` (passed to `configure()`); engine owns token exchange, refresh,
 storage, the cloud client, glasses/BLE, settings, speech, display, and the miniapp
 runtime from there.
+
+**Native peer packages.** The engine declares its native dependencies as peer
+dependencies, so your app installs them (see `peerDependencies` in
+`@mentra/engine`'s `package.json`). `expo-secure-store` (`~55.0.14`) is required:
+the engine keeps Mentra Core sign-in credentials in the iOS Keychain and the
+Android Keystore through it.
 
 <Note>
 You may see internal `configureRuntime(...)` wiring in the first-party Mentra App —

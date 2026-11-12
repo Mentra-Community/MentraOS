@@ -15,26 +15,6 @@ export function linkedGroups(text) {
   return [...block.matchAll(/^\s*-\s*['"]?([a-z0-9-]+)['"]?\s*$/gm)].map((match) => match[1])
 }
 
-export function syncProblems(resources, groups, now = Date.now(), maxAgeMs = 300_000) {
-  const problems = []
-  for (const group of groups) {
-    for (const kind of ["SecretStore", "ExternalSecret"]) {
-      const resource = resources.find((item) => item.kind === kind && item.metadata.name === `${group}.1`)
-      const ready = resource?.status?.conditions?.find((condition) => condition.type === "Ready")
-      if (ready?.status !== "True") {
-        problems.push(`${group}: ${kind} ${ready?.reason ?? "missing"}`)
-      }
-      if (kind === "ExternalSecret" && ready?.status === "True") {
-        const refresh = Date.parse(resource.status.refreshTime)
-        if (!Number.isFinite(refresh) || now - refresh > maxAgeMs || refresh > now + 60_000) {
-          problems.push(`${group}: stale or invalid refresh time`)
-        }
-      }
-    }
-  }
-  return problems
-}
-
 export function appProblems(app, yaml, exportedOverrides) {
   const problems = []
   const groups = linkedGroups(yaml)
@@ -76,18 +56,6 @@ export async function checkHealth(contract, {run = porter, token = process.env.P
   for (const cluster of contract.clusters) {
     const apps = contract.apps.filter((app) => app.cluster === cluster.id)
     const flags = ["--project", String(contract.project), "--cluster", String(cluster.id)]
-    const resources = JSON.parse(
-      await run(
-        ["kubectl", ...flags, "--", "get", "secretstores,externalsecrets", "-n", "porter-env-group", "-o", "json"],
-        token,
-      ),
-    )
-    problems.push(
-      ...syncProblems(
-        resources.items,
-        contract.groups.filter((group) => group.cluster === cluster.id).map((group) => group.name),
-      ),
-    )
     for (const scope of contract.groups.filter((group) => group.cluster === cluster.id)) {
       const exported = await run(["env", "pull", "--group", scope.name, ...flags], token)
       problems.push(...groupProblems(scope, exported))
@@ -119,7 +87,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.exitCode = 1
     } else {
       console.info(
-        `Doppler sync healthy for ${contract.apps.length} managed apps; no Porter overrides or manual groups.`,
+        `Doppler groups complete for ${contract.apps.length} managed apps; no Porter overrides or manual groups.`,
       )
       if (contract.exceptions?.length)
         console.info(

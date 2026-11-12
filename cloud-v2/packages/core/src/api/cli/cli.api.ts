@@ -5,10 +5,8 @@
  *   GET /api/cli/config   {issuer, clientId}
  *
  * The issuer is Core's sign-in server (`CLOUD_CORE_OIDC_ISSUER`) and the
- * client ID is its registered `cli` client's. The CLI reads this on a Core
- * without a Mentra Miniapp Store (a Private Cloud); against a Store it reads
- * the Store's own `/api/console/auth/cli-config`, which answers the same for
- * the Core it serves. Both values are public. With the sign-in server off, or
+ * client ID is its registered `cli` client's. The CLI reads this from the Core
+ * it signs in to, production Core or a Private Cloud's. Both values are public. With the sign-in server off, or
  * no `cli` client registered, the answer is 404 `not_configured`.
  */
 

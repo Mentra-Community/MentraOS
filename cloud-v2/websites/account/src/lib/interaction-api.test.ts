@@ -48,9 +48,27 @@ describe("calls to Core's sign-in server", () => {
     expect(await createInteractionApi(ORIGIN, offline).handOff("uid-1234567890", "t")).toEqual({ kind: "error" });
   });
 
-  test("details: the prompt, the client's name and the scopes", async () => {
-    const api = createInteractionApi(ORIGIN, respond(200, { prompt: "consent", client: { name: "Notes" }, scopes: ["openid", 3] }));
-    expect(await api.details("uid-1234567890")).toEqual({ kind: "ok", prompt: "consent", clientName: "Notes", scopes: ["openid"] });
+  test("details: the prompt, the client's name, the scopes, where it returns to and whose data it reaches", async () => {
+    const api = createInteractionApi(
+      ORIGIN,
+      respond(200, {
+        prompt: "consent",
+        client: { name: "Notes", packageName: "com.mentra.notes" },
+        redirectUri: "https://notes.example/callback",
+        scopes: ["openid", 3],
+      }),
+    );
+    expect(await api.details("uid-1234567890")).toEqual({
+      kind: "ok",
+      prompt: "consent",
+      clientName: "Notes",
+      scopes: ["openid"],
+      redirectUri: "https://notes.example/callback",
+      packageName: "com.mentra.notes",
+    });
+    // A Core that sends neither, or sends something else in their place, names no address and no miniapp.
+    const bare = createInteractionApi(ORIGIN, respond(200, { prompt: "consent", client: { name: "Notes", packageName: 7 }, redirectUri: ["x"], scopes: [] }));
+    expect(await bare.details("uid-1234567890")).toMatchObject({ redirectUri: "", packageName: null });
     expect(await createInteractionApi(ORIGIN, respond(400, {})).details("uid-1234567890")).toEqual({ kind: "expired" });
   });
 

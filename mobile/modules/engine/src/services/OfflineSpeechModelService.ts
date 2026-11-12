@@ -2,11 +2,12 @@
 
 import STTModelManager from "./STTModelManager"
 import TTSModelManager from "./TTSModelManager"
+import WakeWordModelManager from "./WakeWordModelManager"
 
 export type DownloadStage = "idle" | "downloading" | "extracting" | "complete" | "failed"
 
 export interface DownloadStatus {
-  kind: "stt" | "tts"
+  kind: "stt" | "tts" | "wakeword"
   languageCode: string
   stage: DownloadStage
   /** 0–100, only meaningful while stage is "downloading" or "extracting". */
@@ -15,6 +16,11 @@ export interface DownloadStatus {
 
 type StatusListener = (status: DownloadStatus | null) => void
 
+/**
+ * The Speech-page download system. Every speech model download goes through
+ * here (the startup background download, a miniapp that needs a missing model,
+ * a tap on the Speech page), so progress always shows on the Speech page.
+ */
 class OfflineSpeechModelService {
   private static instance: OfflineSpeechModelService
   private started = false
@@ -53,7 +59,11 @@ class OfflineSpeechModelService {
     })
   }
 
-  /** Subscribe to background-download status changes. Fires immediately with current status. */
+  /**
+   * Subscribe to download status changes; fires immediately with the current
+   * status. Each event names its model (`kind` + `languageCode`); downloads of
+   * different models can interleave.
+   */
   subscribe(listener: StatusListener): () => void {
     this.listeners.add(listener)
     listener(this.currentStatus)
@@ -78,8 +88,8 @@ class OfflineSpeechModelService {
   }
 
   async ensureDefaultModels(): Promise<void> {
-    // Sequence STT then TTS so the home-screen banner shows one coherent
-    // progress at a time. STT first because it's the primary use case.
+    // Sequence STT, TTS, then the wake word so the Speech page shows one
+    // coherent progress at a time. STT first because it's the primary use case.
     try {
       await this.ensureSttModel()
     } catch (error) {
@@ -89,6 +99,11 @@ class OfflineSpeechModelService {
       await this.ensureTtsModel()
     } catch (error) {
       console.warn("OFFLINE_MODELS: TTS model setup failed:", error)
+    }
+    try {
+      await this.downloadWakeWordModel()
+    } catch (error) {
+      console.warn("OFFLINE_MODELS: wake-word model setup failed:", error)
     }
   }
 
@@ -108,8 +123,60 @@ class OfflineSpeechModelService {
     return this.ttsPromise
   }
 
+  /**
+   * Download an STT model with its progress on the Speech page. Joins a
+   * download of the same model that is already running. Never changes the
+   * selected model.
+   */
+  async downloadSttModel(code: string, onProgress?: (percent: number) => void): Promise<void> {
+    if (await STTModelManager.isModelAvailable(code)) return
+    await this.track("stt", code, onProgress, (progress, extraction) =>
+      STTModelManager.downloadModel(code, progress, extraction),
+    )
+  }
+
+  /** Download the wake-word model with its progress on the Speech page. */
+  async downloadWakeWordModel(onProgress?: (percent: number) => void): Promise<void> {
+    if (await WakeWordModelManager.isModelAvailable()) return
+    await this.track("wakeword", WakeWordModelManager.code, onProgress, (progress, extraction) =>
+      WakeWordModelManager.downloadModel(progress, extraction),
+    )
+  }
+
+  private async track(
+    kind: DownloadStatus["kind"],
+    code: string,
+    onProgress: ((percent: number) => void) | undefined,
+    download: (
+      onProgress: (progress: {percentage: number}) => void,
+      onExtraction: (progress: {percentage: number}) => void,
+    ) => Promise<void>,
+  ): Promise<void> {
+    console.log(`OFFLINE_MODELS: downloading ${kind} model: ${code}`)
+    this.setStatus({kind, languageCode: code, stage: "downloading", percent: 0})
+    try {
+      await download(
+        (p) => {
+          this.setStatus({kind, languageCode: code, stage: "downloading", percent: p.percentage})
+          onProgress?.(p.percentage)
+        },
+        (p) => this.setStatus({kind, languageCode: code, stage: "extracting", percent: p.percentage}),
+      )
+      this.setStatus({kind, languageCode: code, stage: "complete", percent: 100})
+      console.log(`OFFLINE_MODELS: ${kind} model downloaded: ${code}`)
+    } catch (error) {
+      this.setStatus({kind, languageCode: code, stage: "failed", percent: 0})
+      throw error
+    }
+  }
+
   private async ensureSttModelInner(): Promise<void> {
     const preferred = await STTModelManager.getCurrentLanguageFromPreferences()
+    const replacement = preferred ? STTModelManager.getLegacyReplacement(preferred) : undefined
+    if (replacement) {
+      await this.replaceLegacySttModel(preferred, replacement)
+      return
+    }
     const code = preferred || STTModelManager.getCurrentLanguage()
 
     if (await STTModelManager.isModelAvailable(code)) {
@@ -118,21 +185,24 @@ class OfflineSpeechModelService {
       return
     }
 
-    console.log(`OFFLINE_MODELS: downloading STT model in background: ${code}`)
-    this.setStatus({kind: "stt", languageCode: code, stage: "downloading", percent: 0})
-    try {
-      await STTModelManager.downloadModel(
-        code,
-        (p) => this.setStatus({kind: "stt", languageCode: code, stage: "downloading", percent: p.percentage}),
-        (p) => this.setStatus({kind: "stt", languageCode: code, stage: "extracting", percent: p.percentage}),
-      )
-      await STTModelManager.activateLanguage(code)
-      this.setStatus({kind: "stt", languageCode: code, stage: "complete", percent: 100})
-      console.log(`OFFLINE_MODELS: STT model downloaded: ${code}`)
-    } catch (error) {
-      this.setStatus({kind: "stt", languageCode: code, stage: "failed", percent: 0})
-      throw error
-    }
+    await this.downloadSttModel(code)
+    // The user can pick another language on the Speech page while this downloads.
+    if (STTModelManager.getCurrentLanguage() === code) await STTModelManager.activateLanguage(code)
+  }
+
+  /**
+   * A saved model that is no longer listed (the old English Zipformer) keeps
+   * running while its replacement downloads; then the replacement becomes the
+   * saved model and the old folder is deleted. A failed download leaves the old
+   * model in place and runs again next launch. If the user picked another model
+   * during the download, that choice stands and only the old folder is removed.
+   */
+  private async replaceLegacySttModel(legacy: string, replacement: string): Promise<void> {
+    console.log(`OFFLINE_MODELS: replacing saved STT model ${legacy} with ${replacement}`)
+    await this.downloadSttModel(replacement)
+    if (STTModelManager.getCurrentLanguage() === legacy) await STTModelManager.activateLanguage(replacement)
+    await STTModelManager.deleteModel(legacy)
+    console.log(`OFFLINE_MODELS: STT model ${legacy} replaced by ${replacement}`)
   }
 
   private async ensureTtsModelInner(): Promise<void> {
@@ -145,21 +215,10 @@ class OfflineSpeechModelService {
       return
     }
 
-    console.log(`OFFLINE_MODELS: downloading TTS model in background: ${code}`)
-    this.setStatus({kind: "tts", languageCode: code, stage: "downloading", percent: 0})
-    try {
-      await TTSModelManager.downloadModel(
-        code,
-        (p) => this.setStatus({kind: "tts", languageCode: code, stage: "downloading", percent: p.percentage}),
-        (p) => this.setStatus({kind: "tts", languageCode: code, stage: "extracting", percent: p.percentage}),
-      )
-      await TTSModelManager.activateLanguage(code)
-      this.setStatus({kind: "tts", languageCode: code, stage: "complete", percent: 100})
-      console.log(`OFFLINE_MODELS: TTS model downloaded: ${code}`)
-    } catch (error) {
-      this.setStatus({kind: "tts", languageCode: code, stage: "failed", percent: 0})
-      throw error
-    }
+    await this.track("tts", code, undefined, (progress, extraction) =>
+      TTSModelManager.downloadModel(code, progress, extraction),
+    )
+    await TTSModelManager.activateLanguage(code)
   }
 }
 

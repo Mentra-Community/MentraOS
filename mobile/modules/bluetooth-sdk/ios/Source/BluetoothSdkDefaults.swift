@@ -11,9 +11,9 @@ enum BluetoothSdkDefaults {
     static let voiceActivityDetectionEnabled = false
     static let loudnessGateEnabled = true
 
-    /// Must stay true. The firmware defaults auto power-off on, and we re-push
-    /// every Bluetooth setting on connect, so a false default here would
-    /// silently disable it on every pair the app touches.
+    /// Must match the firmware and Mentra App default (off). We re-push every
+    /// Bluetooth setting on connect, so a true default here turns on the
+    /// 20-minute unworn power-off on every pair the app touches.
     static let autoPowerOffEnabled = false
     private static let infoSdkVersionKey = "MentraBluetoothSdkVersion"
     private static let swiftPackageSdkVersion = "__MENTRA_BLUETOOTH_SDK_VERSION__"
