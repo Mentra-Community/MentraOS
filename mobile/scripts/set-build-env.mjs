@@ -4,6 +4,7 @@ import {execFileSync} from "child_process"
 import {writeFile, readFile, chmod} from "fs/promises"
 import {homedir} from "os"
 import {join} from "path"
+import {readFileSync} from "fs"
 import {syncAutolinkingCache} from "./clear-autolinking-cache.mjs"
 
 /**
@@ -57,6 +58,29 @@ export function resolveBuildUser({
   } catch {
     return "unknown"
   }
+}
+
+/**
+ * The app version a local build embeds: the repository root's package.json
+ * owns it, so a copied .env naming an old release does not leave the app
+ * reporting that release, or none (the init screen then cannot check the
+ * cloud's minimum version). CI builds and a value exported by hand keep their
+ * own: releases write their release identity (3.4.0-beta.57) and PR builds
+ * theirs before any build script runs. Bun loads .env into the environment of
+ * a script it runs directly (`bun ios:mac`), so a value equal to .env's is
+ * .env's, not an exported one. Returns null when the build keeps its value.
+ */
+export function localAppVersion({
+  env = process.env,
+  dotenvVersion,
+  readPackageVersion = () => JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version,
+} = {}) {
+  if (env.CI) return null
+  const current = env.EXPO_PUBLIC_MENTRAOS_VERSION
+  if (current !== undefined && current !== dotenvVersion) return null
+  const version = readPackageVersion()
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`Invalid package.json version: ${version}`)
+  return version
 }
 
 export async function setBuildEnv({syncAutolinking = true} = {}) {
@@ -138,25 +162,31 @@ export async function setBuildEnv({syncAutolinking = true} = {}) {
   // ~/.netrc (iOS SPM, written by syncMapboxNetrc above). Persisting it to .env
   // would write a live secret to disk and echo it in the build log below.
 
+  const stale = existingEnv.EXPO_PUBLIC_MENTRAOS_VERSION
+  const appVersion = localAppVersion({dotenvVersion: stale})
+  if (appVersion) {
+    if (stale && stale !== appVersion) {
+      console.warn(`  .env names app version ${stale}; this build uses package.json's ${appVersion}`)
+    }
+    envOverrides.EXPO_PUBLIC_MENTRAOS_VERSION = appVersion
+  }
+
   // Merge with build vars (env-injected real tokens take highest precedence).
   const updatedEnv = {...existingEnv, ...buildVars, ...envOverrides}
 
   // Belt-and-suspenders: never let a real sk.… Downloads token reach .env, even
   // if a prior run or a hand-edit left one in the existing file. The ci/dev
   // dummy ("sk-ci-dummy-…", a hyphen not a dot) is preserved.
-  if (
-    typeof updatedEnv.MAPBOX_DOWNLOADS_TOKEN === "string" &&
-    updatedEnv.MAPBOX_DOWNLOADS_TOKEN.startsWith("sk.")
-  ) {
+  if (typeof updatedEnv.MAPBOX_DOWNLOADS_TOKEN === "string" && updatedEnv.MAPBOX_DOWNLOADS_TOKEN.startsWith("sk.")) {
     delete updatedEnv.MAPBOX_DOWNLOADS_TOKEN
   }
 
-  // Write env to process.env. buildVars are computed fresh for this build and
-  // always apply; every other key only fills a gap — a variable that was
-  // already set in the environment keeps its value (its actual value is not
+  // Write env to process.env. buildVars and envOverrides are computed for this
+  // build and always apply; every other key only fills a gap — a variable that
+  // was already set in the environment keeps its value (its actual value is not
   // echoed either, since env-injected values can be secrets).
   Object.entries(updatedEnv).forEach(([key, value]) => {
-    if (key in buildVars || !inheritedEnv.has(key)) {
+    if (key in buildVars || key in envOverrides || !inheritedEnv.has(key)) {
       process.env[key] = value
       console.log(`  ${key}: (loaded)`)
     } else {

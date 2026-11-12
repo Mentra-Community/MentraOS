@@ -25,7 +25,7 @@ import {
 import {confirmCloudSwitch} from "@/utils/confirmCloudSwitch"
 
 // Types
-type ScreenState = "loading" | "connection" | "outdated" | "success"
+type ScreenState = "loading" | "connection" | "outdated" | "missingVersion" | "success"
 
 interface StatusConfig {
   icon: string
@@ -194,8 +194,9 @@ export default function InitScreen() {
     console.log("INDEX: Local version:", localVer)
 
     if (!localVer) {
-      console.error("Failed to get local version")
-      setState("connection")
+      // A build defect, not a network failure: retrying cannot help.
+      console.error("Failed to get local version: EXPO_PUBLIC_MENTRAOS_VERSION is not set in this build")
+      setState("missingVersion")
       setIsRetrying(false)
       return
     }
@@ -311,6 +312,14 @@ export default function InitScreen() {
           description: isUsingCustomUrl
             ? translate("versionCheck:connectionErrorCustomUrl")
             : translate("versionCheck:connectionErrorDescription"),
+        }
+
+      case "missingVersion":
+        return {
+          icon: "circle-x",
+          iconColor: theme.colors.destructive,
+          title: translate("versionCheck:missingVersionTitle"),
+          description: translate("versionCheck:missingVersionDescription"),
         }
 
       case "outdated":
@@ -455,7 +464,9 @@ export default function InitScreen() {
           />
         )}
 
-        {((state === "connection" && !isBlockedByVersion) || (state === "outdated" && canSkipUpdate)) && (
+        {((state === "connection" && !isBlockedByVersion) ||
+          state === "missingVersion" ||
+          (state === "outdated" && canSkipUpdate)) && (
           <Button flexContainer preset="secondary" onPress={checkLoggedIn} tx="versionCheck:continueAnyway" />
         )}
       </View>

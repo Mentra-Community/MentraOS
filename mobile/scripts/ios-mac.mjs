@@ -33,11 +33,6 @@ const projectRoot = process.cwd()
 const derivedData = path.resolve("build/ios-mac")
 // A debug build gets the miniapps live from the `bun start` it connects to.
 await setBuildEnv()
-// A copied .env may still name an old release. The repository root owns the
-// local version, including the value Metro embeds in the Settings screen.
-const localVersion = JSON.parse(await fs.readFile("../package.json", "utf8")).version
-if (!/^\d+\.\d+\.\d+$/.test(localVersion)) throw new Error("Invalid canonical local version")
-process.env.EXPO_PUBLIC_MENTRAOS_VERSION = localVersion
 // Local builds keep debug symbols local, as the PR compile check does.
 process.env.SENTRY_DISABLE_AUTO_UPLOAD = "true"
 // The shared helper installs Pods with the repository's download/cache policy.

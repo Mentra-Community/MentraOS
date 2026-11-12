@@ -134,6 +134,9 @@ const en = {
     connectionErrorDescription: "Could not connect to the server. Please check your connection and try again.",
     connectionErrorCustomUrl:
       "Could not connect to the custom server. Please try using the default server or check your connection.",
+    missingVersionTitle: "App Version Missing",
+    missingVersionDescription:
+      "This build of the Mentra App has no version number, so it cannot check for updates. Rebuild it with its version set.",
     upToDateTitle: "Up to Date",
     upToDateDescription: "The Mentra App is up to date. Returning to the home screen…",
     managedUpdateDescription:

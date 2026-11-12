@@ -99,6 +99,17 @@ it("recaches a successful requirement after Reset even when it matches the old r
   expect(screen.getByText("versionCheck:updateRequiredButton")).toBeTruthy()
 })
 
+it("reports a build without a version as such, not as a connection failure", async () => {
+  delete process.env.EXPO_PUBLIC_MENTRAOS_VERSION
+  const screen = render(<InitScreen />)
+  await act(async () => {})
+  expect(screen.getByText("versionCheck:missingVersionTitle")).toBeTruthy()
+  expect(screen.queryByText("versionCheck:connectionErrorTitle")).toBeNull()
+  expect(screen.queryByText("versionCheck:retryConnection")).toBeNull()
+  expect(screen.getByText("versionCheck:continueAnyway")).toBeTruthy()
+  expect(fetchMinimumClientVersion).not.toHaveBeenCalled()
+})
+
 describe("signed in", () => {
   beforeEach(() => mockHasStoredSession.mockResolvedValue(true))
 
