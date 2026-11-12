@@ -7,6 +7,7 @@ import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
+import {cancelPairingModeConnect, connectInPairingMode, usePairingModeConnect} from "@/stores/pairingModeConnect"
 import {translate} from "@/i18n"
 import {decideConnectButtonAction, engine} from "@mentra/engine"
 import {usePairingReconnectHold} from "@/hooks/usePairingReconnectHold"
@@ -124,6 +125,8 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   useEffect(() => {
     setReconnectDismissed(false)
   }, [pairingWindowId])
+  // The person's own Connect glasses press in this window: the only connection made during one.
+  const takeBack = usePairingModeConnect(inPairingMode ? pairingWindowId : undefined)
 
   if (pairedModel.includes(DeviceTypes.SIMULATED)) {
     return (
@@ -186,7 +189,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
         }
         return
       }
-      if (inPairingMode) await engine.glasses.connectInPairingMode()
+      if (inPairingMode && pairingWindowId !== undefined) await connectInPairingMode(pairingWindowId)
       else await engine.glasses.connectDefault()
     } catch (error) {
       console.error("connect to glasses error:", error)
@@ -200,6 +203,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       busy: searching || nativeLinkBusy || inPairingMode || holdReconnectAfterPairing,
     })
     if (action === "cancel") {
+      cancelPairingModeConnect()
       await engine.glasses.disconnect()
       setIsCheckingConnectivity(false)
       resetSearching()
@@ -236,13 +240,16 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   // The SDK makes no automatic connection while the glasses are in pairing mode: the card offers
   // Connect glasses right away, which takes the glasses back from their pairing window. The
-  // pairing watch scan is not a connect attempt, so it must not bring the spinner back. Keep the
-  // reconnecting card for a moment after the window ends so "Connect glasses" does not flash
-  // before the reconnect starts, unless the user pressed Cancel.
+  // pairing watch scan is not a connect attempt, so it must not bring the spinner back. The
+  // person's own press is one, and keeps the spinner until it ends: Connect glasses must not come
+  // back while their attempt is still connecting. Keep the reconnecting card for a moment after
+  // the window ends so "Connect glasses" does not flash before the reconnect starts, unless the
+  // user pressed Cancel.
   const userStoppedReconnect = reconnectDismissed && holdReconnectAfterPairing
+  const linkBusy = nativeLinkBusy && (!inPairingMode || takeBack.requested)
   let isSearching =
     !userStoppedReconnect &&
-    (searching || isCheckingConnectivity || wasSearching || (nativeLinkBusy && !inPairingMode) || holdReconnectAfterPairing)
+    (searching || isCheckingConnectivity || wasSearching || takeBack.starting || linkBusy || holdReconnectAfterPairing)
   let _connectingText = translate("home:connectingGlasses")
   // Only show booting message when we've received a glasses_not_ready event
   if (showGlassesBooting) {
