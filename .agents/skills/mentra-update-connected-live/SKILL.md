@@ -24,4 +24,4 @@ Do not use this command to restore a developer build. An enabled `com.mentra.asg
 
 Exit 0 is a pass. Exit 10 means production is unpublished. Exit 12 is a bad artifact and must stop before install. Exit 13 means rerun the same command; do not repeat a component whose fresh read already matches. Exit 14 means MTK or BES is newer than the pin; do not downgrade. The procedure, report path, and lab limits are in `mentra_live/asg_client/docs/refurbishment-usb-update.md`.
 
-A trigger is not completion. The report's final ASG, MTK, and BES values are the versions read after the update. A `-dev` or `-beta` ASG version name is replaced even when its version code is higher. A newer stock version name with no prerelease suffix is retained only when MTK and BES match the pin.
+A trigger is not completion. The report's final ASG, MTK, and BES values are the versions read after the update. An ASG with a higher version code than the pin is retained, only when MTK and BES match the pin.
