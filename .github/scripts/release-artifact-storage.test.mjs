@@ -129,7 +129,7 @@ test("artifact keys preserve release identity and reject traversal/reserved inde
     artifactUrl(repository, "v1.2.3", "file name.apk"),
     "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/v1.2.3/file%20name.apk",
   )
-  for (const name of ["../file", "a/b", "a\\b", "_assets.json", "index.html", "..", ""]) {
+  for (const name of ["../file", "a/b", "a\\b", "_assets.json", "index.html", "android.html", "..", ""]) {
     assert.throws(() => artifactKey(repository, "v1", name))
   }
   assert.throws(() => artifactKey(repository, "../v1", "a.apk"))
@@ -520,6 +520,7 @@ test("a restarted build discovers verified committed bytes after index publicati
   )
   assert.equal(JSON.parse((await options.store.read(indexKey)).body).assets[0].digest, index.assets[0].digest)
   assert.ok(await options.store.read(`${repository}/releases/${release.tag_name}/index.html`))
+  assert.match((await options.store.read(`${repository}/releases/${release.tag_name}/android.html`)).body, /intent:\/\//)
   // The next lookup sees this as reusable, without downloading or rebuilding.
   assert.deepEqual(await readArtifactIndex(repository, release.tag_name, options), index)
   assert.equal(verifications, 1)
