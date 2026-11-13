@@ -5,6 +5,7 @@ import type {ClientApp, OrderMap} from "@mentra/engine"
 import {AppsGrid} from "./AppsGrid"
 
 let mockApps: ClientApp[] = []
+let mockPendingPackages = new Set<string>()
 // null models a Home layout that has never been saved (storage.load fails).
 let mockOrder: OrderMap | null = {}
 const mockStart = jest.fn()
@@ -39,7 +40,11 @@ jest.mock("@mentra/engine", () => ({
   },
 }))
 jest.mock("@mentra/engine-host-internal", () => ({hasAssignmentReason: (pkg: string) => mockManaged.has(pkg)}))
-jest.mock("@/hooks/useAppsExtras", () => ({useForegroundApps: () => mockApps}))
+jest.mock("@/hooks/useAppsExtras", () => ({
+  useForegroundApps: () => mockApps,
+  usePendingDefaultPackages: () => mockPendingPackages,
+  isPendingDefaultApp: (packageName: string) => mockPendingPackages.has(packageName),
+}))
 jest.mock("@/hooks/useCachedRemoteImageSource", () => ({warmCachedRemoteImageSources: jest.fn()}))
 jest.mock("@/contexts/ThemeContext", () => ({
   useAppTheme: () => ({theme: {colors: {primary_foreground: "white"}}, themed: (value: unknown) => value}),

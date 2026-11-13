@@ -543,7 +543,7 @@ interface ServedRelease {
  * local network too).
  */
 async function readServedManifest(
-  deps: InstallMiniappDependencies,
+  deps: Pick<InstallMiniappDependencies, "fetchManifest">,
   url: string,
   local: boolean,
 ): Promise<ServedRelease> {
@@ -764,6 +764,31 @@ const FLEET_INSTALL_REASON: Record<InstallMiniappErrorCode, FleetInstallFailureR
 export function installMiniapp(url: string, options: InstallMiniappOptions): Promise<InstallMiniappResult> {
   engineInstaller ??= withFleetReport(createMiniappInstaller(engineDependencies))
   return engineInstaller(url, options)
+}
+
+/** What a miniapp URL's `miniapp.json` says about the miniapp, for showing it before it is installed. */
+export interface MiniappListing {
+  packageName: string
+  name: string
+  /** The icon `miniapp.json` names, as an absolute HTTPS URL. */
+  iconUrl: string | null
+  version: string
+}
+
+/**
+ * Read the miniapp at an HTTPS miniapp URL without installing it: its `miniapp.json`, with a sign-in challenge
+ * answered as an install answers it. Nothing is registered, downloaded or installed. Throws {@link InstallMiniappError}.
+ */
+export async function readMiniappListing(
+  url: string,
+  deps: Pick<InstallMiniappDependencies, "fetchManifest"> = engineDependencies,
+): Promise<MiniappListing> {
+  const target = normalizeMiniappUrl(url)
+  if (!target || target.kind === "local") {
+    throw new InstallMiniappError("not_a_miniapp", `${url} is not an HTTPS miniapp URL`)
+  }
+  const {manifest, iconUrl} = await readServedManifest(deps, target.url, false)
+  return {packageName: manifest.packageName, name: manifest.name, iconUrl, version: manifest.version}
 }
 
 /** `installer`, reporting each attempt to Fleet as `installMiniapp` describes. Exported for tests. */

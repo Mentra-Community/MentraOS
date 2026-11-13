@@ -1,6 +1,7 @@
 import {create} from "zustand"
 
-type MiniappOpeningAnimation = "slide" | "expand"
+/** `none`: the miniapp appears in place, over the splash it waited behind (MiniappOpenWait). */
+export type MiniappOpeningAnimation = "slide" | "expand" | "none"
 
 /** Presentation only: runtime startup does not wait on this state. */
 export const useMiniappPresentationStore = create<{

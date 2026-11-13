@@ -11,6 +11,7 @@ import {ScreenshotFeedbackPrompt} from "@/effects/ScreenshotFeedbackPrompt"
 import NavigationHost from "@/effects/NavigationHost"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import Compositor from "@/effects/Compositor"
+import {MiniappOpenWait} from "@/effects/MiniappOpenWait"
 import {QrScanOverlay} from "@/effects/QrScanOverlay"
 import {PhoneWifiOverlay} from "@/effects/PhoneWifiOverlay"
 import {FleetSheets} from "@/effects/FleetSheets"
@@ -42,6 +43,8 @@ export const AllEffects = () => {
           <ConsoleLogger />
           <ScreenshotFeedbackPrompt />
           <CapsuleMenu forceShow={false} />
+          {/* Below the Compositor: a miniapp that waited opens over its waiting splash. */}
+          <MiniappOpenWait />
           <Compositor />
           <QrScanOverlay />
           <PhoneWifiOverlay />

@@ -7,6 +7,7 @@ import type {ActiveDeployment, WorkspaceDeployment} from "@/services/deployment/
 import {storage} from "@/utils/storage"
 
 import {useDefaultMiniappsStore} from "@/stores/defaultMiniapps"
+import {startMiniappOpenWait, useMiniappOpenWaitStore} from "@/stores/miniappOpenWait"
 
 import {defaultMiniapps} from "./defaultMiniapps"
 import {shouldSkipMiniappInstall} from "./miniappVisibility"
@@ -36,9 +37,34 @@ const {InstallMiniappError} = jest.requireMock("@mentra/engine-host-internal") a
   InstallMiniappError: new (code: string, message: string) => Error
 }
 const install = jest.fn()
-Object.assign(engine.miniapps, {install})
+const readListing = jest.fn()
+Object.assign(engine.miniapps, {install, readListing})
 const installedVersions = appRegistry.getInstalledVersions as jest.Mock
 const CACHE_KEY = "deployment_default_miniapps:v1"
+const LISTINGS_KEY = "deployment_default_miniapp_listings:v1"
+const IDLE = {status: "idle", pending: [], listings: {}, failed: []}
+
+/** What a host's `miniapp.json` says: `com.mentra.ai` is called "ai", with an icon beside it. */
+function listingFor(url: string) {
+  const packageName = url.split("/").filter(Boolean).pop()!
+  return {packageName, name: packageName.split(".").pop()!, iconUrl: `${url}icon.png`, version: "1.0.0"}
+}
+
+const packageOf = (url: string) => url.split("/").filter(Boolean).pop()!
+
+/** Installs stay installed, so a later pass finds nothing missing. Returns the packages installed. */
+function trackInstalls(): Set<string> {
+  const installed = new Set<string>()
+  installedVersions.mockImplementation((name: string) => (installed.has(name) ? ["1.0.0"] : []))
+  install.mockImplementation(async (url: string) => {
+    installed.add(packageOf(url))
+    return {status: "installed"}
+  })
+  return installed
+}
+
+/** Let the listings, read in parallel with the installs, land. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 function coreServes(defaults: string[]) {
   global.fetch = jest.fn(async () => ({ok: true, status: 200, json: async () => ({miniapps: {defaults}})})) as never
@@ -75,7 +101,9 @@ function workspace(overrides: Partial<WorkspaceDeployment["manifest"]> = {}): Wo
 describe("default miniapps", () => {
   beforeEach(() => {
     storage.remove(CACHE_KEY)
+    storage.remove(LISTINGS_KEY)
     install.mockReset().mockResolvedValue({status: "installed"})
+    readListing.mockReset().mockImplementation(async (url: string) => listingFor(url))
     installedVersions.mockReset().mockReturnValue([])
     ;(getDevAppRecords as jest.Mock).mockReturnValue([])
     ;(shouldSkipMiniappInstall as jest.Mock).mockReturnValue(false)
@@ -99,7 +127,7 @@ describe("default miniapps", () => {
       expectedPackageName: "com.mentra.ai",
       isCancelled: expect.any(Function),
     })
-    expect(useDefaultMiniappsStore.getState()).toEqual({status: "idle", pending: []})
+    expect(useDefaultMiniappsStore.getState()).toEqual(IDLE)
   })
 
   it("leaves a QR development build, and a package the platform or Super Mode hides", async () => {
@@ -118,7 +146,7 @@ describe("default miniapps", () => {
     coreUnreachable()
     await defaultMiniapps.sync()
     expect(install).not.toHaveBeenCalled()
-    expect(useDefaultMiniappsStore.getState()).toEqual({status: "waiting", pending: []})
+    expect(useDefaultMiniappsStore.getState()).toEqual({status: "waiting", pending: [], listings: {}, failed: []})
 
     coreServes(["com.mentra.ai"])
     await defaultMiniapps.sync()
@@ -150,7 +178,11 @@ describe("default miniapps", () => {
     await defaultMiniapps.sync()
 
     expect(install).toHaveBeenCalledTimes(3)
-    expect(useDefaultMiniappsStore.getState()).toEqual({status: "waiting", pending: ["com.mentra.ai"]})
+    expect(useDefaultMiniappsStore.getState()).toMatchObject({
+      status: "waiting",
+      pending: ["com.mentra.ai"],
+      failed: ["com.mentra.notes"],
+    })
   })
 
   it("installs a workspace's own defaults, except those it pins or leaves out of its system list", async () => {
@@ -187,7 +219,7 @@ describe("default miniapps", () => {
     await defaultMiniapps.sync()
 
     expect(install).not.toHaveBeenCalled()
-    expect(useDefaultMiniappsStore.getState()).toEqual({status: "idle", pending: []})
+    expect(useDefaultMiniappsStore.getState()).toEqual(IDLE)
   })
 
   it("stops when the deployment changes", async () => {
@@ -202,6 +234,146 @@ describe("default miniapps", () => {
 
     expect(consumer.kind).toBe("consumer")
     expect(install).toHaveBeenCalledTimes(1)
+  })
+
+  it("shows each pending default by its miniapp.json while it installs, and drops it once installed", async () => {
+    const deployment = activate(createConsumerDeployment())
+    coreServes(["com.mentra.ai", "com.mentra.notes"])
+    let finish!: () => void
+    install.mockImplementationOnce(() => new Promise((resolve) => (finish = () => resolve({status: "installed"}))))
+
+    const pass = defaultMiniapps.sync()
+    await settle()
+
+    const host = deployment.manifest.artifacts.firstPartyMiniappsUrl
+    expect(readListing).toHaveBeenCalledWith(`${host}com.mentra.ai/`)
+    expect(readListing).toHaveBeenCalledWith(`${host}com.mentra.notes/`)
+    expect(useDefaultMiniappsStore.getState()).toMatchObject({
+      status: "installing",
+      listings: {
+        "com.mentra.ai": {name: "ai", iconUrl: `${host}com.mentra.ai/icon.png`, version: "1.0.0"},
+        "com.mentra.notes": {name: "notes", iconUrl: `${host}com.mentra.notes/icon.png`, version: "1.0.0"},
+      },
+    })
+
+    finish()
+    await pass
+    expect(useDefaultMiniappsStore.getState()).toEqual(IDLE)
+  })
+
+  it("keeps the listings of defaults still pending, to show them at the next launch", async () => {
+    activate(createConsumerDeployment())
+    coreServes(["com.mentra.ai"])
+    install.mockRejectedValue(new InstallMiniappError("network", "offline"))
+    await defaultMiniapps.sync()
+    await settle()
+
+    defaultMiniapps.reset()
+    readListing.mockRejectedValue(new InstallMiniappError("network", "offline"))
+    await defaultMiniapps.sync()
+
+    expect(useDefaultMiniappsStore.getState()).toMatchObject({
+      status: "waiting",
+      pending: ["com.mentra.ai"],
+      listings: {"com.mentra.ai": {name: "ai"}},
+    })
+  })
+
+  it("shows no listing a miniapp.json names another package for", async () => {
+    activate(createConsumerDeployment())
+    coreServes(["com.mentra.ai"])
+    install.mockRejectedValue(new InstallMiniappError("network", "offline"))
+    readListing.mockResolvedValue({packageName: "com.other.app", name: "Other", iconUrl: null, version: "1.0.0"})
+
+    await defaultMiniapps.sync()
+    await settle()
+
+    expect(useDefaultMiniappsStore.getState().listings).toEqual({})
+  })
+
+  it("installs the default the person waits for next", async () => {
+    activate(createConsumerDeployment())
+    coreServes(["com.mentra.ai", "com.mentra.notes", "com.mentra.merge"])
+    const installed = trackInstalls()
+    let finish!: () => void
+    install.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => {
+            installed.add("com.mentra.ai")
+            resolve({status: "installed"})
+          }
+        }),
+    )
+
+    const pass = defaultMiniapps.sync()
+    await settle()
+    defaultMiniapps.prioritize("com.mentra.merge")
+    finish()
+    await pass
+    await defaultMiniapps.sync()
+
+    expect(install.mock.calls.map(([url]) => packageOf(url))).toEqual([
+      "com.mentra.ai",
+      "com.mentra.merge",
+      "com.mentra.notes",
+    ])
+  })
+
+  it("tries a default the person waits for again when its download waited for a connection", async () => {
+    activate(createConsumerDeployment())
+    coreServes(["com.mentra.ai"])
+    trackInstalls()
+    install.mockRejectedValueOnce(new InstallMiniappError("network", "offline"))
+    await defaultMiniapps.sync()
+    expect(useDefaultMiniappsStore.getState().status).toBe("waiting")
+
+    defaultMiniapps.prioritize("com.mentra.ai")
+    await defaultMiniapps.sync()
+
+    expect(install).toHaveBeenCalledTimes(2)
+    expect(useDefaultMiniappsStore.getState()).toEqual(IDLE)
+  })
+
+  it("shows no tile for a default its install refused, on the passes that try it again", async () => {
+    activate(createConsumerDeployment())
+    coreServes(["com.mentra.notes"])
+    install.mockRejectedValue(new InstallMiniappError("needs_newer_app", "too new"))
+    await defaultMiniapps.sync()
+    await settle()
+
+    let finish!: () => void
+    install.mockImplementationOnce(
+      () => new Promise((_, reject) => (finish = () => reject(new InstallMiniappError("needs_newer_app", "too new")))),
+    )
+    const pass = defaultMiniapps.sync()
+    await settle()
+    expect(useDefaultMiniappsStore.getState()).toMatchObject({
+      status: "installing",
+      listings: {},
+      failed: ["com.mentra.notes"],
+    })
+    finish()
+    await pass
+  })
+
+  it("logout stops the pass in progress, and ends a miniapp's wait to open", async () => {
+    activate(createConsumerDeployment())
+    coreServes(["com.mentra.ai", "com.mentra.notes"])
+    let finish!: () => void
+    install.mockImplementationOnce(() => new Promise((resolve) => (finish = () => resolve({status: "installed"}))))
+    const pass = defaultMiniapps.sync()
+    await settle()
+    startMiniappOpenWait({packageName: "com.mentra.ai", name: "ai", logoUrl: ""} as never, async () => {})
+
+    defaultMiniapps.reset()
+    finish()
+    await pass
+    await settle()
+
+    expect(install).toHaveBeenCalledTimes(1)
+    expect(useDefaultMiniappsStore.getState()).toEqual(IDLE)
+    expect(useMiniappOpenWaitStore.getState().wait).toBeNull()
   })
 
   it("runs once more after the pass in progress, for every call made meanwhile", async () => {

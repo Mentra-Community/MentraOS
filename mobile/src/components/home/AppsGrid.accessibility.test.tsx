@@ -4,6 +4,7 @@ import type {ClientApp} from "@mentra/engine"
 import {AppsGrid} from "./AppsGrid"
 
 let mockApps: ClientApp[] = []
+let mockPendingPackages = new Set<string>()
 const mockStart = jest.fn()
 const mockPush = jest.fn()
 const mockPermissions = jest.fn()
@@ -23,13 +24,21 @@ jest.mock("@mentra/engine", () => ({
   useSetForeground: () => jest.fn(),
   engine: {miniapps: {list: () => mockApps}},
 }))
-jest.mock("@/hooks/useAppsExtras", () => ({useForegroundApps: () => mockApps}))
+jest.mock("@/hooks/useAppsExtras", () => ({
+  useForegroundApps: () => mockApps,
+  usePendingDefaultPackages: () => mockPendingPackages,
+  isPendingDefaultApp: (packageName: string) => mockPendingPackages.has(packageName),
+}))
 jest.mock("@/hooks/useCachedRemoteImageSource", () => ({warmCachedRemoteImageSources: jest.fn()}))
 jest.mock("@/contexts/ThemeContext", () => ({
   useAppTheme: () => ({theme: {colors: {primary_foreground: "white"}}, themed: (value: unknown) => value}),
 }))
 jest.mock("@/stores/navigation", () => ({useNavigationStore: {getState: () => ({push: mockPush})}}))
 jest.mock("@/stores/miniappLaunch", () => ({setMiniappOpeningAnimation: jest.fn()}))
+const mockStartWait = jest.fn()
+jest.mock("@/stores/miniappOpenWait", () => ({
+  startMiniappOpenWait: (...args: unknown[]) => mockStartWait(...args),
+}))
 jest.mock("@/utils/PermissionsUtils", () => ({
   checkPermissionsUI: (...args: unknown[]) => mockPermissions(...args),
   askPermissionsUI: (...args: unknown[]) => mockAskPermissions(...args),
@@ -72,6 +81,7 @@ jest.mock("react-native-draggable-masonry", () => ({
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockPendingPackages = new Set()
   mockApps = [
     {packageName: "com.mentra.settings", name: "Settings", offlineRoute: "/miniapps/settings/main"} as ClientApp,
   ]
@@ -148,15 +158,50 @@ test("unrecognized accessibility actions do not launch a miniapp", async () => {
 })
 
 test.each(["press", "accessibilityTap"] as const)(
-  "%s on an updating miniapp explains the update instead of opening it",
+  "%s on an updating miniapp waits behind its splash, then opens it in place",
   async (event) => {
     mockApps[0] = {...mockApps[0], updating: true} as ClientApp
     await activate(event)
-    expect(mockAlert).toHaveBeenCalledWith(expect.objectContaining({title: "home:miniappUpdatingTitle"}))
+    expect(mockAlert).not.toHaveBeenCalled()
     expect(mockPermissions).not.toHaveBeenCalled()
     expect(mockStart).not.toHaveBeenCalled()
+    expect(mockStartWait).toHaveBeenCalledWith(
+      expect.objectContaining({packageName: "com.mentra.settings"}),
+      expect.any(Function),
+    )
     const target = screen.getByTestId("home.miniapp.com.mentra.settings")
     expect(target.props.accessibilityLabel).toBe("home:miniappUpdatingLabel")
     expect(target.props.accessibilityState).toEqual({busy: true})
+
+    // The update installed: the wait opens it through the same gates as a tap.
+    mockApps[0] = {...mockApps[0], updating: false} as ClientApp
+    const open = mockStartWait.mock.calls[0][1] as (app: ClientApp) => Promise<void>
+    await act(async () => open(mockApps[0]))
+    expect(mockPermissions).toHaveBeenCalledTimes(1)
+    expect(mockStart).toHaveBeenCalledTimes(1)
   },
 )
+
+test("a default miniapp still installing shows as installed, says so to a screen reader, and waits behind its splash", async () => {
+  mockApps = [
+    ...mockApps,
+    {packageName: "com.mentra.ai", name: "Mentra AI", compatibility: {isCompatible: true}} as ClientApp,
+  ]
+  mockPendingPackages = new Set(["com.mentra.ai"])
+  const onOpenApp = jest.fn()
+  render(<AppsGrid showAllApps={true} onOpenApp={onOpenApp} />)
+  await act(async () => {})
+  const target = screen.getByTestId("allApps.miniapp.com.mentra.ai")
+  expect(target.props.accessibilityLabel).toBe("home:miniappInstallingLabel")
+  expect(target.props.accessibilityState).toEqual({busy: true})
+
+  await act(async () => fireEvent.press(target))
+  expect(mockStartWait).toHaveBeenCalledWith(
+    expect.objectContaining({packageName: "com.mentra.ai"}),
+    expect.any(Function),
+  )
+  // All Apps closes, and its keyboard with it, as the splash slides in.
+  expect(onOpenApp).toHaveBeenCalledWith(expect.objectContaining({packageName: "com.mentra.ai"}))
+  expect(mockPermissions).not.toHaveBeenCalled()
+  expect(mockStart).not.toHaveBeenCalled()
+})

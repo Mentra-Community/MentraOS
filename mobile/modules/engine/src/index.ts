@@ -42,6 +42,7 @@ export {
   type InstallMiniappResult,
   type InstallMiniappSource,
   type MiniappInstallPreview,
+  type MiniappListing,
 } from "./services/installMiniapp"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
 export type {

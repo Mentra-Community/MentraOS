@@ -13,7 +13,12 @@ import appRegistry from "../services/AppRegistry"
 import {cloudClientService} from "../services/CloudClientService"
 import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
 import {normalizeCoreUrl} from "../services/fleet/coreUrl"
-import {installMiniapp, type InstallMiniappOptions, type InstallMiniappResult} from "../services/installMiniapp"
+import {
+  installMiniapp,
+  readMiniappListing,
+  type InstallMiniappOptions,
+  type InstallMiniappResult,
+} from "../services/installMiniapp"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
 import {fetchMiniappBundle, fetchMiniappJson} from "../services/miniappFetch"
 import {registryStatusStore} from "../services/miniappRegistryStatusStore"
@@ -174,6 +179,11 @@ export const miniapps = {
    * `InstallMiniappError` with a code.
    */
   install,
+  /**
+   * Read what the miniapp at a miniapp URL is called, its icon and version, from its `miniapp.json`, without
+   * installing anything. Throws `InstallMiniappError` with a code.
+   */
+  readListing: (url: string) => readMiniappListing(url),
   /** Uninstall a miniapp. */
   uninstall: (...args: Parameters<AppsState["uninstall"]>) => useAppStatusStore.getState().uninstall(...args),
   /** Persist a miniapp's captured screenshot (the switcher/card preview). */

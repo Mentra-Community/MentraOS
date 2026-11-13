@@ -438,7 +438,14 @@ export default function Compositor() {
     swipeTranslateY.value = 0
     fadeOpacity.value = 1
 
-    if (consumeMiniappOpeningAnimation(renderedApp.packageName) === "expand") {
+    const animation = consumeMiniappOpeningAnimation(renderedApp.packageName)
+    // Opened from the splash it waited behind (MiniappOpenWait): its own splash takes that one's place.
+    if (animation === "none") {
+      swipeTranslateX.value = 0
+      finishOpening(packageName)
+      return
+    }
+    if (animation === "expand") {
       swipeTranslateX.value = 0
       const warmGlass = Platform.OS === "ios" && isOfflineHosted(renderedApp.packageName)
       fadeScale.value = warmGlass ? 0.15 : 0.4

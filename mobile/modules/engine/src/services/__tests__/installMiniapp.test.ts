@@ -28,7 +28,9 @@ mock.module("../localBuildInstall", () => ({
   restoreInstalledRelease: async () => {},
 }))
 
-const {createMiniappInstaller, InstallMiniappError, withFleetReport} = await import("../installMiniapp")
+const {createMiniappInstaller, InstallMiniappError, readMiniappListing, withFleetReport} = await import(
+  "../installMiniapp"
+)
 const {fleetEvents} = await import("../fleet/fleetEvents")
 const {fetchMiniappBundle, fetchMiniappJson} = await import("../miniappFetch")
 type InstallMiniappDependencies = import("../installMiniapp").InstallMiniappDependencies
@@ -1273,5 +1275,22 @@ describe("a local-network address", () => {
     })
     expect(await failure(promise)).toBe("cancelled")
     expect(localInstalls).toEqual([])
+  })
+})
+
+describe("reading a miniapp's listing", () => {
+  test("reads its name, icon and version from miniapp.json, and installs, registers and downloads nothing", async () => {
+    requireRegistry = true
+    const listing = await readMiniappListing(url, deps())
+    expect(listing).toEqual({packageName: pkg, name: "Acme Tools", iconUrl: `${url}icon.png`, version: "1.2.0"})
+    expect(sent.map((request) => request.url)).toEqual([manifestUrl])
+    expect(registrations).toEqual([])
+    expect(installs).toEqual([])
+  })
+
+  test("refuses what isn't an HTTPS miniapp, and a URL that serves none", async () => {
+    expect(await failure(readMiniappListing("http://tools.acme.com/app/", deps()))).toBe("not_a_miniapp")
+    route(manifestUrl, {status: 404})
+    expect(await failure(readMiniappListing(url, deps()))).toBe("not_a_miniapp")
   })
 })

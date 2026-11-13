@@ -33,14 +33,15 @@ import {hasAssignmentReason} from "@mentra/engine-host-internal"
 
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"
-import {useForegroundApps} from "@/hooks/useAppsExtras"
+import {isPendingDefaultApp, useForegroundApps, usePendingDefaultPackages} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
 import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
+import {startMiniappOpenWait} from "@/stores/miniappOpenWait"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {storage} from "@/utils/storage"
 import {useNavigationStore} from "@/stores/navigation"
-import {setMiniappOpeningAnimation} from "@/stores/miniappLaunch"
+import {type MiniappOpeningAnimation, setMiniappOpeningAnimation} from "@/stores/miniappLaunch"
 import {translate} from "@/i18n"
 import GlassView from "@/components/ui/GlassView"
 import {showAlert} from "@/contexts/ModalContext"
@@ -300,6 +301,7 @@ export function AppsGrid({
   const stopApplet = useStop()
   const setForeground = useSetForeground()
   const apps = useForegroundApps()
+  const pendingPackages = usePendingDefaultPackages()
 
   const [orderMap, setOrderMap] = useState<OrderMap>({})
   const [popoverVisible, setPopoverVisible] = useState(false)
@@ -795,10 +797,18 @@ export function AppsGrid({
     [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push, homePackageNames],
   )
 
+  const handlePressRef = useRef<(app: ClientApp, animation?: MiniappOpeningAnimation) => Promise<void>>(async () => {})
   const handlePress = useCallback(
-    async (app: ClientApp) => {
+    async (app: ClientApp, animation?: MiniappOpeningAnimation) => {
       if (app.packageName.includes("@empty")) return // ignore dummy apps
-      if (blockUpdatingMiniapp(app.packageName)) return
+      // A default still installing, or a miniapp that is updating, opens behind its splash once it can.
+      const updating = engine.miniapps.list().some((a) => a.packageName === app.packageName && a.updating)
+      if (updating || isPendingDefaultApp(app.packageName)) {
+        // Leave All Apps now, as an open does: its search keyboard must not stay over the splash.
+        onOpenApp?.(app)
+        startMiniappOpenWait(app, (ready) => handlePressRef.current(ready, "none"))
+        return
+      }
       if (await showCompatibilityAlert(app)) return
 
       // Check permissions before foregrounding the overlay.
@@ -810,13 +820,14 @@ export function AppsGrid({
       }
 
       if (overlayForegrounded) {
-        setMiniappOpeningAnimation(app.packageName, showAllApps ? "expand" : "slide")
+        setMiniappOpeningAnimation(app.packageName, animation ?? (showAllApps ? "expand" : "slide"))
         await setForeground(app.packageName)
       }
       await openApp(app)
     },
-    [openApp, setForeground, theme, showAllApps],
+    [openApp, onOpenApp, setForeground, theme, showAllApps],
   )
+  handlePressRef.current = handlePress
 
   const showPopover = useCallback(
     (key: string) => {
@@ -824,6 +835,8 @@ export function AppsGrid({
       // get the index of the app
       // const index = gridData.findIndex((a) => a.packageName === key)
       if (!app?.name) return
+      // Nothing to start, stop, set or uninstall before it is installed.
+      if (isPendingDefaultApp(app.packageName)) return
 
       const ref = itemRefs.current[app.packageName]
       setSelectedApp(app)
@@ -910,8 +923,14 @@ export function AppsGrid({
             itemRefs.current[item.packageName] = ref
           }}
           accessibilityRole="button"
-          accessibilityLabel={item.updating ? translate("home:miniappUpdatingLabel", {app: item.name}) : item.name}
-          accessibilityState={{busy: Boolean(item.updating)}}
+          accessibilityLabel={
+            item.updating
+              ? translate("home:miniappUpdatingLabel", {app: item.name})
+              : pendingPackages.has(item.packageName)
+                ? translate("home:miniappInstallingLabel", {app: item.name})
+                : item.name
+          }
+          accessibilityState={{busy: Boolean(item.updating) || pendingPackages.has(item.packageName)}}
           testID={`${showAllApps ? "allApps" : "home"}.miniapp.${item.packageName}`}
           onAccessibilityTap={() => {
             void handlePress(item)
@@ -958,7 +977,7 @@ export function AppsGrid({
         </Pressable>
       )
     },
-    [handlePress, showAllApps, showPopover],
+    [handlePress, showAllApps, showPopover, pendingPackages],
   )
 
   // Non-gated path (home grid): unchanged — plain skeleton while showPlaceholders,
