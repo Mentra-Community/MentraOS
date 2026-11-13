@@ -3303,7 +3303,7 @@ class G2: NSObject, SGCManager {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
             // activate the dashboard by setting dept to the current setting:
-            let currentDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 0
+            let currentDepth = (DeviceStore.shared.get("bluetooth", "dashboard_depth") as? NSNumber)?.intValue ?? 2
             self.setDashboardDepthOnly(currentDepth)
         }
     }
@@ -3433,8 +3433,9 @@ class G2: NSObject, SGCManager {
     }
 
     func setDashboardDepthOnly(_ depth: Int) {
-        let clamped = Int32(min(max(depth, 0), 2))
-        Bridge.log("G2: setDashboardDepthOnly(\(clamped))")
+        // Setting is 1..3 (see the G2 capability); firmware X-coordinate levels are 0..2.
+        let clamped = Int32(min(max(depth - 1, 0), 2))
+        Bridge.log("G2: setDashboardDepthOnly(\(depth) -> level \(clamped))")
         let msg = G2SettingProto.setScreenDepth(
             magicRandom: sendManager.nextMagicRandom(),
             level: clamped
