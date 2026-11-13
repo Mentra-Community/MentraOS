@@ -11,7 +11,8 @@ import {setTimeout as sleep} from "node:timers/promises"
 
 export const ARTIFACT_ORIGIN = "https://artifactscdn.mentraglass.com"
 const INDEX_NAME = "_assets.json"
-const RESERVED_NAMES = new Set([INDEX_NAME, "index.html"])
+// The Android install page staging's publisher writes beside index.html, in the same shared folders: not an artifact.
+const RESERVED_NAMES = new Set([INDEX_NAME, "index.html", "android.html"])
 
 // A runner can kill the process before a network promise rejects. Emit the
 // phase before awaiting it, without putting diagnostics in JSON CLI stdout.

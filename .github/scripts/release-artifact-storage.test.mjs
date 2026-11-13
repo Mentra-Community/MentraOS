@@ -430,6 +430,20 @@ test("recovery identifies public verification and reuses committed bytes without
   assert.ok(messages.some((message) => /recovery commit recovered index: completed$/.test(message)))
 })
 
+test("recovery skips the Android install page another branch's publisher writes beside the artifacts", async (t) => {
+  const options = await fixture(t)
+  await publishR2Artifact(options)
+  // As staging's publisher writes it: a page with no checksum metadata, newer than the index.
+  await options.store.put(`${repository}/releases/${release.tag_name}/android.html`, "<!doctype html>", {
+    ContentType: "text/html; charset=utf-8",
+  })
+  const index = await readArtifactIndex(repository, release.tag_name, options)
+  assert.deepEqual(
+    index.assets.map((entry) => entry.name),
+    ["file.apk"],
+  )
+})
+
 test("default recovery diagnostics use stderr and leave JSON stdout clean", async (t) => {
   const options = await fixture(t)
   await publishR2Artifact(options)
