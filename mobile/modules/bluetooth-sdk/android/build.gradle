@@ -265,6 +265,16 @@ android {
     versionName project.version
     buildConfigField "String", "SDK_VERSION", "\"${project.version}\""
   }
+  // Only the explicitly selected diagnostic app variant includes the DUMP-protected seam.
+  buildTypes {
+    nimoDiagnostic {
+      initWith debug
+      matchingFallbacks = ['debug']
+    }
+  }
+  sourceSets {
+    nimoDiagnostic.java.srcDirs = ['src/debug/java']
+  }
   publishing {
     singleVariant("release") {
       withSourcesJar()
