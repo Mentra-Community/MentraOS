@@ -6,13 +6,15 @@
 //   MAJOR × 100,000,000 + MINOR × 1,000,000 + PATCH × 10,000 + sequence
 //
 // Release builds are pinned by CI (MENTRAOS_PINNED_BUILD_NUMBER) to the sequence
-// the coordinated pipeline allocated. Every other build, local or pull-request
-// CI, takes a sequence above every release of the family, derived from the HEAD
-// commit's committer time, so the app and the ASG client built from the same
-// commit share a number and a dev build always installs over a release of the
-// family. Same number for iOS CFBundleVersion and Android versionCode, except a
-// PR CI build of the Android app, which CI pins above the latest beta's borrowed
-// code (prepare-pr-mobile.mjs, see "Pull-request Android codes" in the spec).
+// the coordinated pipeline allocated, two above the family's latest release. A
+// pull-request CI build of the app is pinned to the number in between
+// (prepare-pr-mobile.mjs), so the next release installs over it; the Android
+// Mentra App sits above the latest beta's borrowed code instead (see
+// "Pull-request Android codes" in the spec). Every other build, local or a PR's
+// ASG client, takes a sequence above every release of the family, derived from
+// the HEAD commit's committer time, so a local build always installs over a
+// release of the family and a release never adopts a PR's ASG client. Same
+// number for iOS CFBundleVersion and Android versionCode.
 //
 // Pinning: release scripts set MENTRAOS_PINNED_BUILD_NUMBER before invoking
 // `bun expo prebuild`, so the value baked into the native projects matches

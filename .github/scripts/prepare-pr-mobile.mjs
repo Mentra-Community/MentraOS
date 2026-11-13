@@ -3,31 +3,47 @@ import path from "node:path"
 import {setTimeout as sleep} from "node:timers/promises"
 import {fileURLToPath} from "node:url"
 
-import {getBuildNumber} from "../../mobile/scripts/build-number.mjs"
+import {familyBaseVersion} from "../../mobile/scripts/build-number.mjs"
+import {prFamilyBuildNumber} from "./allocate-family-build-sequence.mjs"
 import {readPublicIndex} from "./release-artifact-storage.mjs"
 import {ANDROID_CODE_LEDGER, prAndroidVersionCode, reservedAndroidCodes} from "./resolve-android-version-code.mjs"
 
-// Every reserved Android version code, from the ledger's public download index
-// (no credentials). A PR build that cannot read it fails: its fallback, the
-// family number, would not install over the betas testers have.
-export async function readAndroidReservations({readIndex = readPublicIndex, attempts = 3, wait = sleep} = {}) {
+// The assets of one of the ledger's releases, from its public download index (no
+// credentials). A PR build that cannot read it fails: without it, its number
+// would not sit between the releases testers have.
+async function readLedgerAssets(tag, what, {readIndex = readPublicIndex, attempts = 3, wait = sleep} = {}) {
   for (let attempt = 1; ; attempt += 1) {
     try {
-      const {assets} = await readIndex(ANDROID_CODE_LEDGER.repository, ANDROID_CODE_LEDGER.tag)
-      return reservedAndroidCodes(assets)
+      return (await readIndex(ANDROID_CODE_LEDGER.repository, tag)).assets
     } catch (error) {
-      if (attempt >= attempts) {
-        throw new Error(`Could not read the Android version code reservations: ${error.message}`)
-      }
-      console.error(`Reading the Android version code reservations failed (${error.message}); retrying`)
+      if (attempt >= attempts) throw new Error(`Could not read ${what}: ${error.message}`)
+      console.error(`Reading ${what} failed (${error.message}); retrying`)
       await wait(5_000 * attempt)
     }
   }
 }
 
+// Every reserved Android version code.
+export async function readAndroidReservations(options) {
+  return reservedAndroidCodes(
+    await readLedgerAssets(ANDROID_CODE_LEDGER.tag, "the Android version code reservations", options),
+  )
+}
+
+// One above the family's latest release number, recorded as a marker in the
+// family's container or as an ASG pair in the shared ASG release.
+export async function readPrFamilyBuildNumber(baseVersion, options) {
+  const what = `the ${baseVersion} release numbers`
+  const assets = [
+    ...(await readLedgerAssets(`mentra-builds-v${baseVersion}`, what, options)),
+    ...(await readLedgerAssets(ANDROID_CODE_LEDGER.tag, what, options)),
+  ]
+  return prFamilyBuildNumber({assets, baseVersion})
+}
+
 // The build number a PR build pins. The Mentra App's Android build sits above
-// every reserved code (prAndroidVersionCode); iOS and the Bluetooth example keep
-// the family number.
+// every reserved code (prAndroidVersionCode); iOS and the Bluetooth example take
+// the family number, one above the family's latest release.
 export async function pinnedPrBuildNumber({
   platform,
   app = "mentra",
@@ -36,30 +52,27 @@ export async function pinnedPrBuildNumber({
 }) {
   if (platform !== "android" || app !== "mentra") return {buildNumber: familyNumber}
   const result = prAndroidVersionCode({familyNumber, reservations: await readReservations()})
-  return {buildNumber: result.versionCode, androidReservedFloor: result.reservedFloor, source: result.source}
+  return {buildNumber: result.versionCode, source: result.source}
 }
 
 async function main() {
   // `android` from the Android workflows; the iOS workflows pass nothing.
   const platform = process.argv[2] ?? "ios"
-  const familyNumber = getBuildNumber()
+  const familyNumber = await readPrFamilyBuildNumber(familyBaseVersion())
   const pinned = await pinnedPrBuildNumber({platform, app: process.env.MENTRA_PR_APP || "mentra", familyNumber})
   if (pinned.source === "reserved-floor") {
     console.log(
       `Android version code ${pinned.buildNumber}: one above the latest reserved code, above the family number ${familyNumber}`,
     )
   } else {
-    console.log(`Build number ${pinned.buildNumber} (the family number)`)
+    console.log(`Build number ${pinned.buildNumber}: one above the family's latest release`)
   }
   // The same stable compilation environment and per-run packaging inputs on both
   // platforms. No branch/head/time is inlined into reusable JavaScript.
   const env = {
-    MENTRAOS_PINNED_BUILD_NUMBER: String(pinned.buildNumber),
-    // An earlier push's APK at or below this code is below a reserved beta
+    // An earlier push's build is reused only at this number
     // (pr-mobile-build-unchanged.mjs).
-    ...(pinned.androidReservedFloor !== undefined
-      ? {MENTRA_ANDROID_RESERVED_CODE_FLOOR: String(pinned.androidReservedFloor)}
-      : {}),
+    MENTRAOS_PINNED_BUILD_NUMBER: String(pinned.buildNumber),
     EXPO_PUBLIC_MENTRAOS_VERSION: JSON.parse(readFileSync("package.json", "utf8")).version,
     EXPO_PUBLIC_BUILD_BRANCH: "",
     EXPO_PUBLIC_BUILD_COMMIT: "",

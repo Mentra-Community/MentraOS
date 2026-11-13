@@ -15,7 +15,8 @@ const ota = (sha) => url(`ota-pr-7-${sha}.json`)
 const now = Date.parse("2026-11-05T12:00:00Z")
 const daysAgo = (days) => new Date(now - days * 86400000).toISOString()
 const env = {GITHUB_REPOSITORY: repository, PR_NUMBER: "7", PR_HEAD_SHA: head, MENTRA_PR_MOBILE_FINGERPRINT: fingerprint,
-  EXPO_PUBLIC_BUILD_ENV: "dev", PR_OTA_MANIFEST_URL: ota(head), GITHUB_RUN_ID: "200", GITHUB_RUN_ATTEMPT: "1"}
+  EXPO_PUBLIC_BUILD_ENV: "dev", PR_OTA_MANIFEST_URL: ota(head), GITHUB_RUN_ID: "200", GITHUB_RUN_ATTEMPT: "1",
+  MENTRAOS_PINNED_BUILD_NUMBER: "305000100"}
 
 const androidName = androidReceiptName(7, earlier, 100, 1)
 const androidReceipt = () => ({schemaVersion: 1, pr: 7, headSha: earlier, baseSha: "e".repeat(40), buildSha: "f".repeat(40),
@@ -30,7 +31,7 @@ const iosReceipt = () => {
   return {schemaVersion: 2, pr: 7, headSha: earlier, buildSha: "f".repeat(40), runId: 100, runAttempt: 2, buildAttempt: 1,
     packagingFingerprint: packaging,
     app: {bundleId: "com.mentra.mentra", headSha: earlier, backend: "dev", otaManifestUrl: ota(earlier), profileUUID: profile,
-      mobileFingerprint: fingerprint, macPackageVersion: 2, macInstaller: "Install Mentra.app", version: "3.5.0", build: "305"},
+      mobileFingerprint: fingerprint, macPackageVersion: 2, macInstaller: "Install Mentra.app", version: "3.5.0", build: "305000100"},
     macInstaller: {bundleId: "com.mentra.mac-installer", teamId: "T5XXXL6N36", notarizationStatus: "Accepted", stapled: true,
       notarizationId: "01234567-89ab-cdef-0123-456789abcdef"},
     artifacts: Object.fromEntries(Object.entries(files).map(([kind, ext]) =>
@@ -125,12 +126,14 @@ test("any difference, or anything unreadable, falls back to packaging this head"
   }
 })
 
-test("android: an earlier APK at or below a code reserved since is repackaged at this head's code", async () => {
-  // The receipt's APK carries 305000100.
-  for (const [floor, reused] of [["305000099", true], ["305000100", false], ["310000776", false]]) {
-    const h = harness("android")
-    h.args.env = {...env, MENTRA_ANDROID_RESERVED_CODE_FLOOR: floor}
-    assert.equal(await findUnchangedBuild(h.args), reused ? androidName : undefined, floor)
+test("an earlier push's build is reused only at this head's number", async () => {
+  // The receipts carry 305000100. A release since then moves this head to 305000103.
+  for (const [platform, name] of [["android", androidName], ["ios", iosName]]) {
+    for (const [pinned, reused] of [["305000100", true], ["305000103", false], ["305000099", false]]) {
+      const h = harness(platform)
+      h.args.env = {...h.args.env, MENTRAOS_PINNED_BUILD_NUMBER: pinned}
+      assert.equal(await findUnchangedBuild(h.args), reused ? name : undefined, `${platform} ${pinned}`)
+    }
   }
 })
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {pinnedPrBuildNumber, readAndroidReservations} from "./prepare-pr-mobile.mjs"
+import {pinnedPrBuildNumber, readAndroidReservations, readPrFamilyBuildNumber} from "./prepare-pr-mobile.mjs"
 
 const marker = (code, owner = `monorepo-release-${code}`) => ({
   name: `mentra-android-version-code-${code}-${owner}.json`,
@@ -15,12 +15,12 @@ test("the Mentra App's Android PR build sits one above the latest reserved code"
   // A 3.4 PR build (family number 304007989) over beta 310000776.
   assert.deepEqual(
     await pinnedPrBuildNumber({platform: "android", familyNumber: 304007989, readReservations: reservations}),
-    {buildNumber: 310000777, androidReservedFloor: 310000776, source: "reserved-floor"},
+    {buildNumber: 310000777, source: "reserved-floor"},
   )
   // Once families pass the borrowed codes, the family number wins.
   assert.deepEqual(
     await pinnedPrBuildNumber({platform: "android", familyNumber: 311003500, readReservations: reservations}),
-    {buildNumber: 311003500, androidReservedFloor: 310000776, source: "family"},
+    {buildNumber: 311003500, source: "family"},
   )
 })
 
@@ -55,5 +55,33 @@ test("the reservations come from the ledger's public index, with retries, and an
       wait: async () => {},
     }),
     /Could not read the Android version code reservations: HTTP 503/,
+  )
+})
+
+test("the family number is one above the family's latest release, from both ledger releases", async () => {
+  const indexes = {
+    "mentra-builds-v3.5.0": [{name: "mentra-build-number-305000076.json"}, {name: "mentra-build-number-305000078.json"}],
+    // An ASG pair recorded before markers existed counts too; other families don't.
+    "mentra-coordinated-asg": [
+      {name: `mentra-live-asg-305000080-${"a".repeat(64)}.apk`},
+      {name: `mentra-live-asg-304000290-${"b".repeat(64)}.apk`},
+      marker(310000776),
+    ],
+  }
+  const readIndex = async (repository, tag) => {
+    assert.equal(repository, "Mentra-Community/MentraOS")
+    return {assets: indexes[tag] ?? []}
+  }
+  assert.equal(await readPrFamilyBuildNumber("3.5.0", {readIndex}), 305000081)
+  // A family with no release yet starts at its first number.
+  assert.equal(await readPrFamilyBuildNumber("3.6.0", {readIndex}), 306000001)
+  await assert.rejects(
+    readPrFamilyBuildNumber("3.5.0", {
+      readIndex: async () => {
+        throw new Error("HTTP 503")
+      },
+      wait: async () => {},
+    }),
+    /Could not read the 3.5.0 release numbers: HTTP 503/,
   )
 })

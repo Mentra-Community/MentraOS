@@ -7,6 +7,7 @@ import test from "node:test"
 import {
   allocateFamilyBuildNumber,
   familyBuildNumberMarker,
+  prFamilyBuildNumber,
   markerAssetName,
   readMarkersDirectory,
   recordedFamilyBuildNumbers,
@@ -17,7 +18,7 @@ import {familyBuildNumber} from "./release-family.mjs"
 const marker = (version, sequence) => ({name: markerAssetName(familyBuildNumber(version, sequence))})
 const owner = "coordinated-run:123"
 
-test("a new family starts at sequence 1 and every later run takes the next free number above markers and ASG pairs", () => {
+test("a new family starts at sequence 1 and every later run takes two above markers and ASG pairs", () => {
   assert.deepEqual(allocateFamilyBuildNumber({assets: [], baseVersion: "3.1.1", owner}), {
     familyBaseVersion: "3.1.1",
     buildNumber: familyBuildNumber("3.1.1", 1),
@@ -41,9 +42,18 @@ test("a new family starts at sequence 1 and every later run takes the next free 
     familyBuildNumber("3.1.1", 5),
     familyBuildNumber("3.1.1", 9),
   ])
-  assert.equal(allocateFamilyBuildNumber({assets, baseVersion: "3.1.1", owner}).sequence, 10)
-  assert.equal(allocateFamilyBuildNumber({assets, baseVersion: "3.2.0", owner}).sequence, 41)
+  assert.equal(allocateFamilyBuildNumber({assets, baseVersion: "3.1.1", owner}).sequence, 11)
+  assert.equal(allocateFamilyBuildNumber({assets, baseVersion: "3.2.0", owner}).sequence, 42)
   assert.equal(allocateFamilyBuildNumber({assets, baseVersion: "3.3.0", owner}).sequence, 1)
+})
+
+test("a PR build takes the number a release skips, between the latest release and the next", () => {
+  const assets = [marker("3.1.1", 5), {name: `mentra-live-asg-${familyBuildNumber("3.1.1", 9)}-${"a".repeat(64)}.apk`}]
+  const pr = prFamilyBuildNumber({assets, baseVersion: "3.1.1"})
+  const next = allocateFamilyBuildNumber({assets, baseVersion: "3.1.1", owner}).buildNumber
+  assert.equal(pr, familyBuildNumber("3.1.1", 10))
+  assert.equal(next, pr + 1)
+  assert.equal(prFamilyBuildNumber({assets: [], baseVersion: "3.3.0"}), familyBuildNumber("3.3.0", 1))
 })
 
 test("an owner reuses its own reservation and other owners never share bytes", () => {
@@ -72,7 +82,7 @@ test("an owner reuses its own reservation and other owners never share bytes", (
     owner,
     reused: true,
   })
-  assert.equal(allocateFamilyBuildNumber({assets, baseVersion: "3.1.1", owner, markers: [theirs]}).sequence, 9)
+  assert.equal(allocateFamilyBuildNumber({assets, baseVersion: "3.1.1", owner, markers: [theirs]}).sequence, 10)
   assert.throws(
     () =>
       allocateFamilyBuildNumber({
@@ -106,7 +116,7 @@ test("an owner reuses its own reservation and other owners never share bytes", (
 
 test("the release band is bounded", () => {
   assert.throws(
-    () => allocateFamilyBuildNumber({assets: [marker("3.1.1", 2999)], baseVersion: "3.1.1", owner}),
+    () => allocateFamilyBuildNumber({assets: [marker("3.1.1", 2998)], baseVersion: "3.1.1", owner}),
     /exhausted/,
   )
   assert.throws(() => allocateFamilyBuildNumber({assets: null, baseVersion: "3.1.1", owner}), /must be an array/)

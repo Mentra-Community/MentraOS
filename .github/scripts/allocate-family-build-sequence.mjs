@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 // Allocates the one build number a coordinated run, a production promotion or
-// the production example uses for its family: the next free sequence above
-// every number already recorded for the family, either as a
+// the production example uses for its family: two above every number already
+// recorded for the family, either as a
 // `mentra-build-number-<code>.json` marker in the family's build container or
 // as an ASG client pair `mentra-live-asg-<code>-<fingerprint>.(apk|json)` in
 // the shared ASG release (numbers taken before markers existed, seen on the
 // 3.2.0 family: runs 34904296139 and 34904687939 collided with them). The
 // caller passes the assets of both releases. Sequences restart at 1 for every
 // family; see notes/superpowers/specs/2026-09-14-family-build-numbers.md.
+//
+// The number a release skips belongs to pull-request builds
+// (prFamilyBuildNumber): every PR build made between two releases takes the one
+// in between, so release N, then a PR build, then release N+1 each install over
+// the one before.
 //
 // A marker names the owner of the reservation (a coordinated run, a promotion
 // attempt's candidate or lab, an example release). Two owners choosing the same
@@ -24,6 +29,9 @@ import {BUILD_NUMBER_RELEASE_SEQUENCE_LIMIT, familyBuildNumberWindow} from "./re
 const MARKER_PATTERN = /^mentra-build-number-(\d+)\.json$/
 const ASG_PAIR_PATTERN = /^mentra-live-asg-(\d+)-[0-9a-f]{64}\.(?:apk|json)$/
 const OWNER_PATTERN = /^[a-z][a-z0-9-]*:[A-Za-z0-9._:-]{1,120}$/
+// The numbers a release skips above the latest recorded one: one, the number
+// pull-request builds made since then carry.
+const PR_BUILD_SLOT = 1
 
 export function markerAssetName(buildNumber) {
   return `mentra-build-number-${buildNumber}.json`
@@ -87,12 +95,20 @@ export function allocateFamilyBuildNumber({assets, baseVersion, owner, markers =
     }
   }
   const recorded = recordedFamilyBuildNumbers(assets, baseVersion)
-  const buildNumber = recorded.length === 0 ? window.first : recorded.at(-1) + 1
+  const buildNumber = recorded.length === 0 ? window.first : recorded.at(-1) + PR_BUILD_SLOT + 1
   const sequence = buildNumber - window.prefix
   if (sequence > BUILD_NUMBER_RELEASE_SEQUENCE_LIMIT) {
     throw new Error(`Family ${baseVersion} has exhausted its release build numbers`)
   }
   return {familyBaseVersion: baseVersion, buildNumber, sequence, owner, reused: false}
+}
+
+// The build number a pull-request build of the family carries: one above the
+// latest recorded release number, without reserving it. PR builds made between
+// the same two releases share it, whatever their PR or base commit.
+export function prFamilyBuildNumber({assets, baseVersion}) {
+  const recorded = recordedFamilyBuildNumbers(assets, baseVersion)
+  return recorded.length === 0 ? familyBuildNumberWindow(baseVersion).first : recorded.at(-1) + PR_BUILD_SLOT
 }
 
 export function readMarkersDirectory(directory) {

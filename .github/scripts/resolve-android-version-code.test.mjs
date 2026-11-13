@@ -97,11 +97,20 @@ test("a pull-request build sits between the latest reserved code and the next be
   assert.throws(() => prAndroidVersionCode({familyNumber: 0}), /Invalid family build number/)
 })
 
-test("production and Internal App Sharing always carry the family number", () => {
-  assert.equal(
-    resolveAndroidVersionCode({planBuildNumber: 302010037, track: "production", trackCodes: [301010003]}).versionCode,
-    302010037,
+test("production borrows like a beta, two above the beta it promotes", () => {
+  assert.deepEqual(
+    resolveAndroidVersionCode({
+      planBuildNumber: 304000290,
+      track: "production",
+      trackCodes: [304000275],
+      reservations: [{code: 310000776, owner: "monorepo-release-1"}],
+      owner: "monorepo-release-2",
+    }),
+    {versionCode: 310000778, source: "track-floor", floor: 310000776, reused: false},
   )
+})
+
+test("Internal App Sharing always carries the family number", () => {
   assert.equal(
     resolveAndroidVersionCode({planBuildNumber: 302010037, track: "internal-app-sharing", trackCodes: [900000002]})
       .versionCode,

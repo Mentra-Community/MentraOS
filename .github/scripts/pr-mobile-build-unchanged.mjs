@@ -133,11 +133,9 @@ async function earlierPublication(options) {
       // Receipts from before the packaging fingerprint are never reused.
       receipt.packagingFingerprint !== packaging ||
       receipt.app?.profileUUID !== profile ||
-      // An Android APK at or below a code reserved since it was built would not
-      // install over that beta (prepare-pr-mobile.mjs).
-      (platform === "android" &&
-        env.MENTRA_ANDROID_RESERVED_CODE_FLOOR !== undefined &&
-        !(Number(receipt.app?.build) > Number(env.MENTRA_ANDROID_RESERVED_CODE_FLOOR)))
+      // A build from before the latest release carries a lower number, which
+      // that release would not install over (prepare-pr-mobile.mjs).
+      Number(receipt.app?.build) !== Number(env.MENTRAOS_PINNED_BUILD_NUMBER)
     )
       continue
     try {

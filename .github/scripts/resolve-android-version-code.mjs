@@ -8,9 +8,9 @@
 // passes those floors, a build for a testing track takes a code two above both
 // the track's floor and every code already reserved in the release container,
 // leaving the code in between to pull-request builds (prAndroidVersionCode
-// below); iOS and the ASG client keep the family number. Production keeps
-// the family number: preparation already requires it above the served
-// production release. Internal App Sharing has no floor.
+// below); iOS and the ASG client keep the family number. Production borrows
+// like a beta, two above the beta it promotes, so it installs over that beta.
+// Internal App Sharing has no floor.
 //
 // A reservation is a marker `mentra-android-version-code-<code>-<owner>.json`
 // published to the release container before the build, so a run that stops
@@ -29,7 +29,7 @@ export const ANDROID_CODE_LEDGER = {repository: "Mentra-Community/MentraOS", tag
 // code a pull-request build built after the latest reservation takes.
 const PR_BUILD_SLOT = 1
 
-const FAMILY_NUMBER_TRACKS = new Set(["production", "internal-app-sharing"])
+const FAMILY_NUMBER_TRACKS = new Set(["internal-app-sharing"])
 const MARKER_PATTERN = /^mentra-android-version-code-(\d+)-([a-z0-9][a-z0-9-]{0,120})\.json$/
 const OWNER_PATTERN = /^[a-z0-9][a-z0-9-]{0,120}$/
 
@@ -88,9 +88,8 @@ export function resolveAndroidVersionCode({
 }
 
 // The Android version code of a pull-request build of the Mentra App: its
-// family number (commit-derived, above every release of its family; see
-// mobile/scripts/build-number.mjs), or one above the latest reserved code when
-// that is higher. While betas borrow codes above a Play track's floor
+// family number (one above the family's latest release, prFamilyBuildNumber),
+// or one above the latest reserved code when that is higher. While betas borrow codes above a Play track's floor
 // (310,000,xxx through the 3.9 families), the latter wins, so a PR build
 // installs over every beta and dev build already out, and the next beta,
 // which skips that one code, installs over the PR build. PR builds made between
