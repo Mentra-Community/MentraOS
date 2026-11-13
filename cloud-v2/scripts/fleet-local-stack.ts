@@ -17,10 +17,10 @@
  *   - the sign-in site (`websites/account`, built here against the stand-in account directory) on :5176, the origin
  *     of Core's sign-in server (`CLOUD_CORE_OIDC_ISSUER`), relaying the provider's routes to Core as its Pages
  *     Function does; both portals are its registered clients, so their real sign-in runs end to end;
- *   - a local control API on :3199 for the seed (`miniapp-store/fleet/scripts/seed.ts`): create test accounts, mint
- *     portal sessions, backdate a membership, expire an invitation.
+ *   - a local control API on :3199 for the seed (`fleet/scripts/seed.ts` in the Mentra monorepo): create test
+ *     accounts, mint portal sessions, backdate a membership, expire an invitation.
  *
- * MFM is started separately from the miniapp-store repository (`fleet/scripts/dev-stack.ts`); this script writes
+ * MFM is started separately, from the Mentra monorepo (`fleet/scripts/dev-stack.ts`); this script writes
  * the settings it needs to `<state>/mfm.env`. Everything binds 127.0.0.1 unless `--lan` is given, which binds Core,
  * the account directory and the portals to every interface so a phone on the same network can reach Core.
  *
