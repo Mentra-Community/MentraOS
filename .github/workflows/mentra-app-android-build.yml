@@ -3,7 +3,7 @@ run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}{3}', inputs.
 
 on:
   pull_request:
-    branches-ignore: [dev]
+    branches-ignore: [dev, main]
     # Select/repackage on glasses-only changes too. ASG triggers must cover these.
     paths:
       - "mobile/**"
@@ -272,7 +272,7 @@ jobs:
             # base, not PR-controlled input. The backend is part of the reuse
             # fingerprint, so a dev binary is never repackaged as staging.
             case "${MENTRA_PR_BASE_REF:-$GITHUB_BASE_REF}" in
-              staging | main) CLOUD_ENV="staging" ;;
+              staging) CLOUD_ENV="staging" ;;
               *) CLOUD_ENV="dev" ;;
             esac
           else

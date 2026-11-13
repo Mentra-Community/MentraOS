@@ -118,13 +118,12 @@ class BackendTests(unittest.TestCase):
     def test_records_the_backend_selected_by_the_pr_base(self):
         self.assertEqual(packaged_backend(self.compilation, self.env()), "dev")
         self.assertEqual(packaged_backend(self.compilation, self.env(EXPO_PUBLIC_BUILD_ENV="staging", GITHUB_BASE_REF="staging")), "staging")
-        self.assertEqual(packaged_backend(self.compilation, self.env(EXPO_PUBLIC_BUILD_ENV="staging", GITHUB_BASE_REF="main")), "staging")
-        # Other PR bases keep the existing dev app.
+        # Other PR bases keep the existing dev app; a PR into main has no PR build.
         self.assertEqual(packaged_backend(self.compilation, self.env(GITHUB_BASE_REF="feature")), "dev")
 
     def test_never_relabels_another_backend_or_a_different_compilation(self):
         for change in [{"GITHUB_BASE_REF": "staging"}, {"EXPO_PUBLIC_BUILD_ENV": "staging"},
-                       {"GITHUB_BASE_REF": "main"},
+                       {"EXPO_PUBLIC_BUILD_ENV": "staging", "GITHUB_BASE_REF": "main"},
                        {"EXPO_PUBLIC_BUILD_ENV": "staging", "GITHUB_BASE_REF": "feature"},
                        {"EXPO_PUBLIC_BUILD_ENV": "prod", "GITHUB_BASE_REF": "prod"}]:
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, "PR base"):
