@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
 
 const environments = ["dev", "staging", "prod"] as const;
+// The workspace portal (Mentra Portal) is not one of them: it is closed source, built and deployed from the Mentra
+// monorepo's portal/ (portal/scripts/deploy-pages.ts).
 const sites = {
   admin: "mentra-admin",
-  portal: "mentra-enterprise-portal",
   account: "mentra-account",
 } as const;
 
@@ -35,14 +36,6 @@ const accountConfig = {
 };
 const accountConfigured = Object.values(accountConfig).every(Boolean);
 
-// The Developer Console each environment's workspace portal links to from its
-// sidebar, given to the portal's build as DEVELOPER_CONSOLE_URL.
-export const developerConsoleUrls: Record<Environment, string> = {
-  dev: "https://console.dev.mentraglass.com",
-  staging: "https://console.staging.mentraglass.com",
-  prod: "https://console.mentraglass.com",
-};
-
 // The workspace portal each environment's admin portal deep-links to (Workspaces, Fleet Management), given to
 // the admin portal's build as PORTAL_URL.
 export const portalUrls: Record<Environment, string> = {
@@ -54,11 +47,6 @@ export const portalUrls: Record<Environment, string> = {
 /** The public build-time configuration of the admin portal for `env`. */
 export function adminBuildConfig(env: Environment): Record<string, string> {
   return { PORTAL_URL: portalUrls[env] };
-}
-
-/** The public build-time configuration of the workspace portal for `env`. */
-export function portalBuildConfig(env: Environment): Record<string, string> {
-  return { DEVELOPER_CONSOLE_URL: developerConsoleUrls[env] };
 }
 
 if (import.meta.main) main();
@@ -79,7 +67,7 @@ function main() {
   if (requestedSite && requestedSite !== "all") {
     selectedSites.push(requestedSite);
   } else {
-    selectedSites.push("admin", "portal");
+    selectedSites.push("admin");
     if (accountConfigured) selectedSites.push("account");
     else console.log("Skipping the account site: its ACCOUNT_* configuration is not set.");
   }
@@ -94,12 +82,8 @@ function deploySite(site: Site, env: Environment) {
   if (site === "account") {
     if (!accountConfigured) fail("The account site needs ACCOUNT_SUPABASE_URL and ACCOUNT_SUPABASE_PUBLISHABLE_KEY.");
     run(["bun", "--cwd", "websites/account", "build"], { env: accountConfig });
-  } else if (site === "portal") {
-    run(["bun", "--cwd", "websites/portal", "build"], { env: portalBuildConfig(env) });
-  } else if (site === "admin") {
-    run(["bun", "--cwd", "websites/admin", "build"], { env: adminBuildConfig(env) });
   } else {
-    run(["bun", "--cwd", `websites/${site}`, "build"]);
+    run(["bun", "--cwd", "websites/admin", "build"], { env: adminBuildConfig(env) });
   }
   run([
     "bunx",

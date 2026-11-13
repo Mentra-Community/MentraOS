@@ -109,8 +109,6 @@ jobs:
             scripts/deploy-pages.test.ts \
             websites/account/src \
             websites/account/functions \
-            websites/portal/src \
-            websites/portal/functions \
             websites/admin/functions \
             websites/admin/src/lib/session.test.ts \
             websites/admin/src/lib/admin-access.test.ts \
@@ -131,14 +129,12 @@ jobs:
         working-directory: cloud-v2
         run: |
           bun run typecheck:admin
-          bun run typecheck:portal
           bun run typecheck:account
 
       - name: Build websites
         working-directory: cloud-v2
         run: |
           bun run build:admin
-          bun run build:portal
           bun run build:account
 
   workspace-integration:

@@ -1,3 +1,0 @@
-@import "../styles/globals.css";
-/* Tailwind only generates the classes it finds: scan the shared workspace screens too. */
-@source "../node_modules/@mentra/workspace-ui/src";

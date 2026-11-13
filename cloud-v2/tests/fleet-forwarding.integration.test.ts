@@ -1238,10 +1238,10 @@ describe("the workspace portal", () => {
     expect((await fromPortal(owner, "GET", `/workspaces/${theirs}/people`)).status).toBe(403)
   })
 
-  test("no organization-scoped route is reachable: only workspaces and ui are routes", async () => {
+  test("only workspaces and the organization view are routes", async () => {
     const owner = await portalPerson("p-owner")
     await workspaceWith(owner)
-    for (const rest of ["", "/", "/organization/overview", "/overview", "/workspaces", "/workspaces/", "/Workspaces/x/people", "/UI/x.js", "/ui", "/ui/"]) {
+    for (const rest of ["", "/", "/overview", "/workspaces", "/workspaces/", "/Workspaces/x/people", "/Organization/overview", "/UI/x.js", "/ui", "/ui/"]) {
       const reply = await fromPortal(owner, "GET", rest)
       expect({rest, status: reply.status}).toEqual({rest, status: 404})
     }
@@ -1338,7 +1338,7 @@ describe("the workspace portal", () => {
     expect(received).toEqual([])
   })
 
-  test("there is no unscoped UI route: /api/portal/fleet/ui/* is a 404 for every signed-in person and nothing is forwarded", async () => {
+  test("nothing serves a UI: /api/portal/fleet/ui/* is a 404 for every signed-in person and nothing is forwarded", async () => {
     const owner = await portalPerson("p-owner")
     const member = await portalPerson("p-member")
     await workspaceWith(owner, {member})
@@ -1351,54 +1351,76 @@ describe("the workspace portal", () => {
     expect(received).toEqual([])
   })
 
-  test("a workspace's UI assets are behind its fleet.read: relayed from /v1/portal/ui as the person", async () => {
-    const owner = await portalPerson("p-owner")
-    const admin = await portalPerson("p-admin")
-    const orgAdmin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
-    const ws = await workspaceWith(owner, {admin})
-    for (const who of [owner, admin, orgAdmin]) {
-      const get = await fromPortal(who, "GET", `/workspaces/${ws}/ui/chunks/main.js?v=1`)
-      const head = await fromPortal(who, "HEAD", `/workspaces/${ws}/ui/entry.js`)
-      expect(get.status).toBe(200)
-      expect(head.status).toBe(200)
-      expect((get.json as Echo).pathWithQuery).toBe("/v1/portal/ui/chunks/main.js?v=1")
-      expect((get.json as Echo).principal).toMatchObject({kind: "user", scope: {kind: "person"}})
-      expect(get.headers.get("x-content-type-options")).toBe("nosniff")
-      expect(get.headers.get("cross-origin-resource-policy")).toBe("same-origin")
-    }
-    const sent = received.length
-    expect((await fromPortal(owner, "POST", `/workspaces/${ws}/ui/entry.js`, {body: "{}"})).status).toBe(405)
-    expect((await fromPortal(owner, "DELETE", `/workspaces/${ws}/ui/entry.js`)).status).toBe(405)
-    expect(received).toHaveLength(sent)
-  })
-
-  test("a workspace's UI assets refuse who its API refuses, and other spellings of ui are not routes", async () => {
-    const owner = await portalPerson("p-owner")
-    const member = await portalPerson("p-member")
-    const developer = await portalPerson("p-dev")
-    const stranger = await portalPerson("p-stranger")
-    const ws = await workspaceWith(owner, {member, developer})
-    for (const who of [member, developer, stranger]) {
-      for (const method of ["GET", "HEAD", "POST"]) {
-        const reply = await fromPortal(who, method, `/workspaces/${ws}/ui/entry.js`)
-        expect({method, status: reply.status}).toEqual({method, status: 403})
-      }
-    }
-    expect((await fromPortal(owner, "GET", "/workspaces/ws_missing/ui/entry.js")).status).toBe(404)
-    expect((await fromPortal(owner, "GET", `/workspaces/${ws}/ui/entry.js`, {via: "bearer"})).status).toBe(403)
-    for (const rest of [`/workspaces/${ws}/UI/entry.js`, `/workspaces/${ws}/%75i/entry.js`, `/workspaces/${ws}/ui`, `/workspaces/${ws}/ui/`]) {
-      const reply = await fromPortal(owner, "GET", rest)
-      expect({rest, status: reply.status}).toEqual({rest, status: 404})
-    }
-    expect(received).toEqual([])
-  })
-
   test("Fleet is not a portal module: the module router never forwards to it", async () => {
     const owner = await portalPerson("p-owner")
     await workspaceWith(owner)
     const reply = await send("GET", "/api/portal/billing/ui/x.js", {headers: {cookie: owner.cookie}})
     expect(reply.status).toBe(404)
     expect(received).toEqual([])
+  })
+})
+
+describe("the workspace portal's organization view", () => {
+  test("an Organization Admin reads the admin surface with the organization scope, query and all", async () => {
+    const admin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+
+    const overview = await fromPortal(admin, "GET", "/organization/overview")
+    const usage = await fromPortal(admin, "GET", "/organization/usage?range=7d&q=ada")
+    const head = await fromPortal(admin, "HEAD", "/organization/devices/g_1")
+
+    expect([overview.status, usage.status, head.status]).toEqual([200, 200, 200])
+    expect(received.map(call => call.pathWithQuery)).toEqual(["/v1/admin/overview", "/v1/admin/usage?range=7d&q=ada", "/v1/admin/devices/g_1"])
+    expect((overview.json as Echo).principal).toEqual({
+      kind: "user",
+      mentraUserId: admin.mentraUserId,
+      email: ADMIN_EMAIL,
+      emailVerified: true,
+      isOrganizationAdmin: true,
+      organizationCapabilities: [...ORGANIZATION_CAPABILITIES],
+      scope: {kind: "organization"},
+    })
+    expect(overview.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(received[0]!.headers.get("cookie")).toBeNull()
+  })
+
+  test("anyone else is refused before Fleet: an Owner 403, a bearer or key 403, no session 401", async () => {
+    const owner = await portalPerson("p-owner")
+    const admin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+    await workspaceWith(owner)
+    const refused = await fromPortal(owner, "GET", "/organization/overview")
+    expect([refused.status, refused.json.error]).toEqual([403, "forbidden"])
+    expect((await fromPortal(admin, "GET", "/organization/overview", {via: "bearer"})).status).toBe(403)
+    for (const token of [await operatorKey(["organization.supportProfiles.read"]), await workspaceKey()]) {
+      const reply = await send("GET", "/api/portal/fleet/organization/overview", {headers: {authorization: `Bearer ${token}`}})
+      expect(reply.status).toBe(403)
+    }
+    expect((await send("GET", "/api/portal/fleet/organization/overview")).status).toBe(401)
+    expect(received).toEqual([])
+  })
+
+  test("it only reads: a write is 405, and nothing is forwarded", async () => {
+    const admin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      const reply = await fromPortal(admin, method, "/organization/overview", {body: method === "DELETE" ? undefined : "{}"})
+      expect({method, status: reply.status, allow: reply.headers.get("allow")}).toEqual({method, status: 405, allow: "GET, HEAD"})
+    }
+    expect(received).toEqual([])
+  })
+
+  test("no UI and no escape: ui is 404 and an unsafe path 400, and a Core without Fleet says so", async () => {
+    const admin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+    // Hono routes `%6Frganization` as `organization`; Core then reads the path as received, which is not the route.
+    for (const rest of ["/organization/ui/entry.js", "/organization/UI/x.js", "/organizationx/overview", "/%6Frganization/overview"]) {
+      expect({rest, status: (await fromPortal(admin, "GET", rest)).status}).toEqual({rest, status: 404})
+    }
+    for (const rest of ["/organization/a%2fb", "/organization/%252e", "/organization/%zz"]) {
+      expect({rest, status: (await fromPortal(admin, "GET", rest)).status}).toEqual({rest, status: 400})
+    }
+    expect(received).toEqual([])
+    restoreEnv()
+    restoreEnv = applyEnv({...TEST_ENV, CLOUD_CORE_FLEET_URL: undefined, CLOUD_CORE_FLEET_SECRET: undefined})
+    const missing = await fromPortal(admin, "GET", "/organization/overview")
+    expect([missing.status, missing.json.error]).toEqual([404, "fleet_not_installed"])
   })
 })
 

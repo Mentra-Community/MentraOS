@@ -1,21 +1,16 @@
 # Cloud V2 websites on Cloudflare Pages
 
-MentraOS deploys two Cloud V2 browser surfaces:
+MentraOS deploys the admin console and the sign-in site:
 
 | Surface | Local package | Pages project pattern | Hostname pattern |
 | --- | --- | --- | --- |
 | Admin console | `websites/admin` | `mentra-admin-<env>` | `admin.<env>.mentraglass.com` |
-| Enterprise portal | `websites/portal` | `mentra-enterprise-portal-<env>` | `portal.<env>.mentraglass.com` |
 
-Production hostnames omit the environment label:
+Production hostnames omit the environment label (`admin.mentraglass.com`).
 
-| Surface | Production hostname |
-| --- | --- |
-| Admin console | `admin.mentraglass.com` |
-| Enterprise portal | `portal.mentraglass.com` |
-
-The Developer Console and the Store website are deployed by the Mentra Miniapp
-Store service, not by MentraOS.
+The workspace portal (`portal.mentraglass.com`, the `mentra-enterprise-portal-<env>`
+projects), the Developer Console and the Store website are separate, closed-source
+sites, deployed outside MentraOS.
 
 Use one Pages project per surface per environment. That keeps each website's
 `CORE_URL` plain and prevents dev, staging, and production domains from
@@ -25,9 +20,9 @@ depending on branch-preview behavior.
 
 | Branch | Workflow target | Pages projects |
 | --- | --- | --- |
-| `dev` | dev | `mentra-admin-dev`, `mentra-enterprise-portal-dev` |
-| `staging` | staging | `mentra-admin-staging`, `mentra-enterprise-portal-staging` |
-| `main` | prod | `mentra-admin-prod`, `mentra-enterprise-portal-prod` |
+| `dev` | dev | `mentra-admin-dev` |
+| `staging` | staging | `mentra-admin-staging` |
+| `main` | prod | `mentra-admin-prod` |
 
 The workflow can also be run manually from a PR branch with an explicit
 environment and site selection. The environment comes from the website URL and
@@ -48,13 +43,6 @@ Required Pages environment variable:
 
 `bun run deploy:pages` refreshes `CORE_URL` for the selected Pages project
 before uploading the static bundle.
-
-`bun run deploy:pages` builds the workspace portal with `DEVELOPER_CONSOLE_URL`, its
-environment's Developer Console, from the
-`developerConsoleUrls` map in `scripts/deploy-pages.ts`: `console.mentraglass.com`,
-`console.staging.mentraglass.com` and `console.dev.mentraglass.com`. A portal
-built without `DEVELOPER_CONSOLE_URL`, such as a Private Cloud's, has none. The
-sidebar's Developer Console link is hidden, so the portal shows no link either way.
 
 Deploy manually:
 

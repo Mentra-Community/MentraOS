@@ -10,9 +10,9 @@ MentraOS is an open source operating system, app store, and development framewor
 - Mobile app: `mobile` (React Native with native modules)
 - Android logic: `android_core`
 - iOS native module: `mobile/ios`
-- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, admin, and portal)
+- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, admin portal and sign-in site)
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
-- Websites: `cloud-v2/websites/` (admin portal, workspace portal, sign-in site). The Mentra Miniapp Store and Developer Console live in the separate Mentra Miniapp Store service.
+- Websites: `cloud-v2/websites/` (admin portal, sign-in site). The workspace portal (Mentra Portal), the Mentra Miniapp Store and the Developer Console are separate, closed-source sites; Core serves the workspace portal's API (`/api/portal/*`).
 
 ### Established iOS behavior
 

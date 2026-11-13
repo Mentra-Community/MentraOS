@@ -11,7 +11,9 @@
  *   - a stand-in account directory (`fleet-local/fake-gotrue.ts`) on :3190, so `/api/account/login` works with the
  *     stack's test accounts, from a phone too;
  *   - the workspace portal's built site on :5175 and the admin portal's on :5174, served as Cloudflare Pages serves
- *     them (their `_headers`, `/api/*` to Core), each with a local sign-in shortcut at `/__dev/login`;
+ *     them (their `_headers`, `/api/*` to Core), each with a local sign-in shortcut at `/__dev/login`. The workspace
+ *     portal is a separate, closed-source site: its build is `PORTAL_DIST`, by default the Mentra monorepo's
+ *     `portal/dist` beside this checkout;
  *   - the sign-in site (`websites/account`, built here against the stand-in account directory) on :5176, the origin
  *     of Core's sign-in server (`CLOUD_CORE_OIDC_ISSUER`), relaying the provider's routes to Core as its Pages
  *     Function does; both portals are its registered clients, so their real sign-in runs end to end;
@@ -279,15 +281,15 @@ const accounts = () => {
   }))
 }
 
-for (const site of ["portal", "admin"] as const) {
-  const dist = resolve(ROOT, "websites", site, "dist")
-  if (!existsSync(resolve(dist, "index.html"))) refuse(`websites/${site}/dist is missing: build it first (see STACK.md)`)
+const PORTAL_DIST = process.env.PORTAL_DIST?.trim() || resolve(ROOT, "../../../portal/dist")
+for (const [label, dist] of [["PORTAL_DIST", PORTAL_DIST], ["websites/admin/dist", resolve(ROOT, "websites/admin/dist")]] as const) {
+  if (!existsSync(resolve(dist, "index.html"))) refuse(`${label} (${dist}) has no build: build it first (see STACK.md)`)
 }
 const portal = startStaticSite({
   name: "Workspace portal",
   hostname: HOST,
   port: PORTS.portal,
-  distDir: resolve(ROOT, "websites/portal/dist"),
+  distDir: PORTAL_DIST,
   coreUrl: `http://127.0.0.1:${PORTS.core}`,
   devLogin: {cookieName: "mentra_portal_session", accounts, mint: (email) => mint("portal", email)},
 })

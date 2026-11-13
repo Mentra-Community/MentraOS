@@ -55,7 +55,7 @@ are gone. Recovery names an existing account; a deleted account is refused
 
 ## The workspace portal
 
-The workspace portal (`websites/portal`) is centred on the current workspace. A switcher at
+The workspace portal (Mentra Portal, a separate site built on `/api/portal/*`) is centred on the current workspace. A switcher at
 the top of the sidebar shows it and your role (your membership's; "Member · Organization
 Admin" when an Organization Admin's powers go beyond it), and its menu lists your workspaces,
 each with your role, the one that manages your device marked "Manages your device". Choosing one

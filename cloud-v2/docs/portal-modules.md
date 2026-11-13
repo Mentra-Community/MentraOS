@@ -21,13 +21,10 @@ There is one portal module:
 | --- | --- | --- | --- | --- |
 | `billing` | Data | `/api/portal/billing` | `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | The Mentra Miniapp Store's billing module: what it sells, what each workspace holds, and the hosted pages where they pay. The portal draws the Licenses page and the Members list's licenses from its answers. Hosted Core only; a Private Cloud leaves it unset. |
 
-Billing is a data module. Fleet's is the only UI module: the admin portal mounts
-its bundle from `/api/admin/fleet/ui/entry.js` ([Fleet
-integration](fleet-integration.md#the-fleet-ui-module-contract)), and the workspace
-portal keeps a module host (`websites/portal/src/components/portal-module-host.tsx`)
-for Fleet Management's UI. No workspace portal page mounts it, and the registry
-above lists billing alone. [The UI of a UI module](#the-ui-of-a-ui-module) is the
-contract that host speaks.
+Billing is a data module, and the registry above lists billing alone. Fleet is
+not a portal module ([Fleet integration](fleet-integration.md)). [The UI of a UI
+module](#the-ui-of-a-ui-module) is the contract a workspace portal's module host
+speaks.
 
 How a request is signed and sent, what a module receives, how its answer is mapped
 and how its UI assets are relayed are the same as Fleet's, in code

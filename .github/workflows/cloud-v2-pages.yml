@@ -20,7 +20,6 @@ on:
         options:
           - all
           - admin
-          - portal
           - account
 concurrency:
   group: cloud-v2-pages-${{ github.event_name == 'workflow_dispatch' && inputs.environment || github.ref_name }}
