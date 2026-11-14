@@ -8,6 +8,9 @@ import Foundation
 final class PcmUrlPlayback: @unchecked Sendable {
     fileprivate let sink: PcmStreamSink
     fileprivate let queue: DispatchQueue
+    /// The most one write hands the sink, in whole samples. The sink refuses a write that would
+    /// put its backlog past its limit, so what piled up behind a slow write goes in pieces.
+    fileprivate let maxWriteBytes: Int
     fileprivate var task: URLSessionDataTask?
     fileprivate var carry = PcmByteCarry()
     fileprivate var pending = Data()
@@ -23,9 +26,10 @@ final class PcmUrlPlayback: @unchecked Sendable {
     /// Times the transfer was paused for backpressure. For diagnostics and tests.
     private(set) var suspensions = 0
 
-    fileprivate init(sink: PcmStreamSink, queue: DispatchQueue) {
+    fileprivate init(sink: PcmStreamSink, queue: DispatchQueue, maxWriteBytes: Int) {
         self.sink = sink
         self.queue = queue
+        self.maxWriteBytes = max(2, maxWriteBytes - maxWriteBytes % 2)
     }
 
     /// Wait for the body to finish playing. Throws `PcmStreamError.aborted` after `cancel()`.
@@ -84,17 +88,21 @@ final class PcmUrlPlayback: @unchecked Sendable {
         pump()
     }
 
-    /// Hand pending audio to the sink one write at a time. The sink's write suspends while its
-    /// backlog is above its ceiling; meanwhile `pending` fills, and past the high-water mark the
-    /// transfer is paused until the next write takes it. Once the body is complete and
-    /// everything is written, close the sink.
+    /// Hand pending audio to the sink one write at a time, at most `maxWriteBytes` each. The
+    /// sink's write suspends while its backlog is above its ceiling; meanwhile `pending` fills,
+    /// and past the high-water mark the transfer is paused until writes have taken it back
+    /// under. A paused transfer still delivers what it had already received, so `pending` can
+    /// hold many seconds of a fast download: written whole, that would pass the sink's backlog
+    /// limit and end the speech part-way. Once the body is complete and everything is written,
+    /// close the sink.
     fileprivate func pump() {
         guard result == nil, !writing, !closing else { return }
         if !pending.isEmpty {
-            let chunk = pending
-            pending = Data()
+            let size = min(pending.count, maxWriteBytes)
+            let chunk = Data(pending.prefix(size))
+            pending = Data(pending.dropFirst(size))
             writing = true
-            if suspended, let task {
+            if suspended, pending.count <= maxWriteBytes, let task {
                 task.resume()
                 suspended = false
             }
@@ -169,7 +177,7 @@ final class PcmUrlLoader: NSObject, URLSessionDataDelegate {
 
     /// Start fetching `url` into `sink`. Never blocks the caller.
     func start(url: URL, sink: PcmStreamSink) -> PcmUrlPlayback {
-        let playback = PcmUrlPlayback(sink: sink, queue: queue)
+        let playback = PcmUrlPlayback(sink: sink, queue: queue, maxWriteBytes: highWaterBytes)
         queue.async {
             guard playback.result == nil else { return } // Cancelled before it started.
             var request = URLRequest(url: url)
