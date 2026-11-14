@@ -2622,6 +2622,9 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         clearPairingStateOnForget()
         clearSecureFirmware()
         clearFormerOwnerKeys()
+        // An earlier scan's rows would list the forgotten glasses at the next pairing scan,
+        // which keeps rows it finds already listed, though they are not in pairing mode.
+        searchResults = emptyList()
 
         val live = sgc as? MentraLive
         if (live != null) {
