@@ -249,6 +249,62 @@ describe("the served miniapp.json", () => {
   })
 })
 
+describe("a check before a miniapp starts", () => {
+  test("installs a newer release while the miniapp is stopped, before it resolves", async () => {
+    responses = [served(manifest("1.1.0"))]
+    await updater().checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    expect(installs).toHaveLength(1)
+    expect(active[pkg]).toBe("1.1.0")
+  })
+
+  test("resolves at once for a miniapp already up to date", async () => {
+    responses = [served(manifest("1.0.0"))]
+    const started = performance.now()
+    await updater().checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    expect(performance.now() - started).toBeLessThan(500)
+    expect(installs).toHaveLength(0)
+  })
+
+  test("stops waiting for a host that doesn't answer, and installs nothing", async () => {
+    const u = new MiniappUrlUpdater({...updaterDeps(), fetchManifest: () => new Promise(() => {})})
+    const started = performance.now()
+    await u.checkBeforeStart(pkg, {checkMs: 30, installMs: 5000})
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(installs).toHaveLength(0)
+  })
+
+  test("once a newer release installs, waits for it longer than the check's own limit, then no longer", async () => {
+    responses = [served(manifest("1.1.0"))]
+    let finish!: () => void
+    const u = new MiniappUrlUpdater({
+      ...updaterDeps(),
+      install: (bundleUrl, options) => {
+        installs.push({bundleUrl, options})
+        return new Promise<void>((resolve) => {
+          finish = resolve
+        })
+      },
+    })
+    let resolved = false
+    const check = u.checkBeforeStart(pkg, {checkMs: 20, installMs: 5000}).then(() => {
+      resolved = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(installs).toHaveLength(1)
+    expect(resolved).toBe(false)
+    finish()
+    await check
+    expect(resolved).toBe(true)
+
+    // An install that outlasts its own limit too: the miniapp starts as it is.
+    responses = [served(manifest("1.2.0"))]
+    const stuck = new MiniappUrlUpdater({...updaterDeps(), install: () => new Promise<void>(() => {})})
+    const started = performance.now()
+    await stuck.checkBeforeStart(pkg, {checkMs: 20, installMs: 40})
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+})
+
 describe("updates from a miniapp's own URL", () => {
   test("a bundled miniapp updates from Mentra's host through the shared installer", async () => {
     responses = [served(manifest("1.1.0"), {etag: '"v2"'})]

@@ -722,15 +722,25 @@ class MiniappLauncher {
    * resumes when they reconnect, same as mid-session. A release this Mentra App
    * can't run is refused like any launch (see {@link assertRunsOnPhone}).
    */
-  async autostartLocalMiniapps(): Promise<void> {
+  async autostartLocalMiniapps(options: {beforeStart?: (packageNames: string[]) => Promise<void>} = {}): Promise<void> {
     const apps = await appRegistry.getInstalledMiniapps()
-    for (const app of apps) {
-      // Only phone-hosted miniapps have a JSContext to re-spawn. Offline
-      // built-ins (`local:false, offline:true`) restore their native running
-      // state elsewhere and have no bundle to launch.
-      if (!app.local) continue
-      if (!getLocalAppRunningState(app.packageName)) continue
-      if (this.isRunning(app.packageName)) continue
+    // Only phone-hosted miniapps have a JSContext to re-spawn. Offline
+    // built-ins (`local:false, offline:true`) restore their native running
+    // state elsewhere and have no bundle to launch.
+    const toStart = apps.filter(
+      (app) => app.local && getLocalAppRunningState(app.packageName) && !this.isRunning(app.packageName),
+    )
+    if (toStart.length === 0) return
+    // The host's chance to update them while they are still stopped (`beforeStart`), so an update installs silently
+    // instead of asking to restart a miniapp that is running. Its failure never keeps them from starting.
+    if (options.beforeStart) {
+      await options.beforeStart(toStart.map((app) => app.packageName)).catch((e) => {
+        console.warn("MiniappLauncher: the check before autostart failed", e)
+      })
+    }
+    for (const app of toStart) {
+      // The person may have started or stopped it while it was checked: what they did stands.
+      if (this.isRunning(app.packageName) || !getLocalAppRunningState(app.packageName)) continue
       try {
         // Restoring what was running is the platform's doing, never the user's.
         await this.ensureRunning(app.packageName, undefined, {trigger: "automatic"})

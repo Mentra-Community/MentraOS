@@ -138,6 +138,15 @@ export const miniapps = {
    */
   checkOpenedForUpdate: (packageName: string): Promise<void> => urlUpdater.checkOpened(packageName),
   /**
+   * Check miniapps that are about to start for a newer release, all at once, so that one found installs while they
+   * are stopped, silently, instead of asking to restart a running miniapp. Waits `checkMs` at most for each to find
+   * one, and once found, `installMs` more at most for its install. Never throws.
+   */
+  checkBeforeStart: (packageNames: string[], limits: {checkMs: number; installMs: number}): Promise<void> =>
+    Promise.all(
+      packageNames.map((packageName) => urlUpdater.checkBeforeStart(packageName, limits).catch(() => {})),
+    ).then(() => {}),
+  /**
    * A person opened a miniapp: started it themselves, or opened one again after answering Not now to its update.
    * Automatic starts (restoring what ran before, an update's restart) are not announced. Returns an unsubscribe.
    */

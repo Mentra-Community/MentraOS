@@ -689,6 +689,24 @@ describe("MantleManager", () => {
     }
   })
 
+  it("checks the miniapps it starts for an update before they start, within a time limit", async () => {
+    const instance = mantle as unknown as {restoreMiniapps: () => Promise<void>}
+    const start = jest.spyOn(miniappUpdateScheduler, "start").mockResolvedValue()
+    const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockResolvedValue()
+    const checkBeforeStart = jest.fn(async () => {})
+    Object.assign(engine.miniapps, {checkBeforeStart})
+    const autostart = miniappLauncher.autostartLocalMiniapps as jest.Mock
+    try {
+      await instance.restoreMiniapps()
+      const {beforeStart} = autostart.mock.calls.at(-1)![0] as {beforeStart: (names: string[]) => Promise<void>}
+      await beforeStart(["com.mentra.captions"])
+      expect(checkBeforeStart).toHaveBeenCalledWith(["com.mentra.captions"], {checkMs: 3_000, installMs: 30_000})
+    } finally {
+      start.mockRestore()
+      sync.mockRestore()
+    }
+  })
+
   it.each(["ios", "android"] as const)(
     "installs LinkLingo only in Super Mode and stops it on opt-out on %s",
     async (os) => {

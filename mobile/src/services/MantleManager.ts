@@ -65,6 +65,11 @@ import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployme
  * Longest a spoken notification is assumed to take. Only a backstop for a
  * completion callback that never arrives — not a playback limit.
  */
+/**
+ * How long the miniapps left running wait at launch for their update check: to learn whether there is an update, and,
+ * once one is installing, for it to install. Past that they start as they are, and the update waits for later.
+ */
+const AUTOSTART_UPDATE_LIMITS = {checkMs: 3_000, installMs: 30_000}
 const SPOKEN_NOTIFICATION_MAX_MS = 30_000
 
 /**
@@ -791,13 +796,18 @@ class MantleManager {
     // here from the persisted running flags. Runs last so newly installed/
     // upgraded bundles are on disk first. Already-running contexts are left
     // alone when foreground reconciliation follows background recovery.
+    // Before they start, each is checked for an update: one found installs
+    // while it is still stopped, silently, instead of asking to restart it
+    // once it runs. Offline or on a slow host, it starts as it is.
     await miniappLauncher
-      .autostartLocalMiniapps()
+      .autostartLocalMiniapps({
+        beforeStart: (packageNames) => engine.miniapps.checkBeforeStart(packageNames, AUTOSTART_UPDATE_LIMITS),
+      })
       .catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
     if (!isCurrent()) return
 
     // Each miniapp updates from its own URL. Start after the user's sessions
-    // are restored, so a running miniapp defers its update.
+    // are restored, so the miniapps they run were checked first.
     void miniappUpdateScheduler.start()
   }
 

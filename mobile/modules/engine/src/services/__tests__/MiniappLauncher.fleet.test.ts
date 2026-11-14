@@ -189,6 +189,55 @@ describe("a restore after a process death", () => {
     expect(savedRunningState).toEqual([[NOTES, false]])
   })
 
+  test("first hands the host every miniapp it is about to start, and starts them once it is done", async () => {
+    const order: string[] = []
+    await miniappLauncher.autostartLocalMiniapps({
+      beforeStart: async (packageNames) => {
+        order.push(`before ${packageNames.join(", ")}`)
+        expect(launches).toEqual([])
+      },
+    })
+    expect(order).toEqual([`before ${NOTES}, ${MAPS}`])
+    expect(launches.map((launch) => [launch.packageName, launch.outcome])).toEqual([
+      [NOTES, "started"],
+      [MAPS, "started"],
+    ])
+  })
+
+  test("starts them all the same when the host's check before the start fails", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    await miniappLauncher.autostartLocalMiniapps({
+      beforeStart: async () => {
+        throw new Error("offline")
+      },
+    })
+    expect(launches.map((launch) => [launch.packageName, launch.outcome])).toEqual([
+      [NOTES, "started"],
+      [MAPS, "started"],
+    ])
+    warn.mockRestore()
+  })
+
+  test("doesn't start one the person stopped while it was checked", async () => {
+    await miniappLauncher.autostartLocalMiniapps({
+      beforeStart: async () => {
+        runningFlags.delete(NOTES)
+      },
+    })
+    expect(launches.map((launch) => launch.packageName)).toEqual([MAPS])
+  })
+
+  test("asks the host about nothing when nothing is to start", async () => {
+    runningFlags = new Set()
+    let asked = false
+    await miniappLauncher.autostartLocalMiniapps({
+      beforeStart: async () => {
+        asked = true
+      },
+    })
+    expect(asked).toBe(false)
+  })
+
   test("skips miniapps that were not running, that already run, or that have no context", async () => {
     installed = [notes, {packageName: "com.mentra.stopped", local: true}, {packageName: "com.mentra.native"}]
     runningFlags = new Set([NOTES, "com.mentra.native"])

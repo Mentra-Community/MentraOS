@@ -222,8 +222,14 @@ export class MiniappUrlUpdater {
   private readonly manifests = new Map<string, CachedManifest>()
   private readonly backoff = new Map<string, Backoff>()
   private readonly lastCheckedAt = new Map<string, number>()
-  /** Each check in flight, and `asking`: settled once it waits for the person's answer to its update prompt. */
-  private readonly inFlight = new Map<string, {session: number; check: Promise<void>; asking: Promise<void>}>()
+  /**
+   * Each check in flight, `asking`: settled once it waits for the person's answer to its update prompt, and
+   * `installing`: settled once it found a newer release and starts installing it.
+   */
+  private readonly inFlight = new Map<
+    string,
+    {session: number; check: Promise<void>; asking: Promise<void>; installing: Promise<void>}
+  >()
   /** The kept status answer: undefined until read. */
   private status: StoredRegistryStatus | null | undefined
   /** The refresh in flight, and the Core it asks. */
@@ -259,27 +265,55 @@ export class MiniappUrlUpdater {
     return this.check(packageName)
   }
 
+  /**
+   * Check a miniapp that is about to start, so that a newer release installs while it is stopped, silently, rather
+   * than once it runs, behind an update prompt. Resolves when the check is done; after `checkMs` when it hasn't found
+   * a newer release by then (offline, a slow host); or, once it found one, after `installMs` more at most. A check
+   * still going on then carries on, as any check does.
+   */
+  async checkBeforeStart(packageName: string, limits: {checkMs: number; installMs: number}): Promise<void> {
+    const entry = this.start(packageName, this.deps.installSession())
+    const done = entry.check.then(
+      () => "done" as const,
+      () => "done" as const,
+    )
+    const found = await raceWithin([done, entry.installing.then(() => "installing" as const)], limits.checkMs)
+    if (found === "installing") await raceWithin([done], limits.installMs)
+  }
+
   /** Check one miniapp. Checks of it during the same engine session share one request. */
   check(packageName: string, session = this.deps.installSession()): Promise<void> {
     return this.start(packageName, session).check
   }
 
-  private start(packageName: string, session: number): {check: Promise<void>; asking: Promise<void>} {
+  private start(
+    packageName: string,
+    session: number,
+  ): {check: Promise<void>; asking: Promise<void>; installing: Promise<void>} {
     const running = this.inFlight.get(packageName)
     if (running?.session === session) return running
     let onAsking = () => {}
     const asking = new Promise<void>((resolve) => {
       onAsking = resolve
     })
-    const entry = {session, asking, check: Promise.resolve()}
-    entry.check = this.run(packageName, session, onAsking).finally(() => {
+    let onInstalling = () => {}
+    const installing = new Promise<void>((resolve) => {
+      onInstalling = resolve
+    })
+    const entry = {session, asking, installing, check: Promise.resolve()}
+    entry.check = this.run(packageName, session, onAsking, onInstalling).finally(() => {
       if (this.inFlight.get(packageName) === entry) this.inFlight.delete(packageName)
     })
     this.inFlight.set(packageName, entry)
     return entry
   }
 
-  private async run(packageName: string, session: number, onAsking: () => void): Promise<void> {
+  private async run(
+    packageName: string,
+    session: number,
+    onAsking: () => void,
+    onInstalling: () => void = () => {},
+  ): Promise<void> {
     // An install started in an ended session must not activate.
     const isCancelled = () => this.deps.installSession() !== session
     if (isCancelled()) return
@@ -412,6 +446,7 @@ export class MiniappUrlUpdater {
       bundleSha256: manifest.bundle.sha256,
       ...(served.private ? {private: true} : {}),
     }
+    onInstalling()
     try {
       await this.deps.install(bundleUrl, {
         expectedPackageName: packageName,
@@ -675,5 +710,18 @@ function readStoredStatus(store: RegistryStatusStore): StoredRegistryStatus | nu
     return value as StoredRegistryStatus
   } catch {
     return null
+  }
+}
+
+/** The first of `outcomes` to settle, or "timeout" after `ms`. */
+async function raceWithin<T>(outcomes: Promise<T>[], ms: number): Promise<T | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), ms)
+  })
+  try {
+    return await Promise.race([...outcomes, timeout])
+  } finally {
+    clearTimeout(timer)
   }
 }
