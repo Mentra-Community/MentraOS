@@ -1,6 +1,6 @@
 {
   "name": "@mentra/cloud-protocol",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {

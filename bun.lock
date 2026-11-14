@@ -56,7 +56,7 @@
     },
     "cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "3.4.0",
+      "version": "3.4.1",
       "dependencies": {
         "@mentra/cloud-protocol": "3.4.0",
         "tweetnacl": "^1.0.3",
@@ -117,7 +117,7 @@
     },
     "cloud-v2/packages/protocol": {
       "name": "@mentra/cloud-protocol",
-      "version": "3.4.0",
+      "version": "3.4.1",
       "dependencies": {
         "tldts": "7.4.19",
         "zod": "^3.24.1",
@@ -293,9 +293,9 @@
     },
     "mobile/modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "3.4.0",
+      "version": "3.4.1",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.4.0",
+        "@mentra/cloud-protocol": "3.4.1",
         "eventemitter3": "^5.0.1",
       },
       "devDependencies": {
@@ -1240,7 +1240,6 @@
     "fault": ["fault@2.0.1", "", { "dependencies": { "format": "^0.2.0" } }, ""],
 
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" } }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
-
 
     "file-entry-cache": ["file-entry-cache@8.0.0", "", { "dependencies": { "flat-cache": "^4.0.0" } }, ""],
 
