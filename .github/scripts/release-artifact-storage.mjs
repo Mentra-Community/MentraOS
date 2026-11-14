@@ -11,8 +11,9 @@ import {setTimeout as sleep} from "node:timers/promises"
 
 export const ARTIFACT_ORIGIN = "https://artifactscdn.mentraglass.com"
 const INDEX_NAME = "_assets.json"
-// The Android install page staging's publisher writes beside index.html, in the same shared folders: not an artifact.
-const RESERVED_NAMES = new Set([INDEX_NAME, "index.html", "android.html"])
+// The Android install page every release folder has, beside index.html.
+const ANDROID_PAGE = "android.html"
+const RESERVED_NAMES = new Set([INDEX_NAME, "index.html", ANDROID_PAGE])
 
 // A runner can kill the process before a network promise rejects. Emit the
 // phase before awaiting it, without putting diagnostics in JSON CLI stdout.
@@ -451,11 +452,27 @@ export function releaseDownloadBody(body, repository, tag) {
 
 const INDEX_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mentra release artifacts</title><style>body{font:16px system-ui;max-width:1000px;margin:48px auto;padding:0 24px}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:12px;border-bottom:1px solid #ddd}code{font-size:12px;overflow-wrap:anywhere}a{color:#1765ce}</style><h1>Mentra release artifacts</h1><p id="status">Loading downloads…</p><table><thead><tr><th>File</th><th>Size</th><th>SHA-256</th></tr></thead><tbody></tbody></table><noscript><a href="_assets.json">Download the artifact manifest</a></noscript><script>fetch('_assets.json?read='+Date.now(),{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('Could not load downloads');return r.json()}).then(index=>{document.querySelector('#status').textContent=index.repository+' · '+index.tag;for(const a of index.assets){const row=document.createElement('tr'),name=document.createElement('td'),size=document.createElement('td'),hash=document.createElement('td'),link=document.createElement('a'),code=document.createElement('code');link.textContent=a.name;link.href=a.browser_download_url;name.append(link);size.textContent=(a.size/1000000).toFixed(1)+' MB';code.textContent=a.digest.replace('sha256:','');hash.append(code);row.append(name,size,hash);document.querySelector('tbody').append(row)}}).catch(e=>document.querySelector('#status').textContent=e.message)</script></html>`
 
+// Slack's in-app browser stalls APK downloads at 100%, so its Android buttons open this page: it hands
+// the APK in its folder (?file=) to Chrome, which downloads it here if Chrome is missing.
+const ANDROID_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install on Android</title><style>body{font:17px system-ui;max-width:560px;margin:48px auto;padding:0 20px;color:#111}code{overflow-wrap:anywhere}.main{display:block;margin:24px 0 16px;padding:14px;border-radius:10px;background:#1765ce;color:#fff;text-align:center;text-decoration:none;font-weight:600}p{line-height:1.5}.note{color:#555;font-size:15px}</style><h1>Install on Android</h1><p id="status">Loading…</p><div id="install" hidden><a id="main" class="main"></a><p class="note" id="note">Slack's built-in browser stops APK downloads at 100%, so this opens the download in Chrome.</p></div><script>(()=>{const status=document.getElementById('status'),file=new URLSearchParams(location.search).get('file')||'';if(!/^[\\w.+-]+\\.apk$/.test(file)){status.textContent='This link does not name an Android app.';return}const apk=new URL(encodeURIComponent(file),location.href),main=document.getElementById('main');status.innerHTML='<code></code>';status.firstChild.textContent=file;if(/Android/i.test(navigator.userAgent)){main.textContent='Open in Chrome to download';main.href='intent://'+apk.host+apk.pathname+'#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(apk.href)+';end'}else{main.textContent='Download';main.href=apk.href;document.getElementById('note').textContent='Open this page on the Android phone to install it there.'}document.getElementById('install').hidden=false})()</script></html>`
+
+/** A Slack button's Android install: an APK on the artifact CDN opens its folder's install page; anything else is unchanged. */
+export function androidInstallUrl(url) {
+  const match = /^(https:\/\/artifactscdn\.mentraglass\.com\/[^/?#]+\/[^/?#]+\/releases\/[^/?#]+)\/([^/?#]+\.apk)$/.exec(url ?? "")
+  if (!match) return url
+  try {
+    return `${match[1]}/${ANDROID_PAGE}?file=${encodeURIComponent(decodeURIComponent(match[2]))}`
+  } catch {
+    return url
+  }
+}
+
 function writeDownloadPage(store, repository, tag) {
-  return store.put(artifactPrefix(repository, tag) + "index.html", INDEX_HTML, {
+  const page = (name, body) => store.put(artifactPrefix(repository, tag) + name, body, {
     ContentType: "text/html; charset=utf-8",
     CacheControl: "no-cache",
   })
+  return Promise.all([page("index.html", INDEX_HTML), page(ANDROID_PAGE, ANDROID_HTML)])
 }
 
 export async function publishR2Artifact({

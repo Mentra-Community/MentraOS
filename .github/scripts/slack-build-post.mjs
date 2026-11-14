@@ -1,3 +1,5 @@
+import {androidInstallUrl} from "./release-artifact-storage.mjs"
+
 // Every Slack build post, in one layout: the PR builds in #pr-builds, the dev
 // and staging releases, and the lab's nightly results and device notices
 // (testing/agent/slack.ts). Buttons, never inline links:
@@ -54,14 +56,15 @@ export function installSlots(apps) {
     ...(apps.some(({installs}) => installs.some(({platform, url}) => platform === "macOS" && installable(url))) ? ["macOS"] : [])]
   return apps.flatMap(({name, installs}, index) => platforms.map((platform) => {
     const install = installs.find((entry) => entry.platform === platform)
-    return {label: `${PLATFORM_EMOJI[platform]} ${name}`, emoji: PLATFORM_EMOJI[platform], name, primary: !index,
+    return {label: `${PLATFORM_EMOJI[platform]} ${name}`, emoji: PLATFORM_EMOJI[platform], name, platform, primary: !index,
       ...(installable(install?.url) ? {url: install.url} : {missing: install?.missing ?? "not built"})}
   }))
 }
 
 export function installButtons(apps) {
   return installSlots(apps).filter(({url}) => url)
-    .map(({emoji, name, primary, url}) => button(`${emoji} Install ${name}`, url, primary ? "primary" : undefined))
+    .map(({emoji, name, platform, primary, url}) => button(`${emoji} Install ${name}`,
+      platform === "Android" ? androidInstallUrl(url) : url, primary ? "primary" : undefined))
 }
 
 /** The glasses versions an OTA manifest of this release or PR build (`releaseVersion`) targets. */
