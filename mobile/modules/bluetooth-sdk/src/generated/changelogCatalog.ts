@@ -6,6 +6,10 @@ export const GENERATED_RELEASE_CHANGELOGS = Object.freeze(
     "markdown": "This release is under active development. User-facing changes will be documented as they land."
   },
   {
+    "version": "3.4.1",
+    "markdown": "- **Pairing:** Pairing your glasses is simpler, with new voice prompts to guide you. Glasses paired before this update keep working with your current phone.\n- **Mentra Call:** Simpler call controls and a free first month.\n- **Miniapps:** Add miniapps from a link or QR code.\n- **Glasses updates:** Updates keep going when your phone switches networks, with clearer messages if something goes wrong.\n- **Photos and gallery:** More reliable photo syncing on iPhone. Your glasses now tell you when their storage is full.\n- **Livestreaming:** Smoother livestreams.\n- **Sound:** Music no longer stays off after a call.\n- **Notes:** Short conversations now get notes too.\n- **Reliability:** Fewer glasses crashes and disconnects."
+  },
+  {
     "version": "3.4.0",
     "markdown": "- **Pairing:** Pairing your glasses is simpler, with new voice prompts to guide you.\n- **Mentra Call:** Simpler call controls and a free first month.\n- **Miniapps:** Add miniapps from a link or QR code.\n- **Glasses updates:** Updates keep going when your phone switches networks, with clearer messages if something goes wrong.\n- **Photos and gallery:** More reliable photo syncing on iPhone. Your glasses now tell you when their storage is full.\n- **Livestreaming:** Smoother livestreams.\n- **Sound:** Better speaker sound on Mentra Live, and music no longer stays off after a call.\n- **Notes:** Short conversations now get notes too.\n- **Reliability:** Fewer glasses crashes and disconnects."
   },

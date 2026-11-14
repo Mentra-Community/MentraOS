@@ -476,7 +476,7 @@ BluetoothSdk.addListener("pair_failure", (event) => {
 })
 ```
 
-`entering_pairing_mode` includes `window_id`. `pairing_info` includes `auto_audio` and no longer includes `awaiting_confirm` or `retained_owner_link`. Do not use the word "owner" in user-facing sample copy.
+`entering_pairing_mode` includes `window_id`. `pairing_info` includes `auto_audio` and no longer includes `awaiting_confirm` or `retained_owner_link`. With `former_owner_keys: true` the glasses keep this phone's keys after another phone takes them over or this phone unpairs, and take it back in pairing mode with the pairing it has: the SDK keeps the phone's Bluetooth pairing on Android, and an iOS app need not send the person to forget the glasses in Settings after Unpair. Do not use the word "owner" in user-facing sample copy.
 
 ## Glasses audio setup
 

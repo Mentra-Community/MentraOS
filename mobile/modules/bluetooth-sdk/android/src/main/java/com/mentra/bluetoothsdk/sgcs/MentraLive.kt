@@ -371,11 +371,16 @@ class MentraLive : SGCManager() {
          * Drop A2DP/HFP + removeBond for every bonded Mentra Live unit. Safe when no SGC
          * instance exists — [DeviceManager.forget] often runs after disconnect() nulled sgc
          * (abandonAttempt), which previously skipped MentraLive.forget() entirely and left
-         * Classic ACL up so glasses never re-advertised.
+         * Classic ACL up so glasses never re-advertised. With [removeBonds] false the bonds stay:
+         * glasses that keep former owners' keys (pairing-spec V9) take this phone back with them.
          */
         @JvmStatic
         @JvmOverloads
-        fun unbondBondedMentraLiveDevices(context: Context?, extraAddress: String? = null) {
+        fun unbondBondedMentraLiveDevices(
+                context: Context?,
+                extraAddress: String? = null,
+                removeBonds: Boolean = true,
+        ) {
             if (context == null) {
                 Bridge.log("LIVE: CTKD: unbondBondedMentraLiveDevices — no context")
                 return
@@ -433,7 +438,11 @@ class MentraLive : SGCManager() {
                         BluetoothHeadset::class.java,
                         "HFP"
                 )
-                removeBondStandalone(device)
+                if (removeBonds) removeBondStandalone(device)
+            }
+            if (!removeBonds) {
+                Bridge.log("LIVE: CTKD: bonds kept, the glasses keep former owners' keys")
+                return
             }
             Handler(Looper.getMainLooper())
                     .postDelayed({ retryUnbondIfStillPaired(context, extraAddress) }, 700)
@@ -2179,9 +2188,13 @@ class MentraLive : SGCManager() {
         if (isKilled) return
         if (isExplicitPairingAttempt()) return
         leaveGlassesLink()
-        // The glasses deleted this phone's keys. A bond kept here would make the first Pair Again
-        // connect with them, get refused and fail; removed now, Pair Again bonds afresh.
-        forgetRejectedBond()
+        // Glasses that keep former owners' keys (pairing-spec V9) take this phone back with the
+        // bond it has, with no pairing request. Older ones deleted this phone's keys: a bond kept
+        // there would make the first Pair Again connect with them, get refused and fail; removed
+        // now, Pair Again bonds afresh.
+        if (MentraLiveOwnerLossPolicy.removesBondWhenGlassesLetGo(savedGlassesKeepFormerOwnerKeys())) {
+            forgetRejectedBond()
+        }
     }
 
     private fun forgetRejectedBond() {
@@ -2346,6 +2359,16 @@ class MentraLive : SGCManager() {
      */
     private fun isSavedGlassesSecureFirmware(): Boolean =
             DeviceStore.get("bluetooth", "mentra_live_secure_firmware") as? Boolean == true
+
+    /** `pairing_info.former_owner_keys`: the saved glasses keep this phone's keys once it loses them. */
+    private fun savedGlassesKeepFormerOwnerKeys(): Boolean =
+            DeviceStore.get("bluetooth", "mentra_live_former_owner_keys") as? Boolean == true
+
+    private fun rememberFormerOwnerKeys(kept: Boolean) {
+        if (savedGlassesKeepFormerOwnerKeys() == kept) return
+        DeviceStore.apply("bluetooth", "mentra_live_former_owner_keys", kept)
+        Bridge.saveSetting("mentra_live_former_owner_keys", kept)
+    }
 
     /** Remember what the connected glasses reported so later rejections can be read correctly. */
     private fun rememberSecureFirmware(secure: Boolean) {
@@ -4590,6 +4613,7 @@ class MentraLive : SGCManager() {
                 // Legacy firmware that omits this field is not secure-capable.
                 val secureCapable = json.optBoolean("secure_pairing_capable", false)
                 rememberSecureFirmware(secureCapable)
+                rememberFormerOwnerKeys(json.optBoolean("former_owner_keys", false))
                 cancelSecureFirmwareRefresh()
                 // Decides the capability of a pairing target the scan row did not know.
                 sessionPairingInfoSecure = secureCapable
@@ -7178,6 +7202,12 @@ class MentraLive : SGCManager() {
         return device.bondState == BluetoothDevice.BOND_BONDING
     }
 
+    /**
+     * Set by [DeviceManager.forget] before [forget]: the glasses keep former owners' keys
+     * (`pairing_info.former_owner_keys`), so Unpair leaves this phone's bond for a later reclaim.
+     */
+    var keepBondsOnForget = false
+
     override fun forget() {
         if (postGattLifecycle { forget() }) return
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
@@ -7217,7 +7247,7 @@ class MentraLive : SGCManager() {
                     // Drop GATT first. removeBond while the BLE link is still encrypted often
                     // returns true on Samsung but the OS Bluetooth UI keeps the dual-mode pair.
                     disconnect()
-                    unbondBondedMentraLiveDevices(ctx, bondedAddress)
+                    unbondBondedMentraLiveDevices(ctx, bondedAddress, !keepBondsOnForget)
                 }
         unpairFlushRunnable = flush
         handler.postDelayed(flush, UNPAIR_FLUSH_MS)

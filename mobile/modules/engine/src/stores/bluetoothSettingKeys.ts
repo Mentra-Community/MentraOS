@@ -25,6 +25,7 @@ export const MENTRA_LIVE_SETTING_KEYS: string[] = [
   "device_name",
   "device_address",
   "mentra_live_secure_firmware",
+  "mentra_live_former_owner_keys",
   "glasses_user_disconnected",
   "default_controller",
   "pending_controller",

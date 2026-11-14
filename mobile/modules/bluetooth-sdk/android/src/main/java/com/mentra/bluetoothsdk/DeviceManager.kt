@@ -23,6 +23,7 @@ import com.mentra.bluetoothsdk.sgcs.SceneElement
 import com.mentra.bluetoothsdk.sgcs.SceneFrame
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
+import com.mentra.bluetoothsdk.sgcs.MentraLiveOwnerLossPolicy
 import com.mentra.bluetoothsdk.sgcs.MentraLivePairingStateStore
 import com.mentra.bluetoothsdk.sgcs.MentraNex
 import com.mentra.bluetoothsdk.sgcs.Nimo
@@ -2388,6 +2389,13 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         Bridge.saveSetting("mentra_live_secure_firmware", false)
     }
 
+    /** Whether the forgotten glasses keep former owners' keys is learned again from the next glasses. */
+    private fun clearFormerOwnerKeys() {
+        if (DeviceStore.store.get("bluetooth", "mentra_live_former_owner_keys") as? Boolean != true) return
+        DeviceStore.apply("bluetooth", "mentra_live_former_owner_keys", false)
+        Bridge.saveSetting("mentra_live_former_owner_keys", false)
+    }
+
     fun connectDefault() {
         if (defaultWearable.isEmpty()) {
             Bridge.log("MAN: No default wearable, returning")
@@ -2605,11 +2613,19 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             connectionRecovery.clear()
         }
         Bridge.log("MAN: Forgetting smart glasses")
+        // Read before it is cleared: glasses that keep former owners' keys (pairing-spec V9)
+        // take this phone back later with the bond it has, so Unpair keeps it.
+        val keepLiveBonds =
+                !MentraLiveOwnerLossPolicy.removesBondWhenGlassesLetGo(
+                        DeviceStore.store.get("bluetooth", "mentra_live_former_owner_keys") as? Boolean == true
+                )
         clearPairingStateOnForget()
         clearSecureFirmware()
+        clearFormerOwnerKeys()
 
         val live = sgc as? MentraLive
         if (live != null) {
+            live.keepBondsOnForget = keepLiveBonds
             // MentraLive.forget() disconnects GATT then removeBond. Do not refuse
             // during CTKD bonding — Unpair is an explicit user request to drop the pair.
             live.forget()
@@ -2660,6 +2676,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
                 MentraLive.unbondBondedMentraLiveDevices(
                         Bridge.getContext(),
                         extraAddress,
+                        !keepLiveBonds,
                 )
             }
             sgc?.forget()

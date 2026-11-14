@@ -166,6 +166,15 @@ internal object MentraLiveOwnerLossPolicy {
     ): Boolean = !savedGlasses && !reconnectScan && secureTrailer && !pairingDiscoverable
 
     /**
+     * Whether this phone removes its bond when it loses the glasses or unpairs them. Glasses that
+     * report `pairing_info.former_owner_keys` (pairing-spec V9) keep this phone's keys and take it
+     * back in pairing mode with the bond it has, with no pairing request; removing it would only
+     * throw that away. Older glasses deleted the keys, so the bond is stale and goes.
+     */
+    fun removesBondWhenGlassesLetGo(glassesKeepFormerOwnerKeys: Boolean): Boolean =
+            !glassesKeepFormerOwnerKeys
+
+    /**
      * `secure_pairing_capable` only means the firmware can do secure pairing. Ownership is the
      * separate `owner_committed` bit the glasses set after the BLE bond. Mirrors iOS
      * `MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner`.
