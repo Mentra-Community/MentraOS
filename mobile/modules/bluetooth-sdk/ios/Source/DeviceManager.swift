@@ -2147,6 +2147,9 @@ struct ViewState {
         clearOwnerLost()
         clearSecureFirmware()
         clearFormerOwnerKeys()
+        // An earlier scan's rows would list the forgotten glasses at the next pairing scan,
+        // which keeps rows it finds already listed, though they are not in pairing mode.
+        searchResults = []
         // With no connection object, MentraLive.forget() can't run. Only clear Live's saved
         // identity when Live is the target: forgetting G1/G2 must not touch a Live unit's.
         if sgc == nil, defaultWearable.contains(DeviceTypes.LIVE) || pendingWearable.contains(DeviceTypes.LIVE) {
