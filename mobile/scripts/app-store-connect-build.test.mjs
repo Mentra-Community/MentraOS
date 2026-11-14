@@ -937,3 +937,17 @@ test("waits for the App Store version to leave preparation", async () => {
   })
   assert.equal(status.state, "IN_REVIEW")
 })
+
+test("finds the app whose bundle ID matches exactly when the filter also returns longer ones", async () => {
+  const api = client([
+    {
+      data: [
+        {id: "app-2", attributes: {bundleId: "com.mentra.example.widget"}},
+        {id: "app-1", attributes: {bundleId: "com.mentra.example"}},
+      ],
+    },
+  ])
+  const app = await findApp(api, "com.mentra.example")
+  assert.equal(app.id, "app-1")
+  assert.match(api.calls[0].resource, /filter%5BbundleId%5D=com.mentra.example/)
+})
