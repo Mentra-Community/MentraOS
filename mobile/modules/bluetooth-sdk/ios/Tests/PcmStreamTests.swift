@@ -275,6 +275,32 @@ final class PcmUrlPlaybackTests: XCTestCase {
         XCTAssertEqual(sink.closeCount, 0)
     }
 
+    /// A fast download behind a slow sink: everything that arrived while one write waited must
+    /// not reach the sink as a single write, which a real player refuses once it is more than
+    /// its backlog limit, cutting a long spoken answer off part-way.
+    func testAudioThatPiledUpBehindASlowWriteGoesToTheSinkInPieces() async throws {
+        let body = Data((0 ..< 4000).map { UInt8(truncatingIfNeeded: $0 * 7) })
+        let chunks = stride(from: 0, to: body.count, by: 100).map { body.subdata(in: $0 ..< min(body.count, $0 + 100)) }
+        let url = StubPcmURLProtocol.serve("/piled-up", .init(chunks: chunks))
+        let release = DispatchSemaphore(value: 0)
+        let sink = RecordingSink(holdWrites: release)
+        let loader = makeLoader(highWaterBytes: 64)
+        let playback = loader.start(url: url, sink: sink)
+        // The stub delivers the whole body at once, while the first write is still held.
+        let paused = expectation(description: "transfer paused")
+        func poll() {
+            loader.queue.asyncAfter(deadline: .now() + 0.01) {
+                if playback.suspensions > 0 { paused.fulfill() } else { poll() }
+            }
+        }
+        poll()
+        await fulfillment(of: [paused], timeout: 5)
+        release.signal()
+        _ = try await playback.wait()
+        XCTAssertEqual(sink.written, body)
+        XCTAssertTrue(sink.sizes.allSatisfy { $0 <= 64 && $0.isMultiple(of: 2) }, "writes: \(sink.sizes)")
+    }
+
     func testSlowSinkPausesTheTransferAndKeepsOrder() async throws {
         let body = Data((0 ..< 400).map { UInt8(truncatingIfNeeded: $0) })
         let chunks = stride(from: 0, to: body.count, by: 10).map { body.subdata(in: $0 ..< min(body.count, $0 + 10)) }
