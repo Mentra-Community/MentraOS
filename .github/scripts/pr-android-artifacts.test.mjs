@@ -171,7 +171,7 @@ test("the receipt reflects native APK metadata and preserves reused compilation 
 test("staging-targeted PRs package staging and never relabel another backend", () => {
   const staging = androidAppIdentity({...identity, backend: "staging", baseRef: "staging", config: config(), badging})
   assert.equal(staging.backend, "staging")
-  for (const [backend, baseRef] of [["dev", "staging"], ["staging", "dev"], ["dev", "main"], ["staging", undefined], ["prod", "staging"]])
+  for (const [backend, baseRef] of [["dev", "staging"], ["staging", "dev"], ["staging", "main"], ["staging", undefined], ["prod", "staging"]])
     assert.throws(() => androidAppIdentity({...identity, backend, baseRef, config: config(), badging}), /PR inputs/)
 })
 

@@ -17,7 +17,7 @@ run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}{3}', inputs.
 
 on:
   pull_request:
-    branches-ignore: [dev]
+    branches-ignore: [dev, main]
     paths:
       - "mobile/**"
       - "android_core/**"

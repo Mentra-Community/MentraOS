@@ -80,9 +80,10 @@ export function packagingFingerprint(platform, exec = execFileSync) {
   return hash(JSON.stringify({schemaVersion: 1, platform, tree}))
 }
 
-/** A PR into staging or main uses staging services; every other PR keeps dev.
+/** A PR into staging uses staging services; every other PR keeps dev. A PR into
+ * main is the production promotion, which has no PR build.
  * The backend is compiled in and fingerprinted, so reuse never crosses backends. */
-export const prBackend = (baseRef) => (baseRef === "staging" || baseRef === "main" ? "staging" : "dev")
+export const prBackend = (baseRef) => (baseRef === "staging" ? "staging" : "dev")
 const hash = (value) => createHash("sha256").update(value).digest("hex")
 const transientNetworkCodes = new Set(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "ECONNRESET", "EAI_AGAIN"])
 
