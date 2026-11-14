@@ -152,7 +152,7 @@ validates the public Maven artifact dependency shape.
 
 ## Testing Guidelines
 
-Cloud V2 services use Bun tests via `cd cloud-v2 && bun run test`; add suites in `cloud-v2/tests/` or beside the relevant package code and mock external providers. Mobile UI logic uses Jest (`bun test`, `bun test:watch`) with files colocated in `mobile/test/` and snapshots beside components. Device flows rely on Maestro (`bun test:maestro`), so update scripts whenever navigation or pairing shifts. Features touching pairing, BLE, or transcription need unit coverage plus an end-to-end path.
+Cloud V2 services use Bun tests via `cd cloud-v2 && bun run test`; add suites in `cloud-v2/tests/` or beside the relevant package code and mock external providers. Mobile UI logic uses Jest (`bun test`, `bun test:watch`) with files colocated in `mobile/test/` and snapshots beside components. Features touching pairing, BLE, or transcription need unit coverage plus an end-to-end path.
 
 ## GitHub Actions runners
 

@@ -4,8 +4,8 @@
 # What this does:
 #   1. Streams the unified log to a file, filtering for STRESS:, jetsam,
 #      our app crashes, and BLE state.
-#   2. Replays a Maestro flow that opens the stress-test screen, mounts a
-#      configurable number of dummy WebViews, and starts logging.
+#   2. Opens the stress-test screen through a deep link that mounts a
+#      configurable number of dummy WebViews and starts logging.
 #   3. Optionally backgrounds the app, waits, then foregrounds and re-checks.
 #   4. Pulls jetsam history out of the device after the run completes and
 #      writes a parsed CSV next to the raw log.
@@ -13,7 +13,7 @@
 # Usage:
 #   ./run-jetsam-test.sh [scenario] [device]
 #
-# Scenarios (each maps to a Maestro flow + duration):
+# Scenarios (each sets the screen's parameters and a duration):
 #   foreground   mount until jetsam, app stays foreground (default)
 #   background   mount, then put app in background for 10 minutes
 #   long         mount, then 60 minutes background
@@ -29,10 +29,6 @@ DEVICE_NAME="${2:-Israelov}"
 APP_BUNDLE_ID="${APP_BUNDLE_ID:-com.mentra.mentra}"
 MB_PER_APP="${MB_PER_APP:-25}"
 MAX_MOUNTS="${MAX_MOUNTS:-25}"
-# Apple Team ID — required by maestro to build/sign its WebDriverAgent
-# driver onto a real iOS device. One-time setup: `maestro driver-setup
-# --apple-team-id <ID>`. Default is Mentra Labs.
-APPLE_TEAM_ID="${APPLE_TEAM_ID:-T5XXXL6N36}"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RUN_ID="$(date +%Y%m%d-%H%M%S)-${SCENARIO}"

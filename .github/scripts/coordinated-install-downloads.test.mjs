@@ -5,7 +5,6 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {downloadLinks, downloadNames, prepareDownloads, publishDownloads, restoreDownloads, validateDownloads} from "./coordinated-install-downloads.mjs"
-import {coordinatedFixture} from "./coordinated-routine-fixture.mjs"
 import {createIosRecord} from "./coordinated-mobile-records.mjs"
 
 const repository = "Mentra-Community/MentraOS"

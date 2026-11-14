@@ -111,8 +111,7 @@ developer setting.
    `installReloads` is 0.
 
 2. **Memory after toggles.** 50 hide/show toggles, 10 dismiss/reopen cycles of the UI, 3 page
-   reloads, using the Maestro preview flow under `mobile/.maestro/flows/` once it exists. Each
-   start writes a new file; pass the first and last files in order:
+   reloads. Each start writes a new file; pass the first and last files in order:
 
    ```sh
    bun preview-run.ts retained runs/toggle-first.ndjson runs/toggle-last.ndjson

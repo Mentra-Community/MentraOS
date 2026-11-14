@@ -61,7 +61,6 @@ derives `X.Y.Z-dev.N` or `X.Y.Z-beta.N` identities without source edits.
 - Run tests: `bun test`
 - Run tests in watch mode: `bun test:watch`
 - Run single test: `bun test -- -t "test name"`
-- Run Maestro E2E tests: `bun test:maestro`
 - Lint code: `bun lint`
 - Type check: `bun compile`
 - Bluetooth SDK Android compile check: `../scripts/check-android-compile.sh bluetooth-sdk`

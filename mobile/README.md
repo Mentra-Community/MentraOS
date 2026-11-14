@@ -157,10 +157,6 @@ const MyComponent = () => {
 };
 ```
 
-## Running Maestro end-to-end tests
-
-Follow our [Maestro Setup](https://ignitecookbook.com/docs/recipes/MaestroSetup) recipe.
-
 ---
 
 ### Development Guidelines

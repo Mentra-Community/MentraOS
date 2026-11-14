@@ -28,7 +28,6 @@ can satisfy that, not to choose between strategies.
   Default device is `Israelov` (iPhone 15); pass another name as 2nd arg.
 - App built and installed on the device (any debug or release build with
   this branch's instrumentation in it).
-- Maestro CLI installed (`brew install maestro`).
 - Super Mode enabled in the app (Konami code: swipe ↑ ↓ ↑ ↓ ← ← anywhere,
   then flip the toggle).
 - Glasses paired (so the BLE session is active during the test). Optional
@@ -38,9 +37,9 @@ can satisfy that, not to choose between strategies.
 
 1. Streams the iOS unified log to a file, filtering for our process,
    `STRESS:` lines, jetsam, memorystatus, and WebKit memory pressure.
-2. Launches the app via `xcrun devicectl`.
-3. Replays a Maestro flow that navigates to the stress-test screen, picks
-   a per-app heap size, hits "Start logging", and mounts N dummy WebViews.
+2. Launches the app via `xcrun devicectl` with a deep link to the
+   stress-test screen, which picks a per-app heap size, starts logging, and
+   mounts N dummy WebViews.
 4. Dwells for the scenario-specific duration, polling app liveness via
    `xcrun devicectl device info processes` every 30s.
 5. Stops the log stream, parses STRESS: lines into a CSV, and prints a
@@ -72,7 +71,6 @@ Output lands in `scripts/stress-test/runs/<timestamp>-<scenario>/`:
 - `raw.log` — filtered unified log (STRESS:, jetsam, memorystatus, app process)
 - `events.csv` — parsed STRESS: samples and events
 - `meta.json` — run metadata (device, scenario, parameters)
-- `maestro.log` — Maestro test runner output
 - `launch.log` — devicectl launch output
 
 ## How instrumentation works
@@ -135,9 +133,8 @@ or longer background dwell) on the next run.
   returns 0 there.
 - `log stream --device` may need `sudo` on some macOS versions; if you get
   a permission error, run `sudo -v` once before the script.
-- Maestro can't actually lock the device screen, only background the app
-  via Home. To test "screen off" precisely, lock the phone manually after
-  the Maestro flow finishes mounting (it will print a notice).
+- The script can't lock the device screen. To test "screen off" precisely,
+  lock the phone manually once the WebViews are mounted (it prints a notice).
 - The Web Content Process for each WebView is a separate OS process, so
   jetsam can kill individual WebViews without taking down the host app.
   Only when host RAM pressure is high does the host app itself get reaped.

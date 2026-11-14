@@ -78,19 +78,6 @@ Evidence: retain app build/commit, native ready/disconnected and auth logs, both
 arm identifiers, heartbeat timestamps, and phone/on-glasses observations. An SDK
 build or local test pass alone does not qualify this physical path.
 
-For step 1, the opt-in Maestro helper
-`mobile/.maestro/helpers/g2-arm-recovery.yaml` captures the recovery UI and checks
-the retry destination. Start it while the real partial pairing is in progress,
-passing `MAESTRO_APP_ID` and the full expected English `G2_RECOVERY_MESSAGE` from
-`errors.g2LeftArmUnavailable` or `errors.g2RightArmUnavailable` in `en.ts`. Run once
-per direction. It does not create the physical fault, reset app data, or change
-Bluetooth bonds. It remains outside the default no-hardware suite.
-
-The opt-in `mobile/.maestro/helpers/r1-reset-help.yaml` checks R1-specific setup
-copy, help access, and the powered-charger reset instructions. Start on R1
-preparation and pass `MAESTRO_APP_ID`. It captures a screenshot and closes help;
-it does not interact with or reset a ring. Physical R1 recovery remains untested.
-
 Teardown: stop test miniapps and restore the recorded app/connection state. Stop
 after one attempt per failure direction and one recovery attempt; retain logs if
 recovery fails instead of resetting bonds or switching to an unidentified pair.

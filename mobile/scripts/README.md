@@ -61,7 +61,7 @@ scripts remain useful for supervised local builds and diagnostics.
 ### Subdirectories
 
 - **`old/`** — abandoned scripts kept for reference. Includes pre-Expo-migration build scripts. Do not edit.
-- **`stress-test/`** — Maestro-driven stress testing runs. Per-run output dirs (`runs/<timestamp>-<scenario>/`) accumulate; periodically prune them.
+- **`stress-test/`** — iOS jetsam stress testing runs. Per-run output dirs (`runs/<timestamp>-<scenario>/`) accumulate; periodically prune them.
 
 ---
 

@@ -3,7 +3,7 @@ name: E2E Setup Checks
 on:
   pull_request:
     paths:
-      - ".github/scripts/coordinated-routine-*"
+      - ".github/scripts/coordinated-install-downloads*"
       - ".github/scripts/published-build-metadata*"
       - ".github/scripts/notify-pr-builds*"
       - ".github/scripts/release-slack-post*"
@@ -39,7 +39,7 @@ jobs:
           node --test
           scripts/unpack-diagnostic-bundle.test.mjs
           scripts/fetch-incident-logs.test.mjs
-          .github/scripts/coordinated-routine-request.test.mjs
+          .github/scripts/coordinated-install-downloads.test.mjs
           .github/scripts/notify-pr-builds.test.mjs
           .github/scripts/release-slack-post.test.mjs
           .github/scripts/slack-build-post.test.mjs
