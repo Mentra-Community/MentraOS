@@ -4,6 +4,7 @@ import Toast from "react-native-toast-message"
 import {FC, ReactNode, createContext, useContext, useEffect, useRef, useState} from "react"
 import {AppState, Platform} from "react-native"
 
+import {APP_SCHEME} from "@/constants/appConfig"
 import {cameraPackageName, settingsPackageName} from "@/constants/miniapps"
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
@@ -116,7 +117,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     pattern: "/settings",
     handler: async () => {
       const settings = engine.miniapps.list().find((app) => app.packageName === settingsPackageName)
-      if (settings && await engine.miniapps.start(settings, {trigger: "user", skipNavigation: true})) {
+      if (settings && (await engine.miniapps.start(settings, {trigger: "user", skipNavigation: true}))) {
         await engine.miniapps.setForeground(settingsPackageName)
       }
     },
@@ -125,7 +126,9 @@ const deepLinkRoutes: DeepLinkRoute[] = [
   {
     // Open the existing controls without enabling Super Mode or changing settings.
     pattern: "/miniapps/settings/super",
-    handler: () => {useNavigationStore.getState().push("/miniapps/settings/super")},
+    handler: () => {
+      useNavigationStore.getState().push("/miniapps/settings/super")
+    },
     requiresAuth: true,
   },
   {
@@ -494,7 +497,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
   const lastProcessed = useRef({url: null as string | null, time: 0})
   const nav = useNavigationStore.getState()
   const config = {
-    scheme: "com.mentra",
+    scheme: APP_SCHEME,
     host: "apps.mentra.glass",
     routes: [
       {
@@ -506,7 +509,10 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
             const result = await requestAttendedPermissions(url)
             console.info("ATTENDED_PERMISSION_REQUEST", JSON.stringify(result))
           } catch (error) {
-            console.error("ATTENDED_PERMISSION_REQUEST_INCOMPLETE", error instanceof Error ? error.message : "request failed")
+            console.error(
+              "ATTENDED_PERMISSION_REQUEST_INCOMPLETE",
+              error instanceof Error ? error.message : "request failed",
+            )
           }
         },
       },

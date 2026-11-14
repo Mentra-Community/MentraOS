@@ -135,7 +135,7 @@ if (manifest.otaManifestUrl && configuration === "Release") {
 // Keep evidence in immutable ZIPs, not separately registered .app installations.
 // Replacement happens only after a successful build and normal app termination.
 Object.assign(manifest, await archiveBuild(app, manifest, path.join(derivedData, "Archives")))
-manifest.launchPath = path.join(installationRoot(), "Mentra.app")
+manifest.launchPath = path.join(installationRoot(manifest.bundleId), "Mentra.app")
 const manifestPath = path.join(derivedData, "build-manifest.json")
 await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n")
 console.log(`Built app: ${app}\nBuild evidence: ${path.join(derivedData, "build-manifest.json")}`)

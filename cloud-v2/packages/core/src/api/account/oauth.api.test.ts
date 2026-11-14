@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { AppEnv } from "../../types/hono.types";
-import { publicOrigin } from "./oauth.api";
+import { appSchemeFor, publicOrigin } from "./oauth.api";
 
 async function originFor(url: string, headers: Record<string, string> = {}): Promise<string> {
   const app = new Hono<AppEnv>();
@@ -30,5 +30,19 @@ describe("publicOrigin", () => {
         "x-forwarded-proto": "https",
       }),
     ).toBe("https://api.mentra.glass");
+  });
+});
+
+describe("appSchemeFor", () => {
+  test("returns to the Mentra App unless the dev app names its own scheme", () => {
+    expect(appSchemeFor(undefined)).toBe("com.mentra");
+    expect(appSchemeFor("com.mentra")).toBe("com.mentra");
+    expect(appSchemeFor("com.mentra.dev")).toBe("com.mentra.dev");
+  });
+
+  test("refuses any other scheme, so a sign-in never returns to another app", () => {
+    for (const scheme of ["evil", "https", "com.mentra.devx", ""]) {
+      expect(() => appSchemeFor(scheme)).toThrow("unsupported app_scheme");
+    }
   });
 });

@@ -24,7 +24,17 @@ const app = new Hono<AppEnv>();
 // enough for real sign-in flows, tight enough to blunt code/state brute force.
 app.use("/*", accountRateLimit({ scope: "oauth", limit: 30, windowSec: 60 }));
 
-const APP_SCHEME = "com.mentra";
+// The schemes core deep-links back to: the Mentra App's, and the dev app's, which
+// sits beside it on one phone. An app that names none is the Mentra App.
+const APP_SCHEMES = new Set(["com.mentra", "com.mentra.dev"]);
+const DEFAULT_APP_SCHEME = "com.mentra";
+
+/** The scheme a sign-in returns to. Exported for tests. */
+export function appSchemeFor(requested: string | undefined): string {
+  const scheme = requested ?? DEFAULT_APP_SCHEME;
+  if (!APP_SCHEMES.has(scheme)) throw new InvalidRequest("unsupported app_scheme");
+  return scheme;
+}
 const PROVIDERS = new Set(["google", "apple"]);
 const START_TTL_SEC = 10 * 60;
 const HANDOFF_TTL_SEC = 60;
@@ -54,13 +64,14 @@ app.get("/:provider/start", async (c) => {
   const state = c.req.query("state");
   const codeChallenge = c.req.query("code_challenge");
   if (!state || !codeChallenge) throw new InvalidRequest("state and code_challenge required");
+  const appScheme = appSchemeFor(c.req.query("app_scheme"));
 
   // Core runs its own PKCE leg with GoTrue. The start record is keyed by state.
   const coreVerifier = crypto.randomBytes(32).toString("base64url");
   await otc.issueOAuthStart({
     state,
     ttlSec: START_TTL_SEC,
-    payload: { appChallenge: codeChallenge, coreVerifier, provider },
+    payload: { appChallenge: codeChallenge, coreVerifier, provider, appScheme },
   });
 
   const redirectTo = `${publicOrigin(c)}/api/account/oauth/callback?state=${encodeURIComponent(state)}`;
@@ -79,9 +90,10 @@ app.get("/callback", async (c) => {
   // succeeds. That keeps a transient failure from stranding a burned record.
   const start = await otc.peekOAuthStart(state);
   if (!start) throw new InvalidRequest("oauth start record missing or expired");
-  const { coreVerifier, appChallenge } = start.payload as {
+  const { coreVerifier, appChallenge, appScheme = DEFAULT_APP_SCHEME } = start.payload as {
     coreVerifier: string;
     appChallenge: string;
+    appScheme?: string;
   };
 
   const identity = await gotrue.exchangeOAuthCode(code, coreVerifier);
@@ -104,7 +116,7 @@ app.get("/callback", async (c) => {
   });
 
   return c.redirect(
-    `${APP_SCHEME}://auth/callback?code=${encodeURIComponent(handoff)}&state=${encodeURIComponent(state)}`,
+    `${appScheme}://auth/callback?code=${encodeURIComponent(handoff)}&state=${encodeURIComponent(state)}`,
   );
 });
 

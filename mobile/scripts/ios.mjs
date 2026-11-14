@@ -1,4 +1,5 @@
 #!/usr/bin/env zx
+import {createRequire} from "node:module"
 import {runPodInstallIfNeeded} from "./cocoapods-install.mjs"
 import {setBuildEnv} from "./set-build-env.mjs"
 import {startDevMiniapps} from "./local-miniapps.mjs"
@@ -160,7 +161,8 @@ if (workspaces.length !== 1) {
 }
 const WORKSPACE = workspaces[0]
 const SCHEME = path.basename(WORKSPACE, ".xcworkspace")
-const BUNDLE_ID = "com.mentra.mentra"
+// The bundle app.config.ts gives this build: the Mentra App or, on the dev track, the dev app.
+const BUNDLE_ID = createRequire(import.meta.url)("./android-package-name.cjs").resolveAndroidPackageName()
 const derivedData = "ios/build"
 
 // Automatic signing cannot mint a cert when the keychain only has expired

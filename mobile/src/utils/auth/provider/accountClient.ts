@@ -11,6 +11,7 @@
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {BgTimer} from "@mentra/engine"
 
+import {APP_SCHEME} from "@/constants/appConfig"
 import {ACCOUNT_CREDENTIAL_KEYS, accountCredentials} from "@/utils/auth/accountCredentials"
 import {AuthClient} from "@/utils/auth/authClient"
 import {
@@ -560,7 +561,8 @@ export class AccountAuthProvider extends AuthClient {
     const verifier = randomUrlSafe(32)
     await accountCredentials.set(OAUTH_STATE_KEY, state)
     await accountCredentials.set(OAUTH_VERIFIER_KEY, verifier)
-    const q = new URLSearchParams({state, code_challenge: s256Challenge(verifier)})
+    // The scheme core returns to: the dev app's differs from the Mentra App's.
+    const q = new URLSearchParams({state, code_challenge: s256Challenge(verifier), app_scheme: APP_SCHEME})
     return `${url}?${q}`
   }
 

@@ -33,7 +33,9 @@ const hash = async (file) =>
   createHash("sha256")
     .update(await readFile(file))
     .digest("hex")
-export const installationRoot = () => path.join(homedir(), "Applications", "Mentra E2E")
+// One installation per app, so the dev app (com.mentra.mentra.dev) installs beside the Mentra App.
+export const installationRoot = (bundleId = "com.mentra.mentra") =>
+  path.join(homedir(), "Applications", bundleId === "com.mentra.mentra" ? "Mentra E2E" : `Mentra E2E ${bundleId}`)
 
 function validateLauncherOptions(launcherPath, launcherSha256) {
   if (launcherPath === undefined && launcherSha256 === undefined) return
@@ -272,7 +274,7 @@ async function installOwnedBuild(
   {manifest, portablePackage, preinstalledLauncher, launch, launcherPath, launcherSha256},
   afterLaunch = async () => {},
 ) {
-  const root = installationRoot()
+  const root = installationRoot(manifest.bundleId)
   const destination = path.join(root, "Mentra.app")
   await claimInstallation(root, manifest.bundleId)
   const lock = path.join(root, ".install-lock")
@@ -306,8 +308,8 @@ async function installOwnedBuild(
     const launcher = preinstalledLauncher
       ? preinstalledLauncher.path
       : manifest.launcherPath
-        ? path.resolve(path.dirname(manifestPath), manifest.launcherPath)
-        : path.join(staging, "launch-ios-on-mac")
+      ? path.resolve(path.dirname(manifestPath), manifest.launcherPath)
+      : path.join(staging, "launch-ios-on-mac")
     if (!preinstalledLauncher && manifest.launcherPath) {
       if (
         path.basename(manifest.launcherPath) !== manifest.launcherPath ||

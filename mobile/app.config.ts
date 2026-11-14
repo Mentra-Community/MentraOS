@@ -1,24 +1,56 @@
 import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
+import {AndroidConfig, withStringsXml, type ConfigPlugin} from "expo/config-plugins"
 import {VARIANT_RE, resolveAndroidPackageName} from "./scripts/android-package-name.cjs"
 import {getBuildNumber} from "./scripts/build-number.mjs"
+import {resolveAppTrack} from "./scripts/app-track.cjs"
 import {backendTarget} from "./scripts/backend-target.cjs"
 
 const familyBaseVersion = require("../package.json").version as string
+
+// The app's name under its icon on Android, apart from the native project's name.
+const withAppLabel =
+  (label: string): ConfigPlugin =>
+  (config) =>
+    withStringsXml(config, (modConfig) => {
+      modConfig.modResults = AndroidConfig.Strings.setStringItem(
+        [{_: label, $: {name: "app_name", translatable: "false"}}],
+        modConfig.modResults,
+      )
+      return modConfig
+    })
 
 const VARIANTS = {
   default: {
     appName: "Mentra",
     packageName: "com.mentra.mentra",
+    scheme: "com.mentra",
+    appLinks: true,
     includeFirebase: true,
     googleServicesFile: "./google-services.json",
     googleServicesPlist: "./GoogleService-Info.plist",
     icon: "./assets/app-icons/ic_launcher.png",
     adaptiveIcon: "./assets/app-icons/ic_launcher_foreground.png",
   },
+  // The dev app, beside the Mentra App on one phone: its own scheme, so a
+  // sign-in or `open` link returns to the app that started it, and no app
+  // links, which the Mentra App claims.
+  dev: {
+    appName: "Mentra Dev",
+    packageName: "com.mentra.mentra.dev",
+    scheme: "com.mentra.dev",
+    appLinks: false,
+    includeFirebase: true,
+    googleServicesFile: "./google-services.json",
+    googleServicesPlist: "./GoogleService-Info-dev.plist",
+    icon: "./assets/app-icons/ic_launcher.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground.png",
+  },
   cn: {
     appName: "Mentra",
     packageName: "com.mentra.mentra.cn",
+    scheme: "com.mentra",
+    appLinks: true,
     includeFirebase: false,
     googleServicesFile: null,
     googleServicesPlist: null,
@@ -28,6 +60,8 @@ const VARIANTS = {
   stable: {
     appName: "Mentra Stable",
     packageName: "com.mentra.mentra.stable",
+    scheme: "com.mentra",
+    appLinks: true,
     includeFirebase: true,
     googleServicesFile: "./google-services.json",
     googleServicesPlist: "./GoogleService-Info.plist",
@@ -36,7 +70,12 @@ const VARIANTS = {
   },
 } as const
 
-const variant = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.cn : VARIANTS.default
+const variant =
+  process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
+    ? VARIANTS.cn
+    : resolveAppTrack() === "dev"
+    ? VARIANTS.dev
+    : VARIANTS.default
 
 /**
  * @param config ExpoConfig coming from the static config app.json if it exists
@@ -56,6 +95,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     )
   }
   const appName = variantName && isValidVariant ? variantName : variant.appName
+  // The native projects keep the Mentra App's name, which the build scripts and
+  // CI open (ios/Mentra.xcworkspace, scheme Mentra): only the name a person sees
+  // follows the app (CFBundleDisplayName, Android's app_name).
+  const projectName = variantName && isValidVariant ? variantName : VARIANTS.default.appName
   const androidPackage = resolveAndroidPackageName()
   const iosBundleId = androidPackage
 
@@ -98,7 +141,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     MENTRA_APP_AGE_RATING: "12+",
   }
 
-  return {
+  return withAppLabel(appName)({
     ...config,
     extra: packagedExtra,
     ...(process.env.MENTRA_PR_MOBILE_FINGERPRINT
@@ -119,13 +162,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           },
         }
       : {}),
-    name: appName,
+    name: projectName,
     slug: "Mentra",
     // Coordinated prereleases expose their full identity (for example,
     // 3.1.0-beta.57) to shipped JavaScript while stores retain the plain
     // marketing version so the exact tested binary can be promoted.
     version: process.env.MENTRAOS_NATIVE_MARKETING_VERSION || familyBaseVersion,
-    scheme: "com.mentra",
+    scheme: variant.scheme,
     orientation: "portrait",
     userInterfaceStyle: "automatic",
     icon: variant.icon,
@@ -166,19 +209,21 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       blockedPermissions: ["android.permission.ACCESS_BACKGROUND_LOCATION"],
       // App Links for the miniapp install links (the open link and the package link): Android verifies them
       // against the directory website's assetlinks.json. The rest of the website stays in the browser.
-      intentFilters: [
-        {
-          action: "VIEW",
-          autoVerify: true,
-          data: [
-            {scheme: "https", host: "apps.mentra.glass", path: "/open"},
-            {scheme: "https", host: "apps.mentra.glass", pathPrefix: "/package/"},
-            {scheme: "https", host: "apps.mentraglass.com", path: "/open"},
-            {scheme: "https", host: "apps.mentraglass.com", pathPrefix: "/package/"},
-          ],
-          category: ["DEFAULT", "BROWSABLE"],
-        },
-      ],
+      intentFilters: variant.appLinks
+        ? [
+            {
+              action: "VIEW",
+              autoVerify: true,
+              data: [
+                {scheme: "https", host: "apps.mentra.glass", path: "/open"},
+                {scheme: "https", host: "apps.mentra.glass", pathPrefix: "/package/"},
+                {scheme: "https", host: "apps.mentraglass.com", path: "/open"},
+                {scheme: "https", host: "apps.mentraglass.com", pathPrefix: "/package/"},
+              ],
+              category: ["DEFAULT", "BROWSABLE"],
+            },
+          ]
+        : [],
     },
     ios: {
       icon: variant.icon,
@@ -188,15 +233,16 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       bundleIdentifier: iosBundleId,
       appleTeamId: "T5XXXL6N36",
       ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
-      associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
+      associatedDomains: variant.appLinks ? ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"] : [],
       infoPlist: {
+        CFBundleDisplayName: appName,
         // Native collection must remain off until the deployment profile has
         // been restored. FirebaseAnalyticsSetup enables it for consumer or
         // explicitly opted-in workspace deployments.
         FIREBASE_ANALYTICS_COLLECTION_ENABLED: false,
         CFBundleURLTypes: [
           {
-            CFBundleURLSchemes: ["com.mentra"],
+            CFBundleURLSchemes: [variant.scheme],
           },
           {
             CFBundleURLSchemes: [`msauth.${iosBundleId}`],
@@ -453,5 +499,5 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       tsconfigPaths: true,
       typedRoutes: true,
     },
-  }
+  } as ExpoConfig)
 }

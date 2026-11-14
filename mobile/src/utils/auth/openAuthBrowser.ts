@@ -1,6 +1,8 @@
 import * as WebBrowser from "expo-web-browser"
 import {Platform} from "react-native"
 
+import {APP_SCHEME} from "@/constants/appConfig"
+
 /** Returns false when the user cancels, so the caller can leave the sign-in screen. */
 export async function openAuthBrowser(url: string, processUrl: (url: string) => Promise<void>): Promise<boolean> {
   if (Platform.OS === "ios") {
@@ -11,7 +13,7 @@ export async function openAuthBrowser(url: string, processUrl: (url: string) => 
     return result.type === "dismiss"
   }
 
-  const result = await WebBrowser.openAuthSessionAsync(url, "com.mentra://auth/callback")
+  const result = await WebBrowser.openAuthSessionAsync(url, `${APP_SCHEME}://auth/callback`)
   if (result.type !== "success") return false
 
   await processUrl(result.url)

@@ -8,7 +8,8 @@
  * - **A miniapp URL** on its own, as `mentra pack` or a developer's site gives it. A pasted `.../miniapp.json` means
  *   the URL that serves it, and an address without a scheme means HTTPS.
  *
- * `apps.mentra.glass` and the Mentra App's own scheme (`com.mentra://open?url=…`) are read the same way.
+ * `apps.mentra.glass` and the Mentra App's own scheme (`com.mentra://open?url=…`, or the dev app's
+ * `com.mentra.dev://open?url=…`) are read the same way.
  */
 import {MINIAPP_PACKAGE_NAME_PATTERN, normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
 
@@ -107,7 +108,7 @@ function appLinkPath(text: string): {path: string; query: URLSearchParams} | nul
     return null
   }
   const protocol = url.protocol.toLowerCase()
-  if (protocol === `${MENTRA_APP_SCHEME}:`) {
+  if (protocol === `${MENTRA_APP_SCHEME}:` || protocol === `${MENTRA_APP_SCHEME}.dev:`) {
     // `com.mentra://open?url=…`: the host is the first part of the path.
     return {path: `/${url.hostname}${url.pathname === "/" ? "" : url.pathname}`, query: url.searchParams}
   }

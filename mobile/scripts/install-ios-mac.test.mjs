@@ -12,6 +12,7 @@ import {
   commitStagedInstallation,
   InstallationRollbackError,
   installBuild,
+  installationRoot,
   isPortableMacPackage,
   parseInstallerArgs,
   verifyLauncherOverride,
@@ -247,9 +248,14 @@ async function glassesAdmissionCase(mode) {
   `
   await promisify(execFile)(
     process.execPath,
-    ["--input-type=module", "--eval", program,
+    [
+      "--input-type=module",
+      "--eval",
+      program,
       new URL("./install-ios-mac.mjs", import.meta.url).href,
-      new URL("./app-ownership.mjs", import.meta.url).href, mode],
+      new URL("./app-ownership.mjs", import.meta.url).href,
+      mode,
+    ],
     {env: {...process.env, HOME: home}, timeout: 10000},
   )
 }
@@ -574,4 +580,10 @@ test("failed rollback retains both generations for recovery", async () => {
   assert.equal(await readFile(path.join(paths.root, "Mentra.app", "binary"), "utf8"), "new")
   assert.equal(await readFile(path.join(paths.root, "installed-build.json"), "utf8"), "old manifest")
   assert.equal(await readFile(path.join(paths.staging, "installed-build.json"), "utf8"), "new manifest")
+})
+
+test("the dev app installs in its own folder, beside the Mentra App", () => {
+  assert.equal(path.basename(installationRoot()), "Mentra E2E")
+  assert.equal(path.basename(installationRoot("com.mentra.mentra")), "Mentra E2E")
+  assert.equal(path.basename(installationRoot("com.mentra.mentra.dev")), "Mentra E2E com.mentra.mentra.dev")
 })

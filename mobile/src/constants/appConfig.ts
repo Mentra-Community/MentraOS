@@ -1,3 +1,5 @@
+import Constants from "expo-constants"
+
 const VARIANTS = {
   default: {
     packageName: "com.mentra.mentra",
@@ -17,8 +19,7 @@ const VARIANTS = {
   },
 }
 
-const variant =
-  process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.china : VARIANTS.default
+const variant = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.china : VARIANTS.default
 
 export const PACKAGE_NAME = variant.packageName
 export const PLAY_STORE_URL = variant.playStoreUrl
@@ -26,3 +27,8 @@ export const PLAY_STORE_BETA_URL = variant.playStoreBetaUrl
 export const APP_STORE_URL = variant.appStoreUrl
 export const APP_STORE_REVIEW_URL = variant.appStoreReviewUrl
 export const CDN_BASE_URL = variant.cdnBaseUrl
+
+const scheme = Constants.expoConfig?.scheme
+/** This build's own URL scheme: `com.mentra`, or `com.mentra.dev` for the dev app (app.config.ts). Sign-in returns
+ * to it, so with both apps on one phone each gets its own callback. */
+export const APP_SCHEME: string = (Array.isArray(scheme) ? scheme[0] : scheme) || "com.mentra"
