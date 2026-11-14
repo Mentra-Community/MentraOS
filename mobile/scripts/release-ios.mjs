@@ -10,10 +10,11 @@ import {
 } from './release-bundle-config.mjs';
 import { validateIosSdkAnalyticsMetadata } from './release-sdk-metadata.mjs';
 import { getBuildNumber } from './build-number.mjs';
-import { cp, mkdir } from 'fs/promises';
+import { cp, mkdir, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
+import { createRequire } from 'module';
 
 // Expo's export:embed command sets production mode after the CLI starts, which
 // is too late for its Babel transform to inline inherited EXPO_PUBLIC_* values.
@@ -123,6 +124,11 @@ console.log(`Passing ${archiveBuildSettings.length - 1} build variables as Xcode
 // the unique line "13B07F951A680F5B00A75B9A /* Release */" in pbxproj.
 // Static libs and Debug configs are untouched.
 const isCIForSigning = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+// The app this build is (MENTRA_APP_TRACK; the iOS bundle ID is the Android
+// package), and its App Store profile: match's for the Mentra App, the one
+// release-ios.yml installs for the dev app.
+const bundleId = createRequire(import.meta.url)('./android-package-name.cjs').resolveAndroidPackageName();
+const appStoreProfile = process.env.MENTRA_IOS_APPSTORE_PROFILE || `match AppStore ${bundleId}`;
 if (isCIForSigning) {
   const pbxprojPath = path.resolve('ios/Mentra.xcodeproj/project.pbxproj');
   let pbxproj = await (await import('fs/promises')).readFile(pbxprojPath, 'utf-8');
@@ -147,11 +153,11 @@ if (isCIForSigning) {
 \t\t\t\tCODE_SIGN_STYLE = Manual;
 \t\t\t\tCODE_SIGN_IDENTITY = "Apple Distribution";
 \t\t\t\t"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";
-\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "match AppStore com.mentra.mentra";`,
+\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "${appStoreProfile}";`,
   );
   pbxproj = before + updatedAfter;
   await (await import('fs/promises')).writeFile(pbxprojPath, pbxproj);
-  console.log('Patched pbxproj: Mentra Release → Manual signing with match profile');
+  console.log(`Patched pbxproj: Mentra Release → Manual signing with ${appStoreProfile}`);
 }
 
 // ── Step 3.5: Resolve Mapbox SPM + make archive retry the build-order race ─────
@@ -270,9 +276,36 @@ console.log('\n━━━ Step 5: Exporting IPA ━━━');
 const exportPath = path.resolve('build/ios-export');
 // Clean previous export to avoid picking up stale IPAs
 await $`rm -rf ${exportPath}`;
-const exportOptionsPlist = isCIForSigning
-  ? path.resolve('ci/ios-export/ExportOptions-Match.plist')
-  : path.resolve('ci/ios-export/ExportOptions.plist');
+// CI exports with the profile it archived with; a laptop signs automatically.
+let exportOptionsPlist = path.resolve('ci/ios-export/ExportOptions.plist');
+if (isCIForSigning) {
+  exportOptionsPlist = path.resolve('build/ExportOptions-CI.plist');
+  await mkdir(path.dirname(exportOptionsPlist), { recursive: true });
+  await writeFile(exportOptionsPlist, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>teamID</key>
+	<string>T5XXXL6N36</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>${bundleId}</key>
+		<string>${appStoreProfile}</string>
+	</dict>
+	<key>uploadBitcode</key>
+	<false/>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>destination</key>
+	<string>export</string>
+</dict>
+</plist>
+`);
+}
 
 // NOTE: -exportArchive does NOT take -derivedDataPath (xcodebuild errors:
 // "The flag -scheme, -testProductsPath, or -xctestrun is required when

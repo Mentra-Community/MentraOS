@@ -317,6 +317,18 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
   }
 }
 
+// The app each channel ships: the dev app on dev, beside the Mentra App on one
+// phone, and the Mentra App on beta and production (the monorepo's
+// design_docs/platform/releases/dev-app-track/spec.md). The Android package and
+// the iOS bundle ID are the same.
+export const MENTRA_APP_ID = "com.mentra.mentra"
+export const DEV_APP_ID = "com.mentra.mentra.dev"
+
+// A plan made before the dev app shipped the Mentra App on every channel.
+export function appIdOf(plan) {
+  return plan.native?.appId ?? MENTRA_APP_ID
+}
+
 export function createReleasePlan({
   family,
   channel,
@@ -383,6 +395,7 @@ export function createReleasePlan({
     sequence: channel === "production" ? null : sequence,
     sourceCommit,
     native: {
+      appId: channel === "dev" ? DEV_APP_ID : MENTRA_APP_ID,
       marketingVersion: family.familyBaseVersion,
       buildNumber: nativeBuildNumber,
       // The Play destination is frozen in the plan; the record must publish there.
@@ -510,8 +523,8 @@ function expectedPublicationCoordinate(plan, memberName, target, results) {
     const tracks = expectedPlayTracks(plan)
     // A record names one destination; a legacy plan allows its historical ones.
     const actual = results?.publications?.[memberName]?.[target]?.coordinate
-    const track = tracks.find((candidate) => actual === `com.mentra.mentra:${code}:${candidate}`) ?? tracks[0]
-    return `com.mentra.mentra:${code}:${track}`
+    const track = tracks.find((candidate) => actual === `${appIdOf(plan)}:${code}:${candidate}`) ?? tracks[0]
+    return `${appIdOf(plan)}:${code}:${track}`
   }
   if (target === "app-store-connect") {
     const group = plan.native.testflight?.group || selected.appStore
@@ -521,7 +534,7 @@ function expectedPublicationCoordinate(plan, memberName, target, results) {
     ) {
       throw new Error("Invalid MentraOS public TestFlight policy")
     }
-    return `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${group}`
+    return `${appIdOf(plan)}:${plan.native.marketingVersion}:${plan.native.buildNumber}:${group}`
   }
   throw new Error(`Unknown publication target ${JSON.stringify(target)}`)
 }

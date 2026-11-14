@@ -24,9 +24,9 @@ test("the Mentra App's Android PR build sits one above the latest reserved code"
   )
 })
 
-test("iOS and the Bluetooth example keep the family number without reading the ledger", async () => {
+test("iOS, the Bluetooth example and the dev app keep the family number without reading the ledger", async () => {
   const unread = async () => assert.fail("read the ledger")
-  for (const options of [{platform: "ios"}, {platform: "android", app: "example"}]) {
+  for (const options of [{platform: "ios"}, {platform: "android", app: "example"}, {platform: "android", track: "dev"}]) {
     assert.deepEqual(await pinnedPrBuildNumber({...options, familyNumber: 304007989, readReservations: unread}), {
       buildNumber: 304007989,
     })

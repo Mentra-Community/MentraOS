@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto"
-import {prApp} from "./pr-mobile-build.mjs"
+import {recordedPrApp} from "./pr-mobile-build.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 const escape = (value) =>
@@ -49,15 +49,16 @@ const macInstallScript = ({name, macInstaller}) => `(() => {
 // `key` is a key of PR_APPS (pr-mobile-build.mjs).
 export function iosInstallationFiles(receipt, repository, release = undefined, key = "mentra") {
   const {app} = receipt
-  const {name, prefix, packageId, macInstaller} = prApp(key)
-  const script = macInstallScript(prApp(key))
-  const macScriptPolicy = `; script-src 'sha256-${createHash("sha256").update(script).digest("base64")}'`
+  const identity = recordedPrApp(key, app?.bundleId)
   if (
-    app?.bundleId !== packageId ||
+    !identity ||
     !/^\d+(\.\d+){0,2}$/.test(app.build ?? "") ||
     !/^\d+(\.\d+){0,2}$/.test(app.version ?? "")
   )
     throw new Error("Invalid iPhone installation app identity")
+  const {name, prefix, macInstaller} = identity
+  const script = macInstallScript(identity)
+  const macScriptPolicy = `; script-src 'sha256-${createHash("sha256").update(script).digest("base64")}'`
 
   const ipaName = receipt.artifacts.iphone.name
   const manifestName =

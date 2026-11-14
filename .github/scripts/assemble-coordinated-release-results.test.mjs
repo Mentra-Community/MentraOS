@@ -93,9 +93,9 @@ for (const channel of ["beta", "dev"]) {
       releaseSetId: plan.releaseSetId,
       publications: {
         mentraos: {
-          "google-play": publication(`com.mentra.mentra:${plan.native.buildNumber}:${plan.native.playTrack}`),
+          "google-play": publication(`${plan.native.appId}:${plan.native.buildNumber}:${plan.native.playTrack}`),
           "app-store-connect": publication(
-            `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${channel === "dev" ? "Mentra Dev" : "Mentra Staging"}`,
+            `${plan.native.appId}:${plan.native.marketingVersion}:${plan.native.buildNumber}:${channel === "dev" ? "Mentra Dev" : "Mentra Staging"}`,
           ),
         },
       },

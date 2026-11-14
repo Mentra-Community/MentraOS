@@ -14,10 +14,17 @@ enum InstallerError: LocalizedError {
 }
 
 /// The app this installer installs, fixed at compile time: mac_installer.py
-/// defines MENTRA_EXAMPLE for the Bluetooth example app (pr_apps.py, PR_APPS in
-/// .github/scripts/pr-mobile-build.mjs).
+/// defines MENTRA_EXAMPLE for the Bluetooth example app and MENTRA_DEV for the
+/// dev app (pr_apps.py, PR_APPS in .github/scripts/pr-mobile-build.mjs).
 enum PRApp {
-#if MENTRA_EXAMPLE
+#if MENTRA_DEV
+    static let bundleID = "com.mentra.mentra.dev"
+    static let name = "Mentra Dev"
+    static let product = "Mentra.app"
+    static let prefix = "mentra"
+    static let installerID = "com.mentra.mac-installer.dev"
+    static let scheme = "mentra-dev-install"
+#elseif MENTRA_EXAMPLE
     static let bundleID = "com.mentra.bluetoothsdkexample"
     static let name = "Mentra Example"
     static let product = "MentraBluetoothExample.app"

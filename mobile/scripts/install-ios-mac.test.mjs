@@ -585,5 +585,6 @@ test("failed rollback retains both generations for recovery", async () => {
 test("the dev app installs in its own folder, beside the Mentra App", () => {
   assert.equal(path.basename(installationRoot()), "Mentra E2E")
   assert.equal(path.basename(installationRoot("com.mentra.mentra")), "Mentra E2E")
-  assert.equal(path.basename(installationRoot("com.mentra.mentra.dev")), "Mentra E2E com.mentra.mentra.dev")
+  assert.equal(path.basename(installationRoot("com.mentra.mentra.dev")), "Mentra Dev E2E")
+  assert.equal(path.basename(installationRoot("com.mentra.mentra.stable")), "Mentra E2E com.mentra.mentra.stable")
 })

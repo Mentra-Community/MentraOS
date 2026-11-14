@@ -142,9 +142,10 @@ test("the mobile workflow gates only Play operations, preserving Android artifac
   }
 })
 
-// The pause is decided at the CLI boundary, where the coordinator's plan job
-// calls the script; the library default is to upload.
-test("the plan CLI pauses Google Play for dev and keeps it for staging", (t) => {
+// Dev ships the dev app (com.mentra.mentra.dev), which has no version-code
+// floor on Play, so the plan CLI uploads it to internal testing again; plans
+// made during the pause still finalize without Play (above).
+test("the plan CLI uploads dev's dev app and staging's Mentra App to Google Play", (t) => {
   const root = mkdtempSync(path.join(tmpdir(), "dev-play-pause-cli-"))
   t.after(() => rmSync(root, {recursive: true, force: true}))
   const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..")
@@ -184,9 +185,11 @@ test("the plan CLI pauses Google Play for dev and keeps it for staging", (t) => 
     return JSON.parse(readFileSync(output, "utf8"))
   }
   const dev = planFor("dev")
-  assert.equal(dev.native.googlePlayUpload, false)
-  assert.deepEqual(dev.members.mentraos.publishTargets, ["app-store-connect"])
+  assert.equal(dev.native.googlePlayUpload, undefined)
+  assert.equal(dev.native.appId, "com.mentra.mentra.dev")
+  assert.ok(dev.members.mentraos.publishTargets.includes("google-play"))
   const staging = planFor("staging")
   assert.equal(staging.native.googlePlayUpload, undefined)
+  assert.equal(staging.native.appId, "com.mentra.mentra")
   assert.ok(staging.members.mentraos.publishTargets.includes("google-play"))
 })

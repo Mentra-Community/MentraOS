@@ -42,15 +42,17 @@ export async function readPrFamilyBuildNumber(baseVersion, options) {
 }
 
 // The build number a PR build pins. The Mentra App's Android build sits above
-// every reserved code (prAndroidVersionCode); iOS and the Bluetooth example take
-// the family number, one above the family's latest release.
+// every reserved code (prAndroidVersionCode); iOS, the Bluetooth example and the
+// dev app, which has no floor on Play, take the family number, one above the
+// family's latest release.
 export async function pinnedPrBuildNumber({
   platform,
   app = "mentra",
+  track = "staging",
   familyNumber,
   readReservations = readAndroidReservations,
 }) {
-  if (platform !== "android" || app !== "mentra") return {buildNumber: familyNumber}
+  if (platform !== "android" || app !== "mentra" || track === "dev") return {buildNumber: familyNumber}
   const result = prAndroidVersionCode({familyNumber, reservations: await readReservations()})
   return {buildNumber: result.versionCode, source: result.source}
 }
@@ -59,7 +61,12 @@ async function main() {
   // `android` from the Android workflows; the iOS workflows pass nothing.
   const platform = process.argv[2] ?? "ios"
   const familyNumber = await readPrFamilyBuildNumber(familyBaseVersion())
-  const pinned = await pinnedPrBuildNumber({platform, app: process.env.MENTRA_PR_APP || "mentra", familyNumber})
+  const pinned = await pinnedPrBuildNumber({
+    platform,
+    app: process.env.MENTRA_PR_APP || "mentra",
+    track: process.env.MENTRA_APP_TRACK,
+    familyNumber,
+  })
   if (pinned.source === "reserved-floor") {
     console.log(
       `Android version code ${pinned.buildNumber}: one above the latest reserved code, above the family number ${familyNumber}`,

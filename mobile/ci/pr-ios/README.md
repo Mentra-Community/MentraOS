@@ -166,6 +166,14 @@ base64 < /path/to/profile.mobileprovision | tr -d '\r\n' |
   gh secret set IOS_PR_PROFILE_BASE64 --repo Mentra-Community/MentraOS
 ```
 
+The dev app (`com.mentra.mentra.dev`, built for PRs into dev and dev releases)
+signs with its own Apple Distribution certificate instead of Match: the
+`IOS_DEV_DIST_P12_BASE64` and `IOS_DEV_DIST_P12_PASSWORD` secrets, with its ad
+hoc profile **`Mentra Dev Ad Hoc`** in `IOS_DEV_ADHOC_PROFILE_BASE64` and its App
+Store profile **`Mentra Dev App Store`** in `IOS_DEV_APPSTORE_PROFILE_BASE64`
+(Doppler `mentra-monorepo-ci`, config `dev`; `pr` references them). Renew its
+profiles the same way, on App ID `com.mentra.mentra.dev` and that certificate.
+
 The runner uses its existing Homebrew Ruby (`brew --prefix ruby`) with job-local
 Bundler gems. Existing `MATCH_PASSWORD` and `MATCH_GIT_BASIC_AUTHORIZATION`
 secrets are reused. CI never creates devices, profiles or certificates.

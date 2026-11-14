@@ -18,7 +18,7 @@ from mac_installer import DEVELOPER_ID_REQUIREMENT, package_installer
 from pr_apps import APP
 
 BUNDLE_ID = APP["bundleId"]
-PROFILE_NAME = f"match AdHoc {BUNDLE_ID}"
+PROFILE_NAME = APP.get("profileName", f"match AdHoc {BUNDLE_ID}")
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[2] / ".github/scripts"))
 from pr_mobile_config import pr_backend, read_build

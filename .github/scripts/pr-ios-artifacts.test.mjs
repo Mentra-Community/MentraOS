@@ -101,6 +101,18 @@ test("Safari install page points through a valid Apple plist to the exact signed
     assert.throws(() => iosInstallationFiles({...receipt, app}, repository), /app identity/)
 })
 
+test("a dev app receipt gets the dev app's page and Mac installer", () => {
+  const app = {...receipt.app, bundleId: "com.mentra.mentra.dev", macPackageVersion: 2, macInstaller: "Install Mentra Dev.app"}
+  const html = iosInstallationFiles({...receipt, app}, "Mentra-Community/Mentra").install.content
+  assert.match(html, /mentra-dev-install:\/\/pr/)
+  assert.match(html, /Install Mentra Dev\.app/)
+  assert.doesNotMatch(html, /Install Mentra\.app/)
+  const installer = {bundleId: "com.mentra.mac-installer.dev", teamId: "T5XXXL6N36", notarizationStatus: "Accepted",
+    stapled: true, notarizationId: "0".repeat(8) + "-0000-0000-0000-" + "0".repeat(12)}
+  assert.throws(() => validateIosReceipt({...receipt, app, macInstaller: {...installer, bundleId: "com.mentra.mac-installer"}}, coordinates),
+    /installer notarization/)
+})
+
 test("native Mac handoff preserves immutable HTML and selects the public receipt attempt", () => {
   const native = {...receipt, app: {...receipt.app, macPackageVersion: 2, macInstaller: "Install Mentra.app"}}
   const repository = "Mentra-Community/MentraOS"

@@ -175,6 +175,18 @@ test("staging-targeted PRs package staging and never relabel another backend", (
     assert.throws(() => androidAppIdentity({...identity, backend, baseRef, config: config(), badging}), /PR inputs/)
 })
 
+test("a dev-track build is the dev app, and the receipt may record either Mentra App", () => {
+  const dev = () => {
+    const value = config()
+    value.android.package = "com.mentra.mentra.dev"
+    return value
+  }
+  const devBadging = badging.replace("com.mentra.mentra'", "com.mentra.mentra.dev'")
+  assert.equal(androidAppIdentity({...identity, track: "dev", config: dev(), badging: devBadging}).packageId, "com.mentra.mentra.dev")
+  assert.throws(() => androidAppIdentity({...identity, track: "dev", config: config(), badging}), /native manifest/)
+  assert.throws(() => androidAppIdentity({...identity, config: dev(), badging: devBadging}), /native manifest/)
+})
+
 async function publishing(run, failApk = false, diagnostic = false) {
   const dir = await mkdtemp(path.join(tmpdir(), "android-receipt-"))
   try {

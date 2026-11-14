@@ -33,9 +33,12 @@ const hash = async (file) =>
   createHash("sha256")
     .update(await readFile(file))
     .digest("hex")
-// One installation per app, so the dev app (com.mentra.mentra.dev) installs beside the Mentra App.
+// One installation per app, so the dev app (com.mentra.mentra.dev) installs
+// beside the Mentra App, where its PR installer puts it (PRApp in
+// ci/pr-ios/mac-installer/InstallerCore.swift).
+const INSTALLATION_FOLDERS = {"com.mentra.mentra": "Mentra E2E", "com.mentra.mentra.dev": "Mentra Dev E2E"}
 export const installationRoot = (bundleId = "com.mentra.mentra") =>
-  path.join(homedir(), "Applications", bundleId === "com.mentra.mentra" ? "Mentra E2E" : `Mentra E2E ${bundleId}`)
+  path.join(homedir(), "Applications", INSTALLATION_FOLDERS[bundleId] ?? `Mentra E2E ${bundleId}`)
 
 function validateLauncherOptions(launcherPath, launcherSha256) {
   if (launcherPath === undefined && launcherSha256 === undefined) return

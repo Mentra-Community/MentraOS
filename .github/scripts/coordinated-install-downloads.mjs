@@ -5,6 +5,7 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {artifactUrl, downloadAsset, listReleaseAssets, resolveRelease} from "./release-artifact-storage.mjs"
 import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
+import {appIdOf} from "./release-family.mjs"
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex")
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
@@ -34,7 +35,7 @@ export function validateDownloads(receipt, plan, otaUrl, {complete = true} = {})
     receipt.releaseIdentity !== plan.releaseIdentity ||
     receipt.sourceCommit !== plan.sourceCommit ||
     !/^[a-f0-9]{40}$/.test(plan.sourceCommit) ||
-    app?.bundleId !== "com.mentra.mentra" ||
+    app?.bundleId !== appIdOf(plan) ||
     app.build !== String(plan.native.buildNumber) ||
     app.version !== plan.native.marketingVersion ||
     app.headSha !== plan.sourceCommit ||

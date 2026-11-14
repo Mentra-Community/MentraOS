@@ -6,7 +6,7 @@ import {fileURLToPath} from "node:url"
 
 import {prepareDownloads} from "./coordinated-install-downloads.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {serializeReleaseRecord} from "./release-family.mjs"
+import {appIdOf, serializeReleaseRecord} from "./release-family.mjs"
 import {validateMentraosTestflightDistribution} from "./mentraos-testflight-distribution.mjs"
 
 const STATUSES = new Set(["built", "published", "reused"])
@@ -110,7 +110,7 @@ export function createAndroidRecord({
             "google-play": {
               ...publication({
                 status: storeStatus,
-                coordinate: `com.mentra.mentra:${androidBuildNumber}:${playTrack}`,
+                coordinate: `${appIdOf(plan)}:${androidBuildNumber}:${playTrack}`,
                 url,
                 provenanceUrl,
                 file: aab,
@@ -164,7 +164,7 @@ export function createIosRecord({
         "app-store-connect": {
           ...publication({
             status: storeStatus,
-            coordinate: `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${testflightGroup}`,
+            coordinate: `${appIdOf(plan)}:${plan.native.marketingVersion}:${plan.native.buildNumber}:${testflightGroup}`,
             url: "https://appstoreconnect.apple.com/apps",
             provenanceUrl,
             file: ipa,

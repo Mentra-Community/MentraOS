@@ -11,13 +11,14 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).parent / 'pr-ios'))
-from artifacts import BUNDLE_ID, configure, digest, package_mac_app, read_profile, run, unsigned_executable_bytes, validate_profile
+from artifacts import APP, BUNDLE_ID, configure, digest, package_mac_app, read_profile, run, unsigned_executable_bytes, validate_profile
 from repackage import unpack
 
 
 def validate_app(app, plan, ota_url):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
-    if (info.get('CFBundleIdentifier') != BUNDLE_ID
+    # The plan's app (release-family.mjs appIdOf); MENTRA_APP_TRACK picks its profile (pr_apps.py).
+    if (info.get('CFBundleIdentifier') != BUNDLE_ID or BUNDLE_ID != plan['native'].get('appId', 'com.mentra.mentra')
             or info.get('CFBundleVersion') != str(plan['native']['buildNumber'])
             or info.get('CFBundleShortVersionString') != plan['native']['marketingVersion']
             or 'iPhoneOS' not in info.get('CFBundleSupportedPlatforms', [])
@@ -114,13 +115,13 @@ def package(plan_path, ipa, output):
             'profileExpires': profile['ExpirationDate'].isoformat(), 'teamId': team}
         files = {'iphone': f'{prefix}-iphone.ipa', 'mac': f'{prefix}-mac.zip'}
         shutil.copy2(exported[0], output / files['iphone'])
-        package_mac_app(app, output / files['mac'], manifest, folder_name='Mentra Release', readme=f'''# Mentra {plan['releaseIdentity']}
+        package_mac_app(app, output / files['mac'], manifest, folder_name='Mentra Release', readme=f'''# {APP['name']} {plan['releaseIdentity']}
 
 This is the {manifest['backend']} build. The same signed iOS app runs on a registered iPhone or Apple Silicon Mac.
 
 Mac: install Bun from https://bun.sh if needed, unzip, then open Install.command. macOS may require Open Anyway under Privacy & Security and approval to trust Mentra Labs software. The installer preserves your existing Mentra data. The bundled app retains its Apple signature.
 
-Your device must be included in this build's provisioning profile. Installing this replaces the current Mentra App. Connect your glasses and follow the OTA prompt to reach this release's pinned firmware.
+Your device must be included in this build's provisioning profile. Installing this replaces the current {APP['name']} app. Connect your glasses and follow the OTA prompt to reach this release's pinned firmware.
 ''')
         receipt = {'schemaVersion': 1, 'releaseIdentity': plan['releaseIdentity'], 'sourceCommit': plan['sourceCommit'],
             'app': manifest, 'artifacts': {kind: {'name': name, 'size': (output / name).stat().st_size,

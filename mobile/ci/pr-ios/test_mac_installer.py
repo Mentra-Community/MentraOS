@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import os
 from pathlib import Path
 import plistlib
 import subprocess
@@ -11,6 +12,8 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
+# The Mentra App's fixtures, also when a dev-track PR job runs the tests (pr_apps.py).
+os.environ.pop("MENTRA_APP_TRACK", None)
 import mac_installer as installer
 from pr_apps import pr_app
 
@@ -30,6 +33,15 @@ class MacInstallerPackagingTests(unittest.TestCase):
                          ["-D", "MENTRA_MONOREPO"])
         self.assertEqual(installer.installer_defines({"GITHUB_REPOSITORY": "Mentra-Community/MentraOS"}), [])
         self.assertEqual(installer.installer_defines({}), [])
+
+    def test_the_dev_track_installs_the_dev_app(self):
+        app = pr_app({"MENTRA_APP_TRACK": "dev"})
+        self.assertEqual((app["bundleId"], app["installerId"], app["scheme"], app["folder"], app["installer"]),
+                         ("com.mentra.mentra.dev", "com.mentra.mac-installer.dev", "mentra-dev-install",
+                          "Mentra Dev PR", "Install Mentra Dev.app"))
+        self.assertEqual(installer.installer_defines({}, app), ["-D", "MENTRA_DEV"])
+        self.assertEqual(pr_app({"MENTRA_APP_TRACK": "dev", "MENTRA_PR_APP": "example"})["bundleId"],
+                         "com.mentra.bluetoothsdkexample")
 
     def test_missing_credentials_fail_before_importing_or_building(self):
         with patch.object(installer, "run") as command:

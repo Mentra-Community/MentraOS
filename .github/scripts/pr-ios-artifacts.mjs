@@ -4,7 +4,7 @@ import {readFile, stat, writeFile} from "node:fs/promises"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {PR_BUILD_REPOSITORIES} from "./pr-android-artifacts.mjs"
-import {packagingFingerprint, prApp} from "./pr-mobile-build.mjs"
+import {packagingFingerprint, prApp, recordedPrApp} from "./pr-mobile-build.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
 
@@ -25,7 +25,7 @@ export function iosReceiptName(pr, sha, runId, attempt, app = "mentra") {
 
 /** A receipt with `reusedFrom` republishes that earlier head's unchanged publication for this head. */
 export function validateIosReceipt(receipt, {pr, sha, runId, attempt, app = "mentra"}) {
-  const {prefix, macInstaller} = prApp(app)
+  const {prefix} = prApp(app)
   iosReceiptName(pr, sha, runId, attempt, app)
   const source = receipt.reusedFrom
   const keys = Object.keys(source ?? {}).filter((key) => key !== "buildAttempt").sort().join()
@@ -52,8 +52,11 @@ export function validateIosReceipt(receipt, {pr, sha, runId, attempt, app = "men
   )
     throw new Error("iOS receipt belongs to a different revision or workflow attempt")
   if (receipt.app?.macPackageVersion === 2) {
+    // The installer of the app the receipt records: the dev app's or the Mentra App's.
+    const macInstaller = recordedPrApp(app, receipt.app.bundleId)?.macInstaller
     const installer = receipt.macInstaller
     if (
+      !macInstaller ||
       receipt.app.macInstaller !== macInstaller.name ||
       installer?.bundleId !== macInstaller.bundleId ||
       installer.teamId !== "T5XXXL6N36" ||

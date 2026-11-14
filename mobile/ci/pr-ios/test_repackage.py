@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import plistlib
 import shutil
@@ -6,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+# The Mentra App's fixtures, also when a dev-track PR job runs the tests (pr_apps.py).
+os.environ.pop('MENTRA_APP_TRACK', None)
 from repackage import CONFIG, read_app, rewrite_app, verify_payload, unpack
 
 FP, SHA = 'a' * 64, 'b' * 40

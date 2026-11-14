@@ -87,11 +87,26 @@ export const PR_APPS = Object.freeze({
   },
 })
 
-export function prApp(key = "mentra") {
+// The dev app (com.mentra.mentra.dev, the monorepo's
+// design_docs/platform/releases/dev-app-track/spec.md): the Mentra App built
+// under its own identity, when MENTRA_APP_TRACK is dev. A build is one or the
+// other, so its downloads keep the Mentra App's names.
+const MENTRA_DEV = Object.freeze({
+  name: "Mentra Dev app",
+  packageId: "com.mentra.mentra.dev",
+  macInstaller: {name: "Install Mentra Dev.app", bundleId: "com.mentra.mac-installer.dev", scheme: "mentra-dev-install"},
+})
+
+/** The app a build makes: the dev app for the Mentra App on the dev track. */
+export function prApp(key = "mentra", track = process.env.MENTRA_APP_TRACK) {
   const app = PR_APPS[key]
   if (!app) throw new Error(`Unknown PR app ${JSON.stringify(key)}`)
-  return app
+  return key === "mentra" && track === "dev" ? {...app, ...MENTRA_DEV} : app
 }
+
+/** The identity of a published build of `key` from the package it records, if it is one. */
+export const recordedPrApp = (key, packageId) =>
+  [prApp(key, "staging"), prApp(key, "dev")].find((candidate) => candidate.packageId === packageId)
 
 export const MOBILE_PR_PATHS = [
   ...MOBILE_SOURCE_GLOBS,
