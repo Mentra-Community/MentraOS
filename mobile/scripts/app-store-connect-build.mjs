@@ -126,10 +126,10 @@ export async function findApp(client, bundleId, appId) {
     }
     return app
   }
-  return exactlyOne(
-    await client.request(query("/v1/apps", {"filter[bundleId]": bundleId, "limit": "2"})),
-    `app ${bundleId}`,
-  )
+  // filter[bundleId] also returns apps whose bundle ID only starts with it
+  // (com.mentra.mentra.<suffix>), so keep the exact match.
+  const apps = await collectPaginatedData(client, query("/v1/apps", {"filter[bundleId]": bundleId, "limit": "200"}))
+  return exactlyOne({data: apps.filter((app) => app.attributes?.bundleId === bundleId)}, `app ${bundleId}`)
 }
 
 export async function findBuild(client, {appId, buildNumber, marketingVersion}) {
