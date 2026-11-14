@@ -30,13 +30,13 @@ describe("auto power-off setting", () => {
     saved.clear()
   })
 
-  test("defaults off so a new install matches the firmware default", async () => {
+  test("defaults on for a new install", async () => {
     const {SETTINGS, useSettingsStore} = restartSettings()
-    expect(SETTINGS[AUTO_POWER_OFF_KEY].defaultValue()).toBe(false)
+    expect(SETTINGS[AUTO_POWER_OFF_KEY].defaultValue()).toBe(true)
 
     const result = await useSettingsStore.getState().loadAllSettings()
     expect(result.is_error()).toBe(false)
-    expect(useSettingsStore.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(false)
+    expect(useSettingsStore.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(true)
   })
 
   test("is synced to the glasses rather than kept app-side", async () => {
@@ -46,27 +46,27 @@ describe("auto power-off setting", () => {
     expect(AUTO_POWER_OFF_KEY in useSettingsStore.getState().getBluetoothSettings()).toBe(true)
   })
 
-  test("migrates a previously saved true off once, then preserves a new opt-in", async () => {
-    saved.set(AUTO_POWER_OFF_KEY, true)
-    saved.set("migration:wear_detection_enabled_v2", true) // an earlier migration turned it on
+  test("turns a saved false on once, then preserves a new opt-out", async () => {
+    saved.set(AUTO_POWER_OFF_KEY, false)
+    saved.set("migration:wear_detection_disabled_v3", true) // v3 turned it off
     const {useSettingsStore} = restartSettings()
     await useSettingsStore.getState().loadAllSettings()
-    expect(useSettingsStore.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(false)
-    expect(saved.get("migration:wear_detection_disabled_v3")).toBe(true)
-    await useSettingsStore.getState().setSetting(AUTO_POWER_OFF_KEY, true)
+    expect(useSettingsStore.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(true)
+    expect(saved.get("migration:wear_detection_enabled_v4")).toBe(true)
+    await useSettingsStore.getState().setSetting(AUTO_POWER_OFF_KEY, false)
     const restarted = restartSettings().useSettingsStore
     await restarted.getState().loadAllSettings()
-    expect(restarted.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(true)
+    expect(restarted.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(false)
   })
 
-  test("an opt-in survives a restart instead of snapping back to the default", async () => {
+  test("an opt-out survives a restart instead of snapping back to the default", async () => {
     const {useSettingsStore} = restartSettings()
     await useSettingsStore.getState().loadAllSettings()
-    await useSettingsStore.getState().setSetting(AUTO_POWER_OFF_KEY, true)
-    expect(saved.get(AUTO_POWER_OFF_KEY)).toBe(true)
+    await useSettingsStore.getState().setSetting(AUTO_POWER_OFF_KEY, false)
+    expect(saved.get(AUTO_POWER_OFF_KEY)).toBe(false)
 
     const restarted = restartSettings().useSettingsStore
     await restarted.getState().loadAllSettings()
-    expect(restarted.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(true)
+    expect(restarted.getState().getBluetoothSettings()[AUTO_POWER_OFF_KEY]).toBe(false)
   })
 })

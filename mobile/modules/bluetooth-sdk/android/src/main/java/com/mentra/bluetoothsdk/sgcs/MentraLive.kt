@@ -12540,6 +12540,9 @@ class MentraLive : SGCManager() {
             cmdObject.put("C", "cs_swit")
             cmdObject.put("V", 1)
             cmdObject.put("B", body.toString())
+            // Wake the MTK like iOS does: the ASG only sees the BES's mirror of this write while
+            // it's awake, and a pair marked persist.mentra.wear_detection_off undoes it there.
+            cmdObject.put("W", 1)
 
             val packedData =
                     K900ProtocolUtils.packDataToK900(
