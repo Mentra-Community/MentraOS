@@ -29,6 +29,10 @@ describe("MENTRA_LIVE_SETTING_KEYS", () => {
     expect(MENTRA_LIVE_SETTING_KEYS).toContain("mentra_live_secure_firmware")
   })
 
+  test("syncs the former-owner-keys flag so native keeps a bond the glasses still hold", () => {
+    expect(MENTRA_LIVE_SETTING_KEYS).toContain("mentra_live_former_owner_keys")
+  })
+
   test("syncs only the effective mic tuning, never the persisted one", () => {
     expect(MENTRA_LIVE_SETTING_KEYS).toContain("mic_tuning")
     expect(MENTRA_LIVE_SETTING_KEYS).not.toContain("mic_tuning_desired")

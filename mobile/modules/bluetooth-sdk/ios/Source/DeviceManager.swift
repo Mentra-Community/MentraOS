@@ -152,6 +152,14 @@ struct ViewState {
         Bridge.saveSetting("mentra_live_secure_firmware", false)
     }
 
+    /// Whether the forgotten glasses keep former owners' keys is learned again from the next
+    /// glasses' `pairing_info`.
+    private func clearFormerOwnerKeys() {
+        guard DeviceStore.shared.get("bluetooth", "mentra_live_former_owner_keys") as? Bool == true else { return }
+        DeviceStore.shared.apply("bluetooth", "mentra_live_former_owner_keys", false)
+        Bridge.saveSetting("mentra_live_former_owner_keys", false)
+    }
+
     private var pendingWearable: String {
         get { DeviceStore.shared.get("bluetooth", "pending_wearable") as? String ?? "" }
         set { DeviceStore.shared.apply("bluetooth", "pending_wearable", newValue) }
@@ -2138,6 +2146,7 @@ struct ViewState {
         MentraLivePairingStateStore.shared.update("forget") { $0.onForget() }
         clearOwnerLost()
         clearSecureFirmware()
+        clearFormerOwnerKeys()
         // With no connection object, MentraLive.forget() can't run. Only clear Live's saved
         // identity when Live is the target: forgetting G1/G2 must not touch a Live unit's.
         if sgc == nil, defaultWearable.contains(DeviceTypes.LIVE) || pendingWearable.contains(DeviceTypes.LIVE) {

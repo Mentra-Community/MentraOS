@@ -373,6 +373,18 @@ export const SETTINGS: Record<string, Setting> = {
     // value must not overwrite what the glasses just reported on connect.
     nativeAuthoritative: true,
   },
+  // Set from the saved glasses' `pairing_info` (native `former_owner_keys`): the
+  // glasses keep a former owner's keys for a reclaim in pairing mode, so the app
+  // keeps its bond on owner loss and Unpair, and iOS skips the forget-in-Settings
+  // screen after Unpair. Cleared on forget; refreshed by the next `pairing_info`.
+  mentra_live_former_owner_keys: {
+    key: "mentra_live_former_owner_keys",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    nativeAuthoritative: true,
+  },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
@@ -885,6 +897,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.device_address.key,
   SETTINGS.project_name.key,
   SETTINGS.mentra_live_secure_firmware.key,
+  SETTINGS.mentra_live_former_owner_keys.key,
   // The SDK's own reconnect (Bluetooth back on) leaves glasses the person disconnected.
   SETTINGS.glasses_user_disconnected.key,
   SETTINGS.default_controller.key,
@@ -979,6 +992,7 @@ export const PHONE_WIDE_SETTING_KEYS: ReadonlySet<string> = new Set([
   "device_address",
   "project_name",
   "mentra_live_secure_firmware",
+  "mentra_live_former_owner_keys",
   "glasses_user_disconnected",
   "default_controller",
   "pending_controller",

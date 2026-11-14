@@ -2259,6 +2259,17 @@ class MentraLive: NSObject, SGCManager {
         Bridge.saveSetting("mentra_live_secure_firmware", secure)
     }
 
+    /// The glasses keep a former owner's keys for a reclaim in pairing mode (pairing-spec V9), so
+    /// the app keeps this phone's pairing on Unpair instead of sending the person to Settings.
+    private func rememberFormerOwnerKeys(_ kept: Bool) {
+        guard (DeviceStore.shared.get("bluetooth", "mentra_live_former_owner_keys") as? Bool == true) != kept
+        else { return }
+        Task { @MainActor in
+            DeviceStore.shared.apply("bluetooth", "mentra_live_former_owner_keys", kept)
+        }
+        Bridge.saveSetting("mentra_live_former_owner_keys", kept)
+    }
+
     /// One authentication-type failure. The state machine decides whether it settles a takeover
     /// (the one verification after `OWNER_CHANGED`) or completes the 3-strike streak.
     /// - Returns: true when this phone is now `pairing_rejected`.
@@ -3668,6 +3679,7 @@ class MentraLive: NSObject, SGCManager {
             // Read before any readiness below: the audio wait of a pairing depends on it.
             pairingInfoAutoAudio = json["auto_audio"] as? Bool ?? false
             rememberSecureFirmware(securePairingCapable)
+            rememberFormerOwnerKeys(json["former_owner_keys"] as? Bool ?? false)
             if securePairingCapable {
                 pairingInfoSeenThisSession = true
                 cancelSecureFirmwareRefresh()
