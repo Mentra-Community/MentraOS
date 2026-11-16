@@ -222,6 +222,8 @@ class OtaInstallCoordinator {
   private apkExpectedInSession = false
   // Latched when the legacy build-number completion fires; projected as "complete".
   private apkCompletedViaBuildIncrease = false
+  /** Retry's reconcile query is out: a failed reply means the glasses gave up on the attempt too, so the same Retry starts again. */
+  private retryQueryPending = false
   // The split routes selected legacy/unified behavior before navigation. Keep
   // that choice sticky while an APK step upgrades ASG mid-flow.
   private protocolProfile: OtaProtocolProfile | null = null
@@ -455,6 +457,7 @@ class OtaInstallCoordinator {
         if (this.otaStartOwnership?.outcome === "pending") {
           void this.sendOtaStartWithWatchdogs()
         } else {
+          this.retryQueryPending = true
           void BluetoothSdk.queryOtaStatus().catch(() => {})
           this.armQueryReplyFallback("retry")
         }
@@ -666,6 +669,7 @@ class OtaInstallCoordinator {
     this.initialBuildNumber = null
     this.apkExpectedInSession = false
     this.apkCompletedViaBuildIncrease = false
+    this.retryQueryPending = false
     this.protocolProfile = null
     this.resetBesRestartAttempt()
     this.versionChangeSession = false
@@ -888,6 +892,16 @@ class OtaInstallCoordinator {
       versionChangeSession: this.versionChangeSession,
     })
     if (otaStatusChanged && otaStatus?.status === "failed") this.reportFailure("device_failed")
+    if (otaStatusChanged && this.retryQueryPending && hasRecoveringOtaReply(otaStatus, otaProgress)) {
+      this.retryQueryPending = false
+      // The glasses confirm the failure the phone timed out on (a refused install, say): start again in the same Retry.
+      if (otaStatus?.status === "failed") {
+        console.log("[OTA_PROGRESS] retry's status query came back failed — starting a fresh ota_start")
+        queueMicrotask(() => {
+          if (this.attached) this.retry()
+        })
+      }
+    }
     else if (otaProgressChanged && !otaStatus && otaProgress?.status === "FAILED") this.reportFailure("device_failed")
 
     const stallSig = buildProgressStalenessSignature(otaStatus, otaProgress, displayState)
