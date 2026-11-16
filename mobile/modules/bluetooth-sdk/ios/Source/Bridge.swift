@@ -157,7 +157,7 @@ class Bridge {
         let voiceActivityDetectionEnabled =
             DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool
                 ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
-        let frameSizeBytes = DeviceStore.shared.get("bluetooth", "lc3_frame_size") as? Int ?? defaultLc3FrameSizeBytes
+        let frameSizeBytes = intValue(DeviceStore.shared.get("bluetooth", "lc3_frame_size")) ?? defaultLc3FrameSizeBytes
         return [
             "lc3": data,
             "sampleRate": micSampleRate,

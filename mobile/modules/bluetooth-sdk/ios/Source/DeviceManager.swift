@@ -216,12 +216,12 @@ struct ViewState {
     }
 
     private var brightness: Int {
-        get { DeviceStore.shared.get("bluetooth", "brightness") as? Int ?? 50 }
+        get { intValue(DeviceStore.shared.get("bluetooth", "brightness")) ?? 50 }
         set { DeviceStore.shared.apply("bluetooth", "brightness", newValue) }
     }
 
     private var headUpAngle: Int {
-        get { DeviceStore.shared.get("bluetooth", "head_up_angle") as? Int ?? 30 }
+        get { intValue(DeviceStore.shared.get("bluetooth", "head_up_angle")) ?? 30 }
         set { DeviceStore.shared.apply("bluetooth", "head_up_angle", newValue) }
     }
 
@@ -443,7 +443,7 @@ struct ViewState {
             Bridge.log("MAN: ERROR - LC3 converter not initialized but format is LC3")
             return
         }
-        let frameSize = DeviceStore.shared.get("bluetooth", "lc3_frame_size") as! Int
+        let frameSize = intValue(DeviceStore.shared.get("bluetooth", "lc3_frame_size")) ?? 60
         let lc3Data = lc3Converter.encode(pcmData, frameSize: frameSize) as Data
         guard lc3Data.count > 0 else {
             Bridge.log("MAN: ERROR - LC3 encoding returned empty data")
@@ -1076,9 +1076,9 @@ struct ViewState {
             // have disconnected or switched glasses during the 2s window, and we must not push to a
             // stale/torn-down connection.
             guard let sgc = self?.sgc else { return }
-            let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
+            let h = intValue(DeviceStore.shared.get("bluetooth", "dashboard_height")) ?? 4
             // Fall back to the canonical default (2), matching DeviceStore, not 1.
-            let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 2
+            let rawDepth = intValue(DeviceStore.shared.get("bluetooth", "dashboard_depth")) ?? 2
             let d = sgc.type == DeviceTypes.NIMO ? min(max(rawDepth, 0), 10) : min(max(rawDepth, 1), 4)
             sgc.setDashboardPosition(h, d)
         }
