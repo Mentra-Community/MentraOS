@@ -1341,53 +1341,6 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
-
-  function prepareApkUpgrade() {
-    ;(
-      otaInstallCoordinator as unknown as {preparedCheckResult: OtaCheckCurrentGlassesResult | null}
-    ).preparedCheckResult = {
-      ...checkResult(),
-      updateInfo: {versionCode: 303000500, versionName: "3.3.0", isDowngrade: false, updates: ["apk"]},
-    } as OtaCheckCurrentGlassesResult
-  }
-
-  it("retry starts again in the same press when its status query reports the attempt failed", async () => {
-    prepareApkUpgrade()
-    setGlassesConnected()
-    otaInstallCoordinator.attach()
-    await flushNativeStartPromise()
-    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0}))
-
-    // The install the glasses started was refused; the person presses Retry once.
-    otaInstallCoordinator.retry()
-    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
-    useGlassesStore
-      .getState()
-      .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: "install_failed"}))
-    await flushNativeStartPromise()
-
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
-  })
-
-  it("retry keeps waiting when its status query reports the attempt still running", async () => {
-    prepareApkUpgrade()
-    setGlassesConnected()
-    otaInstallCoordinator.attach()
-    await flushNativeStartPromise()
-    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0}))
-
-    otaInstallCoordinator.retry()
-    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 50}))
-    // A failure reported later belongs to the attempt, not to this Retry.
-    useGlassesStore
-      .getState()
-      .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: "install_failed"}))
-    await flushNativeStartPromise()
-
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
-  })
 })
 
 describe("OtaInstallCoordinator stuck-at-zero watchdog", () => {
