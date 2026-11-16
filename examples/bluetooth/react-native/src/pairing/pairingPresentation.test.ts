@@ -19,14 +19,26 @@ describe('pairingPresentation', () => {
       status: 'choosing',
       scanning: true,
       glasses: [
-        {id: 'a', label: 'E511', device},
-        {id: 'b', label: 'B2C4', device: {...device, id: 'b'}},
+        {id: 'a', label: 'E511', speaksCode: true, device},
+        {id: 'b', label: 'B2C4', speaksCode: true, device: {...device, id: 'b'}},
       ],
     };
     const presentation = pairingPresentation(state);
     expect(presentation.rows?.map((row) => row.label)).toEqual(['Mentra Live E511', 'Mentra Live B2C4']);
     expect(presentation.indeterminate).toBe(true);
     expect(presentation.primary).toBeUndefined();
+  });
+
+  test('marks glasses on older firmware as saying no code', () => {
+    const state: MentraLivePairingState = {
+      page: 'scan',
+      status: 'choosing',
+      scanning: true,
+      glasses: [{id: 'b', label: 'B2C4', speaksCode: false, device}],
+    };
+    const presentation = pairingPresentation(state);
+    expect(presentation.rows?.map((row) => row.label)).toEqual(['Mentra Live B2C4 (no code)']);
+    expect(presentation.detail).toBeUndefined();
   });
 
   test('offers Scan again once the scan stops', () => {

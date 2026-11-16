@@ -39,6 +39,11 @@ export type MentraLivePairingGlasses = {
   id: string
   /** The Bluetooth name without its model prefix, for example `E511`. */
   label: string
+  /**
+   * The glasses spoke `label` as their code after 3 presses of the power button (firmware 3.4.0 and
+   * later). False for older firmware: it lists without pressing the button and speaks no code.
+   */
+  speaksCode: boolean
   device: Device
 }
 
@@ -593,7 +598,12 @@ export function useMentraLivePairing(options: UseMentraLivePairingOptions): Ment
       case "success":
         return {page}
       case "scan": {
-        const listed = visible.map((device) => ({id: device.id, label: glassesLabel(device.name), device}))
+        const listed = visible.map((device) => ({
+          id: device.id,
+          label: glassesLabel(device.name),
+          speaksCode: device.securePairingCapable === true,
+          device,
+        }))
         const status: MentraLivePairingScanStatus =
           diagnostic?.code === "device_connected_on_phone" && listed.length === 0
             ? "in_use"

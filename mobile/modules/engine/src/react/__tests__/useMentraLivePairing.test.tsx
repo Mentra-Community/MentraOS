@@ -172,9 +172,15 @@ describe("useMentraLivePairing", () => {
   test("lists glasses by their code and never auto-connects one", async () => {
     await renderFlow()
     await emitResults([live("MENTRA_LIVE_BLE_E511", {pairingMode: true, securePairingCapable: true})])
-    expect(controller.state).toMatchObject({page: "scan", status: "choosing", glasses: [{label: "E511"}]})
+    expect(controller.state).toMatchObject({page: "scan", status: "choosing", glasses: [{label: "E511", speaksCode: true}]})
     await advance(20_000)
     expect(fakePairing.pair).not.toHaveBeenCalled()
+  })
+
+  test("marks glasses on older firmware as speaking no code", async () => {
+    await renderFlow()
+    await emitResults([live("MENTRA_LIVE_BLE_B2C4", {securePairingCapable: false})])
+    expect(controller.state).toMatchObject({glasses: [{label: "B2C4", speaksCode: false}]})
   })
 
   test("returning to the scan keeps the glasses already listed while the new scan empties the native list", async () => {
