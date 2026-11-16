@@ -39,6 +39,12 @@ each job's `runs-on` must select a Blacksmith runner.
     same-repository code, the `shared` runners for imported MentraOS PRs and
     forks.
   - a signing job keeps `[self-hosted, macOS, ARM64, shared]`.
+- In the monorepo's release.yml, Mac jobs take their labels from the
+  `channel` job: `mac_runner` for signed builds (`release-mac-dev`: big-bob-2,
+  big-bob-3 and the lab MacBook's pro-1-build and pro-1-build-2; `release-mac`
+  adds big-bob for published staging and production), `mac_light` for short
+  jobs (`release-light`: big-bob-light and pro-1-light). The MacBook's runners
+  never carry `shared`, so imported MentraOS PRs and forks stay off it.
 
 Hardware/device-test jobs must stay on the configured self-hosted runner that
 owns their attached devices. In the monorepo that's `runs-on: [lab]`:
