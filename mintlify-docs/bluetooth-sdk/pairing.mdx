@@ -7,7 +7,10 @@ icon: "link"
 Pairing Mentra Live takes more than a scan and a connect. The glasses open a
 2-minute pairing window when the person presses the power button three times,
 speak a 4-character code so the person can pick the right pair from the list,
-and only accept the new phone once they commit the bond. On iPhone, audio may
+and only accept the new phone once they commit the bond. Glasses on firmware
+before 3.4.0 work differently: they list without pressing the button and speak
+no code. Until glasses are listed, an app can't tell which kind they are; each
+listed pair says so with `speaksCode`. On iPhone, audio may
 need a separate Bluetooth pairing in Settings, and a stale pairing left in iOS
 Settings blocks a new one until the person forgets it.
 
@@ -146,7 +149,10 @@ function ScanPage({state, controller}: MentraLivePairingPageProps<"scan">) {
     <View>
       {state.glasses.map((glasses: MentraLivePairingGlasses) => (
         <Pressable key={glasses.id} onPress={() => controller.select(glasses)}>
-          <Text>Mentra Live {glasses.label}</Text>
+          <Text>
+            Mentra Live {glasses.label}
+            {glasses.speaksCode ? "" : " (no code)"}
+          </Text>
         </Pressable>
       ))}
       {!state.scanning && (
@@ -243,10 +249,13 @@ glasses rows and buttons. The scan page, for example:
 function scanRows(glasses: MentraLivePairingGlasses[]): CustomPairingRow[] {
   return glasses.map((item) => ({
     glasses: item,
-    label: `Mentra Live ${item.label}`,
+    // Firmware before 3.4.0 lists without the 3 presses and says no code.
+    label: item.speaksCode ? `Mentra Live ${item.label}` : `Mentra Live ${item.label} (no code)`,
   }));
 }
 ```
+
+It asks the person to match a code only when a listed pair speaks one.
 
 The app opens the flow from its Device tab and closes it on either callback:
 
@@ -280,10 +289,15 @@ stores, or Engine services.
 | `failure` | `error`: a translation key such as `errors:pairingCouldNotStart` or `errors:pairingBatteryTooLow` | `retry()` calls `onRetry`, or scans again. `exit()` or `back()` leaves. |
 
 Each scan row is a `MentraLivePairingGlasses`: `id`, `label` (the Bluetooth
-name without its model prefix, for example `E511`, which matches the code the
-glasses speak), and the SDK `device`. The list holds only glasses that can pair
-now: in pairing mode, or older firmware that always pairs. Glasses leave it when
-their window closes. `pair_audio` and `success` have no `back()`: give them
+name without its model prefix, for example `E511`), `speaksCode`, and the SDK
+`device`. The list holds only glasses that can pair now: in pairing mode, or
+older firmware that always pairs. Glasses leave it when their window closes.
+
+`speaksCode` is true for firmware 3.4.0 and later: those glasses list only after
+three presses of the power button, and speak `label` as their code. It is false
+for older firmware, which lists without the button and speaks nothing, so don't
+ask the person to match a code for those rows. Before any glasses are listed,
+keep the three-press instruction, since the firmware isn't known yet. `pair_audio` and `success` have no `back()`: give them
 their own buttons.
 
 ## Native Android And iOS Apps
