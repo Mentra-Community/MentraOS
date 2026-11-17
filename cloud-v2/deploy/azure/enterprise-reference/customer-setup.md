@@ -17,14 +17,16 @@ example `mongodb+srv://USER:PASSWORD@cluster0.example.mongodb.net/mentra-private
   the Azure portal or Marketplace (MongoDB Atlas, an Azure Native Integration),
   so Atlas is billed through the Azure subscription, then create a dedicated
   cluster (M30 or above for production; M10 for a trial) on MongoDB 8.0, in the
-  same Azure region as the deployment. Connect it privately: an Atlas private
-  endpoint (Azure Private Link) in a virtual network the Container Apps
-  environment is integrated with, or, for a trial, Atlas's IP access list. Create a database user for Core with `readWrite` on its database only.
-  Atlas runs in MongoDB's Azure account, in the region you choose, and backs it
-  up (Cloud Backup with point-in-time restore, configured in Atlas).
+  same Azure region as the deployment. Core reaches it only through a private
+  endpoint ([below](#connecting-atlas-privately)), and the Atlas IP access list
+  stays empty, so the database is never reachable from the internet. Create a
+  database user for Core with `readWrite` on its database only. Atlas runs in
+  MongoDB's Azure account, in the region you choose, and backs it up (Cloud
+  Backup with point-in-time restore, configured in Atlas).
 - **Allowed: a MongoDB replica set you run**, MongoDB 8.0 with at least three
   members, on Azure Kubernetes Service or virtual machines. Backups, upgrades,
-  monitoring and its network are yours. Azure Container Apps is not suitable for
+  monitoring and its network are yours: connect it to the deployment's network
+  (`vnet-<deployment>`) with VNet peering or a private endpoint of your own. Azure Container Apps is not suitable for
   a database: it has no stable storage or member identity for a replica set.
 - **Not supported: Azure Cosmos DB for MongoDB (RU or vCore) and Azure
   DocumentDB.** They implement part of MongoDB's API, and Core is built and
@@ -55,6 +57,52 @@ These are the steps Mentra ran for its own reference stack.
    have them click **Go to MongoDB Atlas** while signed in to Azure. Atlas links
    their Atlas login, existing or new, to the organization. With the tenant's
    security defaults on, the guest first enrolls multi-factor sign-in.
+
+Create the Atlas resource as an Azure user who already has a working mailbox.
+MongoDB sends its first email the moment the resource is created, and once an
+address bounces MongoDB suppresses it: no later email reaches it, and Mentra had
+to start over with another user.
+
+### Connecting Atlas privately
+
+Every new deployment's Container Apps environment is created in its own virtual
+network, `vnet-<deployment>` (`network.bicep`): a `/23` subnet for the
+environment and a `/27` for private endpoints, in `10.40.0.0/16`. Core reaches
+Atlas through an Azure private endpoint in that network, which Atlas accepts
+only once it is registered there. The apps stay public. Atlas's private
+hostnames are public DNS records that resolve to the endpoint's private IP, so
+no private DNS zone is needed.
+
+1. In the Atlas project, create the Azure private endpoint service in the
+   deployment's region (with the Atlas CLI, signed in with `atlas auth login`):
+   `atlas privateEndpoints azure create --region US_WEST_2 --projectId PROJECT_ID`.
+   After a minute or two, `atlas privateEndpoints azure describe SERVICE_ID
+   --projectId PROJECT_ID --output json` shows `privateLinkServiceResourceId`.
+   In the Atlas UI this is **Network Access → Private Endpoint → Dedicated
+   Cluster → Add Private Endpoint → Azure**.
+2. Give setup that resource ID when it asks for the Atlas private endpoint
+   service (`atlasPrivateLinkServiceId` in `--config`). Setup creates the
+   network and the endpoint with the registry and Key Vault.
+3. Before deploying Core, setup prints the one Atlas command that registers the
+   endpoint, with its resource ID and private IP:
+   `atlas privateEndpoints azure interfaces create SERVICE_ID --projectId
+   PROJECT_ID --privateEndpointId ... --privateEndpointIpAddress ...`. In the
+   Atlas UI, the same two values go in the last step of the private endpoint
+   dialog. Atlas shows the endpoint as available within a few minutes.
+4. In Atlas, **Connect → Private Endpoint** gives the cluster's private
+   connection string (`mongodb+srv://...-pl-0...mongodb.net`). Add the
+   database name after the host and give it to setup, which stores it as
+   `mongo-url`.
+
+Cost: Azure bills the private endpoint about $7 a month ($0.01 an hour) plus
+$0.01 per GB through it; Atlas bills $0.03 per GB through Private Link. The
+cluster is the main cost (an M10 is about $60 a month, an M30 about $400).
+
+A Container Apps environment cannot be moved into a network, so a deployment
+created before the network (with no `virtualNetworkName` in its configuration)
+keeps its environment outside one, and setup does not move it. Moving it means
+creating the environment again in a network, with Core offline meanwhile; ask
+Mentra before doing so.
 
 To set or change the connection string, run setup again with
 `--mongo-url-stdin` and the string on standard input; guided setup asks for it
@@ -113,9 +161,10 @@ its storage mounted. It verifies and unpacks the package, then starts
 `setup.sh` with no command. Running the same command again continues an
 interrupted install, finishes after a handoff, or upgrades. Guided setup:
 
-1. Asks seven questions: subscription, tenant, company name, deployment name,
-   region, an optional custom web address, and the email domains your Entra
-   directory issues. An invalid answer is explained and asked again. A region
+1. Asks eight questions: subscription, tenant, company name, deployment name,
+   region, an optional custom web address, the Atlas private endpoint service
+   (see [Connecting Atlas privately](#connecting-atlas-privately); empty for
+   another database), and the email domains your Entra directory issues. An invalid answer is explained and asked again. A region
    such as `West US 2` and a pasted `https://mentra.example.com/` are accepted;
    a custom address must be a subdomain. Email domains are comma-separated,
    lowercase, each subdomain listed separately, and never a Mentra domain; see
@@ -134,7 +183,8 @@ interrupted install, finishes after a handoff, or upgrades. Guided setup:
    the operator names (`--employees`).
 5. Installs with progress lines. Before Core is deployed it asks for the
    database's connection string when Key Vault has none (hidden as it is typed,
-   stored only in Key Vault), adds a client secret
+   stored only in Key Vault), first printing the Atlas command that registers
+   the private endpoint when there is one, adds a client secret
    to the Core app for admin portal sign-in, stores it in Key Vault and turns on
    `adminPortalSignIn` in the saved configuration. It
    handles DNS (adds the two records when the zone is in Azure DNS in the
@@ -272,7 +322,8 @@ minutes, only while new Key Vault access is still reaching Container Apps.
 
 The templates create:
 
-- one Container Apps environment;
+- one Container Apps environment, in the deployment's virtual network, and
+  the private endpoint to Atlas;
 - separate Core and meetings-only Runtime apps using the same digest;
 - customer-owned ACS;
 - a managed identity per app, each able to read only its own Key Vault secrets;
@@ -286,11 +337,10 @@ The templates create:
 They create no database: Core uses the company's (see [The database](#the-database)).
 
 For customer production, use the customer's normal backup, private networking,
-and secret-management requirements. The reference's Container Apps environment
-has no VNet, so it reaches the database over its authenticated public endpoint
-(an Atlas IP access list); a customer requiring private data-plane access
-extends the reference with its standard VNet module and an Atlas private
-endpoint before qualification. Nothing here connects to Mentra.
+and secret-management requirements. Core reaches the database only through the
+deployment's network ([Connecting Atlas privately](#connecting-atlas-privately));
+Key Vault and report storage keep authenticated public endpoints. Nothing here
+connects to Mentra.
 
 Replace the reference legal documents and light/dark transparent PNGs. Managed
 miniapp ZIPs may be added as an asset layer or served by customer ingress; each

@@ -26,15 +26,19 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS = ('Microsoft.App', 'Microsoft.ContainerRegistry', 'Microsoft.ManagedIdentity',
-             'Microsoft.Communication', 'Microsoft.Storage', 'Microsoft.KeyVault')
+             'Microsoft.Communication', 'Microsoft.Storage', 'Microsoft.KeyVault', 'Microsoft.Network')
 BINDING_KEYS = ('subscriptionId', 'tenantId', 'resourceGroup', 'registryName', 'location',
                 'workspaceHostname', 'environmentName', 'runtimeName', 'coreName', 'coreIdentityName', 'runtimeIdentityName',
                 'communicationName', 'reportStorageAccountName', 'deploymentName',
-                'resourceTags', 'coreApiClientId', 'mobileClientId', 'keyVaultName')
+                'resourceTags', 'coreApiClientId', 'mobileClientId', 'keyVaultName', 'virtualNetworkName')
 # Key Vault holds every original secret; nothing secret is stored locally.
 ADMIN_KEY_SECRET = 'mentra-admin-key'
 # Core's database: the company's own MongoDB replica set, never created by setup.
 MONGO_SECRET = 'mongo-url'
+# The Atlas project's Azure private endpoint service (network.bicep). Azure resource IDs are
+# case-insensitive, and Atlas writes /resourcegroups/.
+ATLAS_SERVICE = re.compile(r'^/subscriptions/[0-9a-f-]{36}/resourcegroups/[^/]+/providers/microsoft\.network/privatelinkservices/[^/]+$',
+                           re.IGNORECASE)
 MONGO_URL = re.compile(r'^mongodb(\+srv)?://[^/?#\s]+/[^/?#\s]+(\?\S*)?$')
 # Teams settings, email domains and admin portal sign-in may be added after
 # installation; resume rolls them out.
@@ -129,8 +133,8 @@ def check_release():
     if release.get('schemaVersion') != 1 or not re.fullmatch(
             r'ghcr\.io/mentra-community/mentra-cloud@sha256:[0-9a-f]{64}', release.get('sourceImage', '')):
         raise SetupError('Invalid release metadata')
-    required = {'setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep', 'access.bicep',
-                'deployment.config.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
+    required = {'setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep', 'network.bicep',
+                'access.bicep', 'deployment.config.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
                 'scripts/ensure-vault-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh'}
     inventory = release.get('files')
     if not isinstance(inventory, dict) or not required.issubset(inventory):
@@ -435,7 +439,7 @@ RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName
                  'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
                  'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn',
                  'miniappConfiguration', 'miniappVariants', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
-                 'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'reportStorageAccountName')
+                 'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'reportStorageAccountName', 'virtualNetworkName')
 # Restored even when empty: an empty value there is a deliberate choice.
 RESTORED_AS_IS = ('managedMiniappDirectory',)
 
@@ -456,6 +460,8 @@ def clean_answer(key, value):
     if key == 'location':
         value = value.lower().replace(' ', '')
         return value if re.fullmatch(r'[a-z0-9]+', value) else None
+    if key == 'atlasPrivateLinkServiceId':
+        return value if not value or ATLAS_SERVICE.fullmatch(value) else None
     if key == 'workspaceHostname':
         value = re.sub(r'^https?://', '', value.lower()).rstrip('/')
         if value and (not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}', value) or len(value) > 253
@@ -513,7 +519,9 @@ def ask_email_domains(default=''):
 ANSWER_HELP = {'subscriptionId': 'an Azure subscription ID (a UUID)', 'tenantId': 'a Microsoft Entra tenant ID (a UUID)',
                'displayName': 'a company name', 'deploymentId': '4-19 lowercase letters, digits or single hyphens, starting with a letter',
                'location': 'an Azure region such as westus2 or westeurope',
-               'workspaceHostname': 'a subdomain such as mentra.example.com, or nothing'}
+               'workspaceHostname': 'a subdomain such as mentra.example.com, or nothing',
+               'atlasPrivateLinkServiceId': 'the resource ID /subscriptions/.../providers/Microsoft.Network/privateLinkServices/pls_..., '
+                                            'or nothing'}
 
 
 def subscription_visible(subscription):
@@ -569,7 +577,9 @@ def init(args, directory):
                ('displayName', 'Company name, as employees will see it', ''),
                ('deploymentId', 'Short deployment name (lowercase letters, digits, hyphens)', None),
                ('location', 'Azure region', 'westus2'),
-               ('workspaceHostname', 'Custom web address, e.g. mentra.example.com (Enter to use an Azure address)', '')]
+               ('workspaceHostname', 'Custom web address, e.g. mentra.example.com (Enter to use an Azure address)', ''),
+               ('atlasPrivateLinkServiceId', 'MongoDB Atlas private endpoint service resource ID (see "The database" in '
+                'customer-setup.md; Enter if your database is not Atlas)', '')]
     for key, label, default in prompts:
         if key == 'deploymentId' and default is None:
             default = suggested_deployment_id(inputs.get('displayName', ''))
@@ -585,7 +595,7 @@ def init(args, directory):
             inputs[key] = value
             continue
         if not interactive:
-            if key in ('location', 'workspaceHostname'):
+            if key in ('location', 'workspaceHostname', 'atlasPrivateLinkServiceId'):
                 inputs[key] = default
                 continue
             raise SetupError(f'{key} is required in --config for unattended initialization')
@@ -638,7 +648,7 @@ def init(args, directory):
     defaults = dict(resourceGroup=group, registryName=name.replace('-', '') + ownership.replace('-', '')[:8],
                     environmentName=f'cae-{name}', runtimeName=f'ca-{name}', coreName=f'ca-{name}-core',
                     coreIdentityName=f'id-{name}-core', runtimeIdentityName=f'id-{name}-runtime',
-                    communicationName=f'{name}-acs-{ownership[:8]}',
+                    communicationName=f'{name}-acs-{ownership[:8]}', virtualNetworkName=f'vnet-{name}',
                     keyVaultName='kv' + name.replace('-', '')[:14] + ownership.replace('-', '')[:8],
                     communicationDataLocation=data_location(config['location']),
                     coreApiClientId='', mobileClientId='', coreAdminEmails='',
@@ -652,6 +662,13 @@ def init(args, directory):
     for key in RESTORED_AS_IS:
         if key in deployed:
             config[key] = deployed[key]
+    if earlier and not deployed.get('virtualNetworkName'):
+        # Its Container Apps environment is outside any network and cannot be moved into one.
+        if inputs.get('virtualNetworkName') or inputs.get('atlasPrivateLinkServiceId'):
+            raise SetupError('That deployment was created without a private network, and setup cannot move it into one '
+                             '(see "Connecting Atlas privately" in customer-setup.md). Leave virtualNetworkName and '
+                             'atlasPrivateLinkServiceId out.')
+        config.update(virtualNetworkName='', atlasPrivateLinkServiceId='')
     # An explicit list wins, even an empty one: given now, else the deployment's own.
     if 'approvedSystemMiniapps' in inputs:
         config['approvedSystemMiniapps'] = inputs['approvedSystemMiniapps']
@@ -1496,11 +1513,15 @@ def ensure_database(args, config):
     if getattr(args, 'mongo_url_stdin', False):
         given = sys.stdin.readline().strip()
     elif not vault_get(config, MONGO_SECRET):
+        register = atlas_registration(config)
         if not (sys.stdin.isatty() and not getattr(args, 'yes', False)):
-            raise SetupError(f"Key Vault {config['keyVaultName']} has no {MONGO_SECRET}, the connection string of Core's "
-                             'MongoDB database. Provide it with --mongo-url-stdin (see "The database" in customer-setup.md).')
+            raise SetupError(register + f"Key Vault {config['keyVaultName']} has no {MONGO_SECRET}, the connection string of "
+                             "Core's MongoDB database. Provide it with --mongo-url-stdin (see \"The database\" in "
+                             'customer-setup.md).')
         print('  Core keeps its data in your MongoDB 8.0 replica set: MongoDB Atlas on Azure is recommended '
               '(see "The database" in customer-setup.md).')
+        if register:
+            print('  ' + register.replace('\n', '\n  '))
         given = ask('Its connection string, naming the database (mongodb+srv://USER:PASSWORD@HOST/DATABASE?...; hidden)',
                     '', True, secret=True).strip()
     if not given:
@@ -1511,6 +1532,29 @@ def ensure_database(args, config):
                          'mongodb+srv:// and name the database after the host, for example .../mentra-private?retryWrites=true.')
     vault_set(config, MONGO_SECRET, given)
     print(f"  Saved the connection string in Key Vault {config['keyVaultName']} as {MONGO_SECRET}.")
+
+
+def atlas_registration(config):
+    """What to register with Atlas for the deployment's private endpoint, or nothing without one."""
+    service = config.get('atlasPrivateLinkServiceId')
+    if not service:
+        return ''
+    name = f"{config['virtualNetworkName']}-atlas"
+    show = ('network', 'private-endpoint', 'show', '--name', name, '--resource-group', config['resourceGroup'])
+    try:
+        endpoint = azure(config, *show)
+    except SetupError:
+        # deploy.sh creates the network with the ownership resources.
+        grant_vault_access(config)
+        endpoint = azure(config, *show)
+    address = azure(config, 'network', 'nic', 'show', '--ids', endpoint['networkInterfaces'][0]['id'],
+                    '--query', 'ipConfigurations[0].privateIPAddress')
+    # Atlas names the service pls_<its endpoint service ID>.
+    service_id = service.rsplit('/', 1)[-1].removeprefix('pls_')
+    return ("Register this deployment's private endpoint with Atlas, then use the cluster's private endpoint "
+            "connection string:\n"
+            f"  atlas privateEndpoints azure interfaces create {service_id} --projectId ATLAS_PROJECT_ID "
+            f"--privateEndpointId {endpoint['id']} --privateEndpointIpAddress {address}\n")
 
 
 def ensure_portal_secret(directory, config, state):
@@ -1549,6 +1593,7 @@ FRIENDLY_TYPES = {
     'Microsoft.Communication/communicationServices': 'Azure Communication Services',
     'Microsoft.ContainerRegistry/registries': 'Container registry', 'Microsoft.KeyVault/vaults': 'Key Vault',
     'Microsoft.ManagedIdentity/userAssignedIdentities': 'Managed identity',
+    'Microsoft.Network/virtualNetworks': 'Private network', 'Microsoft.Network/privateEndpoints': 'Database private endpoint',
     'Microsoft.Authorization/roleAssignments': 'Role assignment'}
 
 
@@ -1594,7 +1639,7 @@ def _describe(paths):
 
 def summarize_preview(preview):
     created, changed, unchanged = [], [], 0
-    for template in ('bootstrap', 'access', 'main'):
+    for template in ('bootstrap', 'network', 'access', 'main'):
         for change in (preview.get(template) or {}).get('changes', []):
             kind, name = _resource(change)
             if change['changeType'] == 'Create':
@@ -2442,7 +2487,7 @@ def guided(args, directory):
                 print(f'Approving them for your organization usually takes an Entra {CONSENT_APPROVERS}, '
                       'and your account is none of these. If approval fails, setup prints a message to send to one '
                       'right after creating them; the install continues meanwhile.')
-        print('These resources incur Azure charges; this profile uses authenticated public endpoints.')
+        print('These resources incur Azure charges; Key Vault and report storage use authenticated public endpoints.')
         if not confirm('Create these resources now? This takes about 20 minutes.', True, interactive):
             if checks['resourceGroup'] == 'new':
                 # The group was created only for the preview and is still empty.

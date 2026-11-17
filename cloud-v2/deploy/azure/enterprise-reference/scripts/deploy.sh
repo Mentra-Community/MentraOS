@@ -4,7 +4,7 @@ set -euo pipefail
 # Deploys the stack, or previews it. Secrets never pass through this script:
 # signing keys are created in Key Vault and the apps read them from there.
 # --bootstrap-only runs just the ownership step, which also gives whoever runs
-# it access to the deployment's Key Vault.
+# it access to the deployment's Key Vault, and the private network.
 MODE=deploy
 case "${1:-}" in
   --validate-only) MODE=validate; shift ;;
@@ -118,6 +118,9 @@ jq -e '
   (.communicationName | nonempty) and
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
+  ((.virtualNetworkName // "") | type == "string" and (. == "" or test("^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,52}[a-zA-Z0-9_]$"))) and
+  ((.atlasPrivateLinkServiceId // "") | type == "string" and (. == "" or test("^/subscriptions/[0-9a-f-]{36}/resourcegroups/[^/]+/providers/microsoft\\.network/privatelinkservices/[^/]+$"; "i"))) and
+  ((.atlasPrivateLinkServiceId // "") == "" or (.virtualNetworkName // "") != "") and
   ((.coreAdminEmails // "") | type == "string") and
   ((.verifiedEmailDomains // []) | type == "array" and all(email_domain) and (unique | length) == length) and
   ((.adminPortalSignIn // false) | type == "boolean") and
@@ -155,6 +158,7 @@ CORE_IDENTITY="$(jq -r .coreIdentityName "$CONFIG")"
 RUNTIME_IDENTITY="$(jq -r .runtimeIdentityName "$CONFIG")"
 TEAMS_CLIENT_ID="$(jq -r '.teamsGraphClientId // ""' "$CONFIG")"
 ADMIN_PORTAL_SIGN_IN="$(jq -r '.adminPortalSignIn // false' "$CONFIG")"
+VIRTUAL_NETWORK="$(jq -r '.virtualNetworkName // ""' "$CONFIG")"
 
 # Wizard calls are bound to an explicit subscription without changing az defaults.
 if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
@@ -180,6 +184,8 @@ fi
 
 BOOTSTRAP_PARAMETERS=(registryName="$REGISTRY_NAME" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY" keyVaultName="$KEY_VAULT"
   operatorPrincipalId="$OPERATOR_ID" operatorPrincipalType="$OPERATOR_TYPE" resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
+NETWORK_PARAMETERS=(virtualNetworkName="$VIRTUAL_NETWORK" atlasPrivateLinkServiceId="$(jq -r '.atlasPrivateLinkServiceId // ""' "$CONFIG")"
+  resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
 ACCESS_PARAMETERS=(keyVaultName="$KEY_VAULT" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY"
   teamsGraphClientId="$TEAMS_CLIENT_ID" adminPortalSignIn="$ADMIN_PORTAL_SIGN_IN")
 
@@ -216,6 +222,7 @@ jq -n \
       deploymentId:{value:$c.deploymentId},
       displayName:{value:$c.displayName},
       environmentName:{value:$c.environmentName},
+      virtualNetworkName:{value:($c.virtualNetworkName // "")},
       runtimeName:{value:$c.runtimeName},
       coreName:{value:$c.coreName},
       coreIdentityName:{value:$c.coreIdentityName},
@@ -254,6 +261,11 @@ if [[ "$MODE" == what-if ]]; then
   trap 'rm -rf "$PARAMETERS" "$ERRORS" "$PREVIEWS"' EXIT
   az deployment group what-if --name "$DEPLOYMENT_NAME-bootstrap" --resource-group "$RESOURCE_GROUP" \
     --template-file "$TEMPLATE_DIR/bootstrap.bicep" --parameters "${BOOTSTRAP_PARAMETERS[@]}" --no-pretty-print --output json > "$PREVIEWS/bootstrap"
+  echo null > "$PREVIEWS/network"
+  if [[ -n "$VIRTUAL_NETWORK" ]]; then
+    az deployment group what-if --name "$DEPLOYMENT_NAME-network" --resource-group "$RESOURCE_GROUP" \
+      --template-file "$TEMPLATE_DIR/network.bicep" --parameters "${NETWORK_PARAMETERS[@]}" --no-pretty-print --output json > "$PREVIEWS/network"
+  fi
   az deployment group what-if --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
     --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" --no-pretty-print --output json > "$PREVIEWS/main"
   # Access grants need the vault's secrets. Before the first install they don't
@@ -264,8 +276,8 @@ if [[ "$MODE" == what-if ]]; then
     grep -Eq 'ResourceNotFound|ParentResourceNotFound|SecretNotFound|VaultNotFound' "$ERRORS" || { cat "$ERRORS" >&2; exit 1; }
     echo null > "$PREVIEWS/access"
   fi
-  jq -n --slurpfile bootstrap "$PREVIEWS/bootstrap" --slurpfile main "$PREVIEWS/main" --slurpfile access "$PREVIEWS/access" \
-    '{bootstrap:$bootstrap[0],access:$access[0],main:$main[0]}'
+  jq -n --slurpfile bootstrap "$PREVIEWS/bootstrap" --slurpfile network "$PREVIEWS/network" --slurpfile main "$PREVIEWS/main" \
+    --slurpfile access "$PREVIEWS/access" '{bootstrap:$bootstrap[0],network:$network[0],access:$access[0],main:$main[0]}'
   exit 0
 fi
 
@@ -304,6 +316,15 @@ az deployment group create \
   --parameters "${BOOTSTRAP_PARAMETERS[@]}" \
   --query properties.provisioningState \
   --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
+# The network comes before the database: Atlas's private connection string
+# exists only once the private endpoint is registered with Atlas.
+if [[ -n "$VIRTUAL_NETWORK" ]]; then
+  progress "Preparing the private network..."
+  wait_for_deployment "$DEPLOYMENT_NAME-network"
+  az deployment group create --name "$DEPLOYMENT_NAME-network" --resource-group "$RESOURCE_GROUP" \
+    --template-file "$TEMPLATE_DIR/network.bicep" --parameters "${NETWORK_PARAMETERS[@]}" \
+    --query properties.provisioningState --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
+fi
 if [[ "$MODE" == bootstrap ]]; then
   exit 0
 fi

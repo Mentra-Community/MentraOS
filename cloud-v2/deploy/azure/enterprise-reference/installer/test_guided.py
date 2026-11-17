@@ -927,6 +927,35 @@ class GuidedTests(unittest.TestCase):
         prompt.assert_not_called()
         vault_set.assert_called_once_with(self.config, 'mongo-url', url)
 
+    def test_an_atlas_private_endpoint_is_registered_before_its_connection_string(self):
+        # Atlas writes the resource ID in lower case.
+        service = ('/subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/rg_abc_def/providers/'
+                   'Microsoft.Network/privateLinkServices/pls_6344ac8f51b94c6356527881')
+        self.config.update(virtualNetworkName='vnet-acme', atlasPrivateLinkServiceId=service)
+        endpoint = {'id': '/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/privateEndpoints/vnet-acme-atlas',
+                    'networkInterfaces': [{'id': 'nic-id'}]}
+        calls = []
+        def azure(config, *argv):
+            calls.append(argv)
+            if argv[:2] == ('network', 'private-endpoint'):
+                if len(calls) == 1:
+                    raise setup.SetupError('not found')
+                return endpoint
+            return '10.40.2.4'
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'grant_vault_access') as network:
+            with self.assertRaises(setup.SetupError) as raised:
+                self.ensure_database(None, tty=False)
+        # The network is created with the ownership resources when it is missing.
+        network.assert_called_once_with(self.config)
+        self.assertIn('atlas privateEndpoints azure interfaces create 6344ac8f51b94c6356527881 '
+                      f"--projectId ATLAS_PROJECT_ID --privateEndpointId {endpoint['id']} --privateEndpointIpAddress 10.40.2.4",
+                      str(raised.exception))
+        self.assertIn('--mongo-url-stdin', str(raised.exception))
+        # A saved connection string needs nothing from Azure.
+        with patch.object(setup, 'azure') as untouched:
+            self.ensure_database('mongodb://saved/db')
+        untouched.assert_not_called()
+
     def core_registration(self, redirect=True, claim=True, scopes=('openid', 'email', 'profile')):
         ids = {'openid': 'id-openid', 'email': 'id-email', 'profile': 'id-profile', 'offline_access': 'id-offline'}
         app = {'id': 'core-object',
@@ -1184,7 +1213,7 @@ class GuidedTests(unittest.TestCase):
         verify.assert_called_once()
 
     def test_tenant_suggestion_follows_the_chosen_subscription(self):
-        answers = iter(['33333333-3333-3333-3333-333333333333', '', 'ACME', '', '', '', 'acme.example'])
+        answers = iter(['33333333-3333-3333-3333-333333333333', '', 'ACME', '', '', '', '', 'acme.example'])
         prompts = []
         def ask(label):
             prompts.append(label)
@@ -1223,6 +1252,16 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual((config['subscriptionId'], config['tenantId']), (SUB, TENANT))
         self.assertEqual((config['location'], config['workspaceHostname']), ('westeurope', 'mentra.acme.example'))
         self.assertEqual(config['communicationDataLocation'], 'Europe')
+        # A new deployment's environment is created in its own network.
+        self.assertEqual((config['virtualNetworkName'], config['atlasPrivateLinkServiceId']), ('vnet-acme-mentra', ''))
+        service = ('/subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/rg_abc_def/providers/'
+                   'Microsoft.Network/privateLinkServices/pls_6344ac8f51b94c6356527881')
+        config, _ = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
+                                        atlasPrivateLinkServiceId=service), where='atlas')
+        self.assertEqual(config['atlasPrivateLinkServiceId'], service)
+        with self.assertRaisesRegex(setup.SetupError, 'privateLinkServices'):
+            self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
+                                atlasPrivateLinkServiceId='pls_6344ac8f51b94c6356527881'), where='service')
         with self.assertRaisesRegex(setup.SetupError, 'subdomain'):
             self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
                                 workspaceHostname='acme.example'), where='apex')
@@ -1257,6 +1296,12 @@ class GuidedTests(unittest.TestCase):
         config, _ = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra'), earlier)
         self.assertEqual(config['resourceTags']['costCenter'], '42')
         self.assertEqual(config['managedMiniappDirectory'], '')
+        # Made before the private network: its environment cannot be moved into one.
+        self.assertEqual((config['virtualNetworkName'], config['atlasPrivateLinkServiceId']), ('', ''))
+        # Asking for a network there is refused rather than dropped.
+        with self.assertRaisesRegex(setup.SetupError, 'without a private network'):
+            self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
+                                virtualNetworkName='vnet-acme'), earlier, where='moved')
 
     def test_an_explicitly_empty_miniapp_allowlist_is_kept(self):
         config, _ = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',

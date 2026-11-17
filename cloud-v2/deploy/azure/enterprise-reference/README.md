@@ -253,11 +253,10 @@ subdomain, or extend the template before qualifying an apex hostname.
 The templates create no database. Core reads its MongoDB connection string from
 the Key Vault secret `mongo-url`, which setup asks for and stores (see
 [The database](./customer-setup.md#the-database)); Azure Cosmos DB and Azure
-DocumentDB are not supported. The Container Apps environment has no VNet, so
-Core reaches the database over its authenticated public endpoint; a private
-connection needs a VNet-integrated environment and an Atlas private endpoint.
-Treat this as a documented tradeoff, not a production network posture; see
-[customer-setup.md](./customer-setup.md) for the private-networking guidance.
+DocumentDB are not supported. The Container Apps environment is created in the
+deployment's virtual network (`network.bicep`), and Core reaches Atlas through a
+private endpoint there, so the database is never reachable from the internet
+(see [Connecting Atlas privately](./customer-setup.md#connecting-atlas-privately)).
 
 ## Smoke test
 

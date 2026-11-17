@@ -13,8 +13,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parents[3]
-FILES = ('setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep', 'access.bicep',
-         'deployment.config.example.json', 'answers.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
+FILES = ('setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep', 'network.bicep',
+         'access.bicep', 'deployment.config.example.json', 'answers.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
          'scripts/ensure-vault-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh')
 # Oldest Mentra App release a deployment of this release lets employees use; older apps are asked to update.
 # Raise it when the services need a newer app, never above the app version built with the image.

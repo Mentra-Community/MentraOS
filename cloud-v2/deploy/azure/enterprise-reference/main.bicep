@@ -47,6 +47,8 @@ param clientRecommendedVersion string = ''
 param deploymentId string = 'mentra-enterprise-reference'
 param displayName string = 'Mentra Enterprise Demo'
 param environmentName string = 'cae-mentra-enterprise-reference'
+@description('Network from network.bicep whose apps subnet holds the environment. Empty keeps the environment outside any network. Changing it means creating the environment again.')
+param virtualNetworkName string = ''
 param runtimeName string = 'ca-mentra-enterprise-reference'
 param coreName string = 'ca-mentra-ent-ref-core'
 @description('Existing per-app identities created by bootstrap.bicep. Each pulls the image and reads only its own secrets.')
@@ -123,7 +125,14 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
   tags: resourceTags
-  properties: {}
+  // Inside the network, Core reaches its database through the private endpoint;
+  // the apps stay public.
+  properties: empty(virtualNetworkName) ? {} : {
+    vnetConfiguration: {
+      infrastructureSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, 'apps')
+      internal: false
+    }
+  }
 }
 
 resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (!empty(workspaceHostname)) {

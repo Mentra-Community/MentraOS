@@ -14,6 +14,8 @@
   "deploymentId": "acme-private",
   "displayName": "ACME Mentra",
   "environmentName": "cae-acme-mentra",
+  "virtualNetworkName": "vnet-acme-mentra",
+  "atlasPrivateLinkServiceId": "",
   "runtimeName": "ca-acme-mentra",
   "coreName": "ca-acme-mentra-core",
   "coreAdminEmails": "",

@@ -588,9 +588,10 @@ else:sys.exit(9)
         result, calls = self.deploy('--bootstrap-only')
         self.assertEqual(result.returncode, 0, result.stderr)
         created = [c for c in calls if c[:3] == ['deployment', 'group', 'create']]
-        self.assertEqual(len(created), 1)
-        self.assertTrue(created[0][created[0].index('--template-file') + 1].endswith('bootstrap.bicep'))
+        # The ownership template, then the network: Atlas's private connection string needs its endpoint.
+        self.assertEqual([c[c.index('--template-file') + 1].rsplit('/', 1)[-1] for c in created], ['bootstrap.bicep', 'network.bicep'])
         self.assertIn('operatorPrincipalId=abcdef12-1234-1234-1234-abcdef123456', created[0])
+        self.assertIn('virtualNetworkName=vnet-acme-mentra', created[1])
         self.assertFalse(any(c[:2] in (['keyvault', 'secret'], ['acr', 'import']) for c in calls))
 
     def test_what_if_previews_both_templates_with_the_callers_identity(self):
@@ -598,7 +599,7 @@ else:sys.exit(9)
         result, calls = self.deploy('--what-if')
         self.assertEqual(result.returncode, 0, result.stderr)
         preview = json.loads(result.stdout)
-        self.assertEqual(set(preview), {'bootstrap', 'access', 'main'})
+        self.assertEqual(set(preview), {'bootstrap', 'network', 'access', 'main'})
         bootstrap = next(c for c in calls if c[:3] == ['deployment', 'group', 'what-if'] and 'bootstrap' in c[c.index('--template-file') + 1])
         self.assertIn('operatorPrincipalId=abcdef12-1234-1234-1234-abcdef123456', bootstrap)
         self.assertIn('keyVaultName=kvacmementra', bootstrap)

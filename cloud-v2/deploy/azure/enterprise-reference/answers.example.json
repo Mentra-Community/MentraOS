@@ -6,5 +6,6 @@
   "location": "westus2",
   "workspaceHostname": "mentra.acme.example",
   "verifiedEmailDomains": ["acme.example"],
+  "atlasPrivateLinkServiceId": "<atlas-private-endpoint-service-resource-id, or empty>",
   "resourceTags": {}
 }
