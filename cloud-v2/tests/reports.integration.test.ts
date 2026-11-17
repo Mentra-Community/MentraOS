@@ -615,15 +615,11 @@ describe("report idempotency keys", () => {
     expect(await ReportModel.countDocuments({ incidentKey: INCIDENT_KEY })).toBe(2);
   });
 
-  test("rejects malformed incident keys and needs no unique index beyond reportId", async () => {
+  test("rejects malformed incident keys", async () => {
     for (const incidentKey of ["", "has space", "slash/key", "x".repeat(129), 42]) {
       expect((await submit({ ...crashReport(), incidentKey })).status).toBe(400);
     }
     expect(await ReportModel.countDocuments({})).toBe(0);
-    // Cosmos DB cannot add a unique index to a collection that already holds
-    // reports, so deduplication rides on the reportId index the collection was created with.
-    const unique = (await ReportModel.collection.indexes()).filter(row => row.unique).map(row => row.key);
-    expect(unique).toEqual([{ reportId: 1 }]);
   });
 
   test("a log upload repeated with the same retry key and bytes is stored once", async () => {

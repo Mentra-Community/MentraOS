@@ -5,7 +5,8 @@ cloud-neutral image and configuration contract is in
 [private-deployment.md](../../private-deployment.md). The Azure template starts the
 same immutable Mentra Cloud image as two Container Apps:
 
-- customer Core with Cosmos DB for MongoDB-compatible persistence and Azure Files for durable report attachments; and
+- customer Core, with its data in the company's own MongoDB 8.0 replica set (MongoDB Atlas on Azure is the
+  recommended one; see [The database](./customer-setup.md#the-database)) and Azure Files for durable report attachments; and
 - meetings-only Runtime with the `acs-teams` provider.
 
 It also creates ACS, a Container Apps environment, per-app identities, managed TLS
@@ -249,11 +250,12 @@ environment's static inbound IP plus TXT or HTTP domain-control validation,
 which `main.bicep` (hard-wired to CNAME validation) does not configure. Use a
 subdomain, or extend the template before qualifying an apex hostname.
 
-Cosmos DB keeps `publicNetworkAccess: Enabled` in this reference. Core reaches
-it over the authenticated public endpoint because the Container Apps
-environment has no VNet; disabling public access requires a VNet-integrated
-environment and a Cosmos private endpoint, and the Container Apps outbound IPs
-are not known before Core exists, so an IP firewall cannot be templated here.
+The templates create no database. Core reads its MongoDB connection string from
+the Key Vault secret `mongo-url`, which setup asks for and stores (see
+[The database](./customer-setup.md#the-database)); Azure Cosmos DB and Azure
+DocumentDB are not supported. The Container Apps environment has no VNet, so
+Core reaches the database over its authenticated public endpoint; a private
+connection needs a VNet-integrated environment and an Atlas private endpoint.
 Treat this as a documented tradeoff, not a production network posture; see
 [customer-setup.md](./customer-setup.md) for the private-networking guidance.
 

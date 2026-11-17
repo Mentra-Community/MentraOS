@@ -40,14 +40,10 @@ export function retryUntilSucceeded(
   }
 }
 
-// Core waits for each model's automatic build (Model.init()) at startup, so a
-// successful one is reused as is. Model.init() keeps a rejected promise for the
-// life of the process, though: when the startup build failed, for example on a
-// throttled Azure Cosmos DB metadata request, the index is built again here.
-const ensureSupportProfileIndexes = retryUntilSucceeded(
-  () => SupportProfileModel.init().catch(() => SupportProfileModel.createIndexes()),
-  INDEX_RETRY_MS,
-)
+// Core builds every model's indexes at startup (buildModelCollections). If that
+// build failed, the index is built here, until it succeeds; once built, building
+// it again changes nothing.
+const ensureSupportProfileIndexes = retryUntilSucceeded(() => SupportProfileModel.createIndexes(), INDEX_RETRY_MS)
 
 export interface SupportStateInput {
   observedAt: string

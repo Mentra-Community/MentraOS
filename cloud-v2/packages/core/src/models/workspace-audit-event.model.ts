@@ -51,10 +51,14 @@ const WorkspaceAuditEventSchema = new Schema(
 
 // One workspace's audit page, newest first.
 WorkspaceAuditEventSchema.index({workspaceId: 1, eventId: -1})
-// The change feed: events in `seq` order. NOT unique: the collection already holds documents in every
-// deployment, and Azure Cosmos DB cannot add a unique index to a populated collection. Uniqueness comes
-// from the counter, not from this index. Events without a `seq` fall outside every range read of it.
-WorkspaceAuditEventSchema.index({seq: 1})
+// The change feed: events in `seq` order, one event per number. Events without a `seq` are not in the
+// index and fall outside every range read of it. Earlier releases built it plain under the same name;
+// the startup migrations replace that one (`replacePlainSeqIndex`).
+export const SEQ_INDEX = {
+  key: {seq: 1},
+  options: {name: "seq_1", unique: true, partialFilterExpression: {seq: {$exists: true}}},
+} as const
+WorkspaceAuditEventSchema.index(SEQ_INDEX.key, SEQ_INDEX.options)
 
 export type WorkspaceAuditEventRow = InferSchemaType<typeof WorkspaceAuditEventSchema>
 export const WorkspaceAuditEventModel = registerModel("WorkspaceAuditEvent", WorkspaceAuditEventSchema)

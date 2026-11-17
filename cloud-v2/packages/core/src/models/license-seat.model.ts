@@ -26,8 +26,7 @@ const LicenseSeatSchema = new Schema(
   {timestamps: true, collection: "license_seats"},
 )
 
-// One seat per member per license. The collection is new, so the unique index builds on an empty one
-// (Azure Cosmos DB cannot add a unique index to a collection that already holds documents).
+// One seat per member per license.
 LicenseSeatSchema.index({licenseId: 1, membershipId: 1}, {unique: true})
 // "Which seats does this person hold?" (the features in their miniapp tokens).
 LicenseSeatSchema.index({mentraUserId: 1})

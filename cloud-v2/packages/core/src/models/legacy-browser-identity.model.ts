@@ -11,9 +11,6 @@
  * under it, for their Core user (`services/workspaces/membership-claim.service.ts`):
  * `claimedAt` and `claimedBy` record when and by whom. A claimed identity is
  * never claimed by anyone else.
- *
- * The collection is new, so its unique index is built while it is empty (Azure
- * Cosmos DB refuses a unique index on a collection that already holds documents).
  */
 
 import {Schema, type ClientSession, type InferSchemaType} from "mongoose"

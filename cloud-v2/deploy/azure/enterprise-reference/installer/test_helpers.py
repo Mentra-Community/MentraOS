@@ -235,8 +235,12 @@ else:sys.exit(9)
             self.assertNotIn(name, parameters)
         template = (ROOT / 'main.bicep').read_text()
         self.assertNotIn('@secure()', template)
-        # 5 Core secrets, the admin portal's 3 sign-in secrets, the Graph secret and the demo's 2 speech keys.
-        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 11)
+        # Core's database and 5 more Core secrets, the admin portal's 3 sign-in secrets, the Graph secret and the
+        # demo's 2 speech keys. The template creates no database: Core reads the company's from Key Vault.
+        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 12)
+        self.assertIn("{ name: 'mongo-url', keyVaultUrl: '${vaultUri}secrets/mongo-url', identity: coreIdentity.id }", template)
+        self.assertIn("'mongo-url'", (ROOT / 'access.bicep').read_text())
+        self.assertNotIn('Microsoft.DocumentDB', template)
         # Each app reads only its own secrets with its own identity; nothing reads the admin key.
         core = template[template.index("resource core '"):template.index("resource runtime '")]
         runtime = template[template.index("resource runtime '"):]
@@ -275,7 +279,7 @@ else:sys.exit(9)
         self.assertIn('param verifiedEmailDomains array = []', template)
         self.assertIn('param adminPortalSignIn bool = false', template)
         core = template[template.index("resource core '"):template.index("resource runtime '")]
-        provider = template[template.index('var oidcProviders = ['):template.index('var mongoConnectionString')]
+        provider = template[template.index('var oidcProviders = ['):template.index('var resolvedManagedMiniapps')]
         # Present either way: Core serves the admin portal, and its sign-in answers "not configured" when off.
         for line in ("{ name: 'CLOUD_CORE_OIDC_PROVIDERS', value: string(oidcProviders) }",
                      "{ name: 'CLOUD_CORE_ADMIN_PORTAL_URL', value: coreOrigin }",
@@ -283,7 +287,7 @@ else:sys.exit(9)
             self.assertIn(line, core)
         # The admin portal signs in through Core's sign-in server on Core's host; there is no separate sign-out URL.
         self.assertNotIn('CLOUD_CORE_IDP_SIGNOUT_URL', template)
-        clients = template[template.index('var oidcClients = ['):template.index('var mongoConnectionString')]
+        clients = template[template.index('var oidcClients = ['):template.index('var resolvedManagedMiniapps')]
         for line in ("clientId: 'admin-portal'", "kind: 'admin_portal'", "secretEnv: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET'",
                      "redirectUris: ['${coreOrigin}/api/admin/auth/callback']"):
             self.assertIn(line, clients)

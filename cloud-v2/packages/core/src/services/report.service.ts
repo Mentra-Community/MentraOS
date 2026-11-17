@@ -142,9 +142,7 @@ const CROCKFORD_BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /** The reportId of a keyed submission: the user and incident key hashed into the
  * same `rep_` + 26-character ULID alphabet as every other device report. The
- * long-standing unique reportId index then deduplicates keyed submissions, so
- * no new unique index is needed (Cosmos DB, which Private Cloud uses, cannot
- * add one to a collection that already holds reports). */
+ * long-standing unique reportId index then deduplicates keyed submissions. */
 export function incidentReportId(mentraUserId: string, incidentKey: string): string {
   let value = BigInt(`0x${createHash("sha256").update(`incident\n${mentraUserId}\n${incidentKey}`).digest("hex").slice(0, 32)}`);
   let id = "";

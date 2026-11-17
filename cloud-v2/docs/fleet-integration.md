@@ -518,8 +518,7 @@ that was offline can catch up:
   feed leaves organization-level events (operator keys) out, so consecutive feed
   events can skip numbers. A skipped number is never a missed workspace event.
 - **Re-read an overlap.** On a database that cannot run the transaction (a
-  standalone `mongod`, or Azure Cosmos DB for MongoDB, which fails a transaction
-  across two collections), the one event Core can still record, the
+  standalone `mongod`), the one event Core can still record, the
   `user.deleted` tombstone of a person in no workspace, is written without one:
   Core reserves its `seq`, then inserts the event, as two separate writes. Its
   `seq` is unique and increasing but not ordered against concurrent writers, so

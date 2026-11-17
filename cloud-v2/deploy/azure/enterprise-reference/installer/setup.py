@@ -26,13 +26,16 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS = ('Microsoft.App', 'Microsoft.ContainerRegistry', 'Microsoft.ManagedIdentity',
-             'Microsoft.Communication', 'Microsoft.DocumentDB', 'Microsoft.Storage', 'Microsoft.KeyVault')
+             'Microsoft.Communication', 'Microsoft.Storage', 'Microsoft.KeyVault')
 BINDING_KEYS = ('subscriptionId', 'tenantId', 'resourceGroup', 'registryName', 'location',
                 'workspaceHostname', 'environmentName', 'runtimeName', 'coreName', 'coreIdentityName', 'runtimeIdentityName',
-                'communicationName', 'mongoAccountName', 'reportStorageAccountName', 'deploymentName',
+                'communicationName', 'reportStorageAccountName', 'deploymentName',
                 'resourceTags', 'coreApiClientId', 'mobileClientId', 'keyVaultName')
 # Key Vault holds every original secret; nothing secret is stored locally.
 ADMIN_KEY_SECRET = 'mentra-admin-key'
+# Core's database: the company's own MongoDB replica set, never created by setup.
+MONGO_SECRET = 'mongo-url'
+MONGO_URL = re.compile(r'^mongodb(\+srv)?://[^/?#\s]+/[^/?#\s]+(\?\S*)?$')
 # Teams settings, email domains and admin portal sign-in may be added after
 # installation; resume rolls them out.
 UPDATABLE_KEYS = {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId', 'teamsGraphClientId',
@@ -432,7 +435,7 @@ RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName
                  'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
                  'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn',
                  'miniappConfiguration', 'miniappVariants', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
-                 'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'mongoAccountName', 'reportStorageAccountName')
+                 'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'reportStorageAccountName')
 # Restored even when empty: an empty value there is a deliberate choice.
 RESTORED_AS_IS = ('managedMiniappDirectory',)
 
@@ -690,10 +693,8 @@ def validate_resource_names(config):
     for key, pattern in patterns.items():
         if not isinstance(config.get(key), str) or not re.fullmatch(pattern, config[key]):
             raise SetupError(f'Invalid Azure resource name: {key}')
-    for key, pattern in (('mongoAccountName', r'[a-z0-9][a-z0-9-]{1,42}[a-z0-9]'),
-                         ('reportStorageAccountName', r'[a-z0-9]{3,24}')):
-        if config.get(key) and not re.fullmatch(pattern, config[key]):
-            raise SetupError(f'Invalid Azure resource name: {key}')
+    if config.get('reportStorageAccountName') and not re.fullmatch(r'[a-z0-9]{3,24}', config['reportStorageAccountName']):
+        raise SetupError('Invalid Azure resource name: reportStorageAccountName')
 
 
 def check_openssl():
@@ -935,6 +936,7 @@ def install(args, directory, config, state):
         env=environment(config), explain=True)
     ensure_group(config, state, checks)
     ensure_portal_secret(directory, config, state)
+    ensure_database(args, config)
     domain_verified = state.get('domainVerified', False)
     checkpoint(directory, state, 'deploying', configHash=digest(directory / 'deployment.config.json'))
     if config['workspaceHostname']:
@@ -1485,6 +1487,32 @@ def add_client_secret(config, app_object_id, secret_name, label):
     return expires
 
 
+def ensure_database(args, config):
+    # Core's database is a MongoDB 8.0 replica set the company provides (MongoDB
+    # Atlas on Azure is recommended, see customer-setup.md). Its connection string
+    # goes straight to Key Vault, where only Core reads it; a saved one is kept.
+    ensure_vault(config)
+    given = ''
+    if getattr(args, 'mongo_url_stdin', False):
+        given = sys.stdin.readline().strip()
+    elif not vault_get(config, MONGO_SECRET):
+        if not (sys.stdin.isatty() and not getattr(args, 'yes', False)):
+            raise SetupError(f"Key Vault {config['keyVaultName']} has no {MONGO_SECRET}, the connection string of Core's "
+                             'MongoDB database. Provide it with --mongo-url-stdin (see "The database" in customer-setup.md).')
+        print('  Core keeps its data in your MongoDB 8.0 replica set: MongoDB Atlas on Azure is recommended '
+              '(see "The database" in customer-setup.md).')
+        given = ask('Its connection string, naming the database (mongodb+srv://USER:PASSWORD@HOST/DATABASE?...; hidden)',
+                    '', True, secret=True).strip()
+    if not given:
+        return
+    if not MONGO_URL.fullmatch(given):
+        # The value is never echoed: it holds a password.
+        raise SetupError('That is not a MongoDB connection string naming a database: it must start with mongodb:// or '
+                         'mongodb+srv:// and name the database after the host, for example .../mentra-private?retryWrites=true.')
+    vault_set(config, MONGO_SECRET, given)
+    print(f"  Saved the connection string in Key Vault {config['keyVaultName']} as {MONGO_SECRET}.")
+
+
 def ensure_portal_secret(directory, config, state):
     # Core reads the Core API app's client secret for admin portal sign-in from
     # Key Vault, so it must be there before Core is granted it and deployed with
@@ -1515,7 +1543,7 @@ FRIENDLY_TYPES = {
     'Microsoft.App/containerApps': 'Container App', 'Microsoft.App/managedEnvironments': 'Container Apps environment',
     'Microsoft.App/managedEnvironments/managedCertificates': 'TLS certificate',
     'Microsoft.App/managedEnvironments/storages': 'Report storage mount',
-    'Microsoft.DocumentDB/databaseAccounts': 'Cosmos DB database', 'Microsoft.Storage/storageAccounts': 'Storage account',
+    'Microsoft.Storage/storageAccounts': 'Storage account',
     'Microsoft.Storage/storageAccounts/fileServices': 'File service',
     'Microsoft.Storage/storageAccounts/fileServices/shares': 'Report file share',
     'Microsoft.Communication/communicationServices': 'Azure Communication Services',
@@ -1615,7 +1643,8 @@ def plan(args, directory, config, state):
             'resourceGroup': 'created empty for the preview' if checks['resourceGroup'] == 'new' else 'existing',
             'preview': summary,
             'billing': 'These resources incur Azure charges. Review Azure Pricing Calculator and company budget before install.',
-            'network': 'Authenticated public HTTPS ingress, Cosmos and Key Vault endpoints; this profile does not provision private endpoints.'}
+            'network': 'Authenticated public HTTPS ingress and Key Vault endpoint; this profile does not provision private endpoints. '
+                       'The MongoDB database is yours, reached through the connection string in Key Vault.'}
 
 
 # --- Prompts ---------------------------------------------------------------
@@ -2338,8 +2367,8 @@ def upgrade_command(args, directory, interactive=None):
                         clientRecommendedVersion=target['clientMinVersion'])
         # An upgrade is only confirmed against Azure's own preview of it.
         print_preview(preview(directory, upcoming, state), upcoming)
-        print('Signing keys are safe in Key Vault. Azure backs up the database every 4 hours (restored through an Azure\n'
-              'support request); for a restore point you control, export it with your database tools first.\n'
+        print('Signing keys are safe in Key Vault. Back up your MongoDB database first: on MongoDB Atlas, take an\n'
+              'on-demand snapshot (Backup > Take Snapshot Now); on a replica set you run, use your own backup.\n'
               'Snapshot the report files:\n'
               f"  az storage share-rm snapshot --resource-group {config['resourceGroup']} --name core-attachments "
               f"--storage-account {report_storage_account(config)}\n"
@@ -2442,6 +2471,10 @@ def guided(args, directory):
     handoffs = entra_handoffs(args, config, interactive)
     checkpoint(directory, state, state['phase'], handoffs=handoffs)
     result = {'status': state['phase']}
+    if state['phase'] == 'infrastructure_verified' and getattr(args, 'mongo_url_stdin', False):
+        # A new connection string for a running deployment: Core reads it from Key Vault, no rollout needed.
+        section('The database')
+        ensure_database(args, config)
     if state['phase'] != 'infrastructure_verified':
         section('Installing')
         dns_ready = False
@@ -2583,6 +2616,8 @@ def main():
     parser.add_argument('--teams-user', help='Employee object ID or UPN for check-teams; no license assignment is performed')
     parser.add_argument('--teams-client-id', help='Existing Graph app for configure-teams (default: create one)')
     parser.add_argument('--teams-organizer', help='Licensed account (email or object ID) that hosts meetings for guests')
+    parser.add_argument('--mongo-url-stdin', action='store_true',
+                        help="Read Core's MongoDB connection string from standard input and store it in Key Vault")
     parser.add_argument('--teams-secret-stdin', action='store_true', help='Read the Graph app client secret from standard input')
     parser.add_argument('--backup-confirmed', action='store_true', help='Confirm the database and report files are backed up before upgrade')
     parser.add_argument('--previous-package', help='Package the deployment currently runs (default: found automatically)')

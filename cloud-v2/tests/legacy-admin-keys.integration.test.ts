@@ -497,7 +497,7 @@ describe("legacy admin keys", () => {
   })
 
   test("converting and carrying over a revocation never open a transaction", async () => {
-    // Cosmos DB for MongoDB and a standalone mongod have no multi-document transactions.
+    // A standalone mongod has no multi-document transactions.
     const startSession = spyOn(AccessCredentialModel.db, "startSession").mockImplementation(() => {
       throw new Error("Transaction numbers are only allowed on a replica set member or mongos")
     })

@@ -96,10 +96,9 @@ WorkspaceMembershipSchema.index(
 )
 // "Which workspaces is this person in?"
 WorkspaceMembershipSchema.index({mentraUserId: 1, status: 1})
-// The claim at first sign-in: one former Store user's pending memberships. Deliberately not unique:
-// Azure Cosmos DB cannot add a unique index to a collection that already holds documents, so the
-// import script, the only writer of pending memberships, keeps one active pending membership per
-// former Store user per workspace inside its transaction.
+// The claim at first sign-in: one former Store user's pending memberships. Not unique: the import
+// script, the only writer of pending memberships, keeps one active pending membership per former
+// Store user per workspace inside its transaction.
 WorkspaceMembershipSchema.index({pendingWorkosUserId: 1, status: 1})
 // Last-owner checks and role listings.
 WorkspaceMembershipSchema.index({workspaceId: 1, role: 1, status: 1})

@@ -35,38 +35,40 @@ export async function connectMongo(uri: string): Promise<void> {
   await mongoose.connect(uri, {
     // Fail fast on initial connect; afterwards Mongoose auto-retries.
     serverSelectionTimeoutMS: 10_000,
+    // Built below, one model at a time, instead of all at once on connect.
+    autoCreate: false,
+    autoIndex: false,
   });
-  // Mongoose builds each registered model's collection and indexes in the
-  // background once connected, and the startup migrations then build the same
-  // ones explicitly. Azure Cosmos DB refuses two concurrent builds on one
-  // collection ("already exists", or RetryWith), so the background builds
-  // finish first.
-  await settleModelBuilds();
+  await buildModelCollections();
 }
 
-/** The part of a Mongoose instance `settleModelBuilds` reads. */
+/** The part of a Mongoose instance `buildModelCollections` reads. */
 export type ModelRegistry = {
   modelNames(): string[];
-  model(name: string): { init(): Promise<unknown> };
+  model(name: string): {
+    schema: { get(option: string): unknown };
+    createCollection(): Promise<unknown>;
+    createIndexes(): Promise<unknown>;
+  };
 };
 
 /**
- * Wait for Mongoose's automatic collection and index builds of every model
- * registered so far. `init()` returns the build Mongoose already started. A
- * failed build is logged and does not throw: the model's explicit build in the
- * startup migrations decides whether Core starts, as it did before.
+ * Build every registered model's collection and indexes, one model at a time, rather than all at once
+ * on connect as Mongoose would, so startup's load on the database stays small and predictable. A model whose
+ * schema turns `autoCreate` or `autoIndex` off (a collection Core only reads) is left alone. A failed build
+ * is logged and does not throw: the startup migrations build the workspace models again, and decide
+ * whether Core starts, as before.
  */
-export async function settleModelBuilds(registry: ModelRegistry = mongoose): Promise<void> {
-  const names = registry.modelNames();
-  const results = await Promise.allSettled(names.map((name) => registry.model(name).init()));
-  results.forEach((result, index) => {
-    if (result.status === "rejected") {
-      logger.warn(
-        { model: names[index], error: (result.reason as Error)?.message },
-        "automatic collection or index build failed",
-      );
+export async function buildModelCollections(registry: ModelRegistry = mongoose): Promise<void> {
+  for (const name of registry.modelNames()) {
+    const model = registry.model(name);
+    try {
+      if (model.schema.get("autoCreate") !== false) await model.createCollection();
+      if (model.schema.get("autoIndex") !== false) await model.createIndexes();
+    } catch (err) {
+      logger.warn({ model: name, error: (err as Error)?.message }, "automatic collection or index build failed");
     }
-  });
+  }
 }
 
 /** Close the Mongo connection. Call from graceful-shutdown handlers. */
@@ -133,30 +135,6 @@ export function isTransactionsUnsupportedError(err: unknown): boolean {
       /^Current topology does not support sessions/.test(candidate.message)
     );
   });
-}
-
-/**
- * True only for the one failure Azure Cosmos DB for MongoDB (RU) gives a transaction that touches a
- * second collection: it commits a transaction within one collection, and answers the write to the
- * second with `MongoServerError` code 2, no error labels, and a message that starts
- * `Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; ...
- * Reason: (Message: {"Errors":["Transaction is not active"]}`. It matches that signature and nothing
- * broader: code 2 together with both `Transaction is not active` and `Substatus: 1101`, on the error or
- * its `cause`. MongoDB Atlas never produces this text, so on a replica set every failure still propagates.
- *
- * Kept apart from {@link isTransactionsUnsupportedError} on purpose: `withTransaction` rewraps that one
- * into an error naming the replica-set requirement, which this one's callers (the account-deletion
- * tombstone) do not want applied to every transaction on Cosmos.
- */
-export function isCrossCollectionTransactionUnsupported(err: unknown): boolean {
-  return someInCauseChain(
-    err,
-    (candidate) =>
-      candidate.name === "MongoServerError" &&
-      (candidate as { code?: unknown }).code === 2 &&
-      candidate.message.includes("Transaction is not active") &&
-      candidate.message.includes("Substatus: 1101"),
-  );
 }
 
 /**

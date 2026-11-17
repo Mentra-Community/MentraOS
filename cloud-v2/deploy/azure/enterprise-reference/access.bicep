@@ -1,5 +1,6 @@
 // Per-secret Key Vault read access, applied after the secrets exist. Core reads
-// only its signing keys, refresh pepper and admin portal sign-in secret; Runtime
+// only its database's connection string, its signing keys, refresh pepper and
+// admin portal sign-in secret; Runtime
 // reads only the configured Graph app's secret and, in the Acme demo, its speech
 // keys. No app can read mentra-admin-key, which is for operators.
 @description('Existing Key Vault created by bootstrap.bicep.')
@@ -21,6 +22,7 @@ var secretsUserRoleDefinitionId = subscriptionResourceId(
   '4633458b-17de-408a-b874-0445c86b69e6'
 )
 var coreSecrets = concat([
+  'mongo-url'
   'refresh-token-pepper'
   'mentra-jwt-private-key'
   'mentra-jwt-public-key'

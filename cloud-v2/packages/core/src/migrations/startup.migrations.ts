@@ -3,7 +3,7 @@
  * current schemas. These are intentionally narrow and idempotent.
  */
 
-import mongoose from "mongoose";
+import mongoose, { type Model } from "mongoose";
 import { createLogger } from "@mentra/cloud-shared";
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
@@ -23,7 +23,7 @@ import { WebsiteClientModel } from "../models/website-client.model";
 import { WorkspaceAssignedPackagesModel } from "../models/workspace-assigned-packages.model";
 import { MiniappRegistryArchiveRuleModel, MiniappRegistryEntryModel } from "../models/miniapp-registry.model";
 import { WorkspaceAuditCounterModel } from "../models/workspace-audit-counter.model";
-import { WorkspaceAuditEventModel } from "../models/workspace-audit-event.model";
+import { SEQ_INDEX, WorkspaceAuditEventModel } from "../models/workspace-audit-event.model";
 import { WorkspaceInvitationModel } from "../models/workspace-invitation.model";
 import { WorkspaceMembershipModel } from "../models/workspace-membership.model";
 import { WorkspaceModel } from "../models/workspace.model";
@@ -75,60 +75,52 @@ export async function runStartupMigrations(): Promise<void> {
   // Workspaces rely on unique indexes (one active membership per person, one
   // pending invitation per address, unique ids). Build them, and their
   // collections, before serving: a request in the first moments after boot must
-  // not create a collection inside a transaction. The membership claim's legacy
-  // identities are among them: their collection is created here while it is
-  // empty, so its unique index can be built on Azure Cosmos DB too. The change
-  // feed's counter collection is new and built empty the same way, as are the
-  // licenses and their seats (one seat per license and membership), and each
-  // workspace's assigned miniapps (one set per workspace); the feed's
-  // `seq` index on the already populated audit events is not unique, because
-  // Cosmos DB cannot add a unique index to a populated collection. An index the
-  // database refuses (some databases a Private Cloud uses support only part of
-  // MongoDB's index options) is logged and does not stop Core: sign-in,
-  // incidents and keys keep working.
-  await Promise.all(
-    [
-      WorkspaceModel,
-      WorkspaceMembershipModel,
-      WorkspaceInvitationModel,
-      AccessCredentialModel,
-      WorkspaceAuditEventModel,
-      WorkspaceAuditCounterModel,
-      LegacyBrowserIdentityModel,
-      LicenseModel,
-      LicenseSeatModel,
-      WorkspaceAssignedPackagesModel,
-      // Miniapp websites: one row per client ID (unique), looked up at every sign-in and refresh.
-      WebsiteClientModel,
-    ].map(
-      async (model) => {
-        try {
-          await model.createCollection();
-          await model.createIndexes();
-        } catch (error) {
-          logger.error(
-            { collection: model.collection.collectionName, error: (error as Error)?.message },
-            "failed to create workspace collection indexes",
-          );
-        }
-      },
-    ),
-  );
+  // not create a collection inside a transaction. That includes the membership
+  // claim's legacy identities, the change feed's counter and its unique `seq`
+  // index, the licenses and their seats (one seat per license and membership),
+  // and each workspace's assigned miniapps (one set per workspace). An index the
+  // database refuses is logged and does not stop Core: sign-in, incidents and
+  // keys keep working.
+  await replacePlainSeqIndex();
+  // One at a time, as Core builds every model's (connections/mongo.connection.ts).
+  for (const model of [
+    WorkspaceModel,
+    WorkspaceMembershipModel,
+    WorkspaceInvitationModel,
+    AccessCredentialModel,
+    WorkspaceAuditEventModel,
+    WorkspaceAuditCounterModel,
+    LegacyBrowserIdentityModel,
+    LicenseModel,
+    LicenseSeatModel,
+    WorkspaceAssignedPackagesModel,
+    // Miniapp websites: one row per client ID (unique), looked up at every sign-in and refresh.
+    WebsiteClientModel,
+  ] as Model<any>[]) {
+    try {
+      await model.createCollection();
+      await model.createIndexes();
+    } catch (error) {
+      logger.error(
+        { collection: model.collection.collectionName, error: (error as Error)?.message },
+        "failed to create workspace collection indexes",
+      );
+    }
+  }
+  await keepSeqIndexed();
   // The miniapp registry: one entry per URL and one archive rule per kind and value (both unique), built empty
   // with their collections before the first registration. A refused index is logged, as above.
-  await Promise.all(
-    [MiniappRegistryEntryModel, MiniappRegistryArchiveRuleModel].map(async (model) => {
-      try {
-        await model.createCollection();
-        await model.createIndexes();
-      } catch (error) {
-        logger.error(
-          { collection: model.collection.collectionName, error: (error as Error)?.message },
-          "failed to create miniapp registry collection indexes",
-        );
-      }
-    }),
-  );
+  for (const model of [MiniappRegistryEntryModel, MiniappRegistryArchiveRuleModel] as Model<any>[]) {
+    try {
+      await model.createCollection();
+      await model.createIndexes();
+    } catch (error) {
+      logger.error(
+        { collection: model.collection.collectionName, error: (error as Error)?.message },
+        "failed to create miniapp registry collection indexes",
+      );
+    }
+  }
   // Allowlisted admin API keys keep working as operator keys, before any
   // request is served. A key that fails is logged and retried next start.
   await convertLegacyAdminKeys();
@@ -211,6 +203,46 @@ async function backfillLegacyRefreshTokenTenant(): Promise<void> {
       { collection: REFRESH_TOKENS_COLLECTION, modifiedCount: result.modifiedCount },
       "backfilled legacy refresh token tenant id",
     );
+  }
+}
+
+/**
+ * Earlier releases built the change feed's `seq` index plain (Azure Cosmos DB for MongoDB in RU mode,
+ * which Private Cloud used then, cannot add a unique index to a collection that holds documents). Drop
+ * it, so the unique one of the same name can be built in its place. Every `seq` comes from the feed's
+ * counter, so no two events share one.
+ */
+async function replacePlainSeqIndex(): Promise<void> {
+  const collection = WorkspaceAuditEventModel.collection;
+  const { name } = SEQ_INDEX.options;
+  try {
+    const indexes = await collection.indexes().catch(() => []); // a fresh database has no collection yet
+    if (!indexes.some((index) => index.name === name && !index.unique)) return;
+    await collection.dropIndex(name);
+    logger.info({ collection: collection.collectionName, index: name }, "dropped the plain seq index");
+  } catch (error) {
+    logger.error({ error: (error as Error)?.message }, "failed to drop the plain seq index");
+  }
+}
+
+/**
+ * If the unique `seq` index cannot be built (two events sharing a number would stop it), the feed still
+ * gets a plain one, so its reads stay indexed; the next start tries the unique one again.
+ */
+async function keepSeqIndexed(): Promise<void> {
+  const collection = WorkspaceAuditEventModel.collection;
+  try {
+    await collection.createIndex(SEQ_INDEX.key, SEQ_INDEX.options); // nothing to do once it is built
+  } catch (uniqueError) {
+    try {
+      await collection.createIndex(SEQ_INDEX.key, { name: SEQ_INDEX.options.name });
+      logger.error(
+        { collection: collection.collectionName, error: (uniqueError as Error)?.message },
+        "the unique seq index could not be built; built a plain one in its place",
+      );
+    } catch (error) {
+      logger.error({ error: (error as Error)?.message }, "failed to index the change feed by seq");
+    }
   }
 }
 

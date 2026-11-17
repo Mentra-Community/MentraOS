@@ -9,8 +9,7 @@
  *  - organization-level events (operator keys) are written without a transaction and take no `seq`;
  *  - events recorded before the feed existed have no `seq`, never appear in it and never disturb
  *    paging, whatever their position in the collection;
- *  - the `seq` index is not unique: Azure Cosmos DB cannot add a unique index to a collection that
- *    already holds documents, and `workspace_audit_events` always does.
+ *  - the `seq` index is unique over the events that have one: no two events share a number.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random database name,
  * ignores `MONGO_URL`) and asserts the live connection is on that database before any destructive
@@ -563,18 +562,22 @@ describe("an empty automatic workspace giving way", () => {
 // --- The index -------------------------------------------------------------
 
 describe("the seq index", () => {
-  test("is a plain index: a second event may share a number", async () => {
+  test("is unique over the events that have a seq, and leaves out those without one", async () => {
     const indexes = await WorkspaceAuditEventModel.collection.indexes()
     const seqIndex = indexes.find(index => JSON.stringify(index.key) === JSON.stringify({seq: 1}))
 
-    expect(seqIndex).toBeDefined()
-    expect(seqIndex!.unique).not.toBe(true)
-    // Nothing forbids it, so a database that cannot build a unique index on a populated collection still builds this one.
+    expect(seqIndex).toMatchObject({unique: true, partialFilterExpression: {seq: {$exists: true}}})
+    await WorkspaceAuditEventModel.collection.insertOne(legacyDocument("01K00000000000000000000001", {seq: 9}))
+    const duplicate = await WorkspaceAuditEventModel.collection
+      .insertOne(legacyDocument("01K00000000000000000000002", {seq: 9}))
+      .then(() => null, (error: {code?: number}) => error.code)
+    expect(duplicate).toBe(11000)
+    // Organization and pre-feed events have no seq, and any number of them is fine.
     await WorkspaceAuditEventModel.collection.insertMany([
-      legacyDocument("01K00000000000000000000001", {seq: 9}),
-      legacyDocument("01K00000000000000000000002", {seq: 9}),
+      legacyDocument("01K00000000000000000000003"),
+      legacyDocument("01K00000000000000000000004"),
     ])
-    expect(await WorkspaceAuditEventModel.countDocuments({seq: 9})).toBe(2)
+    expect(await WorkspaceAuditEventModel.countDocuments({seq: {$exists: false}})).toBe(2)
   })
 
   test("the counter is one document with a fixed id, created on first use", async () => {

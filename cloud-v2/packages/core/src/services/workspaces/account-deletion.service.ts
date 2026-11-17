@@ -37,11 +37,7 @@
 import {createLogger} from "@mentra/cloud-shared"
 import {USER_DELETED_ACTION} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
-import {
-  isCrossCollectionTransactionUnsupported,
-  isTransactionsUnsupportedError,
-  withTransaction,
-} from "../../connections/mongo.connection"
+import {isTransactionsUnsupportedError, withTransaction} from "../../connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../../models/access-credential.model"
 import {WorkspaceAuditEventModel} from "../../models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../../models/workspace-invitation.model"
@@ -99,22 +95,13 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
       })
     } catch (err) {
       // Only a database positively known to be unable to run this transaction has no workspace state to
-      // end, because workspace writes fail there: a standalone mongod (`isTransactionsUnsupportedError`)
-      // or Azure Cosmos DB for MongoDB, which fails a transaction across two collections
-      // (`isCrossCollectionTransactionUnsupported`). Deleting such an account must not start failing, and
-      // its tombstone is still owed to the services that hold data about the person. Any other failure
-      // propagates: on a replica set the sweep retries in a minute, whereas a tombstone written outside
-      // the transaction while other recorders are active could be passed over by a poller and never seen.
-      if (workspaceState || !(isTransactionsUnsupportedError(err) || isCrossCollectionTransactionUnsupported(err))) {
-        throw err
-      }
-      // Expected, and on Azure Cosmos DB for MongoDB it happens at every deletion of a person with no
-      // workspace state: routine, so info, naming which signature matched rather than carrying the
-      // database's error (long, and its text is not Core's to repeat on every deletion).
-      logger.info(
-        {mentraUserId, reason: isTransactionsUnsupportedError(err) ? "transactions_unsupported" : "cross_collection_transaction_unsupported"},
-        "transactions are unsupported here; recording the user.deleted tombstone without one",
-      )
+      // end, because workspace writes fail there: a standalone mongod (`isTransactionsUnsupportedError`).
+      // Deleting such an account must not start failing, and its tombstone is still owed to the services
+      // that hold data about the person. Any other failure propagates: on a replica set the sweep retries
+      // in a minute, whereas a tombstone written outside the transaction while other recorders are active
+      // could be passed over by a poller and never seen.
+      if (workspaceState || !isTransactionsUnsupportedError(err)) throw err
+      logger.info({mentraUserId}, "transactions are unsupported here; recording the user.deleted tombstone without one")
       if (!(await tombstoneRecorded(mentraUserId, null))) await recordFeedEventWithoutTransaction(tombstone)
     }
   }

@@ -1,43 +1,64 @@
 import { describe, expect, test } from "bun:test";
-import { settleModelBuilds, type ModelRegistry } from "./mongo.connection";
+import { buildModelCollections, type ModelRegistry } from "./mongo.connection";
 
-function registry(inits: Record<string, () => Promise<unknown>>): ModelRegistry {
+type Steps = { options?: Record<string, unknown>; collection?: () => Promise<unknown>; indexes?: () => Promise<unknown> };
+
+function registry(models: Record<string, Steps>, log: string[]): ModelRegistry {
   return {
-    modelNames: () => Object.keys(inits),
-    model: (name) => ({ init: inits[name]! }),
+    modelNames: () => Object.keys(models),
+    model: (name) => ({
+      schema: { get: (option: string) => models[name]!.options?.[option] },
+      createCollection: async () => {
+        log.push(`${name} collection`);
+        await models[name]!.collection?.();
+      },
+      createIndexes: async () => {
+        log.push(`${name} indexes start`);
+        await models[name]!.indexes?.();
+        log.push(`${name} indexes end`);
+      },
+    }),
   };
 }
 
-describe("settleModelBuilds", () => {
-  test("waits for every model's automatic build", async () => {
-    let finishSlow!: () => void;
-    const slow = new Promise<void>((resolve) => {
-      finishSlow = resolve;
-    });
-    let settled = false;
-    const done = settleModelBuilds(registry({ Fast: async () => {}, Slow: () => slow })).then(() => {
-      settled = true;
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(settled).toBe(false);
-    finishSlow();
-    await done;
-    expect(settled).toBe(true);
+describe("buildModelCollections", () => {
+  test("builds one model's collection and indexes at a time", async () => {
+    const log: string[] = [];
+    const slow = () => new Promise((resolve) => setTimeout(resolve, 10));
+    await buildModelCollections(registry({ First: { indexes: slow }, Second: {} }, log));
+    expect(log).toEqual([
+      "First collection",
+      "First indexes start",
+      "First indexes end",
+      "Second collection",
+      "Second indexes start",
+      "Second indexes end",
+    ]);
   });
 
-  test("a failed build does not throw and the others still finish", async () => {
-    let otherFinished = false;
-    await settleModelBuilds(
-      registry({
-        Refused: async () => {
-          throw new Error("index not supported");
-        },
-        Other: async () => {
-          otherFinished = true;
-        },
-      }),
+  test("leaves alone what a schema turns off", async () => {
+    const log: string[] = [];
+    await buildModelCollections(
+      registry({ ReadOnly: { options: { autoCreate: false, autoIndex: false } }, Indexed: { options: { autoCreate: false } } }, log),
     );
-    expect(otherFinished).toBe(true);
+    expect(log).toEqual(["Indexed indexes start", "Indexed indexes end"]);
+  });
+
+  test("a failed build does not throw and the others still build", async () => {
+    const log: string[] = [];
+    await buildModelCollections(
+      registry(
+        {
+          Refused: {
+            indexes: async () => {
+              throw new Error("index not supported");
+            },
+          },
+          Other: {},
+        },
+        log,
+      ),
+    );
+    expect(log).toContain("Other indexes end");
   });
 });

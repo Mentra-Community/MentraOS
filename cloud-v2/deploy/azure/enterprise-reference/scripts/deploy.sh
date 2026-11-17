@@ -237,8 +237,7 @@ jq -n \
       documentationUrl:{value:($c.documentationUrl // "")},
       supportUrl:{value:($c.supportUrl // "")}
     }
-  } | if ($c.mongoAccountName // "") != "" then .parameters.mongoAccountName={value:$c.mongoAccountName} else . end
-    | if ($c.reportStorageAccountName // "") != "" then .parameters.reportStorageAccountName={value:$c.reportStorageAccountName} else . end
+  } | if ($c.reportStorageAccountName // "") != "" then .parameters.reportStorageAccountName={value:$c.reportStorageAccountName} else . end
   ' > "$PARAMETERS"
 }
 
@@ -311,6 +310,13 @@ fi
 
 progress "Checking the signing keys in Key Vault..."
 "$SCRIPT_DIR/ensure-vault-secrets.sh" "$KEY_VAULT" "$RESOURCE_GROUP" "$CORE_NAME"
+# Core's database is the company's own MongoDB replica set (see
+# customer-setup.md); setup stores its connection string in Key Vault.
+az keyvault secret show --vault-name "$KEY_VAULT" --name mongo-url --query id --output none 2>/dev/null || {
+  printf 'Key Vault %s has no mongo-url, the connection string of Core'"'"'s MongoDB database. Run setup again; it asks for it.\n' \
+    "$KEY_VAULT" >&2
+  exit 1
+}
 if [[ -n "$TEAMS_CLIENT_ID" ]]; then
   az keyvault secret show --vault-name "$KEY_VAULT" --name "teams-graph-client-secret-$TEAMS_CLIENT_ID" --query id --output none 2>/dev/null || {
     printf 'Graph meeting creation is configured, but Key Vault %s has no secret for Graph app %s. Run setup.sh configure-teams.\n' \

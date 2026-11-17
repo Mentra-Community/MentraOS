@@ -66,9 +66,7 @@
  * but is not active (deleted in Core) is skipped whole (`skippedWorkspaces`), and
  * nothing else in the report counts or names it. Core keeps at most one active
  * pending membership per WorkOS user per workspace: this script is the only
- * writer of pending memberships and checks it inside each org's transaction (a
- * unique index cannot be added to the collection on Azure Cosmos DB, which some
- * Private Clouds use). A membership whose person already holds a different
+ * writer of pending memberships and checks it inside each org's transaction. A membership whose person already holds a different
  * unclaimed membership in that workspace is skipped with the keys bound to it
  * (`pendingCollisions`); the rest of the org still imports.
  *

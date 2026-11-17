@@ -19,7 +19,6 @@ import type {Model} from "mongoose"
 import {
   connectMongo,
   disconnectMongo,
-  isCrossCollectionTransactionUnsupported,
   isTransactionsUnsupportedError,
   withTransaction,
 } from "../packages/core/src/connections/mongo.connection"
@@ -33,7 +32,7 @@ import {
   WORKSPACE_AUDIT_COUNTER_ID,
   WorkspaceAuditCounterModel,
 } from "../packages/core/src/models/workspace-audit-counter.model"
-import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
+import {SEQ_INDEX, WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
@@ -266,36 +265,21 @@ describe("withTransaction (error mapping, no Mongo)", () => {
       })
       return errors[0]!
     }
-    const classifiers = [
-      ["isTransactionsUnsupportedError", isTransactionsUnsupportedError],
-      ["isCrossCollectionTransactionUnsupported", isCrossCollectionTransactionUnsupported],
-    ] as const
-
     test("is not a match and does not throw, whether it loops through itself or through another error", () => {
-      for (const [name, classify] of classifiers) {
-        const self = new Error("a failure")
-        self.cause = self
-        const pair = cycle(new Error("outer"), new Error("inner"))
+      const self = new Error("a failure")
+      self.cause = self
+      const pair = cycle(new Error("outer"), new Error("inner"))
 
-        expect([name, classify(self)]).toEqual([name, false])
-        expect([name, classify(pair)]).toEqual([name, false])
-      }
+      expect(isTransactionsUnsupportedError(self)).toBe(false)
+      expect(isTransactionsUnsupportedError(pair)).toBe(false)
     })
 
     test("still finds the signature in a cycle, wherever the loop closes", () => {
       const standalone = Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {
         code: 20,
       })
-      const cosmos = new (WorkspaceModel.base.mongo.MongoServerError)({
-        message:
-          "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
-          'Reason: (Message: {"Errors":["Transaction is not active"]}\r\n)\'',
-        code: 2,
-        errorLabels: [],
-      })
 
       expect(isTransactionsUnsupportedError(cycle(new Error("outer"), standalone))).toBe(true)
-      expect(isCrossCollectionTransactionUnsupported(cycle(new Error("outer"), cosmos))).toBe(true)
     })
 
     test("looks five causes down and no further", () => {
@@ -310,60 +294,6 @@ describe("withTransaction (error mapping, no Mongo)", () => {
 
       expect(isTransactionsUnsupportedError(wrapped(5))).toBe(true)
       expect(isTransactionsUnsupportedError(wrapped(6))).toBe(false)
-    })
-  })
-
-  describe("Azure Cosmos DB for MongoDB's refusal of a transaction across collections", () => {
-    const cosmosMessage =
-      "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
-      'ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21; Reason: (Message: {"Errors":["Transaction is not active"]}\r\n' +
-      "ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21, Request URI: /apps/.../partitions/..., RequestStats: ...)'"
-    const cosmos = (fields: Record<string, unknown> = {}) =>
-      new (WorkspaceModel.base.mongo.MongoServerError)({message: cosmosMessage, code: 2, errorLabels: [], ...fields})
-
-    test("is recognized by its code and both parts of its text, on the error or its cause", () => {
-      const refused = cosmos()
-      expect(refused.name).toBe("MongoServerError")
-      expect(refused.hasErrorLabel("TransientTransactionError")).toBe(false)
-
-      for (const recognized of [refused, new Error("outer", {cause: refused})]) {
-        expect(isCrossCollectionTransactionUnsupported(recognized)).toBe(true)
-      }
-    })
-
-    test("is nothing broader: another code, half the text, another class, or a non-error is not it", () => {
-      for (const other of [
-        cosmos({code: 112}),
-        cosmos({code: undefined}),
-        cosmos({message: "BadValue: unknown operator"}),
-        cosmos({message: "Error=2, Details='Transaction is not active'"}),
-        cosmos({message: "Error=2, Details='BadRequest (400); Substatus: 1101'"}),
-        cosmos({errorLabels: ["TransientTransactionError"], code: 112, message: "write conflict"}),
-        Object.assign(new Error(cosmosMessage), {code: 2}),
-        new Error("outer", {cause: Object.assign(new Error(cosmosMessage), {code: 2})}),
-        new Error("connection closed"),
-        cosmosMessage,
-        null,
-        undefined,
-      ]) {
-        expect(isCrossCollectionTransactionUnsupported(other)).toBe(false)
-      }
-    })
-
-    test("is not what withTransaction rewraps as a replica-set requirement: the workspace writes see Cosmos' own error", async () => {
-      const refused = cosmos()
-      expect(isTransactionsUnsupportedError(refused)).toBe(false)
-      const spy = spyOn(WorkspaceModel.db, "startSession").mockResolvedValue({
-        withTransaction: async () => {
-          throw refused
-        },
-        endSession: async () => {},
-      } as any)
-      try {
-        expect(await thrown(() => withTransaction(async () => 1))).toBe(refused)
-      } finally {
-        spy.mockRestore()
-      }
     })
   })
 
@@ -530,13 +460,8 @@ describe("workspace models (local replica set)", () => {
       // The lookups the services use are indexed too.
       expect(byKey({mentraUserId: 1, status: 1})).toBeDefined()
       expect(byKey({workspaceId: 1, role: 1, status: 1})).toBeDefined()
-      // The claim at first sign-in finds a WorkOS user's pending rows. The index is not unique: Azure
-      // Cosmos DB cannot add a unique index to a populated collection, so the import enforces one pending
-      // row per person per workspace itself.
-      const pending = byKey({pendingWorkosUserId: 1, status: 1})
-      expect(pending).toBeDefined()
-      expect(pending?.unique).toBeUndefined()
-      expect(indexes.filter(index => index.unique && "pendingWorkosUserId" in index.key)).toEqual([])
+      // The claim at first sign-in finds a WorkOS user's pending rows.
+      expect(byKey({pendingWorkosUserId: 1, status: 1})).toBeDefined()
     })
 
     test("needs a Core user or a pending WorkOS user, and keeps only the fields it defines", async () => {
@@ -822,18 +747,14 @@ describe("workspace models (local replica set)", () => {
       expect(byKey({workspaceId: 1, eventId: -1})).toBeDefined()
     })
 
-    test("indexes the change feed by seq, and the index is not unique", async () => {
-      // `workspace_audit_events` is populated in every deployment, and Azure Cosmos DB cannot add a unique
-      // index to a populated collection: a unique seq index would stop an upgrade. Sequence order comes from
-      // the counter's transaction, not from the index.
+    test("indexes the change feed by seq, unique over the events that have one", async () => {
       const index = (await WorkspaceAuditEventModel.collection.indexes()).find(
         candidate => JSON.stringify(candidate.key) === JSON.stringify({seq: 1}),
       )
-      expect(index).toBeDefined()
-      expect(index!.unique).not.toBe(true)
+      expect(index).toMatchObject({name: "seq_1", unique: true, partialFilterExpression: {seq: {$exists: true}}})
       const [fields, options] = WorkspaceAuditEventModel.schema.indexes().find(([f]) => "seq" in f)!
       expect(fields).toEqual({seq: 1})
-      expect(options.unique).not.toBe(true)
+      expect(options.unique).toBe(true)
     })
 
     test("takes a seq only from events recorded for the feed: older events and organization events have none", async () => {
@@ -991,6 +912,53 @@ describe("workspace models (local replica set)", () => {
           }
         }
       }
+    })
+
+    describe("the seq index an earlier release built plain", () => {
+      const collection = () => WorkspaceAuditEventModel.collection
+      const seqIndex = async () => (await collection().indexes()).find(index => index.name === SEQ_INDEX.options.name)
+      const legacy = (eventId: string, seq?: number) => ({
+        eventId,
+        workspaceId: "ws_seq",
+        action: "membership.added",
+        actor: {kind: "system"},
+        occurredAt: new Date(),
+        ...(seq === undefined ? {} : {seq}),
+      })
+      /** The collection as an upgrade finds it: populated, with the plain `seq_1` index. */
+      async function plainIndexWith(documents: ReturnType<typeof legacy>[]) {
+        assertConnectedTo(databaseUrl, WorkspaceModel.db.name)
+        await collection().dropIndex(SEQ_INDEX.options.name)
+        await collection().createIndex({seq: 1}, {name: SEQ_INDEX.options.name})
+        await collection().insertMany(documents)
+      }
+
+      afterEach(async () => {
+        assertConnectedTo(databaseUrl, WorkspaceModel.db.name)
+        await WorkspaceAuditEventModel.deleteMany({workspaceId: "ws_seq"})
+        await collection().dropIndex(SEQ_INDEX.options.name).catch(() => undefined)
+        await collection().createIndex(SEQ_INDEX.key, SEQ_INDEX.options)
+      })
+
+      test("is replaced by the unique one on a populated collection", async () => {
+        await plainIndexWith([legacy("01HZSEQ0000000000000000001", 1), legacy("01HZSEQ0000000000000000002", 2),
+          legacy("01HZSEQ0000000000000000003"), legacy("01HZSEQ0000000000000000004")])
+
+        await runStartupMigrations()
+
+        expect(await seqIndex()).toMatchObject({unique: true, partialFilterExpression: {seq: {$exists: true}}})
+        expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: "ws_seq"})).toBe(4)
+      })
+
+      test("stays plain, so the feed's reads stay indexed, while two events share a seq", async () => {
+        await plainIndexWith([legacy("01HZSEQ0000000000000000005", 7), legacy("01HZSEQ0000000000000000006", 7)])
+
+        await runStartupMigrations()
+
+        const index = await seqIndex()
+        expect(index).toBeDefined()
+        expect(index!.unique).not.toBe(true)
+      })
     })
   })
 })

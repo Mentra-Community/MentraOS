@@ -1,8 +1,65 @@
 # Mentra Private Deployment customer setup
 
 Start with the [cloud-neutral contract](../../private-deployment.md). This runbook
-applies it to Azure Container Apps, Cosmos DB's Mongo-compatible API, Entra,
-ACS, and ACR.
+applies it to Azure Container Apps, Entra, ACS, and ACR, with Core's data in a
+MongoDB database the company provides (see [The database](#the-database)).
+
+## The database
+
+Core keeps its data in MongoDB, and needs a **MongoDB 8.0 replica set with
+transactions**: workspace changes are transactions across collections. Setup
+creates no database. The company provides one and gives setup its connection
+string, which setup stores in the deployment's Key Vault as `mongo-url`; only
+Core reads it. The connection string names the database after the host, for
+example `mongodb+srv://USER:PASSWORD@cluster0.example.mongodb.net/mentra-private?retryWrites=true&w=majority`.
+
+- **Recommended: MongoDB Atlas on Azure.** Create an Atlas organization from
+  the Azure portal or Marketplace (MongoDB Atlas, an Azure Native Integration),
+  so Atlas is billed through the Azure subscription, then create a dedicated
+  cluster (M30 or above for production; M10 for a trial) on MongoDB 8.0, in the
+  same Azure region as the deployment. Connect it privately: an Atlas private
+  endpoint (Azure Private Link) in a virtual network the Container Apps
+  environment is integrated with, or, for a trial, Atlas's IP access list. Create a database user for Core with `readWrite` on its database only.
+  Atlas runs in MongoDB's Azure account, in the region you choose, and backs it
+  up (Cloud Backup with point-in-time restore, configured in Atlas).
+- **Allowed: a MongoDB replica set you run**, MongoDB 8.0 with at least three
+  members, on Azure Kubernetes Service or virtual machines. Backups, upgrades,
+  monitoring and its network are yours. Azure Container Apps is not suitable for
+  a database: it has no stable storage or member identity for a replica set.
+- **Not supported: Azure Cosmos DB for MongoDB (RU or vCore) and Azure
+  DocumentDB.** They implement part of MongoDB's API, and Core is built and
+  tested against MongoDB itself. Mentra runs and tests one database everywhere,
+  rather than working around each compatible service's differences.
+
+### Creating MongoDB Atlas on Azure
+
+These are the steps Mentra ran for its own reference stack.
+
+1. In the Azure portal, create **MongoDB Atlas – An Azure Native Integration**
+   (Marketplace offer `mongodb_atlas_azure_native_prod`, plan "Pay as You Go",
+   monthly term). Fill in the subscription, resource group, resource name,
+   region (the deployment's region; Mentra's is West US 2) and a name for a new
+   Atlas organization, which is linked to that subscription for billing. The
+   price shown is $0.00 up front plus metered usage: the clusters are what cost
+   money.
+2. **Create** accepts MongoDB's and Microsoft's terms, authorizes Microsoft to
+   bill the subscription's payment method monthly, and shares the creator's
+   contact details with MongoDB. The deployment takes about 2.5 minutes.
+3. On the new resource, **Go to MongoDB Atlas** creates an Atlas login for the
+   signed-in Azure user's email address and emails it a link to set a password.
+   Do this as an Azure user whose address receives mail: a
+   `*.onmicrosoft.com` user with no mailbox gets no email and cannot get into
+   the organization, and this flow cannot change the address.
+4. If that already happened, invite a person with a real mailbox as a guest in
+   the tenant, give them Contributor on the Atlas resource's resource group, and
+   have them click **Go to MongoDB Atlas** while signed in to Azure. Atlas links
+   their Atlas login, existing or new, to the organization. With the tenant's
+   security defaults on, the guest first enrolls multi-factor sign-in.
+
+To set or change the connection string, run setup again with
+`--mongo-url-stdin` and the string on standard input; guided setup asks for it
+when Key Vault has none. Core reads a changed one within about 30 minutes, when
+Container Apps refreshes its Key Vault references, or at its next restart.
 
 ## Customer delivery package
 
@@ -38,9 +95,8 @@ Collect and approve:
   the Organization Admins who sign in to the admin portal;
 - assigned employees/groups, admin consent, MFA, and Conditional Access;
 - official Android/iOS distribution channels and redirect URIs;
-- persistent database, signing-key, refresh-pepper, backup, and rotation policy (Cosmos DB
-  uses Azure's periodic backup: every 4 hours, two copies kept, restored through an Azure
-  support request);
+- the MongoDB database (see [The database](#the-database)) and its backup policy, and the
+  signing-key, refresh-pepper and rotation policy;
 - SYSTEM miniapp/glasses allowlists and managed userland miniapps;
 - branding, privacy, terms, support, wallpapers, and version policy;
 - telemetry policy; and
@@ -76,7 +132,9 @@ interrupted install, finishes after a handoff, or upgrades. Guided setup:
    (`configure-entra.sh --installer-owner`), grants tenant-wide consent or
    prints the administrator message for it, and assigns the employees or groups
    the operator names (`--employees`).
-5. Installs with progress lines. Before Core is deployed it adds a client secret
+5. Installs with progress lines. Before Core is deployed it asks for the
+   database's connection string when Key Vault has none (hidden as it is typed,
+   stored only in Key Vault), adds a client secret
    to the Core app for admin portal sign-in, stores it in Key Vault and turns on
    `adminPortalSignIn` in the saved configuration. It
    handles DNS (adds the two records when the zone is in Azure DNS in the
@@ -216,25 +274,23 @@ The templates create:
 
 - one Container Apps environment;
 - separate Core and meetings-only Runtime apps using the same digest;
-- Cosmos DB with MongoDB-compatible API for Core identity/session state, with Azure's
-  periodic backup (continuous backup is not used: on API for MongoDB it forbids the unique
-  indexes Core creates);
 - customer-owned ACS;
 - a managed identity per app, each able to read only its own Key Vault secrets;
 - a purge-protected Key Vault holding the signing keys, refresh pepper,
-  admin portal client secret, administrator key and optional Graph client
-  secret;
+  admin portal client secret, administrator key, the database's connection
+  string and optional Graph client secret;
 - a generated deployment manifest; and
-- Container App secrets that reference Key Vault, plus ACS and Mongo
-  connection strings derived from their resources.
+- Container App secrets that reference Key Vault, plus the ACS connection
+  string derived from its resource.
 
-For customer production, use the customer's normal database, backup, private
-networking, and secret-management requirements. The template's public network
-Cosmos endpoint is an authenticated, customer-owned reference starting point,
-not a universal production network posture. It never connects to Mentra, but a
-customer requiring private data-plane ingress should supply its approved Mongo
-deployment or extend the reference with its standard VNet/private-endpoint
-module before qualification.
+They create no database: Core uses the company's (see [The database](#the-database)).
+
+For customer production, use the customer's normal backup, private networking,
+and secret-management requirements. The reference's Container Apps environment
+has no VNet, so it reaches the database over its authenticated public endpoint
+(an Atlas IP access list); a customer requiring private data-plane access
+extends the reference with its standard VNet module and an Atlas private
+endpoint before qualification. Nothing here connects to Mentra.
 
 Replace the reference legal documents and light/dark transparent PNGs. Managed
 miniapp ZIPs may be added as an asset layer or served by customer ingress; each

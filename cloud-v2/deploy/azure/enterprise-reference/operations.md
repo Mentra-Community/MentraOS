@@ -2,9 +2,10 @@
 
 ## Reports and durable attachments
 
-Core stores report records in the deployment's Cosmos DB (MongoDB API).
-Core's report-asset schema creates the `createdAt` index required by Cosmos
-for the ordered attachment lookup.
+Core stores report records in the deployment's MongoDB database (see
+[The database](./customer-setup.md#the-database)).
+Core's report-asset schema creates the `createdAt` index for the ordered
+attachment lookup.
 The Azure setup also creates an Azure Files share and mounts it at
 `/mnt/core-attachments` in Core. `CLOUD_STORAGE_PROVIDER=local` refers to this
 durable mount, not the container's temporary filesystem. Logs and screenshots
@@ -173,8 +174,9 @@ Record and approve these values before deployment:
   who sign in to the admin portal;
 - the Android/iOS Mentra App distribution channels and matching redirect URIs;
 - employee/group assignment, administrator consent, MFA, and Conditional Access;
-- persistent Mongo, refresh pepper, access/Runtime signing key, miniapp signing
-  key, backup, and rotation ownership;
+- the MongoDB database and its backups (MongoDB Atlas's Cloud Backup, or yours
+  for a replica set you run), and the refresh pepper, access/Runtime signing
+  key, miniapp signing key and rotation ownership;
 - approved SYSTEM miniapps and glasses models;
 - customer-managed userland miniapp package, version, URL, and SHA-256 pins;
 - privacy, terms, documentation, support, logo, and wallpaper assets;
@@ -284,9 +286,9 @@ running the current release until the operator confirms. Setup:
    (or `--previous-package PATH`), and refuses a package older than it and a
    deployment that has not finished setup;
 2. shows Azure's `what-if` preview of the change;
-3. prints how data is protected: signing keys stay in Key Vault; Azure backs up
-   Cosmos DB every 4 hours (restored through an Azure support request), so export
-   the database with your own tools for a restore point you control; and
+3. prints how data is protected: signing keys stay in Key Vault; back up the
+   MongoDB database first (on Atlas, an on-demand snapshot; on a replica set you
+   run, your own backup); and
    the report share is snapshotted with
    `az storage share-rm snapshot --resource-group <rg> --name core-attachments --storage-account <account>`;
 4. asks **Have you backed up the database and report files, and are you ready

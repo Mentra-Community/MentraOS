@@ -333,8 +333,8 @@ who signs in.
 | `RESEND_API_KEY`, `EMAIL_SENDER` | Invitation emails. Without them, inviting still works and returns the link to copy. |
 
 Workspace writes use multi-document transactions across collections, so they
-need a MongoDB replica set (Atlas, or `docker-compose.test.yml` locally). Azure
-Cosmos DB for MongoDB (RU) and a standalone `mongod` cannot run them: there,
+need a MongoDB replica set (Atlas, including a Private Cloud's, or
+`docker-compose.test.yml` locally). A standalone `mongod` runs none: there,
 workspace writes fail, while sign-in, incidents and operator keys keep working
 (an operator key is one document, written without a transaction). Core builds
 the workspace collections and their unique indexes before it serves; a database

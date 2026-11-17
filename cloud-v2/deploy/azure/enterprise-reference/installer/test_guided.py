@@ -105,6 +105,15 @@ class GuidedTests(unittest.TestCase):
         self.assertNotIn('install', calls)
         self.assertNotIn('preview', calls)
 
+    def test_a_new_connection_string_reaches_a_running_deployment_without_a_rollout(self):
+        self.write_state('infrastructure_verified', outputs={'workspaceOrigin': 'https://acme.example'})
+        self.args.mongo_url_stdin = True
+        with self.steps() as calls, patch.object(setup, 'ensure_database') as database, \
+             contextlib.redirect_stdout(io.StringIO()):
+            setup.guided(self.args, self.directory)
+        database.assert_called_once_with(self.args, setup.read_json(self.directory / 'deployment.config.json'))
+        self.assertNotIn('install', calls)
+
     def test_new_package_hands_over_to_upgrade(self):
         self.write_state('infrastructure_verified', release_hash='older-release')
         with self.steps() as calls:
@@ -879,6 +888,44 @@ class GuidedTests(unittest.TestCase):
             with self.assertRaisesRegex(setup.SetupError, 'Key Vault refused'):
                 setup.ensure_portal_secret(self.directory, self.config, state)
         self.assertIn(('removed', 'key-1'), calls)
+
+    def ensure_database(self, saved, given=None, tty=True, **flags):
+        args = argparse.Namespace(**flags)
+        found = setup.subprocess.CompletedProcess([], 0, '', '')
+        with patch.object(setup.subprocess, 'run', return_value=found), \
+             patch.object(setup, 'vault_get', return_value={'value': saved} if saved else None), \
+             patch.object(setup.sys.stdin, 'isatty', return_value=tty), patch.object(setup, 'vault_set') as vault_set, \
+             patch.object(setup.getpass, 'getpass', return_value=given or '') as prompt, \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            setup.ensure_database(args, self.config)
+        return vault_set, prompt, out.getvalue()
+
+    def test_the_database_connection_string_goes_to_key_vault_and_nowhere_else(self):
+        url = 'mongodb+srv://mentra:s3cret@cluster0.abcde.mongodb.net/mentra-private?retryWrites=true&w=majority'
+        vault_set, prompt, out = self.ensure_database(None, url)
+        prompt.assert_called_once()
+        vault_set.assert_called_once_with(self.config, 'mongo-url', url)
+        self.assertNotIn('s3cret', out)
+        # A saved one is kept, without asking.
+        vault_set, prompt, _ = self.ensure_database('mongodb://saved/db')
+        prompt.assert_not_called()
+        vault_set.assert_not_called()
+
+    def test_a_connection_string_without_a_database_is_refused_and_never_echoed(self):
+        for url in ('mongodb+srv://mentra:s3cret@cluster0.abcde.mongodb.net/?retryWrites=true',
+                    'https://mentra:s3cret@cluster0.abcde.mongodb.net/db', 'mongodb://mentra:s3cret@host'):
+            with self.assertRaises(setup.SetupError) as raised:
+                self.ensure_database(None, url)
+            self.assertNotIn('s3cret', str(raised.exception))
+
+    def test_without_a_terminal_the_connection_string_comes_from_standard_input(self):
+        with self.assertRaisesRegex(setup.SetupError, '--mongo-url-stdin'):
+            self.ensure_database(None, tty=False)
+        url = 'mongodb://mentra:s3cret@mongo-0.example,mongo-1.example/mentra-private?replicaSet=rs0'
+        with patch.object(setup.sys.stdin, 'readline', return_value=url + '\n'):
+            vault_set, prompt, _ = self.ensure_database('mongodb://old/db', tty=False, mongo_url_stdin=True)
+        prompt.assert_not_called()
+        vault_set.assert_called_once_with(self.config, 'mongo-url', url)
 
     def core_registration(self, redirect=True, claim=True, scopes=('openid', 'email', 'profile')):
         ids = {'openid': 'id-openid', 'email': 'id-email', 'profile': 'id-profile', 'offline_access': 'id-offline'}

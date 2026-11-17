@@ -1069,8 +1069,8 @@ describe("createOperatorKey", () => {
   })
 
   test("creating, using and revoking an operator key never opens a transaction", async () => {
-    // A Private Cloud may run on a database without multi-document transactions
-    // (Cosmos DB for MongoDB, a standalone mongod). Operator keys must still work there.
+    // A database without multi-document transactions (a standalone mongod) must
+    // still run operator keys.
     const startSession = spyOn(AccessCredentialModel.db, "startSession").mockImplementation(() => {
       throw new Error("Transaction numbers are only allowed on a replica set member or mongos")
     })

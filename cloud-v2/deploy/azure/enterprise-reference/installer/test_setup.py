@@ -322,16 +322,18 @@ class InstallerTests(unittest.TestCase):
             return ''
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
              patch.object(setup, 'run', side_effect=run), patch.object(setup, 'ensure_portal_secret'), \
-             patch.object(setup, 'deploy', side_effect=setup.SetupError('interrupted')):
+             patch.object(setup, 'ensure_database'), patch.object(setup, 'deploy', side_effect=setup.SetupError('interrupted')):
             with self.assertRaisesRegex(setup.SetupError, 'interrupted'):
                 setup.install(self.args, self.directory, self.config, self.state)
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
              patch.object(setup, 'run', side_effect=run), patch.object(setup, 'deploy'), \
-             patch.object(setup, 'ensure_portal_secret') as portal_secret, \
+             patch.object(setup, 'ensure_portal_secret') as portal_secret, patch.object(setup, 'ensure_database') as database, \
              patch.object(setup, 'verify', return_value={'status': 'infrastructure_verified'}):
             self.assertEqual(setup.install(self.args, self.directory, self.config, self.state)['status'], 'infrastructure_verified')
-        # The admin portal's client secret is in Key Vault before Core is deployed to read it.
+        # The admin portal's client secret and the database's connection string are in Key Vault before Core is
+        # deployed to read them.
         portal_secret.assert_called_once_with(self.directory, self.config, self.state)
+        database.assert_called_once_with(self.args, self.config)
         validate = [argv for argv in calls if '--validate-only' in argv]
         self.assertEqual(len(validate), 2)
         self.assertEqual(validate[0][-1], str(self.directory / 'deployment.config.json'))

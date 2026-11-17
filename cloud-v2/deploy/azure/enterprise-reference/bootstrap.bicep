@@ -74,7 +74,7 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     // Replacing the signing keys signs every employee out and invalidates
     // issued tokens. Deleted keys stay recoverable and can never be purged.
     enablePurgeProtection: true
-    // Same authenticated-public profile as Cosmos DB and storage.
+    // Same authenticated-public profile as storage.
     publicNetworkAccess: 'Enabled'
   }
 }

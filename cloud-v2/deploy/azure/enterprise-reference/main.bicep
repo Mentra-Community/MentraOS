@@ -49,7 +49,6 @@ param displayName string = 'Mentra Enterprise Demo'
 param environmentName string = 'cae-mentra-enterprise-reference'
 param runtimeName string = 'ca-mentra-enterprise-reference'
 param coreName string = 'ca-mentra-ent-ref-core'
-param mongoAccountName string = take('cosmos-${uniqueString(subscription().id, resourceGroup().id)}', 44)
 @description('Existing per-app identities created by bootstrap.bicep. Each pulls the image and reads only its own secrets.')
 param coreIdentityName string = 'id-mentra-enterprise-reference-core'
 param runtimeIdentityName string = 'id-mentra-enterprise-reference-runtime'
@@ -107,7 +106,10 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
 }
 
 // Container Apps read the latest version of each secret with their own
-// identity; nothing secret passes through deployment parameters.
+// identity; nothing secret passes through deployment parameters. That includes
+// Core's database: the company's own MongoDB replica set (MongoDB Atlas on Azure
+// is the recommended one), whose connection string setup stores in Key Vault as
+// mongo-url. This template creates no database.
 var vaultUri = vault.properties.vaultUri
 
 resource communication 'Microsoft.Communication/communicationServices@2023-04-01' = {
@@ -122,41 +124,6 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   location: location
   tags: resourceTags
   properties: {}
-}
-
-resource mongo 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
-  name: mongoAccountName
-  location: location
-  tags: resourceTags
-  kind: 'MongoDB'
-  properties: {
-    apiProperties: { serverVersion: '4.2' }
-    databaseAccountOfferType: 'Standard'
-    locations: [
-      {
-        locationName: location
-        failoverPriority: 0
-        isZoneRedundant: false
-      }
-    ]
-    capabilities: [
-      { name: 'EnableMongo' }
-      { name: 'EnableServerless' }
-      // Retry metadata throttling during Core's initial index/migration setup.
-      { name: 'DisableRateLimitingResponses' }
-    ]
-    consistencyPolicy: { defaultConsistencyLevel: 'Session' }
-    // Azure's periodic backup. Continuous backup is not used: on API for MongoDB
-    // accounts it forbids adding unique indexes, which Core creates at startup.
-    // Documented tradeoff: Core reaches Cosmos over the authenticated public
-    // endpoint because this reference environment has no VNet. Disabling public
-    // access requires a VNet-integrated Container Apps environment plus a Cosmos
-    // private endpoint, and Container Apps outbound IPs are neither static nor
-    // known before Core exists, so an IP firewall cannot be templated here.
-    // Customers requiring private data-plane ingress extend this with their
-    // standard VNet/private-endpoint module (see README.md, customer-setup.md).
-    publicNetworkAccess: 'Enabled'
-  }
 }
 
 resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (!empty(workspaceHostname)) {
@@ -254,7 +221,6 @@ var oidcClients = [
     redirectUris: ['${coreOrigin}/api/admin/auth/callback']
   }
 ]
-var mongoConnectionString = replace(mongo.listConnectionStrings().connectionStrings[0].connectionString, '/?', '/mentra-private?')
 var resolvedManagedMiniapps = map(managedMiniapps, app => {
       packageName: app.packageName
       version: app.version
@@ -367,7 +333,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       secrets: concat([
-        { name: 'mongo-url', value: mongoConnectionString }
+        { name: 'mongo-url', keyVaultUrl: '${vaultUri}secrets/mongo-url', identity: coreIdentity.id }
         { name: 'refresh-token-pepper', keyVaultUrl: '${vaultUri}secrets/refresh-token-pepper', identity: coreIdentity.id }
         { name: 'mentra-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-private-key', identity: coreIdentity.id }
         { name: 'mentra-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-public-key', identity: coreIdentity.id }

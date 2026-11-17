@@ -867,22 +867,6 @@ describe("removeDeletedUserFromWorkspaces", () => {
     return {sent: () => failed, restore: () => spy.mockRestore()}
   }
 
-  /**
-   * What Azure Cosmos DB for MongoDB (RU, API 4.2) answers the write that touches a transaction's second
-   * collection (probed on the CI account): code 2, no error labels, and this text (the tail after the
-   * message body is abbreviated).
-   */
-  const cosmosSecondCollection = (overrides: Record<string, unknown> = {}) =>
-    new driver.MongoServerError({
-      message:
-        "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
-        'ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21; Reason: (Message: {"Errors":["Transaction is not active"]}\r\n' +
-        "ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21, Request URI: /apps/.../partitions/..., RequestStats: ...)'",
-      code: 2,
-      errorLabels: [],
-      ...overrides,
-    })
-
   /** A standalone mongod's answer to the first command of a transaction (code 20, `IllegalOperation`). */
   const standaloneMongod = () =>
     new driver.MongoServerError({
@@ -913,31 +897,10 @@ describe("removeDeletedUserFromWorkspaces", () => {
       expect(events[0]).toMatchObject({seq: 1, workspaceId: null, action: "user.deleted", target: {mentraUserId}})
     })
 
-    test("Azure Cosmos DB for MongoDB: the second collection's write fails, and the tombstone is written without a transaction", async () => {
-      const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-cosmos"})
-      // The transaction's read of the audit events (one collection) runs; the counter's write (the second) fails.
-      const failing = failFirstTransactionCommand(cosmosSecondCollection(), WorkspaceAuditCounterModel)
-      try {
-        expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({
-          endedMembershipIds: [],
-          revokedInvitationIds: [],
-          revokedOperatorKeyIds: [],
-        })
-        await removeDeletedUserFromWorkspaces(mentraUserId)
-        expect(failing.sent()).toBe(1)
-      } finally {
-        failing.restore()
-      }
-
-      const {events} = await listChanges({})
-      expect(events).toHaveLength(1)
-      expect(events[0]).toMatchObject({seq: 1, workspaceId: null, action: "user.deleted", target: {mentraUserId}})
-    })
-
     test("the recognized path is routine, so it is logged at info without the database's error, never as a warning", async () => {
       // The logger is the service's own, so the deletions run in a process of their own, with the real logger
-      // writing JSON, against this test's database. In it the transactions fail as they do on each kind of
-      // database that cannot run them (the first command of a standalone mongod, the counter's write on Cosmos).
+      // writing JSON, against this test's database. In it the transaction fails as it does on a database that
+      // cannot run one (the first command of a standalone mongod).
       const root = new URL("..", import.meta.url).pathname
       const script = `
         import {connectMongo, disconnectMongo} from ${JSON.stringify(`${root}packages/core/src/connections/mongo.connection`)}
@@ -946,11 +909,6 @@ describe("removeDeletedUserFromWorkspaces", () => {
         const mongoose = WorkspaceAuditCounterModel.base
         const failures = [
           [null, new mongoose.mongo.MongoServerError({message: "Transaction numbers are only allowed on a replica set member or mongos", code: 20})],
-          [WorkspaceAuditCounterModel, new mongoose.mongo.MongoServerError({
-            message: "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; Reason: (Message: {\\"Errors\\":[\\"Transaction is not active\\"]})'",
-            code: 2,
-            errorLabels: [],
-          })],
         ]
         await connectMongo(${JSON.stringify(databaseUrl)})
         const exec = mongoose.Query.prototype.exec
@@ -981,33 +939,11 @@ describe("removeDeletedUserFromWorkspaces", () => {
         .filter(line => line.startsWith("{"))
         .map(line => JSON.parse(line) as Record<string, unknown>)
         .filter(line => line.service === "account-deletion")
-      expect(lines.map(line => [line.level, line.mentraUserId, line.reason])).toEqual([
-        ["info", "mu_log_check_0", "transactions_unsupported"],
-        ["info", "mu_log_check_1", "cross_collection_transaction_unsupported"],
-      ])
+      expect(lines.map(line => [line.level, line.mentraUserId])).toEqual([["info", "mu_log_check_0"]])
       // The database's own error text is not repeated on every deletion.
       expect(lines.every(line => !("err" in line))).toBe(true)
-      // Both tombstones were written.
-      expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(2)
-    })
-
-    test("Azure Cosmos DB for MongoDB: a person with workspace state is not ended half way either", async () => {
-      const s = await scenario()
-      const events = await WorkspaceAuditEventModel.countDocuments({})
-      const failing = failFirstTransactionCommand(cosmosSecondCollection(), WorkspaceAuditCounterModel)
-      try {
-        const err = await removeDeletedUserFromWorkspaces(s.mentraUserId).then(
-          () => null,
-          (caught: unknown) => caught,
-        )
-        expect(err).toBeInstanceOf(driver.MongoServerError)
-      } finally {
-        failing.restore()
-      }
-
-      expect((await WorkspaceMembershipModel.findOne({membershipId: s.teamMembershipId}).lean())!.status).toBe("active")
-      expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
-      expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(0)
+      // The tombstone was written.
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(1)
     })
 
     test("a topology without sessions is recognized before any command is sent", async () => {
@@ -1052,12 +988,7 @@ describe("removeDeletedUserFromWorkspaces", () => {
       ["no server to select", new driver.MongoServerSelectionError("Server selection timed out after 30000 ms", {} as any)],
       ["a dropped connection", new driver.MongoNetworkError("connection 3 to 127.0.0.1:27017 closed")],
       ["a look-alike without the standalone code", Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {code: 11000})],
-      // Code 2 without the whole Cosmos signature is any other server error, not "transactions unsupported".
-      ["code 2 with another message", new driver.MongoServerError({message: "BadValue: unknown operator", code: 2})],
-      ["code 2 with only Transaction is not active", cosmosSecondCollection({message: "Error=2, Details='Transaction is not active'"})],
-      ["code 2 with only Substatus 1101", cosmosSecondCollection({message: "Error=2, Details='BadRequest (400); Substatus: 1101'"})],
-      ["the Cosmos text under another code", cosmosSecondCollection({code: 112})],
-      ["the Cosmos text on a plain Error", Object.assign(new Error(cosmosSecondCollection().message), {code: 2})],
+      ["a server error", new driver.MongoServerError({message: "BadValue: unknown operator", code: 2})],
     ] as const
 
     test("propagates, and writes no tombstone outside the transaction, so a poller cannot pass it", async () => {

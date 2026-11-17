@@ -40,7 +40,7 @@ repository.
 | Variable | Kind | Meaning |
 | --- | --- | --- |
 | `PORT` | Public | HTTP port; defaults to `3000`. |
-| `MONGO_URL` | Secret | Persistent Mongo-compatible database URI. |
+| `MONGO_URL` | Secret | Connection string of a MongoDB 8.0 replica set, naming Core's database. Workspace changes are transactions across collections, so a standalone `mongod` is not enough. MongoDB-compatible services (Azure Cosmos DB, Azure DocumentDB) are not supported. |
 | `REFRESH_TOKEN_PEPPER` | Secret | Stable high-entropy refresh-token hashing key. |
 | `MENTRA_JWT_PRIVATE_KEY` | Secret | Ed25519 PKCS#8 body for access and Runtime tokens, and the sign-in server's tokens. |
 | `MENTRA_JWT_PUBLIC_KEY` | Public verification material | Matching Ed25519 SPKI body. |
@@ -325,44 +325,18 @@ Optional same-origin assets use `DEPLOYMENT_PRIVACY_PATH`,
 ## Cloud-neutral Compose example
 
 This shows the process boundary. Put secrets in an uncommitted Compose secret
-mechanism and terminate TLS in customer ingress. Mongo is authenticated and is
-not host-exposed. Generate `secrets/mongo-password` as a URL-safe value, for
-example with `openssl rand -hex 32`.
-
-Mongo authentication applies only to a fresh volume: the `mongo` image creates
-the `MONGO_INITDB_ROOT_USERNAME` user only while initializing an empty
-`/data/db`. An existing `mongo-data` volume that was provisioned without these
-settings (an earlier unauthenticated configuration, a beta, or a manual
-bootstrap) never gains the `mentra` user, and Core's `?authSource=admin` URI
-then fails to authenticate at startup. Migrate such a volume once, before
-switching Core to the authenticated URI, by creating the user in the running
-unauthenticated instance:
-
-```bash
-docker compose exec mongo mongosh admin --eval \
-  'db.createUser({user: "mentra", pwd: passwordPrompt(), roles: [{role: "root", db: "admin"}]})'
-```
-
-Alternatively back up, remove, and re-initialize the volume so the image
-creates the user itself. Either path is a one-time operation.
+mechanism and terminate TLS in customer ingress. The database is not part of
+it: Core connects to the company's MongoDB 8.0 replica set (MongoDB Atlas, or one
+the company runs), whose connection string is the secret `secrets/mongo-url`.
 
 ```yaml
 services:
-  mongo:
-    image: mongo:7
-    restart: unless-stopped
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: mentra
-      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_password
-    secrets: [mongo_password]
-    volumes: ["mongo-data:/data/db"]
-
   core:
     image: ghcr.io/mentra-community/mentra-cloud@sha256:<release-digest>
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - >-
-        export MONGO_URL="mongodb://mentra:$$(cat /run/secrets/mongo_password)@mongo:27017/mentra-private?authSource=admin";
+        export MONGO_URL="$$(cat /run/secrets/mongo_url)";
         exec bun packages/core/src/index.ts
     restart: unless-stopped
     environment:
@@ -381,8 +355,7 @@ services:
       CLOUD_CORE_OIDC_CLIENTS: ${CLOUD_CORE_OIDC_CLIENTS:?required}
       CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET: ${CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET:?required}
       ENTRA_BROWSER_CLIENT_SECRET: ${ENTRA_BROWSER_CLIENT_SECRET:?required}
-    secrets: [mongo_password]
-    depends_on: [mongo]
+    secrets: [mongo_url]
 
   runtime:
     image: ghcr.io/mentra-community/mentra-cloud@sha256:<release-digest>
@@ -400,12 +373,9 @@ services:
     volumes:
       - ./config/mentra-deployment.json:/etc/mentra/mentra-deployment.json:ro
 
-volumes:
-  mongo-data:
-
 secrets:
-  mongo_password:
-    file: ./secrets/mongo-password
+  mongo_url:
+    file: ./secrets/mongo-url
 ```
 
 ## Validation, upgrades, and rollback
@@ -422,7 +392,7 @@ curl --fail https://workspace.example/api/client/min-version | jq
 curl --fail https://workspace.example/.well-known/mentra-deployment.json | jq
 ```
 
-Upgrade Core and Runtime to the same new digest while preserving Mongo, secrets,
+Upgrade Core and Runtime to the same new digest while preserving the database, secrets,
 and the manifest. Rollback restores both services to the previous digest; it
 does not generate new keys or restore an older database snapshot.
 
