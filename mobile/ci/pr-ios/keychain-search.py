@@ -4,6 +4,10 @@
 macOS can resolve a duplicate identity's private key from the first search-list
 keychain even when codesign specifies --keychain. Keep the job keychain first
 for the entire signed archive/export, including CocoaPods' nested signers.
+
+The Mac user needs a default keychain, even an empty one: `security cms`
+(reading provisioning profiles) fails without it, as for a runner started as
+a LaunchDaemon, with no login session.
 """
 import fcntl
 from pathlib import Path
