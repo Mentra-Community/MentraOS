@@ -1,5 +1,6 @@
-import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "expo-audio"
+import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync, setIsAudioActiveAsync} from "expo-audio"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {Platform} from "react-native"
 import {BgTimer} from "../utils/timers"
 import {setAudioCloudUplinkSuppressed} from "./AudioCloudUplink"
 import {SILENT_AUDIO_SOURCE} from "./audioPlaybackAssets"
@@ -150,7 +151,20 @@ class AudioPlaybackService {
   private tailUplinkSuppressions = new Set<string>()
   // Original glasses media volume captured before we bump it for A2DP playback.
   private glassesVolumeRestoreLevel: number | null = null
+  /**
+   * Streams on their way to being audible: being opened (before their
+   * registration in `streams`), or a prewarmed one on its first write.
+   */
+  private startingStreams = 0
+  // iOS only: a sound ended while other audio of ours was still playing, so
+  // releasing the audio session waits until that audio ends too.
+  private sessionReleaseOwed = false
+  private sessionReleaseTimer: number | null = null
+  // The release in flight, which new audio waits for before starting.
+  private sessionRelease: Promise<void> | null = null
   private static readonly AUDIO_STOP_DEBOUNCE_MS = 1500
+  /** How long the app's audio must stay idle before the iOS audio session is released. */
+  private static readonly SESSION_RELEASE_DELAY_MS = 250
   private static readonly A2DP_TAIL_DRAIN_MS = 700
   /** Break accidental same-app replay storms without affecting deliberate later replays. */
   private static readonly DUPLICATE_PLAY_WINDOW_MS = 750
@@ -177,6 +191,8 @@ class AudioPlaybackService {
    * one-time log.
    */
   private async ensureAudioModeConfigured(): Promise<void> {
+    const release = this.holdSession()
+    if (release) await release
     try {
       await setAudioModeAsync({
         shouldPlayInBackground: true,
@@ -225,7 +241,15 @@ class AudioPlaybackService {
   private ensurePlayer(): AudioPlayer {
     if (!this.player) {
       console.log("AUDIO: Creating reusable AudioPlayer instance")
-      this.player = createAudioPlayer(null)
+      // keepAudioSessionActive: by default expo-audio deactivates the shared
+      // iOS audio session 100 ms after this player pauses or finishes if none
+      // of ITS players is playing. It doesn't know about native PCM speech,
+      // which plays through its own AVAudioEngine on the same session, so a
+      // click finishing (or its source being cleared after the A2DP tail)
+      // stopped speech that had just started: it never played and never
+      // finished (rep_01M7C5TKBBSEKN5MAE5KYQM5DD, rep_01M7DRAJVXQXSKQZT873YPV5A5).
+      // This service releases the session itself; see releaseSessionWhenIdle.
+      this.player = createAudioPlayer(null, {keepAudioSessionActive: true})
 
       // Add status listener once - it will handle all playback completions
       this.player.addListener("playbackStatusUpdate", (status: AudioStatus) => {
@@ -368,6 +392,74 @@ class AudioPlaybackService {
     } finally {
       if (this.loadedPlayback === playback) this.loadedPlayback = null
     }
+    this.releaseSessionWhenIdle()
+  }
+
+  /**
+   * iOS: deactivate the audio session once a sound of ours has ended and nothing
+   * else of ours is playing, starting or loaded, so audio of other apps that ours
+   * ducked comes back up. This is what expo-audio did on its own after each
+   * sound, except that it never cuts off speech or a stream that is still
+   * playing: then the release waits for that audio to end.
+   */
+  private releaseSessionWhenIdle(): void {
+    if (Platform.OS !== "ios") return
+    if (!this.audioIdle()) {
+      this.sessionReleaseOwed = true
+      return
+    }
+    this.sessionReleaseOwed = false
+    this.cancelSessionRelease()
+    this.sessionReleaseTimer = BgTimer.setTimeout(() => {
+      this.sessionReleaseTimer = null
+      if (!this.audioIdle()) {
+        this.sessionReleaseOwed = true
+        return
+      }
+      const release = setIsAudioActiveAsync(false)
+        .catch((error) => {
+          console.warn("AUDIO: Failed to release the audio session:", error instanceof Error ? error.message : error)
+        })
+        .finally(() => {
+          if (this.sessionRelease === release) this.sessionRelease = null
+        })
+      this.sessionRelease = release
+    }, AudioPlaybackService.SESSION_RELEASE_DELAY_MS)
+  }
+
+  private cancelSessionRelease(): void {
+    if (this.sessionReleaseTimer === null) return
+    BgTimer.clearTimeout(this.sessionReleaseTimer)
+    this.sessionReleaseTimer = null
+  }
+
+  /**
+   * New audio must not start under a release of the session, which would stop
+   * it: put off a release that is due, which this audio's end then owes, and
+   * wait for one already under way.
+   */
+  private holdSession(): Promise<void> | null {
+    if (this.sessionReleaseTimer !== null) {
+      this.cancelSessionRelease()
+      this.sessionReleaseOwed = true
+    }
+    // Nothing to wait for: start without an extra tick, as before.
+    return this.sessionRelease
+  }
+
+  /**
+   * Nothing of ours is audible, about to be, or loaded in the URL player. A
+   * prewarmed stream that hasn't played is silent: it holds no session, and its
+   * first write waits for any release (holdSession) before it plays.
+   */
+  private audioIdle(): boolean {
+    return (
+      this.currentPlayback === null &&
+      this.loadedPlayback === null &&
+      this.pendingPlaybacks.size === 0 &&
+      this.startingStreams === 0 &&
+      ![...this.streams.values()].some((stream) => stream.started && !stream.ended)
+    )
   }
 
   private clearFinishedPlayerAfterTail(playback: PlaybackState): void {
@@ -442,8 +534,8 @@ class AudioPlaybackService {
     const loggedUrl = audioUrl.startsWith("data:")
       ? `${audioUrl.split(",")[0]},[bundled audio]`
       : /^https?:/i.test(audioUrl)
-        ? audioUrl.split("?")[0]
-        : audioUrl
+      ? audioUrl.split("?")[0]
+      : audioUrl
     console.log(`AUDIO: Play request ${requestId}${appId ? ` from ${appId}` : ""}: ${loggedUrl}`)
 
     try {
@@ -704,13 +796,24 @@ class AudioPlaybackService {
         (prewarm ? " prewarm" : ""),
     )
 
-    await this.ensureAudioModeConfigured()
+    // Counted as audio of ours from here, so no release of the iOS session
+    // starts while it is being opened.
+    this.startingStreams++
+    try {
+      await this.ensureAudioModeConfigured()
 
-    // A prewarmed stream is silent until its first write, so it interrupts
-    // other audio then, not now.
-    if (stopOtherAudio && !prewarm) await this.stopOtherAudio(streamId)
+      // A prewarmed stream is silent until its first write, so it interrupts
+      // other audio then, not now.
+      if (stopOtherAudio && !prewarm) await this.stopOtherAudio(streamId)
 
-    await BluetoothSdk.pcmStreamOpen(streamId, sampleRate, channels, Math.max(0, Math.min(1, volume)), jitterMs)
+      await BluetoothSdk.pcmStreamOpen(streamId, sampleRate, channels, Math.max(0, Math.min(1, volume)), jitterMs)
+    } catch (error) {
+      this.startingStreams--
+      // A release put off for this open is due again: nothing of this stream plays.
+      if (this.sessionReleaseOwed) this.releaseSessionWhenIdle()
+      throw error
+    }
+    this.startingStreams--
 
     const stream: StreamState = {
       streamId,
@@ -724,6 +827,9 @@ class AudioPlaybackService {
     this.streams.set(streamId, stream)
 
     if (!prewarm) this.startStreamAudio(stream)
+    // A prewarmed stream stays silent and may never play: a release this open put
+    // off is due again now. An audible one keeps owing it until it ends.
+    else if (this.sessionReleaseOwed) this.releaseSessionWhenIdle()
   }
 
   /** Interrupt URL playback and every stream that is audible, sparing `exceptStreamId`. */
@@ -769,16 +875,21 @@ class AudioPlaybackService {
       throw new Error(`stream ${streamId} is not open`)
     }
     const firstWrite = !stream.started
-    if (firstWrite) {
-      // A prewarmed stream becomes audible now: interrupt other audio first.
-      if (stream.stopOtherAudio) await this.stopOtherAudio(streamId)
-      if (stream.ended) throw new Error(`stream ${streamId} is not open`)
-    }
+    if (firstWrite) this.startingStreams++
     try {
+      if (firstWrite) {
+        // A prewarmed stream becomes audible now: never under a release of the
+        // iOS session, and after interrupting other audio.
+        const release = this.holdSession()
+        if (release) await release
+        if (stream.stopOtherAudio) await this.stopOtherAudio(streamId)
+        if (stream.ended) throw new Error(`stream ${streamId} is not open`)
+      }
       const result = await BluetoothSdk.pcmStreamWrite(streamId, base64)
       if (firstWrite) this.startStreamAudio(stream)
       return result
     } catch (error) {
+      if (firstWrite && stream.ended) throw error
       const message = error instanceof Error ? error.message : String(error)
       if (firstWrite && /not open/i.test(message)) {
         // Native closed this prewarmed stream when the audio route changed
@@ -789,6 +900,8 @@ class AudioPlaybackService {
       }
       this.endStream(stream, false, message, Date.now() - stream.startTime)
       throw error
+    } finally {
+      if (firstWrite) this.startingStreams--
     }
   }
 
@@ -845,6 +958,8 @@ class AudioPlaybackService {
         if (this.tailUplinkSuppressions.delete(suppressionId)) setAudioCloudUplinkSuppressed(suppressionId, false)
       }, AudioPlaybackService.A2DP_TAIL_DRAIN_MS)
     }
+    // A sound that ended while this stream played left the session release to it.
+    if (this.sessionReleaseOwed) this.releaseSessionWhenIdle()
     // Only signal "audio stopped" when nothing else is making noise.
     if (stream.started && !this.isPlaying()) {
       this.notifyAudioStopDebounced()
