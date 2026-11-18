@@ -32,3 +32,10 @@ test("rejects mismatched or unsafe release metadata", () => {
   )
   assert.throws(() => validateReleaseMetadata({...validInput, otaManifestSha256: "ABC"}), /lowercase SHA-256/)
 })
+
+test("an app built before its OTA manifest omits the digest; a passed one must be valid", () => {
+  const {otaManifestSha256: _, ...withoutDigest} = validInput
+  assert.equal(validateReleaseMetadata(withoutDigest).otaManifestSha256, null)
+  assert.match(renderReleaseMetadata(withoutDigest), /"otaManifestSha256": null/)
+  assert.throws(() => validateReleaseMetadata({...validInput, otaManifestSha256: ""}), /lowercase SHA-256/)
+})

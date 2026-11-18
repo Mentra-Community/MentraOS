@@ -27,3 +27,13 @@ test("rejects mutable or cross-family release metadata", () => {
   assert.throws(() => validateReleaseMetadata({...input, otaManifestUrl: "http://example.com/version.json"}), /HTTPS/)
   assert.throws(() => validateReleaseMetadata({...input, otaManifestSha256: "short"}), /SHA-256/)
 })
+
+test("an app built before its OTA manifest omits the digest; a passed one must be valid", () => {
+  const {otaManifestSha256: _, ...withoutDigest} = input
+  const rendered = renderReleaseMetadata(withoutDigest)
+  assert.equal(rendered.metadata.otaManifestSha256, null)
+  assert.match(rendered.typescript, /"otaManifestSha256": null/)
+  assert.match(rendered.kotlin, /OTA_MANIFEST_SHA256: String = ""/)
+  assert.match(rendered.swift, /otaManifestSha256 = ""/)
+  assert.throws(() => validateReleaseMetadata({...input, otaManifestSha256: ""}), /SHA-256/)
+})

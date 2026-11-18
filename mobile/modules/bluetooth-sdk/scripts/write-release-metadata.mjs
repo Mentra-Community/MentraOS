@@ -38,7 +38,9 @@ export function validateReleaseMetadata(input) {
     throw new Error("releaseSetId must be mentra-<releaseIdentity>")
   }
   if (!COMMIT_PATTERN.test(input.sourceCommit)) throw new Error("sourceCommit must be a full lowercase Git SHA")
-  if (!SHA256_PATTERN.test(input.otaManifestSha256)) {
+  // The Mentra App is built before its OTA manifest exists and omits the
+  // digest; the SDK packages, built after, pass it.
+  if (input.otaManifestSha256 !== undefined && !SHA256_PATTERN.test(input.otaManifestSha256)) {
     throw new Error("otaManifestSha256 must be a lowercase SHA-256 digest")
   }
   return {
@@ -48,7 +50,7 @@ export function validateReleaseMetadata(input) {
     releaseSetId: input.releaseSetId,
     sourceCommit: input.sourceCommit,
     otaManifestUrl: validateHttpsUrl(input.otaManifestUrl),
-    otaManifestSha256: input.otaManifestSha256,
+    otaManifestSha256: input.otaManifestSha256 ?? null,
   }
 }
 
@@ -87,7 +89,7 @@ export function renderReleaseMetadata(input) {
     `    const val RELEASE_SET_ID: String = ${JSON.stringify(metadata.releaseSetId)}`,
     `    const val SOURCE_COMMIT: String = ${JSON.stringify(metadata.sourceCommit)}`,
     `    const val OTA_MANIFEST_URL: String = ${JSON.stringify(metadata.otaManifestUrl)}`,
-    `    const val OTA_MANIFEST_SHA256: String = ${JSON.stringify(metadata.otaManifestSha256)}`,
+    `    const val OTA_MANIFEST_SHA256: String = ${JSON.stringify(metadata.otaManifestSha256 ?? "")}`,
     "}",
     "",
   ].join("\n")
@@ -101,7 +103,7 @@ export function renderReleaseMetadata(input) {
     `    static let releaseSetId = ${swiftString(metadata.releaseSetId)}`,
     `    static let sourceCommit = ${swiftString(metadata.sourceCommit)}`,
     `    static let otaManifestUrl = ${swiftString(metadata.otaManifestUrl)}`,
-    `    static let otaManifestSha256 = ${swiftString(metadata.otaManifestSha256)}`,
+    `    static let otaManifestSha256 = ${swiftString(metadata.otaManifestSha256 ?? "")}`,
     "}",
     "",
   ].join("\n")
@@ -121,14 +123,7 @@ function parseArgs(args) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2))
-  const required = [
-    "family-base-version",
-    "release-identity",
-    "release-set-id",
-    "source-commit",
-    "ota-manifest-url",
-    "ota-manifest-sha256",
-  ]
+  const required = ["family-base-version", "release-identity", "release-set-id", "source-commit", "ota-manifest-url"]
   for (const field of required) if (!args[field]) throw new Error(`Missing --${field}`)
   const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
   const rendered = renderReleaseMetadata({

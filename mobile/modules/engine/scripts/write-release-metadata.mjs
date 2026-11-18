@@ -8,14 +8,7 @@ const RELEASE_IDENTITY_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
 
-const fields = [
-  "family-base-version",
-  "release-identity",
-  "release-set-id",
-  "source-commit",
-  "ota-manifest-url",
-  "ota-manifest-sha256",
-]
+const fields = ["family-base-version", "release-identity", "release-set-id", "source-commit", "ota-manifest-url"]
 
 function parseArgs(args) {
   const values = {}
@@ -26,7 +19,7 @@ function parseArgs(args) {
       throw new Error(`Expected --name value pairs, received ${JSON.stringify(args.slice(index))}`)
     }
     const name = option.slice(2)
-    if (![...fields, "output"].includes(name)) throw new Error(`Unknown option --${name}`)
+    if (![...fields, "ota-manifest-sha256", "output"].includes(name)) throw new Error(`Unknown option --${name}`)
     if (values[name] !== undefined) throw new Error(`Duplicate option --${name}`)
     values[name] = value
   }
@@ -69,7 +62,9 @@ export function validateReleaseMetadata(input) {
     throw new Error("releaseSetId must be mentra-<releaseIdentity>")
   }
   if (!COMMIT_PATTERN.test(input.sourceCommit)) throw new Error("sourceCommit must be a full lowercase Git SHA")
-  if (!SHA256_PATTERN.test(input.otaManifestSha256)) {
+  // The Mentra App is built before its OTA manifest exists and omits the
+  // digest; the SDK packages, built after, pass it.
+  if (input.otaManifestSha256 !== undefined && !SHA256_PATTERN.test(input.otaManifestSha256)) {
     throw new Error("otaManifestSha256 must be a lowercase SHA-256 digest")
   }
 
@@ -80,7 +75,7 @@ export function validateReleaseMetadata(input) {
     releaseSetId: input.releaseSetId,
     sourceCommit: input.sourceCommit,
     otaManifestUrl: validateHttpsUrl(input.otaManifestUrl),
-    otaManifestSha256: input.otaManifestSha256,
+    otaManifestSha256: input.otaManifestSha256 ?? null,
   }
 }
 
