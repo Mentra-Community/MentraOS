@@ -242,6 +242,26 @@ describe("OtaUpdateCheckService", () => {
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
+  it("reports glasses held by a developer override as up to date, not as a development build", async () => {
+    // A service app before 39 can't take the override's URL: the glasses are where the override took them.
+    await useSettingsStore.getState().setSetting("super_mode", true, false)
+    await useSettingsStore.getState().setSetting("ota_version_url", "https://ota.example/older-set.json", false)
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "36"})
+    global.fetch = jest.fn() as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+    expect(result.updateAvailable).toBe(false)
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
   it("skips the check when the glasses run a sideloaded client package", async () => {
     useGlassesStore.getState().setGlassesInfo({
       buildNumber: "120",

@@ -4,7 +4,7 @@ import {otaDeviceSessionRevision} from "./OtaDeviceSession"
 import {ENGINE_RELEASE_METADATA} from "../generated/releaseMetadata"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
-import {hasConfiguredModernOtaManifestPin, isLegacyOtaManifestSelected, resolveOtaManifestUrl} from "./otaManifestUrl"
+import {hasConfiguredModernOtaManifestPin, isHeldByOtaOverride, isLegacyOtaManifestSelected, resolveOtaManifestUrl} from "./otaManifestUrl"
 import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
 import {isNewerMtk, normalizeMtkVersion, resolveMtkDowngrade, type MtkDowngrade} from "./mtkDowngrade"
 import {observeManifestNativeErrors} from "./otaNativeNetworkDiagnostics"
@@ -652,6 +652,11 @@ export async function checkCurrentGlassesForUpdate(
 
   if (deviceChanged()) return emptyCheckResult("disconnected")
   const manifestUrl = resolveOtaManifestUrl(useGlassesStore.getState().otaVersionUrl, buildNumber)
+  if (!manifestUrl && isHeldByOtaOverride(buildNumber)) {
+    // The override took these glasses to its set and they can't follow it further: up to date there.
+    console.log("OTA: glasses are at the developer override's set; nothing to install until it is cleared")
+    return {...emptyCheckResult(), hasCheckCompleted: true}
+  }
   if (!manifestUrl) {
     console.log("OTA: check skipped - no OTA manifest pin resolved")
     return emptyCheckResult("dev_build")

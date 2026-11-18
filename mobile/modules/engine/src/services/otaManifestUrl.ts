@@ -50,6 +50,11 @@ export function isLegacyOtaManifestSelected(glassesBuildNumber?: string | null):
   return !hasDeploymentOtaPolicy() && isLegacyAsgOtaStartBuild(glassesBuildNumber)
 }
 
+/** An override is set, and these glasses' service app can't take a manifest URL: they are where it took them. */
+export function isHeldByOtaOverride(glassesBuildNumber?: string | null): boolean {
+  return Boolean(getOtaVersionUrlDevOverride()) && isLegacyOtaManifestSelected(glassesBuildNumber)
+}
+
 export function resolveOtaManifestUrl(glassesUrl?: string | null, glassesBuildNumber?: string | null): string | null {
   return resolveDeploymentAwareOtaManifestPolicy({
     hostPolicyConfigured: hasDeploymentOtaPolicy(),
