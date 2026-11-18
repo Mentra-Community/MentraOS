@@ -103,9 +103,12 @@ public final class GlassesHotspotNetwork {
 
     /// Time to associate after the person answers a join prompt late in the join.
     private static let afterAnswer: TimeInterval = 30
+    /// Time for a Mac that has associated to get its hotspot address. Each Mac scan takes about
+    /// 23 s while it is on another network, so it can find the hotspot near the join deadline.
+    private static let macAddressWait: TimeInterval = 30
 
     /// The join gets 60 s of its own, plus however long the person takes to answer iOS's join
-    /// prompt. The engine keeps the glasses AP up meanwhile.
+    /// prompt, or a Mac's address wait once it has associated. The engine keeps the glasses AP up meanwhile.
     private func scheduleJoinDeadline(ssid: String, generation gen: Int) {
         queue.asyncAfter(deadline: .now() + max(1, joinDeadline - ProcessInfo.processInfo.systemUptime)) {
             // Once associated, the user may still be reading the Local Network alert.
@@ -332,7 +335,9 @@ public final class GlassesHotspotNetwork {
                         self.finishLeave(); return
                     }
                     self.wifiIdentity.observe([HotspotInterfaceReport(name: name, index: index, isWifi: true)])
-                    self.waitForMacAddress(ssid: ssid, association: association, generation: gen, remaining: 60)
+                    self.joinDeadline = max(self.joinDeadline, ProcessInfo.processInfo.systemUptime + Self.macAddressWait)
+                    self.waitForMacAddress(ssid: ssid, association: association, generation: gen,
+                                           remaining: Int(Self.macAddressWait * 2))
                 case let .failure(error):
                     self.finishJoin(.failure(error)); self.finishLeave()
                 }

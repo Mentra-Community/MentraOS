@@ -1720,7 +1720,13 @@ class OtaInstallCoordinator {
         ownership.outcome = "rejected"
         this.clearStuckTimeout()
         this.reportFailure("hotspot_preflight_failed", err instanceof OtaArtifactError ? err.failure : undefined)
-        await this.teardownHotspotTransport()
+        // Unconfirmed cleanup stays with the transport, which retries it on the next attempt;
+        // it must not leave the screen on "starting" without the error.
+        try {
+          await this.teardownHotspotTransport()
+        } catch (cleanupError) {
+          console.warn("[OTA_PROGRESS] hotspot cleanup failed", cleanupError)
+        }
         if (!isCurrentAttempt()) return
         if (this.attached) {
           const copyKey = phoneOtaErrorCopyKey(err, Platform.OS)

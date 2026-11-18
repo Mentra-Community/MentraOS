@@ -81,6 +81,8 @@ export function phoneOtaErrorCopyKey(error: unknown, os?: string): string {
       return "ota:errorPhoneNearbyPermission"
     case "hotspot_wifi_disabled":
       return "ota:errorPhoneWifiOff"
+    case "hotspot_location_denied":
+      return "ota:errorMacLocation"
     case "hotspot_start_failed":
       return "ota:errorGlassesHotspotStart"
     case "hotspot_join_failed":
@@ -143,6 +145,8 @@ export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
   "ota:errorPhoneVerify": "The update file could not be verified. Please try again later.",
   "ota:errorPhoneNearbyPermission": "Allow nearby devices access so your phone can connect to your glasses.",
   "ota:errorPhoneWifiOff": "Turn on your phone’s Wi-Fi so it can connect to your glasses, then try again.",
+  "ota:errorMacLocation":
+    "This Mac needs Location access to find your glasses’ Wi-Fi. In System Settings, open Privacy & Security, turn on Location Services and allow Mentra, then try again.",
   "ota:errorGlassesHotspotStart":
     "Your glasses could not start the connection needed for the update. Please try again.",
   "ota:errorPhoneHotspotJoin": "Your phone could not connect to your glasses for the update. Please try again.",

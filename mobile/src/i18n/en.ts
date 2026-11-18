@@ -619,6 +619,8 @@ const en = {
     errorPhoneVerify: "The update file could not be verified. Please try again later.",
     errorPhoneNearbyPermission: "Allow nearby devices access so your phone can connect to your glasses.",
     errorPhoneWifiOff: "Turn on your phone’s Wi-Fi so it can connect to your glasses, then try again.",
+    errorMacLocation:
+      "This Mac needs Location access to find your glasses’ Wi-Fi. In System Settings, open Privacy & Security, turn on Location Services and allow Mentra, then try again.",
     errorGlassesHotspotStart: "Your glasses could not start the connection needed for the update. Please try again.",
     errorPhoneHotspotJoin: "Your phone could not connect to your glasses for the update. Please try again.",
     errorPhoneOtherGlasses:

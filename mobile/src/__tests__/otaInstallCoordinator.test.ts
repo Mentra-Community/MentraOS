@@ -2762,6 +2762,29 @@ describe("automatic OTA failure incidents", () => {
     expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
   })
 
+  it("shows the preflight failure even when the glasses never confirm hotspot shutdown", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    mockHotspotPrepare.mockRejectedValueOnce(
+      Object.assign(new Error("hotspot enable request timed out waiting for glasses response."), {
+        code: "hotspot_start_failed",
+      }),
+    )
+    mockHotspotTeardown.mockRejectedValueOnce(new Error("The glasses hotspot shutdown was not confirmed"))
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    await flushNativeStartPromise()
+    expect(mockFailureReport).toHaveBeenCalledWith(expect.objectContaining({reason: "hotspot_preflight_failed"}))
+    expect(otaInstallCoordinator.snapshot()).toMatchObject({
+      displayState: "failed",
+      errorCopyKey: "ota:errorGlassesHotspotStart",
+    })
+  })
+
   it("captures hotspot preflight phase before teardown clears it", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},

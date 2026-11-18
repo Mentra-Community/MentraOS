@@ -208,9 +208,11 @@ it("retains failed network cleanup and drains other teardown before retry", asyn
   await expect(hotspotOtaTransport.teardown(false)).rejects.toBe(failure)
   expect(server.stop).toHaveBeenCalledTimes(1)
   expect(downloader.cleanupArtifacts).toHaveBeenCalledTimes(1)
+  localNetwork.disconnect.mockRejectedValueOnce(failure)
   await expect(hotspotOtaTransport.prepare(check)).rejects.toThrow("still needs cleanup")
-  await hotspotOtaTransport.teardown(false)
   expect(localNetwork.disconnect).toHaveBeenCalledTimes(2)
+  await hotspotOtaTransport.teardown(false)
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(3)
   expect(server.stop).toHaveBeenCalledTimes(1)
 })
 
@@ -229,9 +231,43 @@ it("preserves the join failure while retaining a rejected connection's cleanup",
     message: "association refused",
   })
   expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
-  await expect(hotspotOtaTransport.prepare(check)).rejects.toThrow("still needs cleanup")
-  await hotspotOtaTransport.teardown(false)
+  // The next attempt finishes the leftover release, then prepares normally.
+  expect(await hotspotOtaTransport.prepare(check)).toBe("http://192.168.43.2/version.json")
   expect(localNetwork.disconnect).toHaveBeenCalledTimes(2)
+  expect(localNetwork.connect).toHaveBeenCalledTimes(2)
+})
+
+it("retries an unconfirmed hotspot shutdown before the next attempt instead of refusing it", async () => {
+  // The enable reply and both shutdown replies are queued on the glasses behind a file transfer.
+  const timeout = new Error("hotspot request timed out waiting for glasses response.")
+  bluetoothSdkMock.setHotspotState
+    .mockRejectedValueOnce(timeout)
+    .mockRejectedValueOnce(timeout)
+    .mockRejectedValueOnce(timeout)
+  await expect(hotspotOtaTransport.prepare(check)).rejects.toMatchObject({code: "hotspot_start_failed"})
+  expect(bluetoothSdkMock.setHotspotState.mock.calls).toEqual([[true], [false], [false]])
+  // Once the glasses answer again, the leftover shutdown completes and the update proceeds.
+  expect(await hotspotOtaTransport.prepare(check)).toBe("http://192.168.43.2/version.json")
+  expect(bluetoothSdkMock.setHotspotState.mock.calls.slice(3)).toEqual([[false], [true]])
+})
+
+it("names Mac Location access when it blocks identifying the glasses hotspot", async () => {
+  const localNetworkMock = jest.requireMock("../../modules/engine/src/services/asg/localNetworkTransport")
+  localNetworkMock.localNetworkErrorDetails.mockReturnValueOnce({
+    code: "ERR_HOTSPOT_JOIN",
+    message: "Location access is required to identify the glasses hotspot on Mac [location raw=2]",
+  })
+  bluetoothSdkMock.setHotspotState
+    .mockResolvedValueOnce({
+      type: "hotspot_status",
+      state: "enabled",
+      ssid: "A",
+      password: "password",
+      localIp: "192.168.43.1",
+    })
+    .mockResolvedValueOnce({type: "hotspot_status", state: "disabled"})
+  localNetwork.connect.mockRejectedValueOnce(new Error("Location access is required"))
+  await expect(hotspotOtaTransport.prepare(check)).rejects.toMatchObject({code: "hotspot_location_denied"})
 })
 
 it("retains a failed server stop while still releasing the network", async () => {

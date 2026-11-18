@@ -40,10 +40,15 @@ export type HotspotOtaProgress = {
 export type HotspotOtaErrorCode =
   | "hotspot_wifi_permission_denied"
   | "hotspot_wifi_disabled"
+  | "hotspot_location_denied"
   | "hotspot_start_failed"
   | "hotspot_join_failed"
   | "hotspot_other_glasses"
   | "hotspot_server_failed"
+
+/** Mac causes that need Location Services and Mentra's Location access, not Wi-Fi. */
+const MAC_LOCATION_CAUSE =
+  /^(Location (access is|services are) required to |Mac hotspot Location authorization is unavailable)/
 
 /** Joins after the first that may land on other glasses before the update stops and says so. */
 const WRONG_GLASSES_REJOINS = 2
@@ -81,6 +86,16 @@ class HotspotOtaTransport {
     const ownerRevision = otaDeviceSessionRevision()
     if (this.teardownPromise) await this.teardownPromise
     if (ownerRevision !== otaDeviceSessionRevision()) throw new Error("The OTA glasses have changed")
+    // A teardown whose hotspot shutdown went unconfirmed (glasses whose replies are queued behind
+    // a file transfer) leaves its cleanup here. Retry it rather than refuse every later attempt.
+    if (this.releaseHotspot && !this.active && !this.preparing) {
+      try {
+        await this.teardown()
+      } catch (cleanupError) {
+        console.warn("[OTA_PROGRESS] leftover cleanup failed", localNetworkErrorDetails(cleanupError))
+      }
+      if (ownerRevision !== otaDeviceSessionRevision()) throw new Error("The OTA glasses have changed")
+    }
     if (
       this.releaseHotspot ||
       this.active ||
@@ -215,7 +230,11 @@ class HotspotOtaTransport {
         if (Platform.OS === "android" && (await WifiManager.isEnabled().catch(() => true)) === false) {
           throw new HotspotOtaTransportError("hotspot_wifi_disabled", "Phone Wi-Fi is off")
         }
-        throw new HotspotOtaTransportError("hotspot_join_failed", message, localNetworkErrorDetails(error))
+        const nativeError = localNetworkErrorDetails(error)
+        if (MAC_LOCATION_CAUSE.test(nativeError.message ?? "")) {
+          throw new HotspotOtaTransportError("hotspot_location_denied", message, nativeError)
+        }
+        throw new HotspotOtaTransportError("hotspot_join_failed", message, nativeError)
       }
       throw new HotspotOtaTransportError("hotspot_server_failed", message)
     }

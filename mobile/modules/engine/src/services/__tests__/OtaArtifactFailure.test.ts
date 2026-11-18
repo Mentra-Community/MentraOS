@@ -109,4 +109,10 @@ describe("phone download failure diagnosis", () => {
     expect(OTA_ERROR_ENGLISH_COPY["ota:errorPhoneWifiOff"]).toContain("Wi-Fi")
     expect(OTA_ERROR_ENGLISH_COPY["ota:errorPhoneHotspotJoinIos"]).toContain("Wi-Fi is on")
   })
+
+  test("names Location, not Wi-Fi, when a Mac cannot identify the glasses hotspot", () => {
+    expect(phoneOtaErrorCopyKey({code: "hotspot_location_denied"}, "ios")).toBe("ota:errorMacLocation")
+    expect(OTA_ERROR_ENGLISH_COPY["ota:errorMacLocation"]).toContain("Location Services")
+    expect(OTA_ERROR_ENGLISH_COPY["ota:errorMacLocation"]).not.toContain("Wi-Fi is on")
+  })
 })
