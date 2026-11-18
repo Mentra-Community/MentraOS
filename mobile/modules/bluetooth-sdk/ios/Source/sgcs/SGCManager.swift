@@ -610,4 +610,8 @@ extension SGCManager {
     var hotspotGatewayIp: String {
         DeviceStore.shared.get("glasses", "hotspotGatewayIp") as? String ?? ""
     }
+
+    var hotspotFrequency: Int {
+        DeviceStore.shared.get("glasses", "hotspotFrequency") as? Int ?? 0
+    }
 }

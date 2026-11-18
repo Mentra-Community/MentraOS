@@ -47,6 +47,7 @@ function hotspotStatusFromEvent(event: HotspotStatusChangeEvent): HotspotStatus 
       ssid: event.ssid,
       password: event.password,
       localIp: event.localIp,
+      ...(event.frequency ? {frequency: event.frequency} : {}),
     }
   }
   return {state: event.state}

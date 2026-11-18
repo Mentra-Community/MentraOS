@@ -21,8 +21,8 @@ export function installNativeLogConsole() {
 }
 
 export const glassesHotspot = Object.freeze({
-  join: (id, ssid, password, gateway, purpose = "outgoing-client") =>
-    native().joinLocalHotspot(id, ssid, password, gateway ?? null, purpose),
+  join: (id, ssid, password, gateway, purpose = "outgoing-client", frequency) =>
+    native().joinLocalHotspot(id, ssid, password, gateway ?? null, purpose, frequency ?? null),
   leave: (id, waitForInternet = false) => native().leaveLocalHotspot(id, waitForInternet),
   onPermissionRequired: (listener) =>
     native().addListener("onLocalHotspotPermissionRequired", (event) =>

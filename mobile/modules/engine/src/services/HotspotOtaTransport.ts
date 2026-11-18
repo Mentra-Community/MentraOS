@@ -176,6 +176,7 @@ class HotspotOtaTransport {
           localNetworkTransport.connect(this.networkOwner, hotspot.ssid, hotspot.password, {
             assertCurrent,
             gateway: hotspot.localIp,
+            frequency: hotspot.frequency,
             // The glasses download from our listener; OTA asks their server only who they are.
             purpose: "incoming-server",
           }),

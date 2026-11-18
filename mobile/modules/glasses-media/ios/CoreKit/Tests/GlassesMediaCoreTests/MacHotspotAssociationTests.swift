@@ -38,8 +38,9 @@ final class MacHotspotAssociationTests: XCTestCase {
             return ssid
         }
 
-        func network(ssid _: String) throws -> NSObject? {
-            scans += 1; onScan?()
+        var scanned: [MacHotspotScan] = []
+        func network(ssid _: String, channels: MacHotspotScan) throws -> NSObject? {
+            scans += 1; scanned.append(channels); onScan?()
             if let scanError { throw scanError }
             return scans <= missingScans ? nil : NSObject()
         }
@@ -275,6 +276,49 @@ final class MacHotspotAssociationTests: XCTestCase {
         XCTAssertEqual(try join.associate(ssid: "glasses", password: "private"), "en1")
         XCTAssertEqual(wifi.scans, 3)
         XCTAssertGreaterThan(now, 60)
+    }
+
+    // MARK: Scan selection
+
+    func testReportedChannelIsScannedAloneThenEveryChannelBelow6GHz() throws {
+        let wifi = Wifi(); wifi.missingScans = 1
+        var now: TimeInterval = 0
+        let join = MacHotspotAssociation(deadline: 60, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
+        XCTAssertEqual(try join.associate(ssid: "glasses", password: "private", frequency: 5180), "en1")
+        XCTAssertEqual(wifi.scanned, [.channel(band: MacHotspotScan.band5, number: 36), .below6GHz])
+    }
+
+    func testWithoutAReportedChannelThe2GHzBandIsScannedFirst() throws {
+        let wifi = Wifi(); wifi.missingScans = 2
+        var now: TimeInterval = 0
+        let join = MacHotspotAssociation(deadline: 60, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
+        XCTAssertEqual(try join.associate(ssid: "glasses", password: "private"), "en1")
+        XCTAssertEqual(wifi.scanned, [.band2GHz, .below6GHz, .below6GHz])
+    }
+
+    func testRescanAfterRefusedJoinCoversEveryChannelBelow6GHz() throws {
+        let wifi = Wifi(); wifi.refusedJoins = 1
+        let (join, _) = joinFromHome(wifi)
+        XCTAssertEqual(try join.associate(ssid: "glasses", password: "private", frequency: 2437), "en1")
+        XCTAssertEqual(wifi.scanned, [.channel(band: MacHotspotScan.band2, number: 6), .below6GHz])
+    }
+
+    func testFrequenciesMapToTheirChannels() {
+        XCTAssertEqual(MacHotspotScan.channel(frequency: 2412), .channel(band: MacHotspotScan.band2, number: 1))
+        XCTAssertEqual(MacHotspotScan.channel(frequency: 2484), .channel(band: MacHotspotScan.band2, number: 14))
+        XCTAssertEqual(MacHotspotScan.channel(frequency: 5745), .channel(band: MacHotspotScan.band5, number: 149))
+        // 6 GHz, which these glasses cannot use for their AP, and nonsense values fall back to the 2.4 GHz band.
+        XCTAssertNil(MacHotspotScan.channel(frequency: 5955))
+        XCTAssertNil(MacHotspotScan.channel(frequency: 0))
+        XCTAssertEqual(MacHotspotScan.next(after: 0, frequency: 5955), .band2GHz)
+    }
+
+    func testScanSetsCoverOnlyTheirBands() {
+        XCTAssertTrue(MacHotspotScan.band2GHz.includes(band: MacHotspotScan.band2, number: 1))
+        XCTAssertFalse(MacHotspotScan.band2GHz.includes(band: MacHotspotScan.band5, number: 36))
+        XCTAssertTrue(MacHotspotScan.below6GHz.includes(band: MacHotspotScan.band5, number: 36))
+        XCTAssertFalse(MacHotspotScan.below6GHz.includes(band: 3, number: 37))
+        XCTAssertFalse(MacHotspotScan.channel(band: MacHotspotScan.band5, number: 36).includes(band: MacHotspotScan.band5, number: 40))
     }
 
     func testAbsentHotspotStopsAtOriginalDeadlineWithoutAssociating() {

@@ -180,9 +180,10 @@ public enum HotspotStatus: CustomStringConvertible, Equatable {
     }
 
     case disabled
-    case enabled(ssid: String, password: String, localIp: String)
+    /// `frequency`: the AP's channel in MHz when the glasses know it (their station's, which the AP shares).
+    case enabled(ssid: String, password: String, localIp: String, frequency: Int?)
 
-    public init?(enabled: Bool, ssid: String?, password: String?, localIp: String?) {
+    public init?(enabled: Bool, ssid: String?, password: String?, localIp: String?, frequency: Int? = nil) {
         if enabled {
             guard
                 let ssid = ssid?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -194,7 +195,7 @@ public enum HotspotStatus: CustomStringConvertible, Equatable {
             else {
                 return nil
             }
-            self = .enabled(ssid: ssid, password: password, localIp: localIp)
+            self = .enabled(ssid: ssid, password: password, localIp: localIp, frequency: frequency.flatMap { $0 > 0 ? $0 : nil })
         } else {
             self = .disabled
         }
@@ -216,7 +217,8 @@ public enum HotspotStatus: CustomStringConvertible, Equatable {
                 enabled: true,
                 ssid: nonEmptyStringValue(values, "ssid"),
                 password: nonEmptyStringValue(values, "password"),
-                localIp: nonEmptyStringValue(values, "localIp")
+                localIp: nonEmptyStringValue(values, "localIp"),
+                frequency: intValue(values["frequency"])
             )
         case State.disabled.rawValue:
             self = .disabled
@@ -233,12 +235,13 @@ public enum HotspotStatus: CustomStringConvertible, Equatable {
             enabled: enabled,
             ssid: nonEmptyStringValue(values, "hotspotSsid"),
             password: nonEmptyStringValue(values, "hotspotPassword"),
-            localIp: nonEmptyStringValue(values, "hotspotGatewayIp")
+            localIp: nonEmptyStringValue(values, "hotspotGatewayIp"),
+            frequency: intValue(values["hotspotFrequency"])
         )
     }
 
-    static func fromStoreFields(enabled: Bool, ssid: String?, password: String?, localIp: String?) -> HotspotStatus? {
-        HotspotStatus(enabled: enabled, ssid: ssid, password: password, localIp: localIp)
+    static func fromStoreFields(enabled: Bool, ssid: String?, password: String?, localIp: String?, frequency: Int? = nil) -> HotspotStatus? {
+        HotspotStatus(enabled: enabled, ssid: ssid, password: password, localIp: localIp, frequency: frequency)
     }
 
     var storeValues: [String: Any] {
@@ -249,13 +252,15 @@ public enum HotspotStatus: CustomStringConvertible, Equatable {
                 "hotspotSsid": "",
                 "hotspotPassword": "",
                 "hotspotGatewayIp": "",
+                "hotspotFrequency": 0,
             ]
-        case let .enabled(ssid, password, localIp):
+        case let .enabled(ssid, password, localIp, frequency):
             [
                 "hotspotEnabled": true,
                 "hotspotSsid": ssid,
                 "hotspotPassword": password,
                 "hotspotGatewayIp": localIp,
+                "hotspotFrequency": frequency ?? 0,
             ]
         }
     }
@@ -264,13 +269,13 @@ public enum HotspotStatus: CustomStringConvertible, Equatable {
         switch self {
         case .disabled:
             ["state": State.disabled.rawValue]
-        case let .enabled(ssid, password, localIp):
-            [
+        case let .enabled(ssid, password, localIp, frequency):
+            ([
                 "state": State.enabled.rawValue,
                 "ssid": ssid,
                 "password": password,
                 "localIp": localIp,
-            ]
+            ] as [String: Any]).merging(frequency.map { ["frequency": $0] as [String: Any] } ?? [:]) { _, new in new }
         }
     }
 
@@ -294,7 +299,7 @@ public enum HotspotStatus: CustomStringConvertible, Equatable {
         switch self {
         case .disabled:
             "HotspotStatus(disabled)"
-        case let .enabled(ssid, _, localIp):
+        case let .enabled(ssid, _, localIp, _):
             "HotspotStatus(enabled: \(ssid), localIp: \(localIp))"
         }
     }

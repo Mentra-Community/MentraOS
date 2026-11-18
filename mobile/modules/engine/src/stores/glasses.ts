@@ -70,6 +70,7 @@ type LegacyHotspotFields = {
   hotspotPassword?: string
   hotspotGatewayIp?: string
   hotspotLocalIp?: string
+  hotspotFrequency?: number
 }
 
 type GlassesInfoUpdate = Partial<EngineGlassesStatus> & LegacyWifiFields & LegacyHotspotFields
@@ -91,7 +92,10 @@ function hotspotFromLegacyFields(info: LegacyHotspotFields): HotspotStatus | nul
     const ssid = info.hotspotSsid?.trim()
     const password = info.hotspotPassword?.trim()
     const localIp = (info.hotspotGatewayIp ?? info.hotspotLocalIp)?.trim()
-    return ssid && password && localIp ? {state: "enabled", ssid, password, localIp} : null
+    const frequency = info.hotspotFrequency
+    return ssid && password && localIp
+      ? {state: "enabled", ssid, password, localIp, ...(frequency ? {frequency} : {})}
+      : null
   }
   if (info.hotspotEnabled === false) {
     return {state: "disabled"}
@@ -198,6 +202,7 @@ export const useGlassesStore = create<GlassesState>()(
           hotspotPassword,
           hotspotGatewayIp,
           hotspotLocalIp,
+          hotspotFrequency,
           wifi,
           hotspot,
           ...sdkInfo
@@ -205,7 +210,14 @@ export const useGlassesStore = create<GlassesState>()(
         const wifiUpdate = wifi ?? wifiFromLegacyFields({wifiConnected, wifiSsid, wifiLocalIp})
         const hotspotUpdate =
           hotspot ??
-          hotspotFromLegacyFields({hotspotEnabled, hotspotSsid, hotspotPassword, hotspotGatewayIp, hotspotLocalIp})
+          hotspotFromLegacyFields({
+            hotspotEnabled,
+            hotspotSsid,
+            hotspotPassword,
+            hotspotGatewayIp,
+            hotspotLocalIp,
+            hotspotFrequency,
+          })
         const hasWifiInfoUpdate =
           Object.prototype.hasOwnProperty.call(info, "wifi") ||
           Object.prototype.hasOwnProperty.call(info, "wifiConnected") ||

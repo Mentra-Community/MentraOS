@@ -130,6 +130,8 @@ export const localNetworkTransport = {
     options?: {
       assertCurrent?: () => void
       gateway?: string
+      /** The hotspot's channel in MHz, when the glasses report it: a Mac then scans only that channel. */
+      frequency?: number
       purpose?: "outgoing-client" | "incoming-server"
       /** iOS: the join has waited a few seconds for Local Network access, which may have been denied. */
       onPermissionRequired?: (systemAnswer: string) => void
@@ -160,6 +162,7 @@ export const localNetworkTransport = {
           password,
           options?.gateway,
           options?.purpose ?? "outgoing-client",
+          options?.frequency,
         )
         assertCurrent()
         return address

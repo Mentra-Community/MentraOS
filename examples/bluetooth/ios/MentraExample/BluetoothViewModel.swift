@@ -852,7 +852,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             hotspot = current
         } else {
             let status = try await mentraBluetoothSdk.setHotspotState(enabled: true)
-            guard case let .enabled(ssid, password, localIp) = status.status else {
+            guard case let .enabled(ssid, password, localIp, _) = status.status else {
                 throw ExampleActionError(message: "The glasses hotspot did not turn on.")
             }
             hotspot = (ssid, password, localIp)
@@ -3616,7 +3616,7 @@ func isDisplayableOtaStatus(_ status: OtaStatusEvent) -> Bool {
 }
 
 func enabledHotspotStatus(_ hotspot: HotspotStatus) -> (ssid: String, password: String, localIp: String)? {
-    guard case let .enabled(ssid, password, localIp) = hotspot else {
+    guard case let .enabled(ssid, password, localIp, _) = hotspot else {
         return nil
     }
     return (ssid, password, localIp)
@@ -3789,7 +3789,7 @@ func summarize(_ status: GlassesRuntimeState) -> String {
         status.wifi.map { _ in "wifi: \(wifiLabel(status))" },
         status.hotspot.map { hotspot -> String in
             switch hotspot {
-            case let .enabled(ssid, _, localIp):
+            case let .enabled(ssid, _, localIp, _):
                 return "hotspot: \(ssid) · \(localIp)"
             case .disabled:
                 return "hotspot: disabled"

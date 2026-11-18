@@ -2,7 +2,7 @@ import CoreLocation
 import Foundation
 import ObjectiveC
 
-/// Blocking public CoreWLAN calls are isolated here; the existing hotspot owner
+/// Blocking CoreWLAN calls are isolated here; the existing hotspot owner
 /// retains custody until they return, even after cancellation or a timeout.
 final class MacHotspotAssociation {
     /// Rejoining the hotspot seconds after leaving it, as between an update's passes, can be refused while the
@@ -16,8 +16,8 @@ final class MacHotspotAssociation {
     /// macOS answers an app without the scan entitlement from its cache until 10 s after its last live
     /// scan returned (airportd, 2026-11-17), so scanning sooner only reads the scan that just missed.
     static let scanInterval: TimeInterval = 10
-    /// Time to find and join the hotspot. A live scan takes about 22 s while the Mac is on another network,
-    /// so a minute holds two, and either can miss an AP that just came up (lab Mac, 2026-11-17). This holds four.
+    /// Time to find and join the hotspot. A full live scan took about 22 s while the Mac was on another network,
+    /// and one could miss an AP that had just come up (lab Mac, 2026-11-17). This window holds four.
     static let joinWindow: TimeInterval = 120
 
     private let condition = NSCondition()
@@ -31,6 +31,7 @@ final class MacHotspotAssociation {
     private let pause: ((TimeInterval) -> Void)?
     private let makeInterface: () throws -> MacWifiInterface
     private let authorization: MacHotspotAuthorization?
+    private var scansStarted = 0
 
     init(deadline: TimeInterval = ProcessInfo.processInfo.systemUptime + MacHotspotAssociation.joinWindow,
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
@@ -46,7 +47,8 @@ final class MacHotspotAssociation {
         self.makeInterface = makeInterface ?? { try PublicCoreWlanInterface(authorizationFacts: authorizationFacts, authorization: authorization) }
     }
 
-    func associate(ssid: String, password: String) throws -> String {
+    /// `frequency` is the channel the glasses report for their AP, in MHz, when they know it.
+    func associate(ssid: String, password: String, frequency: Int? = nil) throws -> String {
         try checkCurrent()
         let interface = try makeInterface()
         self.interface = interface
@@ -54,7 +56,7 @@ final class MacHotspotAssociation {
         if before != ssid { previousSSID = before }
         for attempt in 1 ... Self.associationAttempts {
             guard try readSSID(interface) != ssid else { break }
-            let network = try discoverNetwork(ssid: ssid, interface: interface)
+            let network = try discoverNetwork(ssid: ssid, frequency: frequency, interface: interface)
             try checkDiscoveryCurrent()
             guard let network, try readSSID(interface) != ssid else { break }
             try checkDiscoveryCurrent()
@@ -170,13 +172,14 @@ final class MacHotspotAssociation {
         try PublicCoreWlanInterface().currentSSID()
     }
 
-    private func discoverNetwork(ssid: String, interface: MacWifiInterface) throws -> NSObject? {
+    private func discoverNetwork(ssid: String, frequency: Int?, interface: MacWifiInterface) throws -> NSObject? {
         while true {
             try checkDiscoveryCurrent()
             // Recheck Location authorization before and after each blocking scan.
             if try readSSID(interface) == ssid { return nil }
             try authorization?.requireCurrentAuthorization()
-            let network = try interface.network(ssid: ssid)
+            let network = try interface.network(ssid: ssid, channels: MacHotspotScan.next(after: scansStarted, frequency: frequency))
+            scansStarted += 1
             try checkDiscoveryCurrent()
             if try readSSID(interface) == ssid { return nil }
             if let network { return network }
@@ -207,10 +210,46 @@ final class MacHotspotAssociation {
     }
 }
 
+/// Which channels a hotspot scan covers. A scan of every channel took about 22 s, most of it in a 6 GHz pass
+/// (2026-11-17), and these glasses cannot run a 6 GHz AP. One channel takes 0.07 s, the 2.4 GHz band 0.65 s (air-3).
+enum MacHotspotScan: Equatable {
+    /// The channel the glasses reported: their station's, which their AP shares while it is connected.
+    case channel(band: Int, number: Int)
+    /// Where the glasses start their own AP, with their station off Wi-Fi (Android's 2.4 GHz SoftAP band).
+    case band2GHz
+    /// Every 2.4 and 5 GHz channel, once a narrower scan has missed.
+    case below6GHz
+
+    /// CWChannelBand raw values.
+    static let band2 = 1, band5 = 2
+
+    static func next(after scans: Int, frequency: Int?) -> MacHotspotScan {
+        guard scans == 0 else { return .below6GHz }
+        return frequency.flatMap(channel(frequency:)) ?? .band2GHz
+    }
+
+    static func channel(frequency: Int) -> MacHotspotScan? {
+        switch frequency {
+        case 2412 ... 2472: .channel(band: band2, number: (frequency - 2407) / 5)
+        case 2484: .channel(band: band2, number: 14)
+        case 5160 ... 5885: .channel(band: band5, number: (frequency - 5000) / 5)
+        default: nil
+        }
+    }
+
+    func includes(band: Int, number: Int) -> Bool {
+        switch self {
+        case let .channel(b, n): band == b && number == n
+        case .band2GHz: band == Self.band2
+        case .below6GHz: band == Self.band2 || band == Self.band5
+        }
+    }
+}
+
 protocol MacWifiInterface: AnyObject {
     func name() throws -> String
     func currentSSID() throws -> String?
-    func network(ssid: String) throws -> NSObject?
+    func network(ssid: String, channels: MacHotspotScan) throws -> NSObject?
     func associate(network: NSObject, password: String) throws
     func disassociate()
     /// Removes the network from the Mac's known networks, so auto-join never picks it.
@@ -245,7 +284,7 @@ enum MacHotspotRestore: String, Equatable {
 enum MacWifiInvocation {
     // Objective-C NSError** parameters use autoreleasing writeback. Strong
     // pointer storage would over-release errors when the native pool drains.
-    typealias Scan = @convention(c) (AnyObject, Selector, NSData, AutoreleasingUnsafeMutablePointer<NSError?>) -> Unmanaged<NSSet>?
+    typealias Scan = @convention(c) (AnyObject, Selector, NSSet, NSData, NSString?, AutoreleasingUnsafeMutablePointer<NSError?>) -> Unmanaged<NSSet>?
     typealias Associate = @convention(c) (AnyObject, Selector, AnyObject, NSString, AutoreleasingUnsafeMutablePointer<NSError?>) -> Bool
     typealias Forget = @convention(c) (AnyObject, Selector, NSData, UInt64, AutoreleasingUnsafeMutablePointer<NSError?>) -> Bool
     typealias SetPower = @convention(c) (AnyObject, Selector, Bool, AutoreleasingUnsafeMutablePointer<NSError?>) -> Bool
@@ -276,7 +315,8 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
               client.responds(to: NSSelectorFromString("interface")),
               let interface = client.perform(NSSelectorFromString("interface"))?.takeUnretainedValue() as? NSObject
         else { throw LocalMediaError("Mac Wi-Fi interface is unavailable") }
-        for method in ["interfaceName", "ssidData", "scanForNetworksWithSSID:error:", "associateToNetwork:password:error:", "disassociate"] {
+        for method in ["interfaceName", "ssidData", "supportedWLANChannels", "scanForNetworksWithChannels:ssid:bssid:error:",
+                       "associateToNetwork:password:error:", "disassociate"] {
             guard interface.responds(to: NSSelectorFromString(method)) else {
                 throw LocalMediaError("Mac Wi-Fi interface does not support hotspot association")
             }
@@ -309,12 +349,19 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
         }
     }
 
-    func network(ssid: String) throws -> NSObject? {
+    /// CoreWLAN's public scan always covers every channel, 6 GHz included; its channel-scoped scan is not public.
+    func network(ssid: String, channels scan: MacHotspotScan) throws -> NSObject? {
         try requireAuthorization()
-        let selector = NSSelectorFromString("scanForNetworksWithSSID:error:")
+        let supported = interface.perform(NSSelectorFromString("supportedWLANChannels"))?.takeUnretainedValue() as? NSSet ?? []
+        let channels = NSSet(array: supported.compactMap { $0 as? NSObject }.filter {
+            scan.includes(band: $0.value(forKey: "channelBand") as? Int ?? 0, number: $0.value(forKey: "channelNumber") as? Int ?? 0)
+        })
+        // A reported channel this Mac cannot use is a miss: an empty set would scan every channel.
+        guard channels.count > 0 else { return nil }
+        let selector = NSSelectorFromString("scanForNetworksWithChannels:ssid:bssid:error:")
         let invoke = unsafeBitCast(interface.method(for: selector), to: MacWifiInvocation.Scan.self)
         var error: NSError?
-        guard let networks = invoke(interface, selector, NSData(data: Data(ssid.utf8)), &error)?.takeUnretainedValue() else {
+        guard let networks = invoke(interface, selector, channels, NSData(data: Data(ssid.utf8)), nil, &error)?.takeUnretainedValue() else {
             throw Self.failure("scan", error)
         }
         // A directed scan can include unrelated networks. Match the requested

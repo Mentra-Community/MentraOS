@@ -32,7 +32,7 @@ final class MacHotspotAuthorizationTests: XCTestCase {
             onRead?(); return ssid
         }
 
-        func network(ssid _: String) throws -> NSObject? {
+        func network(ssid _: String, channels _: MacHotspotScan) throws -> NSObject? {
             scans += 1; onScan?(); return NSObject()
         }
 

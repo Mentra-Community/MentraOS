@@ -9,6 +9,8 @@ export const glassesHotspot: {
     password: string,
     gateway?: string,
     purpose?: "outgoing-client" | "incoming-server",
+    /** The hotspot's channel in MHz, when the glasses report it: a Mac scans only that channel first. */
+    frequency?: number,
   ): Promise<string>
   leave(id: string, waitForInternet?: boolean): Promise<void>
   /** A join with this id has waited a few seconds for Local Network access, which the person may have denied.

@@ -42,6 +42,8 @@ export interface HotspotInfo {
   ssid: string
   password: string
   ip: string
+  /** The AP's channel in MHz, when the glasses report it. */
+  frequency?: number
 }
 
 export interface SyncQueue {

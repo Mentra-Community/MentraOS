@@ -52,6 +52,7 @@ describe("iOS hotspot ownership", () => {
       "private",
       "192.168.43.1",
       "outgoing-client",
+      undefined,
     )
   })
 
@@ -88,6 +89,7 @@ describe("iOS hotspot ownership", () => {
     await expect(
       localNetworkTransport.connect(networkOwner, "glasses", "private", {
         gateway: "192.168.43.1",
+        frequency: 5180,
         purpose: "incoming-server",
       }),
     ).resolves.toBe("192.168.43.2")
@@ -97,6 +99,7 @@ describe("iOS hotspot ownership", () => {
       "private",
       "192.168.43.1",
       "incoming-server",
+      5180,
     )
     await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
     await localNetworkTransport.disconnect(otherOwner)

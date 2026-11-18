@@ -670,6 +670,7 @@ class GallerySyncService {
             ssid: glassesStore.hotspot.ssid,
             password: glassesStore.hotspot.password,
             ip: glassesStore.hotspot.localIp,
+            frequency: glassesStore.hotspot.frequency,
           }
         : null
 
@@ -945,6 +946,7 @@ class GallerySyncService {
             ssid: currentGlassesStore.hotspot.ssid,
             password: currentGlassesStore.hotspot.password,
             ip: currentGlassesStore.hotspot.localIp,
+            frequency: currentGlassesStore.hotspot.frequency,
           }
         : null
 
@@ -1241,6 +1243,7 @@ class GallerySyncService {
           const joinedAddress = await keepHotspotUpWhileJoining(
             localNetworkTransport.connect(this.networkOwner, hotspotInfo.ssid, hotspotInfo.password, {
               gateway: hotspotInfo.ip,
+              frequency: hotspotInfo.frequency,
               onPermissionRequired: (systemAnswer) => {
                 if (!signal?.aborted) {
                   emitGalleryNotice({code: "local_network_permission_required", data: {systemAnswer}})

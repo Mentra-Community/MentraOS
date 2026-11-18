@@ -23,7 +23,7 @@ public final class GlassesMediaRelayModule: Module {
             permissionLog.notice("\(line, privacy: .public)")
         }
 
-        AsyncFunction("joinLocalHotspot") { (id: String, ssid: String, password: String, gateway: String?, purpose: String, promise: Promise) in
+        AsyncFunction("joinLocalHotspot") { (id: String, ssid: String, password: String, gateway: String?, purpose: String, frequency: Int?, promise: Promise) in
             self.queue.async {
                 guard self.localHotspotOwner == nil else {
                     promise.reject(LocalMediaError("Previous hotspot session has not been released")); return
@@ -36,7 +36,7 @@ public final class GlassesMediaRelayModule: Module {
                 self.localHotspot.onPermissionRequired = { [weak self] systemAnswer in
                     self?.sendEvent("onLocalHotspotPermissionRequired", ["id": id, "systemAnswer": systemAnswer])
                 }
-                self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway, purpose: accessPurpose) { result in
+                self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway, frequency: frequency, purpose: accessPurpose) { result in
                     switch result {
                     case let .success(address): promise.resolve(address)
                     case let .failure(error):

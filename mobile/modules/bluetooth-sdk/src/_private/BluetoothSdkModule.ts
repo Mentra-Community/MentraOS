@@ -515,6 +515,7 @@ function adaptGlassesUpdateToNative(values: Partial<GlassesStatus>): Record<stri
       hotspotSsid: hotspot.ssid,
       hotspotPassword: hotspot.password,
       hotspotGatewayIp: hotspot.localIp,
+      hotspotFrequency: hotspot.frequency ?? 0,
     }
   } else if (hotspot?.state === "disabled") {
     update = {
@@ -523,6 +524,7 @@ function adaptGlassesUpdateToNative(values: Partial<GlassesStatus>): Record<stri
       hotspotSsid: "",
       hotspotPassword: "",
       hotspotGatewayIp: "",
+      hotspotFrequency: 0,
     }
   }
   return update

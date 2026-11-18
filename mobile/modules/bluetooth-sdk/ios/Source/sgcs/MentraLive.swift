@@ -3602,7 +3602,8 @@ class MentraLive: NSObject, SGCManager {
             let ssid = json["hotspot_ssid"] as? String ?? ""
             let password = json["hotspot_password"] as? String ?? ""
             let ip = json["hotspot_gateway_ip"] as? String ?? ""
-            updateHotspotStatus(enabled: enabled, ssid: ssid, password: password, ip: ip)
+            let frequency = json["hotspot_frequency"] as? Int ?? 0
+            updateHotspotStatus(enabled: enabled, ssid: ssid, password: password, ip: ip, frequency: frequency)
 
         case "hotspot_error":
             let errorMessage = json["error_message"] as? String ?? "Unknown hotspot error"
@@ -6947,12 +6948,13 @@ class MentraLive: NSObject, SGCManager {
         emitWifiStatusChange(error: error)
     }
 
-    private func updateHotspotStatus(enabled: Bool, ssid: String, password: String, ip: String) {
+    private func updateHotspotStatus(enabled: Bool, ssid: String, password: String, ip: String, frequency: Int) {
         Bridge.log("LIVE: 🔥 Updating hotspot status - enabled: \(enabled), ssid: \(ssid)")
         DeviceStore.shared.apply("glasses", "hotspotEnabled", enabled)
         DeviceStore.shared.apply("glasses", "hotspotSsid", ssid)
         DeviceStore.shared.apply("glasses", "hotspotPassword", password)
         DeviceStore.shared.apply("glasses", "hotspotGatewayIp", ip) // This is the gateway IP from glasses
+        DeviceStore.shared.apply("glasses", "hotspotFrequency", frequency)
         emitHotspotStatusChange()
     }
 
@@ -7374,7 +7376,8 @@ class MentraLive: NSObject, SGCManager {
             enabled: hotspotEnabled,
             ssid: hotspotSsid,
             password: hotspotPassword,
-            localIp: hotspotGatewayIp
+            localIp: hotspotGatewayIp,
+            frequency: hotspotFrequency
         ) else {
             return
         }
@@ -7480,6 +7483,7 @@ class MentraLive: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "hotspotSsid", "")
         DeviceStore.shared.apply("glasses", "hotspotPassword", "")
         DeviceStore.shared.apply("glasses", "hotspotGatewayIp", "")
+        DeviceStore.shared.apply("glasses", "hotspotFrequency", 0)
 
         connectedPeripheral = nil
         discoveredPeripherals.removeAll()

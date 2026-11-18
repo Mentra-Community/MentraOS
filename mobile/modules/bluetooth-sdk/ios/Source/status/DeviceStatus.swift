@@ -343,6 +343,7 @@ struct GlassesStatus: CustomStringConvertible {
         dictionary.removeValue(forKey: "hotspotSsid")
         dictionary.removeValue(forKey: "hotspotPassword")
         dictionary.removeValue(forKey: "hotspotGatewayIp")
+        dictionary.removeValue(forKey: "hotspotFrequency")
         return dictionary
     }
 
@@ -380,6 +381,8 @@ struct GlassesStatus: CustomStringConvertible {
             dictionary.removeValue(forKey: "hotspotSsid")
             dictionary.removeValue(forKey: "hotspotPassword")
             dictionary.removeValue(forKey: "hotspotGatewayIp")
+            dictionary.removeValue(forKey: "hotspotFrequency")
+        dictionary.removeValue(forKey: "hotspotFrequency")
         }
         return dictionary
     }

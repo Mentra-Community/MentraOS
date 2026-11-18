@@ -216,7 +216,16 @@ export type SavedWifiNetworksEvent = {
   error?: string
 }
 
-export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
+export type HotspotStatus =
+  | {state: "disabled"}
+  | {
+      state: "enabled"
+      ssid: string
+      password: string
+      localIp: string
+      /** The AP's channel in MHz, when the glasses know it: their station's, which the AP shares. */
+      frequency?: number
+    }
 
 export type EnabledHotspotStatus = Extract<HotspotStatus, {state: "enabled"}>
 
