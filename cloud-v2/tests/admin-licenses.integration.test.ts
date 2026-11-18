@@ -12,8 +12,9 @@
  * What it pins: an Organization Admin lists every license, newest first, each with the workspace that holds it
  * shown by name, its product, quantity, seats used, paid-through date and ended state; the workspaces of a page
  * are looked up in one batch, and no person's record is read; search matches the workspace's name or id or the
- * product as plain text, and pages with the same cursor; a workspace admin, an operator key
- * (every scope included), a workspace key and a phone token are refused; the route is read-only; and `/me`
+ * product as plain text, and pages with the same cursor; an operator key created with
+ * `organization.licenses.read` reads it too, while a workspace admin, an operator key without that scope, a
+ * workspace key and a phone token are refused; the route is read-only; and `/me`
  * says whether the Licenses page has anything to offer.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random database name, ignores
@@ -620,11 +621,14 @@ describe("GET /api/admin/licenses?query=", () => {
 // --- Who may read ----------------------------------------------------------
 
 describe("who may read the license list", () => {
-  test("a workspace admin, an operator key, a workspace key and a phone token are refused", async () => {
+  test("a workspace admin, an operator key without the scope, a workspace key and a phone token are refused", async () => {
     await seedNamedLicenses()
     const ws = await workspaceWithPeople()
-    // Every scope an operator key can carry.
-    const operator = await operatorKey("all-scopes", [...OPERATOR_KEY_SCOPES])
+    // Every scope an operator key can carry but this one.
+    const operator = await operatorKey(
+      "all-but-licenses",
+      OPERATOR_KEY_SCOPES.filter(scope => scope !== "organization.licenses.read"),
+    )
     const phone = await phoneToken("holder")
 
     const refused: Array<[label: string, caller: Person | string, via: "session" | "bearer" | undefined, status: number]> = [
@@ -632,7 +636,7 @@ describe("who may read the license list", () => {
       ["workspace owner (bearer)", ws.owner, "bearer", 403],
       ["workspace admin (session)", ws.admin, "session", 403],
       ["workspace admin (bearer)", ws.admin, "bearer", 403],
-      ["operator key with every scope", operator, undefined, 403],
+      ["operator key without the scope", operator, undefined, 403],
       ["workspace key", ws.workspaceKey, undefined, 403],
       // A phone's access token is no credential on the admin surface at all.
       ["phone token", phone, undefined, 401],
@@ -659,12 +663,16 @@ describe("who may read the license list", () => {
     }
   })
 
-  test("an operator key is refused for want of a scope it can never hold, not for lack of one it was given", async () => {
-    const operator = await operatorKey("all-scopes", [...OPERATOR_KEY_SCOPES])
+  test("an operator key created with organization.licenses.read reads the list, and /me offers it the page", async () => {
+    await seedNamedLicenses()
+    const operator = await operatorKey("licenses", ["organization.licenses.read"])
     const me = await call("GET", "/api/admin/me", {as: operator})
+    expect(me.json.organization.capabilities).toEqual(["organization.licenses.read"])
+    expect(me.json.licenses).toEqual({available: true})
 
-    expect(me.json.organization.capabilities).not.toContain("organization.licenses.read")
-    expect(me.json.licenses).toEqual({available: false})
+    const reply = await call("GET", `${LICENSES}?query=acme`, {as: operator})
+    expect(reply.status).toBe(200)
+    expect(reply.text).toContain("Acme Robotics")
   })
 })
 

@@ -12,10 +12,28 @@ const PANEL = "rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px
 
 export const OPERATOR_KEYS_QUERY_KEY = ["admin-operator-keys"] as const;
 
-/** What each scope lets a key do, in words. */
+/** Each scope's name in words, as the form and the list show it. */
 export const SCOPE_LABELS: Record<string, string> = {
+  "organization.workspaces.administer": "Administer every workspace",
+  "organization.credentials.manage": "Manage keys and sign-in websites",
   "organization.incidents.read": "Read incident reports",
   "organization.supportProfiles.read": "Look up support profiles",
+  "organization.fleet.administer": "Administer Fleet",
+  "organization.licenses.read": "Read every license",
+  "organization.registry.administer": "Administer the miniapp registry",
+};
+
+/** What each scope lets a key do, under its name in the form. */
+export const SCOPE_DESCRIPTIONS: Record<string, string> = {
+  "organization.workspaces.administer":
+    "List and create workspaces, make people Owners, and act as an Owner in any workspace: members, invitations, licenses and settings.",
+  "organization.credentials.manage":
+    "List and revoke operator keys, change or remove the websites that sign in with Mentra, and read the audit log.",
+  "organization.incidents.read": "Read bug reports, feedback and automatic reports, with their logs.",
+  "organization.supportProfiles.read": "Look up a person's support profile, devices and recent reports.",
+  "organization.fleet.administer": "Fleet Management across the organization. Fleet does not accept keys yet, so this has no effect for now.",
+  "organization.licenses.read": "Read every license and the workspace that holds it.",
+  "organization.registry.administer": "Search, export, register, archive and unarchive registry entries.",
 };
 
 /** A scope this page does not know yet shows as it is rather than disappearing. */
@@ -120,9 +138,13 @@ export function OperatorKeysPage() {
         <div className="border-b border-[#eceeeb] p-5">
           <h2 className="text-xl font-bold">Create an operator key</h2>
           <p className="mt-1 text-sm text-[#68746d]">
-            An operator key acts for this organization, not for a workspace. It carries only the scopes you choose, and
-            it cannot administer workspaces or other keys. A key works only while the Organization Admin who created it
-            remains one, so create shared or automation keys from an admin who will stay.
+            An operator key acts for this organization, not for a workspace. It can do what an Organization Admin can,
+            as far as the scopes you choose allow. What it changes is recorded in the audit logs under its name and yours.
+          </p>
+          <p className="mt-2 text-sm text-[#68746d]">
+            Keys can't create keys: no operator key, workspace key or website secret, so a leaked key can't outlast its
+            revocation. A key works only while the Organization Admin who created it remains one, so create shared or
+            automation keys from an admin who will stay.
           </p>
         </div>
         <div className="p-5">
@@ -241,18 +263,23 @@ function CreateKeyForm({
       <fieldset className="grid gap-2">
         <legend className="mb-1 text-sm font-medium">Scopes</legend>
         {OPERATOR_KEY_SCOPES.map(scope => (
-          <label key={scope} className="flex items-center gap-2 text-sm">
+          <label key={scope} className="flex items-start gap-2 text-sm">
             <input
               type="checkbox"
               name="scope"
               value={scope}
-              className="size-4 accent-[#087d50]"
+              className="mt-0.5 size-4 shrink-0 accent-[#087d50]"
               checked={scopes.includes(scope)}
               onChange={event =>
                 setScopes(current => (event.target.checked ? [...current, scope] : current.filter(held => held !== scope)))
               }
             />
-            {scopeLabel(scope)}
+            <span>
+              <span className="font-medium">{scopeLabel(scope)}</span>
+              {SCOPE_DESCRIPTIONS[scope] ? (
+                <span className="block text-xs text-[#68746d]">{SCOPE_DESCRIPTIONS[scope]}</span>
+              ) : null}
+            </span>
           </label>
         ))}
       </fieldset>

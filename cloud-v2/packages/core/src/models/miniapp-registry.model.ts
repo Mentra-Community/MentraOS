@@ -46,7 +46,10 @@ const MiniappRegistryEntrySchema = new Schema(
     private: {type: Boolean, default: false},
     status: {type: String, enum: ["active", "archived"], default: "active"},
     firstRegisteredAt: {type: Date, required: true},
-    /** The `mentraUserId` that first registered the URL. */
+    /**
+     * Who first registered the URL: a person's `mentraUserId`, or `credential:<id>` for an operator key registering
+     * from the admin portal (a key is no account).
+     */
     firstRegisteredBy: {type: String, required: true},
     lastVerifiedAt: {type: Date, default: null},
     /** When Core last tried to read the URL; re-verification is at most once an hour per URL. */

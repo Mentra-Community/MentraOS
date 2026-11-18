@@ -51,6 +51,7 @@ import {
   changeRole,
   countActiveOwners,
   createWorkspace,
+  createWorkspaceForOwner,
   deleteWorkspace,
   getActiveMembership,
   getWorkspace,
@@ -2370,5 +2371,89 @@ describe("audit", () => {
     expect(clampPageSize(1e9)).toBe(500)
     const notNumbers = ["abc", undefined] as unknown as number[]
     for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, ...notNumbers]) expect(clampPageSize(bad)).toBe(1)
+  })
+})
+
+describe("an operator key as the actor", () => {
+  /** An operator key actor holding `capabilities`, created by the Organization Admin `alex@example.test`. */
+  function key(capabilities: Array<"organization.workspaces.administer" | "organization.credentials.manage">): Actor {
+    return {
+      kind: "operatorKey",
+      credentialId: "01KEYKEYKEYKEYKEYKEYKEYKEY",
+      name: "Sales tooling",
+      createdByEmail: "alex@example.test",
+      organizationCapabilities: capabilities,
+    }
+  }
+  const administers = key(["organization.workspaces.administer"])
+  const managesKeysOnly = key(["organization.credentials.manage"])
+
+  test("acts as an Owner with organization.workspaces.administer, and as nobody without it", async () => {
+    const ws = await newWorkspace()
+    const memberId = await addMember(ws, "mu_member", "member")
+
+    await expectError(() => renameWorkspace(managesKeysOnly, ws, "Nope", 0), "forbidden", 403)
+    await expectError(() => changeRole(managesKeysOnly, ws, memberId, "admin", 0), "forbidden", 403)
+
+    const renamed = await renameWorkspace(administers, ws, "Acme Two", 0)
+    // Owner-only: a Member straight to Owner.
+    await changeRole(administers, ws, memberId, "owner", renamed.authorizationRevision)
+    expect((await getActiveMembership(ws, "mu_member"))!.role).toBe("owner")
+    // The key is never a member.
+    expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ws, status: "active"})).toBe(2)
+  })
+
+  test("the audit log records the key's id and name, and the address of the person who created it", async () => {
+    const ws = await newWorkspace()
+    await renameWorkspace(administers, ws, "Acme Two", 0)
+    const [event] = await listWorkspaceAudit(ws, {limit: 1})
+    expect(event).toMatchObject({action: "workspace.renamed"})
+    expect(event!.actor).toEqual({
+      kind: "credential",
+      credentialId: "01KEYKEYKEYKEYKEYKEYKEYKEY",
+      credentialName: "Sales tooling",
+      email: "alex@example.test",
+    })
+  })
+
+  test("recovers ownership only with organization.workspaces.administer", async () => {
+    await accounts("mu_heir")
+    const ws = await newWorkspace()
+    await expectError(() => recoverOwnership(managesKeysOnly, ws, "mu_heir"), "forbidden", 403)
+    await recoverOwnership(administers, ws, "mu_heir")
+    expect((await getActiveMembership(ws, "mu_heir"))!.role).toBe("owner")
+  })
+
+  test("creates a workspace for a person, who is its first Owner, only with organization.workspaces.administer", async () => {
+    await accounts("mu_reseller")
+    for (const refused of [managesKeysOnly, service, user("mu_owner")]) {
+      await expectError(
+        () => createWorkspaceForOwner(refused, {name: "Northwind", owner: {mentraUserId: "mu_reseller"}}),
+        "forbidden",
+        403,
+      )
+    }
+    await expectError(
+      () => createWorkspaceForOwner(administers, {name: "Northwind", owner: {mentraUserId: "mu_nobody"}}),
+      "user_not_found",
+      404,
+    )
+    expect(await WorkspaceModel.countDocuments({})).toBe(0)
+
+    const created = await createWorkspaceForOwner(administers, {
+      name: "Northwind",
+      owner: {mentraUserId: "mu_reseller", email: "Owner@Reseller.test "},
+    })
+    expect(created).toMatchObject({name: "Northwind", status: "active", authorizationRevision: 0})
+    expect(created.owner).toMatchObject({mentraUserId: "mu_reseller", email: "Owner@Reseller.test"})
+    expect((await listWorkspacesForUser("mu_reseller")).map(item => [item.name, item.membership.role])).toEqual([
+      ["Northwind", "owner"],
+    ])
+    // The system and an Organization Admin may too.
+    for (const actor of [system, orgAdmin]) {
+      expect((await createWorkspaceForOwner(actor, {name: "Another", owner: {mentraUserId: "mu_reseller"}})).name).toBe(
+        "Another",
+      )
+    }
   })
 })

@@ -123,7 +123,8 @@ Core reads a private URL with the token of the person whose phone asked.
 
 An entry is archived when its status is `archived`, or when a rule names its
 URL, its package name, its registrable domain, or the account that first
-registered it. A rule also refuses URLs registered after it: Core checks the
+registered it: a person's Mentra user ID, or `credential:<id>` for an operator
+key that registered it from the admin portal. A rule also refuses URLs registered after it: Core checks the
 rules before it reads a URL, and again once it knows the package name, and
 records no entry for a URL a rule covers. It checks once more after it writes,
 so a rule made while Core was reading the URL still refuses that install.
@@ -137,23 +138,24 @@ directory archive's actor is `store:<staff email>`.
 ## The admin portal
 
 The admin portal's **Miniapp registry** page is the full registry, for
-Organization Admins only: it needs `organization.registry.administer`, which
-no operator key can carry. Its routes are under `/api/admin/registry`
+Organization Admins: it needs `organization.registry.administer`, which an
+operator key may also be created with, and a key may do everything below. Its routes are under `/api/admin/registry`
 (`packages/core/src/api/admin/registry.api.ts`), with the types in
 `@mentra/workspace-contract` (`registry-admin.ts`):
 
 | Route | What it does |
 | --- | --- |
-| `GET /entries?q=&status=&verification=&cursor=` | Every entry, most recently registered first, 50 to a page, with nothing redacted. `q` matches the URL, package name, name or domain as plain text, or the account that registered it by its Mentra user ID. |
+| `GET /entries?q=&status=&verification=&cursor=` | Every entry, most recently registered first, 50 to a page, with nothing redacted. `q` matches the URL, package name, name or domain as plain text, or the account that registered it by its Mentra user ID (or `credential:<id>`). |
 | `GET /export` | Every entry as CSV, for App Review: URL, package, name, version, age rating, verification, private, status and dates. It names no account. |
-| `POST /register` with `{urls}` | Registers 1 to 50 URLs as the Organization Admin, exactly as a phone's registration: Core reads each one, and a sign-in challenge gets the admin's own miniapp token. A URL Core can't read records nothing. Seeds Mentra's own listings. |
+| `POST /register` with `{urls}` | Registers 1 to 50 URLs exactly as a phone's registration: Core reads each one, and the archive rules apply. A URL Core can't read records nothing. Seeds Mentra's own listings. An Organization Admin registers as themselves: a new entry's first registrant is their Mentra user ID, and a sign-in challenge gets their own miniapp token. An operator key registers for the organization and is no account: a new entry's first registrant is the key, `credential:<id>`, and a sign-in challenge goes unanswered, so a private miniapp is recorded private with only its package. The key's creator is not used, since a legacy admin key's creator has no Mentra account. |
 | `GET /coverage?kind=&value=` | How many entries a rule covers, and whether it exists. The page asks before it archives. |
-| `POST /archive` with `{rule: {kind, value}, reason?}` | Archives by `url`, `package`, `domain` (a registrable domain) or `account` (a Mentra user ID). |
+| `POST /archive` with `{rule: {kind, value}, reason?}` | Archives by `url`, `package`, `domain` (a registrable domain) or `account` (a Mentra user ID, or `credential:<id>` for everything a key first registered). |
 | `POST /unarchive` with `{rule}` | Removes the rule. |
 | `GET /rules?cursor=` | The archive rules, newest first. |
 
 Archiving, unarchiving, each registered URL and each export are recorded in the
-admin audit log with the Organization Admin's email.
+admin audit log with the Organization Admin's email, or with the key and the
+email of the person who created it.
 
 ## Configuration
 

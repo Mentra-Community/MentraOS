@@ -7,8 +7,9 @@
  *  1. load the workspace (missing: `not_found`; deleted: `workspace_deleted`);
  *  2. compare `authorizationRevision` with the caller's `expectedRevision`
  *     (mismatch: `membership_changed`);
- *  3. resolve the actor's role (Organization Admins and the system act as
- *     `owner`; service actors have none);
+ *  3. resolve the actor's role (Organization Admins, operator keys holding
+ *     `organization.workspaces.administer` and the system act as `owner`;
+ *     service actors and other keys have none);
  *  4. check the role-transition rules (`forbidden`) and the last-owner guard
  *     (`last_owner`);
  *  5. write the change, bump `authorizationRevision` and record the audit event.
@@ -37,6 +38,8 @@ import {
   describeDeletionHolds,
   roleAtLeast,
   WORKSPACE_ROLES,
+  type OrganizationCapability,
+  type OrganizationWorkspaceCreated,
   type PrincipalResponse,
   type WorkspaceRole,
   type WorkspaceSummary,
@@ -71,6 +74,13 @@ export const WORKSPACE_NAME_MAX_LENGTH = 80
  * Who is acting. For a user, `emailVerified` says whether the identity provider
  * verified `email`; anything that matches on the address (accepting an
  * invitation) requires it.
+ *
+ * An operator key (`operatorKey`) acts for the organization with the
+ * capabilities it holds now (`organizationCapabilities`): holding
+ * `organization.workspaces.administer` it acts as an Owner in every workspace,
+ * as an Organization Admin does. It is never a member of anything, and never
+ * creates a credential. `name` and `createdByEmail` (the person who created the
+ * key) are recorded with what it does, so the audit log names both.
  */
 export type Actor =
   | {
@@ -82,6 +92,13 @@ export type Actor =
     }
   | {kind: "system"}
   | {kind: "service"; service: string; email: string | null}
+  | {
+      kind: "operatorKey"
+      credentialId: string
+      name: string
+      createdByEmail: string | null
+      organizationCapabilities: readonly OrganizationCapability[]
+    }
 
 export type MembershipRow = WorkspaceMembershipRow
 
@@ -270,10 +287,62 @@ export async function insertWorkspace(
   actor: Actor & {kind: "user"},
   input: {name: string; automatic: boolean},
 ): Promise<{workspace: WorkspaceSummary; membership: {membershipId: string; role: "owner"}}> {
+  const {workspace, membershipId} = await insertOwnedWorkspace(session, actor, {
+    name: input.name,
+    automatic: input.automatic,
+    owner: {mentraUserId: actor.mentraUserId, email: actor.email},
+  })
+  return {workspace, membership: {membershipId, role: "owner"}}
+}
+
+/**
+ * Create a workspace for someone else: `input.owner` (by Core user id, with the address they were named by,
+ * if any) becomes its first Owner, and `actor` is not a member of it. Organization administration only: an
+ * Organization Admin, an operator key holding `organization.workspaces.administer`, or the system
+ * (`forbidden` otherwise). The workspace is not anyone's automatic workspace, and the creation policy
+ * (`CLOUD_CORE_WORKSPACE_CREATION`) does not apply: only organization administrators reach this.
+ *
+ * The owner must be a Core user whose account is not deleted (`user_not_found`), as `recoverOwnership`
+ * requires. In the same transaction, the owner's own automatic workspace gives way when it holds nothing
+ * (`yieldAutomaticWorkspace`), as it does whenever a person gains a workspace. `workspace.created` names
+ * the owner in its target (`membershipId`, `mentraUserId`, `email`), so the audit log says whose it is.
+ */
+export async function createWorkspaceForOwner(
+  actor: Actor,
+  input: {name: string; owner: {mentraUserId: string; email?: string | null}},
+): Promise<OrganizationWorkspaceCreated> {
+  if (!actsForOrganization(actor, "organization.workspaces.administer")) {
+    fail("forbidden", "only an organization admin can create a workspace for someone else")
+  }
+  const name = validateName(input?.name)
+  if (!isId(input?.owner?.mentraUserId)) fail("invalid_request", "owner is required")
+  const owner = {mentraUserId: input.owner.mentraUserId.trim(), email: input.owner.email?.trim() || null}
+  return withTransaction(async session => {
+    if (!(await UserModel.exists({mentraUserId: owner.mentraUserId, supportTelemetryDeletedAt: null}).session(session))) {
+      fail("user_not_found", "no such person")
+    }
+    const {workspace, membershipId} = await insertOwnedWorkspace(session, actor, {name, automatic: false, owner})
+    // A person who gains a workspace here no longer needs an empty automatic one of their own.
+    await yieldAutomaticWorkspace(session, actor, owner.mentraUserId, {except: workspace.workspaceId})
+    return {...workspace, owner: {membershipId, ...owner}}
+  })
+}
+
+/**
+ * Insert a workspace whose first Owner is `input.owner`, inside the caller's transaction, and record
+ * `workspace.created` for `actor`. When the owner is not the actor, the event's target names them too.
+ */
+async function insertOwnedWorkspace(
+  session: ClientSession,
+  actor: Actor,
+  input: {name: string; automatic: boolean; owner: {mentraUserId: string; email: string | null}},
+): Promise<{workspace: WorkspaceSummary; membershipId: string}> {
   const name = validateName(input.name)
+  const {owner} = input
   const workspaceId = `ws_${ulid()}`
   const membershipId = `wm_${ulid()}`
   const now = new Date()
+  const ownSelf = actor.kind === "user" && actor.mentraUserId === owner.mentraUserId
   await WorkspaceModel.create(
     [
       {
@@ -281,7 +350,8 @@ export async function insertWorkspace(
         name,
         status: "active",
         authorizationRevision: 0,
-        createdByMentraUserId: actor.mentraUserId,
+        // The person who made it; a key or the system is nobody's account.
+        createdByMentraUserId: actor.kind === "user" ? actor.mentraUserId : null,
         ...(input.automatic ? {automatic: true} : {}),
       },
     ],
@@ -292,8 +362,8 @@ export async function insertWorkspace(
       {
         membershipId,
         workspaceId,
-        mentraUserId: actor.mentraUserId,
-        email: actor.email,
+        mentraUserId: owner.mentraUserId,
+        email: owner.email,
         role: "owner",
         roleHistory: [roleEntry("owner", now, 0)],
         status: "active",
@@ -306,13 +376,12 @@ export async function insertWorkspace(
     workspaceId,
     action: "workspace.created",
     actor: auditActor(actor),
-    target: {workspaceId, membershipId},
+    target: ownSelf
+      ? {workspaceId, membershipId}
+      : {workspaceId, membershipId, mentraUserId: owner.mentraUserId, email: owner.email},
     after: {name, role: "owner", ...(input.automatic ? {automatic: true} : {})},
   })
-  return {
-    workspace: {workspaceId, name, status: "active", authorizationRevision: 0},
-    membership: {membershipId, role: "owner"},
-  }
+  return {workspace: {workspaceId, name, status: "active", authorizationRevision: 0}, membershipId}
 }
 
 export async function renameWorkspace(
@@ -524,8 +593,10 @@ export async function leaveWorkspace(actor: Actor & {kind: "user"}, workspaceId:
 
 /**
  * Give `targetMentraUserId` the owner role, creating the membership if they
- * have none. Organization Admins (and the system) only: this is how a workspace
- * whose owners are all gone gets an owner again. The target must be a Core user
+ * have none. Organization administration only (an Organization Admin, an
+ * operator key holding `organization.workspaces.administer`, or the system):
+ * this is how a workspace whose owners are all gone gets an owner again, and how
+ * an organization administrator names a workspace's Owners. The target must be a Core user
  * whose account is not deleted (`user_not_found` otherwise): a deleted account
  * keeps its users row as a tombstone, and an owner nobody can sign in as would
  * still count for the last-owner guard.
@@ -540,7 +611,7 @@ export async function recoverOwnership(
   targetMentraUserId: string,
   opts: {email?: string | null} = {},
 ): Promise<WorkspaceSummary> {
-  if (!(actor.kind === "system" || (actor.kind === "user" && actor.isOrganizationAdmin))) {
+  if (!actsForOrganization(actor, "organization.workspaces.administer")) {
     fail("forbidden", "only an organization admin can recover workspace ownership")
   }
   if (!isId(targetMentraUserId)) fail("invalid_request", "targetMentraUserId is required")
@@ -672,9 +743,28 @@ function assertRevision(workspace: WorkspaceRow, expectedRevision: number): void
 }
 
 /**
- * The role the actor acts with in this workspace. Organization Admins and the
- * system act as `owner` anywhere; a user otherwise has their membership's role;
- * service actors and non-members have none.
+ * Whether `actor` may do what `capability` allows to the organization: the system and an Organization Admin
+ * always, an operator key while it holds the capability, anyone else never. Checks that once read "the system
+ * or an Organization Admin" read this, so a key with the matching scope passes them too.
+ */
+export function actsForOrganization(actor: Actor, capability: OrganizationCapability): boolean {
+  switch (actor?.kind) {
+    case "system":
+      return true
+    case "user":
+      return actor.isOrganizationAdmin === true
+    case "operatorKey":
+      return actor.organizationCapabilities.includes(capability)
+    default:
+      return false
+  }
+}
+
+/**
+ * The role the actor acts with in this workspace. Organization Admins, operator
+ * keys holding `organization.workspaces.administer`, and the system act as
+ * `owner` anywhere; a user otherwise has their membership's role; service
+ * actors, other keys and non-members have none.
  */
 export async function actingRole(
   session: ClientSession | null,
@@ -682,6 +772,9 @@ export async function actingRole(
   workspaceId: string,
 ): Promise<WorkspaceRole | null> {
   if (actor.kind === "system") return "owner"
+  if (actor.kind === "operatorKey") {
+    return actsForOrganization(actor, "organization.workspaces.administer") ? "owner" : null
+  }
   if (actor.kind !== "user") return null
   if (actor.isOrganizationAdmin) return "owner"
   if (!isId(actor.mentraUserId)) return null
@@ -856,12 +949,24 @@ export async function endMembership(
   return toSummary(workspace)
 }
 
+/**
+ * How an audit event records `actor`. An operator key is recorded as a `credential` actor with its id, its
+ * name and the address of the person who created it (`email`), so the audit log names both the key and the
+ * person answerable for it.
+ */
 export function auditActor(actor: Actor): WorkspaceAuditEventInput["actor"] {
   switch (actor.kind) {
     case "user":
       return {kind: "user", mentraUserId: actor.mentraUserId, ...(actor.email ? {email: actor.email} : {})}
     case "service":
       return {kind: "service", service: actor.service, ...(actor.email ? {email: actor.email} : {})}
+    case "operatorKey":
+      return {
+        kind: "credential",
+        credentialId: actor.credentialId,
+        ...(actor.name ? {credentialName: actor.name} : {}),
+        ...(actor.createdByEmail ? {email: actor.createdByEmail} : {}),
+      }
     case "system":
       return {kind: "system"}
   }

@@ -157,10 +157,16 @@ describe("GET /api/admin/me reports whether the Licenses page has anything to of
     process.env.CLOUD_CORE_BILLING_URL = "https://billing.example.test"
     process.env.CLOUD_CORE_BILLING_SECRET = "billing-secret"
     licenseExists.mockResolvedValue({_id: "lic_1"} as never)
-    for (const principal of [member, operatorKey([...OPERATOR_KEY_SCOPES]), workspaceKey]) {
+    const withoutLicenses = OPERATOR_KEY_SCOPES.filter(scope => scope !== "organization.licenses.read")
+    for (const principal of [member, operatorKey(withoutLicenses), workspaceKey]) {
       expect((await me(principal)).licenses).toEqual({available: false})
     }
     expect(licenseExists).not.toHaveBeenCalled()
+  })
+
+  test("available to an operator key created with organization.licenses.read", async () => {
+    licenseExists.mockResolvedValue({_id: "lic_1"} as never)
+    expect((await me(operatorKey(["organization.licenses.read"]))).licenses).toEqual({available: true})
   })
 
   test("never carries the billing URL or the secret", async () => {
@@ -184,13 +190,16 @@ describe("GET /api/admin/me lists the organization capabilities", () => {
     expect((await me(member)).organization.capabilities).toEqual([])
   })
 
-  test("an operator key never holds it, even when asked for it as a scope", async () => {
+  test("an operator key holds the scopes it was created with, and nothing this build does not know", async () => {
     const all = await me(operatorKey([...OPERATOR_KEY_SCOPES]))
-    expect(all.organization.capabilities).not.toContain("organization.fleet.administer")
-    expect(all.organization.capabilities).toEqual([...OPERATOR_KEY_SCOPES])
+    expect(all.organization.capabilities).toEqual([...ORGANIZATION_CAPABILITIES])
 
-    const forged = await me(operatorKey([...OPERATOR_KEY_SCOPES, "organization.fleet.administer"]))
-    expect(forged.organization.capabilities).not.toContain("organization.fleet.administer")
+    const some = await me(operatorKey(["organization.incidents.read"]))
+    expect(some.organization.capabilities).toEqual(["organization.incidents.read"])
+    expect(some.organization.capabilities).not.toContain("organization.fleet.administer")
+
+    const forged = await me(operatorKey(["organization.incidents.read", "organization.everything", "workspace.delete"]))
+    expect(forged.organization.capabilities).toEqual(["organization.incidents.read"])
     expect(forged.credential?.credentialKind).toBe("organization")
   })
 

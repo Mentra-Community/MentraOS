@@ -350,9 +350,10 @@ export interface WorkspaceDetail extends WorkspaceSummary {
   membership: MembershipSummary | null
   capabilities: WorkspaceCapability[]
   /**
-   * Whether the caller is an Organization Admin, who acts as an Owner in every workspace: when their
-   * membership's role grants less (or they have none), that is where `capabilities` come from.
-   * Optional for servers that predate it.
+   * Whether the caller acts as an Owner in every workspace by its standing in the organization: an
+   * Organization Admin, or an operator key holding `organization.workspaces.administer`. When their
+   * membership's role grants less (or they have none, as a key never does), that is where `capabilities`
+   * come from. Optional for servers that predate it.
    */
   organizationAdmin?: boolean
   /**
@@ -379,6 +380,14 @@ export interface MemberView {
   role: WorkspaceRole
   startedAt: string
   pending: boolean
+}
+
+/**
+ * What `POST /api/organization/workspaces` answers (201): the new workspace and the person who is its first
+ * Owner. The caller, an Organization Admin or an operator key, is not a member of it.
+ */
+export interface OrganizationWorkspaceCreated extends WorkspaceSummary {
+  owner: {membershipId: string; mentraUserId: string; email: string | null}
 }
 
 /** A pending invitation as listed to administrators. It never carries the token or its hash. */
@@ -560,7 +569,14 @@ export interface CredentialView {
   createdAt: string
 }
 
-/** One entry of a workspace's audit log, newest first. `target`, `before` and `after` are snapshots whose shape depends on `action`. */
+/**
+ * One entry of a workspace's audit log, newest first. `target`, `before` and `after` are snapshots whose shape
+ * depends on `action`.
+ *
+ * `actor` is who did it: a person (`user`, by `email`), an operator key (`credential`: `credentialId`, the key's
+ * name `credentialName`, and `email`, the address of the person who created the key), a service acting for
+ * someone (`service`, with their `email`), or Core itself (`system`).
+ */
 export interface AuditEventView {
   eventId: string
   action: string
@@ -568,6 +584,8 @@ export interface AuditEventView {
     kind: "user" | "credential" | "service" | "system"
     email: string | null
     credentialId: string | null
+    /** The key's name when `kind` is `credential`, else null. An older Core leaves it out. */
+    credentialName?: string | null
     service: string | null
   }
   target: Record<string, unknown> | null

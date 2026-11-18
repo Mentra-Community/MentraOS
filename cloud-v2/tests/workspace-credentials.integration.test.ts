@@ -52,6 +52,7 @@ import {
   WorkspaceError,
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
+import {OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
 
@@ -291,6 +292,7 @@ describe("createWorkspaceCredential", () => {
       scopes: ["miniapps.publish"],
       packageNames: [],
       label: "CI key",
+      createdByEmail: "mu_developer@example.test",
     })
     // Keys do not change who holds which role, so they leave the revision alone.
     expect(await revisionOf(workspaceId)).toBe(before)
@@ -822,6 +824,7 @@ describe("validateCredentialToken", () => {
       scopes: ["miniapps.publish"],
       packageNames: ["com.acme.app"],
       label: "Publish com.acme.app",
+      createdByEmail: "staff@example.test",
     })
 
     // The key does not depend on anyone's membership.
@@ -1047,6 +1050,7 @@ describe("createOperatorKey", () => {
       scopes: ["organization.incidents.read", "organization.supportProfiles.read"],
       packageNames: [],
       label: "Incident reader",
+      createdByEmail: ADMIN_EMAIL,
     })
   })
 
@@ -1181,18 +1185,13 @@ describe("createOperatorKey", () => {
     )
   })
 
-  test("scopes must be a non-empty subset of the operator scopes: no workspace administration", async () => {
+  test("scopes must be a non-empty subset of the operator scopes, every organization capability", async () => {
     const create = (scopes: string[]) =>
       createOperatorKey(orgAdmin, {name: "ops", scopes: scopes as Parameters<typeof createOperatorKey>[1]["scopes"]})
 
-    await expectError(() => create(["organization.workspaces.administer"]), "invalid_request", 400)
-    await expectError(
-      () => create(["organization.incidents.read", "organization.workspaces.administer"]),
-      "invalid_request",
-      400,
-    )
-    await expectError(() => create(["organization.credentials.manage"]), "invalid_request", 400)
     await expectError(() => create(["miniapps.publish"]), "invalid_request", 400)
+    await expectError(() => create(["organization.incidents.read", "workspace.delete"]), "invalid_request", 400)
+    await expectError(() => create(["organization.everything"]), "invalid_request", 400)
     await expectError(() => create([]), "invalid_request", 400)
     await expectError(() => create("organization.incidents.read" as unknown as string[]), "invalid_request", 400)
     await expectError(
@@ -1208,6 +1207,10 @@ describe("createOperatorKey", () => {
       "organization.supportProfiles.read",
     ])
     expect(credential.scopes).toEqual(["organization.incidents.read", "organization.supportProfiles.read"])
+
+    // Workspace administration and managing keys are scopes like any other.
+    const all = await create([...OPERATOR_KEY_SCOPES])
+    expect(all.credential.scopes).toEqual([...ORGANIZATION_CAPABILITIES])
   })
 
   test("expiry must be in the future and is enforced", async () => {
@@ -1253,6 +1256,60 @@ describe("createOperatorKey", () => {
       packageNames: ["com.a.b"],
     })
     expect(await validateCredentialToken(other.token)).toBeNull()
+  })
+})
+
+describe("an operator key as the actor", () => {
+  const keyActor = (organizationCapabilities: Array<(typeof OPERATOR_KEY_SCOPES)[number]>): Actor => ({
+    kind: "operatorKey",
+    credentialId: "01KEYKEYKEYKEYKEYKEYKEYKEY",
+    name: "Sales tooling",
+    createdByEmail: ADMIN_EMAIL,
+    organizationCapabilities,
+  })
+  const everything = keyActor([...OPERATOR_KEY_SCOPES])
+
+  test("never creates a credential, whatever it holds", async () => {
+    const {workspaceId} = await newWorkspace()
+    await expectError(() => createWorkspaceCredential(everything, workspaceId, {name: "k"}), "forbidden", 403)
+    await expectError(
+      () => createOperatorKey(everything as never, {name: "child", scopes: ["organization.incidents.read"]}),
+      "forbidden",
+      403,
+    )
+    expect(await AccessCredentialModel.countDocuments({})).toBe(0)
+  })
+
+  test("revokes an operator key only with organization.credentials.manage, recorded as the key and its creator", async () => {
+    const {credential, token} = await createOperatorKey(orgAdmin, {name: "ops", scopes: ["organization.incidents.read"]})
+    await expectError(
+      () => revokeCredential(keyActor(["organization.workspaces.administer"]), credential.credentialId),
+      "forbidden",
+      403,
+    )
+    expect(await validateCredentialToken(token)).not.toBeNull()
+
+    await revokeCredential(keyActor(["organization.credentials.manage"]), credential.credentialId)
+    expect(await validateCredentialToken(token)).toBeNull()
+    const event = await WorkspaceAuditEventModel.findOne({action: "credential.revoked"}).lean()
+    expect(event!.actor).toEqual({
+      kind: "credential",
+      credentialId: "01KEYKEYKEYKEYKEYKEYKEYKEY",
+      credentialName: "Sales tooling",
+      email: ADMIN_EMAIL,
+    })
+  })
+
+  test("revokes a workspace key as the workspace's Owner with organization.workspaces.administer", async () => {
+    const {workspaceId, developer} = await newWorkspace()
+    const {credential, token} = await createWorkspaceCredential(developer, workspaceId, {name: "k"})
+    await expectError(
+      () => revokeCredential(keyActor(["organization.credentials.manage"]), credential.credentialId),
+      "forbidden",
+      403,
+    )
+    await revokeCredential(keyActor(["organization.workspaces.administer"]), credential.credentialId)
+    expect(await validateCredentialToken(token)).toBeNull()
   })
 })
 

@@ -1,5 +1,6 @@
 /**
- * @fileoverview Admin API keys made before operator keys keep working as operator keys.
+ * @fileoverview Admin API keys made before operator keys keep working as operator keys, with every
+ * operator scope; one converted earlier with fewer is widened at the next start.
  *
  * Before operator keys, an incident admin key was a developer-organization API key
  * (`msk_<env>_<keyId>.<secret>`, a row of Core's own `developer_org_api_keys`)
@@ -127,7 +128,7 @@ async function seedReport(reportId = "rep_legacy_admin_1") {
 const createdEvents = (credentialId: string) =>
   WorkspaceAuditEventModel.find({action: "credential.created", "target.credentialId": credentialId}).lean()
 
-const noChanges = {converted: [], revoked: [], failed: []}
+const noChanges = {converted: [], revoked: [], widened: [], failed: []}
 
 /**
  * Make the database refuse to store an access credential for `keyId` (a collection validator), as a
@@ -221,25 +222,32 @@ describe("legacy admin keys", () => {
     expect(me.json.workspaces).toEqual([])
   })
 
-  test("the converted key is refused on the organization administration and workspace APIs, which are for people", async () => {
+  test("the converted key administers the organization, but never creates a key or acts as a person", async () => {
     const key = await legacyKey()
     allowlist(key)
     await convertLegacyAdminKeys()
     expect((await call("GET", "/api/admin/reports", key.token)).status).toBe(200)
 
+    // Every operator scope: organization administration answers it.
+    for (const path of [
+      "/api/admin/organization/credentials",
+      "/api/admin/organization/workspaces",
+      "/api/organization/credentials",
+      "/api/organization/workspaces",
+      "/api/admin/audit-log",
+    ]) {
+      expect({path, status: (await call("GET", path, key.token)).status}).toEqual({path, status: 200})
+    }
+
     for (const [method, path, body] of [
-      ["GET", "/api/admin/organization/credentials"],
+      // A key never creates a key.
       ["POST", "/api/admin/organization/credentials", {name: "minted by a key", scopes: ["organization.incidents.read"]}],
-      ["GET", "/api/admin/organization/workspaces"],
-      ["POST", "/api/admin/organization/workspaces/ws_1/owners", {mentraUserId: "mu_1"}],
-      ["GET", "/api/organization/credentials"],
-      ["GET", "/api/organization/workspaces"],
+      ["POST", "/api/organization/credentials", {name: "minted by a key", scopes: ["organization.incidents.read"]}],
+      // A person's own workspaces.
       ["GET", "/api/admin/workspaces"],
       ["POST", "/api/admin/workspaces", {name: "Keyed"}],
       ["GET", "/api/workspaces"],
       ["POST", "/api/workspaces", {name: "Keyed"}],
-      // The audit log needs an Organization Admin who is a person.
-      ["GET", "/api/admin/audit-log"],
     ] as Array<[string, string, unknown?]>) {
       const reply = await call(method, path, key.token, body)
       expect({method, path, status: reply.status, error: reply.json?.error}).toEqual({
@@ -263,7 +271,7 @@ describe("legacy admin keys", () => {
     const key = await legacyKey()
     allowlist(key)
 
-    expect(await convertLegacyAdminKeys()).toEqual({converted: [key.keyId], revoked: [], failed: []})
+    expect(await convertLegacyAdminKeys()).toEqual({converted: [key.keyId], revoked: [], widened: [], failed: []})
 
     const row = await AccessCredentialModel.findOne({credentialId: key.keyId}).lean()
     expect(row).toMatchObject({
@@ -339,7 +347,7 @@ describe("legacy admin keys", () => {
     const unlisted = await legacyKey()
     allowlist(listed)
 
-    expect(await convertLegacyAdminKeys()).toEqual({converted: [listed.keyId], revoked: [], failed: []})
+    expect(await convertLegacyAdminKeys()).toEqual({converted: [listed.keyId], revoked: [], widened: [], failed: []})
 
     expect(await AccessCredentialModel.exists({credentialId: unlisted.keyId})).toBeNull()
     expect((await call("GET", "/api/admin/reports", unlisted.token)).status).toBe(401)
@@ -404,6 +412,67 @@ describe("legacy admin keys", () => {
     expect(await AccessCredentialModel.exists({credentialId: key.keyId})).toBeNull()
   })
 
+  test("a key converted when operator keys held fewer scopes is given every one at the next start, once, as the system", async () => {
+    const key = await legacyKey()
+    const unrelated = await legacyKey({name: "Not allowlisted"})
+    allowlist(key)
+    await convertLegacyAdminKeys()
+    // As an earlier Core converted it: the two read scopes only.
+    const narrow = ["organization.incidents.read", "organization.supportProfiles.read"]
+    await AccessCredentialModel.updateOne({credentialId: key.keyId}, {$set: {scopes: narrow}})
+    expect((await call("GET", "/api/admin/organization/workspaces", key.token)).status).toBe(403)
+
+    expect(await convertLegacyAdminKeys()).toEqual({converted: [], revoked: [], widened: [key.keyId], failed: []})
+    const row = await AccessCredentialModel.findOne({credentialId: key.keyId}).lean()
+    expect([...row!.scopes].sort()).toEqual(OPERATOR_SCOPES)
+    expect((await call("GET", "/api/admin/organization/workspaces", key.token)).status).toBe(200)
+
+    const widened = await WorkspaceAuditEventModel.find({action: "credential.scopes_changed"}).lean()
+    expect(widened).toHaveLength(1)
+    expect(widened[0]).toMatchObject({
+      workspaceId: null,
+      actor: {kind: "system"},
+      target: {credentialId: key.keyId, prefix: "msk", credentialKind: "organization"},
+      before: {scopes: narrow},
+      after: {reason: "legacy_admin_key"},
+    })
+    expect([...(widened[0]!.after as {scopes: string[]}).scopes].sort()).toEqual(OPERATOR_SCOPES)
+    expect(widened[0]!.seq).toBeUndefined()
+    expect(JSON.stringify(widened)).not.toContain(key.hash)
+
+    // Idempotent: another start changes nothing and records nothing.
+    expect(await convertLegacyAdminKeys()).toEqual(noChanges)
+    await runStartupMigrations()
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "credential.scopes_changed"})).toBe(1)
+    // A key that is not allowlisted is never converted, so never widened.
+    expect(await AccessCredentialModel.exists({credentialId: unrelated.keyId})).toBeNull()
+  })
+
+  test("only converted legacy keys widen: a revoked one and a mak_ operator key keep their scopes", async () => {
+    const revokedKey = await legacyKey({name: "Revoked"})
+    allowlist(revokedKey)
+    await convertLegacyAdminKeys()
+    await AccessCredentialModel.updateOne(
+      {credentialId: revokedKey.keyId},
+      {$set: {scopes: ["organization.incidents.read"], revokedAt: new Date("2026-09-01T00:00:00Z")}},
+    )
+    const admin = await person("org-admin", ADMIN_EMAIL)
+    const created = await call("POST", "/api/organization/credentials", admin, {
+      name: "narrow",
+      scopes: ["organization.incidents.read"],
+    })
+    expect(created.status).toBe(201)
+
+    expect(await convertLegacyAdminKeys()).toEqual(noChanges)
+    expect((await AccessCredentialModel.findOne({credentialId: revokedKey.keyId}).lean())!.scopes).toEqual([
+      "organization.incidents.read",
+    ])
+    expect(
+      (await AccessCredentialModel.findOne({credentialId: created.json.credential.credentialId}).lean())!.scopes,
+    ).toEqual(["organization.incidents.read"])
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "credential.scopes_changed"})).toBe(0)
+  })
+
   test("the conversion is idempotent: a re-run changes nothing and records nothing", async () => {
     const key = await legacyKey()
     allowlist(key)
@@ -440,7 +509,7 @@ describe("legacy admin keys", () => {
     await convertLegacyAdminKeys()
     await legacyKeys().updateOne({keyId: key.keyId}, {$set: {revokedAt: new Date("2026-08-01T00:00:00Z")}})
 
-    expect(await convertLegacyAdminKeys()).toEqual({converted: [], revoked: [key.keyId], failed: []})
+    expect(await convertLegacyAdminKeys()).toEqual({converted: [], revoked: [key.keyId], widened: [], failed: []})
     expect(await convertLegacyAdminKeys()).toEqual(noChanges)
 
     expect((await call("GET", "/api/admin/reports", key.token)).status).toBe(401)
@@ -481,7 +550,7 @@ describe("legacy admin keys", () => {
 
       expect({consoleUrl, result: await convertLegacyAdminKeys()}).toEqual({
         consoleUrl,
-        result: {converted: [created.keyId], revoked: [], failed: []},
+        result: {converted: [created.keyId], revoked: [], widened: [], failed: []},
       })
 
       const reports = await call("GET", "/api/admin/reports", created.token)
@@ -504,11 +573,11 @@ describe("legacy admin keys", () => {
     try {
       const key = await legacyKey()
       allowlist(key)
-      expect(await convertLegacyAdminKeys()).toEqual({converted: [key.keyId], revoked: [], failed: []})
+      expect(await convertLegacyAdminKeys()).toEqual({converted: [key.keyId], revoked: [], widened: [], failed: []})
       expect((await call("GET", "/api/admin/reports", key.token)).status).toBe(200)
 
       await legacyKeys().updateOne({keyId: key.keyId}, {$set: {revokedAt: new Date("2026-08-01T00:00:00Z")}})
-      expect(await convertLegacyAdminKeys()).toEqual({converted: [], revoked: [key.keyId], failed: []})
+      expect(await convertLegacyAdminKeys()).toEqual({converted: [], revoked: [key.keyId], widened: [], failed: []})
       expect((await call("GET", "/api/admin/reports", key.token)).status).toBe(401)
 
       expect(startSession).not.toHaveBeenCalled()
@@ -524,7 +593,7 @@ describe("legacy admin keys", () => {
     allowlist(failing, fine)
     const lift = await refuseCredentialRows(failing.keyId)
     try {
-      expect(await convertLegacyAdminKeys()).toEqual({converted: [fine.keyId], revoked: [], failed: [failing.keyId]})
+      expect(await convertLegacyAdminKeys()).toEqual({converted: [fine.keyId], revoked: [], widened: [], failed: [failing.keyId]})
       // Core still starts.
       expect(await runStartupMigrations()).toBeUndefined()
     } finally {
@@ -537,7 +606,7 @@ describe("legacy admin keys", () => {
     expect((await call("GET", "/api/admin/reports", failing.token)).status).toBe(401)
     expect((await call("GET", "/api/admin/reports", fine.token)).status).toBe(200)
 
-    expect(await convertLegacyAdminKeys()).toEqual({converted: [failing.keyId], revoked: [], failed: []})
+    expect(await convertLegacyAdminKeys()).toEqual({converted: [failing.keyId], revoked: [], widened: [], failed: []})
     expect((await call("GET", "/api/admin/reports", failing.token)).status).toBe(200)
     expect(await createdEvents(failing.keyId)).toHaveLength(1)
   })

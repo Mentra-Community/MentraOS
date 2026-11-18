@@ -87,25 +87,21 @@ describe("canChangeRole", () => {
 })
 
 describe("operator key scopes", () => {
-  test("never include workspace administration and are all organization capabilities", () => {
-    expect(OPERATOR_KEY_SCOPES).not.toContain("organization.workspaces.administer")
-    expect(OPERATOR_KEY_SCOPES).not.toContain("organization.credentials.manage")
-    for (const scope of OPERATOR_KEY_SCOPES) expect(ORGANIZATION_CAPABILITIES).toContain(scope)
+  test("are every organization capability, so a key can be given whatever an Organization Admin can do", () => {
+    expect([...OPERATOR_KEY_SCOPES]).toEqual([...ORGANIZATION_CAPABILITIES])
+    for (const capability of [
+      "organization.workspaces.administer",
+      "organization.credentials.manage",
+      "organization.fleet.administer",
+      "organization.licenses.read",
+      "organization.registry.administer",
+    ] as const) {
+      expect(OPERATOR_KEY_SCOPES).toContain(capability)
+    }
   })
 
-  test("organization.fleet.administer is an organization capability and not an operator key scope", () => {
-    expect(ORGANIZATION_CAPABILITIES).toContain("organization.fleet.administer")
-    expect(OPERATOR_KEY_SCOPES).not.toContain("organization.fleet.administer")
-  })
-
-  test("organization.licenses.read is an organization capability and not an operator key scope", () => {
-    expect(ORGANIZATION_CAPABILITIES).toContain("organization.licenses.read")
-    expect(OPERATOR_KEY_SCOPES).not.toContain("organization.licenses.read")
-  })
-
-  test("organization.registry.administer is an organization capability and not an operator key scope", () => {
-    expect(ORGANIZATION_CAPABILITIES).toContain("organization.registry.administer")
-    expect(OPERATOR_KEY_SCOPES).not.toContain("organization.registry.administer")
+  test("follow the organization capabilities: the list is the same one, not a copy", () => {
+    expect(OPERATOR_KEY_SCOPES).toBe(ORGANIZATION_CAPABILITIES)
   })
 })
 

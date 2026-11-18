@@ -137,7 +137,10 @@ group ([APIs](workspaces.md#apis)):
 | `DELETE /:workspaceId/licenses/:licenseId/seats/:membershipId` | `workspace.licenses.assign` | `204`. Unassigning a seat nobody holds changes nothing. |
 | `POST /:workspaceId/seat-assignments` | `workspace.licenses.assign` | `{licenses}`: every license the request names, with its seats. Assigns several seats at once, all of them or none. |
 
-They are for people: a key gets `403`. A seat assignment is refused with
+They are for people and operator keys: an operator key holding
+`organization.workspaces.administer` acts as an Owner, as an Organization Admin
+does, and is named in the audit log with the person who created it; any other
+key gets `403`. A seat assignment is refused with
 `404 license_not_found` for a license that is not this workspace's,
 `409 license_ended` for one that has ended, `404 not_found` for a membership
 that is not an active one of this workspace, `400 invalid_request` for an
@@ -454,9 +457,9 @@ produces a successful local reset. No additional secrets or environment settings
 
 An Organization Admin lists every license, with the workspace that holds it, in
 the admin portal's Licenses page, which reads `GET /api/admin/licenses?query=&cursor=`. It
-needs `organization.licenses.read`, which only an Organization Admin holds: an
-operator key never does, and neither do a workspace admin, a workspace key or a
-phone. The list is read-only: no admin route changes a license or a seat.
+needs `organization.licenses.read`: an Organization Admin holds it, and so does
+an operator key created with it; a workspace admin, a workspace key and a phone
+never do. The list is read-only: no admin route changes a license or a seat.
 
 - **Items.** Newest first, 50 to a page: `{items, next}`. Each item is an
   `AdminLicenseView` (the license's id, owner, product, quantity, `seatsUsed`,
@@ -522,8 +525,8 @@ and the seated licenses by `_id`. A person with no seat costs one query.
 | `workspace.billing.manage`: buy, change or cancel, payment methods, invoices | | | Yes | Yes |
 
 Organization Admins act as Owner in every workspace, and hold
-`organization.licenses.read`: every license on their Core, for support. It allows no seat change and no billing. Operator keys
-never carry it.
+`organization.licenses.read`: every license on their Core, for support. It allows no seat change and no billing. An operator key
+may be created with either: `organization.workspaces.administer` to act as Owner, `organization.licenses.read` to read the list.
 
 The Licenses page draws what the viewer's capabilities and the portal's offer of
 billing allow, and asks for no more than that. Core refuses the rest whatever

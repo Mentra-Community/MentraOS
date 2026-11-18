@@ -4,8 +4,9 @@
  * (`design_docs/cloud/auth/miniapp-website-sign-in/spec.md`, W03 and W04).
  *
  * Both run through the real app with the real principal and service middleware. What must hold:
- *  - an Organization Admin who is a person registers, changes and removes any website; everyone else is
- *    refused there;
+ *  - an Organization Admin who is a person registers, changes and removes any website; an operator key
+ *    holding `organization.credentials.manage` lists, changes and removes them but never registers one or
+ *    replaces a secret; everyone else is refused there;
  *  - through the Store, a person registers a website only for a package in Core's registry, and only with
  *    redirect URIs on that package's own domain, with their own Core access token: the Store's signature
  *    alone registers nothing;
@@ -245,6 +246,44 @@ describe("the admin portal", () => {
     expect(created.json.secret).toBeNull()
     expect(created.json.client).toMatchObject({ownerUserId: null, secretLast4: null})
     expect((await admin("POST", `/${created.json.client.clientId}/secret`, orgAdmin)).status).toBe(400)
+  })
+
+  test("an operator key with organization.credentials.manage lists, changes and removes websites, but never makes a secret", async () => {
+    const orgAdmin = await person(ADMIN_EMAIL)
+    const operatorKey = async (name: string, scopes: string[]): Promise<Person> => {
+      const created = await app.request(`${ADMIN_ORIGIN}/api/organization/credentials`, {
+        method: "POST",
+        headers: {authorization: `Bearer ${orgAdmin.token}`, "content-type": "application/json"},
+        body: JSON.stringify({name, scopes}),
+      })
+      expect(created.status).toBe(201)
+      const {token} = (await created.json()) as {token: string}
+      return {mentraUserId: "", email: "", token}
+    }
+    const manager = await operatorKey("websites", ["organization.credentials.manage"])
+    const other = await operatorKey("incidents", ["organization.incidents.read"])
+    const {client, secret} = (await admin("POST", "", orgAdmin, site())).json
+
+    expect((await admin("GET", "", other)).status).toBe(403)
+    const listed = await admin("GET", "", manager)
+    expect(listed.status).toBe(200)
+    expect(listed.json.clients.map((item: {clientId: string}) => item.clientId)).toEqual([client.clientId])
+    expect(JSON.stringify(listed.json)).not.toContain(secret)
+    const changed = await admin("PATCH", `/${client.clientId}`, manager, {name: "Paperwork Web"})
+    expect(changed.status).toBe(200)
+    expect(changed.json.client.name).toBe("Paperwork Web")
+
+    // Registering a website and replacing its secret create a credential: a person's only.
+    expect((await admin("POST", "", manager, site({name: "Sneaky"}))).status).toBe(403)
+    expect((await admin("POST", `/${client.clientId}/secret`, manager)).status).toBe(403)
+    expect(await WebsiteClientModel.countDocuments()).toBe(1)
+    expect((await WebsiteClientModel.findOne({clientId: client.clientId}).lean())!.secretHash).toBe(hashWebsiteClientSecret(secret))
+
+    expect((await admin("DELETE", `/${client.clientId}`, manager)).status).toBe(204)
+    // The key's writes are audited as the key and the person who created it.
+    const audit = await AdminActionAuditLogModel.find({targetId: client.clientId, action: {$ne: "website_client.create"}}).lean()
+    expect(audit.map(row => row.action).sort()).toEqual(["website_client.delete", "website_client.update"])
+    for (const row of audit) expect(row.adminId).toMatch(new RegExp(`^credential:[0-9A-Z]{26} \\(websites, created by ${ADMIN_EMAIL}\\)$`))
   })
 
   test("anyone but an Organization Admin is refused, and nothing is written", async () => {

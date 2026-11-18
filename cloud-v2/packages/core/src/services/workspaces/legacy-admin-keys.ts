@@ -9,16 +9,25 @@
  *  - the same credential id, hash, environment label and last 4, with
  *    `prefix: "msk"`: validation binds the token's prefix to the row and takes the
  *    kind from the row;
- *  - the operator scopes (`OPERATOR_KEY_SCOPES`);
+ *  - every operator scope (`OPERATOR_KEY_SCOPES`): a legacy admin key could do
+ *    whatever an Organization Admin could, so its operator key may too;
  *  - created by `api-key@<keyId>.local`, so, like every operator key, it works
  *    exactly while that address stays on the allowlist.
  *
- * The legacy collection is only read. The step runs on every start and inserts
- * only: a key that already has a row (converted before, revoked since, or a
- * workspace credential) keeps it, and a legacy row that is revoked or could never
- * validate is not converted. A legacy revocation does carry over: an operator key
- * converted from a key that is now revoked there is revoked too. Each conversion
- * and each carried revocation records its audit event as the system.
+ * The legacy collection is only read. The step runs on every start. A key with
+ * no row yet is converted; a key that already has one (converted before, revoked
+ * since, or a workspace credential) keeps it, and a legacy row that is revoked or
+ * could never validate is not converted. Two changes do carry over to an
+ * operator key converted earlier:
+ *  - a legacy revocation: an operator key converted from a key that is now
+ *    revoked there is revoked too;
+ *  - the operator scopes: a converted key that is not revoked and lacks any of
+ *    them (it was converted when operator keys held fewer) is given every one, so
+ *    it gains what later scopes allow at the next start. Only these keys widen:
+ *    an operator key made as one (`mak_`) keeps the scopes it was created with.
+ * Each conversion, carried revocation and widening records its audit event as
+ * the system (`credential.created`, `credential.revoked`,
+ * `credential.scopes_changed`).
  *
  * Each conversion is one upsert of one document, with its audit event written
  * after it, so it needs no transaction (some databases a Private Cloud uses
@@ -32,7 +41,7 @@ import {OPERATOR_KEY_SCOPES} from "@mentra/workspace-contract"
 import mongoose from "mongoose"
 import {AccessCredentialModel, type AccessCredentialRow} from "../../models/access-credential.model"
 import {recordOrganizationEvent} from "./audit.service"
-import {createdEvent, markRevoked} from "./credential.service"
+import {auditTarget, createdEvent, markRevoked} from "./credential.service"
 import {getAdminEmailAllowlist} from "../admin-email-policy"
 import {credentialEnvironmentLabels} from "./organization"
 
@@ -71,26 +80,34 @@ export function allowlistedLegacyKeyIds(): string[] {
   return [...new Set(ids)]
 }
 
+/** What one run of {@link convertLegacyAdminKeys} did, by key id. */
+export interface LegacyAdminKeysResult {
+  converted: string[]
+  revoked: string[]
+  /** Converted earlier, and given every operator scope by this run. */
+  widened: string[]
+  failed: string[]
+}
+
 /**
- * Give every allowlisted legacy admin key its operator credential (see the file header). Returns the
- * ids converted, revoked and failed by this run. Never throws: a key that fails is logged and listed.
+ * Give every allowlisted legacy admin key its operator credential, with every operator scope (see the file
+ * header). Returns the ids converted, revoked, widened and failed by this run. Never throws: a key that
+ * fails is logged and listed.
  */
-export async function convertLegacyAdminKeys(): Promise<{converted: string[]; revoked: string[]; failed: string[]}> {
-  const converted: string[] = []
-  const revoked: string[] = []
-  const failed: string[] = []
+export async function convertLegacyAdminKeys(): Promise<LegacyAdminKeysResult> {
+  const result: LegacyAdminKeysResult = {converted: [], revoked: [], widened: [], failed: []}
   for (const keyId of allowlistedLegacyKeyIds()) {
     try {
-      await convertOne(keyId, converted, revoked)
+      await convertOne(keyId, result)
     } catch (err) {
-      failed.push(keyId)
+      result.failed.push(keyId)
       logger.error({err, credentialId: keyId}, "could not convert a legacy admin key; it does not validate until a later start converts it")
     }
   }
-  return {converted, revoked, failed}
+  return result
 }
 
-async function convertOne(keyId: string, converted: string[], revoked: string[]): Promise<void> {
+async function convertOne(keyId: string, result: LegacyAdminKeysResult): Promise<void> {
   const legacy = await mongoose.connection.collection<LegacyKey>(LEGACY_KEYS).findOne({keyId})
   const existing = await AccessCredentialModel.findOne({credentialId: keyId}).lean<AccessCredentialRow>()
 
@@ -104,10 +121,16 @@ async function convertOne(keyId: string, converted: string[], revoked: string[])
       }
       return
     }
-    if (legacy?.revokedAt && !existing.revokedAt) {
+    if (existing.revokedAt) return
+    if (legacy?.revokedAt) {
       await markRevoked(null, existing, SYSTEM)
-      revoked.push(keyId)
+      result.revoked.push(keyId)
       logger.info({credentialId: keyId}, "revoked the operator key of a revoked legacy admin key")
+      return
+    }
+    if (await widen(existing)) {
+      result.widened.push(keyId)
+      logger.info({credentialId: keyId}, "gave a converted legacy admin key every operator scope")
     }
     return
   }
@@ -130,7 +153,7 @@ async function convertOne(keyId: string, converted: string[], revoked: string[])
   const {hash, env, last4} = legacy
 
   const now = new Date()
-  const result = await AccessCredentialModel.updateOne(
+  const upserted = await AccessCredentialModel.updateOne(
     {credentialId: keyId},
     {
       $setOnInsert: {
@@ -158,10 +181,10 @@ async function convertOne(keyId: string, converted: string[], revoked: string[])
     // The legacy creation time carries over, and a row that exists is left exactly as it is.
     {upsert: true, timestamps: false},
   )
-  if (result.upsertedCount !== 1) return
+  if (upserted.upsertedCount !== 1) return
   const row = await AccessCredentialModel.findOne({credentialId: keyId}).lean<AccessCredentialRow>()
   if (row) await recordOrganizationEvent(createdEvent(row, SYSTEM))
-  converted.push(keyId)
+  result.converted.push(keyId)
   logger.info({credentialId: keyId}, "converted a legacy admin key to an operator key")
   if (!credentialEnvironmentLabels().includes(env)) {
     logger.warn(
@@ -170,4 +193,29 @@ async function convertOne(keyId: string, converted: string[], revoked: string[])
         "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS or the key does not validate",
     )
   }
+}
+
+/**
+ * Give a converted legacy admin key every operator scope when it lacks any, and record
+ * `credential.scopes_changed` as the system. Whether this run changed it: the write matches only the scopes
+ * read, so two Cores starting at once widen it, and record it, once.
+ */
+async function widen(row: AccessCredentialRow): Promise<boolean> {
+  const before = [...row.scopes]
+  if (OPERATOR_KEY_SCOPES.every(scope => before.includes(scope))) return false
+  const after = [...new Set([...OPERATOR_KEY_SCOPES, ...before])]
+  const changed = await AccessCredentialModel.updateOne(
+    {credentialId: row.credentialId, credentialKind: "organization", revokedAt: null, scopes: before},
+    {$set: {scopes: after}},
+  )
+  if (changed.modifiedCount !== 1) return false
+  await recordOrganizationEvent({
+    workspaceId: null,
+    action: "credential.scopes_changed",
+    actor: SYSTEM,
+    target: auditTarget(row),
+    before: {scopes: before},
+    after: {scopes: after, reason: "legacy_admin_key"},
+  })
+  return true
 }

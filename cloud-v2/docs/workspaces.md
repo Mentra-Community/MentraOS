@@ -51,7 +51,8 @@ They hold every organization capability (`organization.workspaces.administer`,
 `organization.licenses.read`, `organization.registry.administer`) and act as
 Owner in every workspace, which is how they recover a workspace whose Owners
 are gone. Recovery names an existing account; a deleted account is refused
-(`404 user_not_found`).
+(`404 user_not_found`). An operator key may be given any of these capabilities
+and then does the same, never creating a credential ([Keys](#keys)).
 
 ## The workspace portal
 
@@ -215,9 +216,11 @@ licenses are assigned from the Licenses page.
   that membership ends and refused at acceptance once the role no longer grants
   the invited role. Sent by an Organization Admin on the organization's
   authority, it is refused while the inviter's email is off the admin allowlist,
-  and revoked when their account is deleted. A person may send 100 invitations
-  an hour, and a workspace hold 200 pending ones; replacing the pending
-  invitation to an address does not count against that.
+  and revoked when their account is deleted. Sent by an operator key, it names
+  no inviter and is refused once the key no longer validates or administers
+  workspaces (revoking the key voids it). A person or key may send 100
+  invitations an hour, and a workspace hold 200 pending ones; replacing the
+  pending invitation to an address does not count against that.
 - Memberships imported from the Mentra Miniapp Store's developer organizations
   ([Store integration](store-integration.md#moving-developer-organizations-from-the-store))
   wait for their person's first sign-in with a matching verified email. Until
@@ -262,19 +265,31 @@ environment labels it is configured for.
   revokes it. A key may be limited to some packages. Developers manage their own
   keys; Admins and Owners can revoke any. Workspace keys hold no organization
   capability and never administer people, keys or workspaces.
-- **Operator keys** (`mak_…`) are for tools that read organization data, such as
-  `scripts/fetch-incident-logs.sh`. An Organization Admin creates one in the
-  admin portal's **Operator keys** page with some of
-  `organization.incidents.read` and `organization.supportProfiles.read`. It works only
-  while its creator's email stays on the Organization Admin allowlist, so create
-  shared keys from an admin who will stay. A key whose creator is admitted by
+- **Operator keys** (`mak_…`) are for tools that act for the organization, such
+  as `scripts/fetch-incident-logs.sh` or sales tooling that sets up a customer's
+  workspace. An Organization Admin creates one in the admin portal's **Operator
+  keys** page with any of the organization capabilities as its scopes, and the
+  key can then do what an Organization Admin can, as far as those scopes allow:
+  with `organization.workspaces.administer` it lists and creates workspaces,
+  names Owners and acts as an Owner in every workspace (members, invitations,
+  workspace keys, licenses and seats, settings, audit), without ever being a
+  member. One rule is not a scope: **a key never creates a credential**, so no
+  key makes an operator key, a workspace key or a website's client secret, and a
+  leaked key cannot mint another that would outlive its own revocation. With
+  `organization.credentials.manage` a key lists and revokes operator keys. What
+  a key does is recorded in the audit logs under the key's id and name and the
+  email of the person who created it. It works only while its creator's email
+  stays on the Organization Admin allowlist, so create shared keys from an admin
+  who will stay. A key whose creator is admitted by
   `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` keeps working while the domain is listed:
-  revoke it when that person leaves. Operator keys never administer workspaces
-  or keys.
+  revoke it when that person leaves.
 - **Admin keys made before operator keys** (`msk_…` with their address,
   `api-key@<keyId>.local`, on `CLOUD_CORE_ADMIN_EMAILS`) become operator keys
-  at Core's startup, with every operator scope, and keep their tokens. They work
-  while that address stays on the allowlist.
+  at Core's startup, with every operator scope, and keep their tokens. One
+  converted earlier with fewer scopes is given every one at the next start, and
+  the change is recorded as the system (`credential.scopes_changed`). They work
+  while that address stays on the allowlist. Operator keys made as such keep
+  the scopes they were created with.
 
 ## APIs
 
@@ -291,26 +306,41 @@ session authenticates only its own routes:
 Workspace routes (`GET`/`POST /`, `POST /ensure`, `GET`/`PATCH`/`DELETE /:workspaceId`,
 `/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
 (by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`, and `/licenses` with
-its seats and `/seat-assignments`, [Licenses](licenses.md#assigning-licenses)) are for people;
-a key gets 403. A workspace's detail says whether the caller is an Organization Admin
-(`organizationAdmin`). Audit events name their subject: `target.email` for memberships and
-invitations, `target.name` for keys. Each checks
+its seats and `/seat-assignments`, [Licenses](licenses.md#assigning-licenses)) are for people
+and operator keys; a workspace key gets 403. What is about the caller's own standing is a
+person's only, and an operator key gets 403 there too: `GET`/`POST /`, `/ensure`,
+`/invitations/mine`, `/invitations/peek`, `/invitations/accept`, `/invitations/decline`
+and `/leave`; so is creating a workspace key (`POST /:workspaceId/credentials`). On the
+rest, an operator key holding `organization.workspaces.administer` acts as an Owner, and one
+without it gets 403 `not_a_member`. A workspace's detail says whether the caller acts as an
+Owner by organization standing, an Organization Admin or such a key (`organizationAdmin`).
+Audit events name their subject: `target.email` for memberships and invitations,
+`target.name` for keys; and their actor: a key as `{kind: "credential", credentialId,
+credentialName, email}`, `email` being its creator's. Each checks
 the caller's capability in that workspace. A workspace's detail lists what holds it
 from deletion (`deletionHolds`), and `DELETE /:workspaceId` answers
 `409 workspace_has_holds` with those holds while there are any. `GET /api/organization` tells any
 caller, a key included, its organization capabilities and whether it may create
-a workspace. `/api/organization/workspaces` lists every workspace and
-`/api/organization/workspaces/:workspaceId/owners` makes a person (by Core user
-id, or on hosted Core by confirmed email) an Owner; `/api/organization/credentials`
-manages operator keys. Those need the matching organization capability and a
-person.
+a workspace for itself (a key never may). With `organization.workspaces.administer`,
+`GET /api/organization/workspaces` lists every workspace, `POST /api/organization/workspaces`
+`{name, owner: {email} | {mentraUserId}}` creates one whose first Owner is that person (the
+caller is not a member; the person's empty automatic workspace gives way), and
+`/api/organization/workspaces/:workspaceId/owners` makes a person (by Core user id, or on
+hosted Core by confirmed email) an Owner. With `organization.credentials.manage`,
+`/api/organization/credentials` lists and revokes operator keys; creating one is a person's
+only. A person or an operator key holding the capability may call each of them.
 
 `/api/admin/*` checks a capability per area: incidents
-(`organization.incidents.read`) and support profiles
-(`organization.supportProfiles.read`). `/api/admin/me` answers any caller with its capabilities and whether
+(`organization.incidents.read`), support profiles
+(`organization.supportProfiles.read`), licenses (`organization.licenses.read`), the
+miniapp registry (`organization.registry.administer`; a key registers URLs as itself, no account), and the
+websites that sign in with Mentra and the admin audit log (`organization.credentials.manage`;
+registering a website and replacing its secret are a person's). Each is open to an operator key
+created with the scope. `/api/admin/me` answers any caller with its capabilities and whether
 Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwards
 to the optional Fleet service for a person holding `organization.fleet.administer`
-(an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
+(an Organization Admin); keys get 403, since Fleet's admin API takes people only
+([Fleet integration](fleet-integration.md)).
 The Store calls Core through a signed service API ([Store integration](store-integration.md)),
 and its billing module writes licenses through it ([Licenses](licenses.md)).
 `/api/portal/billing/*` forwards the workspace portal's billing requests

@@ -3,8 +3,16 @@
  *
  * `principalAuth` requires a person or a Core credential and puts it on
  * `c.var.principal` (resolved once per request, so stacking gates does not
- * authenticate twice). `requireUserPrincipal`, `requireOrganizationCapability`
- * and `requireWorkspaceCapability` add the authorization decision on top.
+ * authenticate twice). `requireUserPrincipal`, `requirePersonOrOperatorKey`,
+ * `requireOrganizationCapability` and `requireWorkspaceCapability` add the
+ * authorization decision on top. `requestActor` is who the services then act
+ * for: the person, or the operator key with the capabilities it holds.
+ *
+ * An operator key may do whatever its scopes allow an Organization Admin to do,
+ * with one rule that is not a scope: a key never creates a credential. The
+ * routes that create one (an operator key, a workspace key, a website's client
+ * secret) keep `requireUserPrincipal`, so a leaked key cannot mint another that
+ * would outlive its own revocation.
  *
  * The session cookie a request may use belongs to its route group: the admin
  * portal's for `/api/admin`, the workspace portal's for `/api/portal`, and none
@@ -83,13 +91,33 @@ export function principalAuth(portal?: PortalKind | null): MiddlewareHandler<App
   })
 }
 
-/** Requires a signed-in person; a Core credential gets 403. Workspace administration is done by people. */
+/**
+ * Requires a signed-in person; a Core credential gets 403. For what only a person does: their own
+ * workspaces, invitations and memberships, and creating any credential.
+ */
 export function requireUserPrincipal(portal?: PortalKind | null): MiddlewareHandler<AppEnv> {
   return createMiddleware<AppEnv>(async (c, next) => {
     const resolved = await resolveFor(c, portal)
     if ("response" in resolved) return resolved.response
     if (resolved.principal.kind !== "user") {
       return c.json({error: "forbidden", error_description: "a signed-in person is required"}, 403)
+    }
+    return next()
+  })
+}
+
+/**
+ * Requires a signed-in person or an operator key; a workspace key (`msk_` of a workspace) gets 403. For
+ * administration routes that an Organization Admin and an operator key holding the matching scope may both
+ * use; the capability gate after it decides what each may do.
+ */
+export function requirePersonOrOperatorKey(portal?: PortalKind | null): MiddlewareHandler<AppEnv> {
+  return createMiddleware<AppEnv>(async (c, next) => {
+    const resolved = await resolveFor(c, portal)
+    if ("response" in resolved) return resolved.response
+    const {principal} = resolved
+    if (principal.kind !== "user" && principal.credentialKind !== "organization") {
+      return c.json({error: "forbidden", error_description: "a signed-in person or an operator key is required"}, 403)
     }
     return next()
   })
@@ -108,8 +136,9 @@ export function requireOrganizationCapability(capability: OrganizationCapability
 }
 
 /**
- * Requires an Organization Admin who is a person (a verified allowlisted email). For the admin audit log,
- * which has no organization capability of its own; keys are refused.
+ * Requires an Organization Admin who is a person (a verified allowlisted email); keys are refused. For what
+ * acts as a person or creates a credential: registering a website that signs in with Mentra, replacing its
+ * client secret, and the test-billing reset, which the billing module is told a person asked for.
  */
 export function requireOrganizationAdminPerson(): MiddlewareHandler<AppEnv> {
   return createMiddleware<AppEnv>(async (c, next) => {
@@ -180,8 +209,36 @@ export function userActor(c: AppContext): Actor & {kind: "user"} {
   }
 }
 
-/** A short label for audit fields: the person's email or Core user ID, or `credential:<id>`. Never a token. */
+/**
+ * The actor the services act for: the signed-in person, or the operator key with the organization
+ * capabilities it holds now. Call only behind `requireUserPrincipal` or `requirePersonOrOperatorKey`.
+ */
+export function requestActor(c: AppContext): Actor & {kind: "user" | "operatorKey"} {
+  const principal = c.get("principal")
+  if (principal?.kind === "credential" && principal.credentialKind === "organization") {
+    return {
+      kind: "operatorKey",
+      credentialId: principal.credentialId,
+      name: principal.label,
+      createdByEmail: principal.createdByEmail ?? null,
+      organizationCapabilities: [...organizationCapabilities(principal)],
+    }
+  }
+  if (principal?.kind !== "user") {
+    throw new Error("requestActor requires a person or an operator key; mount requirePersonOrOperatorKey")
+  }
+  return userActor(c)
+}
+
+/**
+ * A short label for audit fields: the person's email or Core user ID; for a key `credential:<id>`, with its
+ * name and the address of the person who created it, so the admin audit log names both. Never a token.
+ */
 export function principalLabel(principal: CorePrincipal): string {
   if (principal.kind === "user") return principal.email ?? principal.mentraUserId
-  return `credential:${principal.credentialId}`
+  const id = `credential:${principal.credentialId}`
+  const name = principal.label && principal.label !== id ? principal.label : null
+  const creator = principal.createdByEmail ? `created by ${principal.createdByEmail}` : null
+  const about = [name, creator].filter(Boolean).join(", ")
+  return about ? `${id} (${about})` : id
 }

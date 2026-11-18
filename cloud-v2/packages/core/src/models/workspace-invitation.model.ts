@@ -10,10 +10,14 @@
  *  - `membership`: the inviter's membership (`invitedByMembershipId`) granted the role;
  *  - `organization_admin`: the inviter (`invitedByMentraUserId`) was an Organization
  *    Admin by the verified email `invitedByEmail`;
+ *  - `operator_key`: an operator key (`invitedByCredentialId`) holding
+ *    `organization.workspaces.administer` sent it; it is good while that key still
+ *    validates and holds the scope, so revoking the key voids what it sent;
  *  - `system`: Core itself.
  * `invitedByMentraUserId` is the person who sent it, for both kinds a person can
  * send; account deletion revokes their pending invitations by it, then clears it
- * and `invitedByEmail`.
+ * and `invitedByEmail`. A key's invitation names no person: deleting its creator's
+ * account revokes the key, which voids it.
  */
 
 import {WORKSPACE_ROLES} from "@mentra/workspace-contract"
@@ -23,7 +27,7 @@ import {registerModel} from "./register-model"
 export const WORKSPACE_INVITATION_STATUSES = ["pending", "accepted", "revoked", "declined"] as const
 export type WorkspaceInvitationStatus = (typeof WORKSPACE_INVITATION_STATUSES)[number]
 
-export const INVITER_AUTHORITIES = ["membership", "organization_admin", "system"] as const
+export const INVITER_AUTHORITIES = ["membership", "organization_admin", "operator_key", "system"] as const
 export type InviterAuthority = (typeof INVITER_AUTHORITIES)[number]
 
 const WorkspaceInvitationSchema = new Schema(
@@ -39,6 +43,7 @@ const WorkspaceInvitationSchema = new Schema(
     invitedByMembershipId: {type: String, default: null},
     invitedByMentraUserId: {type: String, default: null},
     invitedByEmail: {type: String, default: null},
+    invitedByCredentialId: {type: String, default: null},
     expiresAt: {type: Date, required: true},
     acceptedMembershipId: {type: String, default: null},
   },

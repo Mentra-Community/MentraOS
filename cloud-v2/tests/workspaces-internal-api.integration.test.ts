@@ -43,7 +43,11 @@ import {recordOrganizationEvent, recordWorkspaceEvent} from "../packages/core/sr
 import {resetCoreKeyCaches} from "./support/key-caches"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
-import {createWorkspaceCredential, revokeCredential} from "../packages/core/src/services/workspaces/credential.service"
+import {
+  createOperatorKey,
+  createWorkspaceCredential,
+  revokeCredential,
+} from "../packages/core/src/services/workspaces/credential.service"
 import {
   changeRole,
   createWorkspace,
@@ -753,6 +757,45 @@ describe("POST /authorize", () => {
     expect(asMentraUser.allowed).toBe(false)
     expect(asMentraUser.reason).toBe("not_a_member")
     expect(asMentraUser.principal).toMatchObject({isOrganizationAdmin: false})
+  })
+
+  test("an operator key acts as an Owner with organization.workspaces.administer, and is not_a_member without it", async () => {
+    const {workspaceId} = await newWorkspace()
+    const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
+    const administers = await createOperatorKey(actorOf(orgAdmin, true), {
+      name: "Sales tooling",
+      scopes: ["organization.workspaces.administer"],
+    })
+    const readsOnly = await createOperatorKey(actorOf(orgAdmin, true), {
+      name: "Triage",
+      scopes: ["organization.incidents.read", "organization.credentials.manage"],
+    })
+
+    const allowed = await store().authorize({
+      credential: {type: "bearer", token: administers.token},
+      workspaceId,
+      capability: "workspace.delete",
+      packageName: "com.acme.app",
+    })
+    expect(allowed.allowed).toBe(true)
+    expect(allowed.membership).toBeNull()
+    expect([...allowed.capabilities].sort()).toEqual([...capabilitiesForRole("owner")].sort())
+    // Another service is told the key, never who created it.
+    expect(allowed.principal).toEqual({
+      kind: "credential",
+      credentialId: administers.credential.credentialId,
+      credentialKind: "organization",
+      workspaceId: null,
+      scopes: ["organization.workspaces.administer"],
+      packageNames: [],
+      label: "Sales tooling",
+    })
+
+    const refused = await store().authorize({credential: {type: "bearer", token: readsOnly.token}, workspaceId})
+    expect(refused.allowed).toBe(false)
+    expect(refused.reason).toBe("not_a_member")
+    expect(refused.workspace).toBeUndefined()
+    expect(refused.capabilities).toEqual([])
   })
 
   test("an allowlisted email the account directory has not confirmed is no Organization Admin, whatever the token claims", async () => {

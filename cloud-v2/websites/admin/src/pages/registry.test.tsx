@@ -342,8 +342,10 @@ describe("the Miniapp registry item in the admin portal's navigation", () => {
     expect(nav.map(item => item.key).indexOf("registry")).toBe(nav.map(item => item.key).indexOf("workspaces") + 1);
   });
 
-  test("is never offered to an operator key, whatever its scopes", async () => {
+  test("is offered to an operator key only while it holds organization.registry.administer", async () => {
     const { visibleNav } = await loadNav();
-    expect(visibleNav(visiblePages(caller([...OPERATOR_KEY_SCOPES], false))).map(item => item.key)).not.toContain("registry");
+    expect(visibleNav(visiblePages(caller([...OPERATOR_KEY_SCOPES], false))).map(item => item.key)).toContain("registry");
+    const without = OPERATOR_KEY_SCOPES.filter(scope => scope !== "organization.registry.administer");
+    expect(visibleNav(visiblePages(caller(without, false))).map(item => item.key)).not.toContain("registry");
   });
 });

@@ -15,9 +15,12 @@
  * other admin route needs the organization capability its area is gated by; an
  * operator key carries only the scopes it was created with; a workspace key and
  * a person who is not an Organization Admin have none. The audit log
- * (`/audit-log`) and the organization API under `/api/admin/organization` need
- * an Organization Admin who is a person, and refuse every key. Core's former
- * built-in Store administration (`/submissions`, `/preinstalled/*`) is gone.
+ * (`/audit-log`) needs `organization.credentials.manage`, and the organization
+ * API under `/api/admin/organization` the capability of each route, from an
+ * Organization Admin or an operator key; creating an operator key is a person's,
+ * and refuses every key. Admin audit rows name a key and the person who created
+ * it. Core's former built-in Store administration (`/submissions`,
+ * `/preinstalled/*`) is gone.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random
  * database name, ignores `MONGO_URL`) and asserts the live connection is on
@@ -473,7 +476,11 @@ describe("support profiles", () => {
     expect(reply.json).toEqual({user: null, profile: null, devices: [], recentReports: []})
     const audit = await AdminActionAuditLogModel.find({}).lean()
     expect(audit).toHaveLength(1)
-    expect(audit[0]).toMatchObject({adminId: `credential:${key.credentialId}`, action: "support_profile.read"})
+    // The key by its id and name, and the person who created it.
+    expect(audit[0]).toMatchObject({
+      adminId: `credential:${key.credentialId} (support, created by ${ADMIN_EMAIL})`,
+      action: "support_profile.read",
+    })
     // The queried address never lands in the durable audit row.
     expect(JSON.stringify(audit[0])).not.toContain("nobody@example.test")
 
@@ -504,8 +511,24 @@ describe("the audit log", () => {
     }
   })
 
-  test("every key is refused, an operator key with every scope included, and so is anyone else", async () => {
-    const operator = await operatorKey("all-scopes", OPERATOR_KEY_SCOPES)
+  test("an operator key reads it with organization.credentials.manage, the capability it goes with", async () => {
+    const manager = await operatorKey("keys", ["organization.credentials.manage"])
+    await AdminActionAuditLogModel.create({
+      adminId: ADMIN_EMAIL,
+      action: "support_profile.read",
+      targetType: "user_support_profile",
+      targetId: "email_lookup_miss",
+    })
+    const reply = await call("GET", AUDIT_LOG, {as: manager.token})
+    expect(reply.status).toBe(200)
+    expect(reply.json.events).toMatchObject([{adminId: ADMIN_EMAIL, action: "support_profile.read"}])
+  })
+
+  test("an operator key without organization.credentials.manage, a workspace key and anyone else are refused", async () => {
+    const operator = await operatorKey(
+      "all-but-keys",
+      OPERATOR_KEY_SCOPES.filter(scope => scope !== "organization.credentials.manage"),
+    )
     const ws = await workspaceWithKey()
     const claimed = await person("claimed", {email: ADMIN_EMAIL, emailVerified: false})
 
@@ -596,19 +619,32 @@ describe("/api/admin/organization", () => {
     expect(await AccessCredentialModel.countDocuments({})).toBe(0)
   })
 
-  test("operator keys, workspace keys and people who are not Organization Admins are refused", async () => {
+  test("operator keys without the scopes, workspace keys and people who are not Organization Admins are refused", async () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
     const ws = await workspaceWithKey()
-    const operator = await operatorKey("all-scopes", OPERATOR_KEY_SCOPES)
+    const operator = await operatorKey(
+      "all-but-administration",
+      OPERATOR_KEY_SCOPES.filter(
+        scope => scope !== "organization.workspaces.administer" && scope !== "organization.credentials.manage",
+      ),
+    )
+    // Holding every scope does not let a key create a key.
+    const everything = await operatorKey("all-scopes", OPERATOR_KEY_SCOPES)
     const stranger = await person("stranger")
     const claimed = await person("claimed", {email: ADMIN_EMAIL, emailVerified: false})
     const routes: Array<[method: string, path: string, body?: unknown]> = [
       ["GET", "/api/admin/organization/workspaces"],
+      ["POST", "/api/admin/organization/workspaces", {name: "Sneaky", owner: {mentraUserId: stranger.mentraUserId}}],
       ["POST", `/api/admin/organization/workspaces/${ws.workspaceId}/owners`, {mentraUserId: stranger.mentraUserId}],
       ["GET", "/api/admin/organization/credentials"],
       ["POST", "/api/admin/organization/credentials", {name: "sneaky", scopes: ["organization.incidents.read"]}],
       ["DELETE", `/api/admin/organization/credentials/${operator.credentialId}`],
     ]
+    const create = await call("POST", "/api/admin/organization/credentials", {
+      as: everything.token,
+      body: {name: "sneaky", scopes: ["organization.incidents.read"]},
+    })
+    expect(create.status).toBe(403)
 
     for (const [label, caller, via] of [
       ["operator key", operator.token, undefined],
@@ -633,10 +669,35 @@ describe("/api/admin/organization", () => {
       expect([method, path, anonymous.status]).toEqual([method, path, 401])
     }
 
-    // Nothing moved: the operator key is live, no other key exists and the stranger owns nothing.
+    // Nothing moved: the operator keys are live, no other key exists and the stranger owns nothing.
     const keys = await call("GET", "/api/admin/organization/credentials", {as: admin})
-    expect(keys.json.items.map((item: any) => item.credentialId)).toEqual([operator.credentialId])
+    expect(keys.json.items.map((item: any) => item.credentialId).sort()).toEqual(
+      [operator.credentialId, everything.credentialId].sort(),
+    )
     expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: stranger.mentraUserId})).toBe(0)
+  })
+
+  test("an operator key with the scopes lists workspaces, creates one for a person, names Owners and revokes keys", async () => {
+    const ws = await workspaceWithKey()
+    const key = await operatorKey("admin-tooling", ["organization.workspaces.administer", "organization.credentials.manage"])
+    const other = await operatorKey("other", ["organization.incidents.read"])
+    const owner = await person("reseller-owner")
+    const heir = await person("heir")
+
+    const listed = await call("GET", "/api/admin/organization/workspaces", {as: key.token})
+    expect(listed.json.items.map((item: any) => item.workspaceId)).toEqual([ws.workspaceId])
+    const created = await call("POST", "/api/admin/organization/workspaces", {
+      as: key.token,
+      body: {name: "Reseller", owner: {mentraUserId: owner.mentraUserId}},
+    })
+    expect(created.status).toBe(201)
+    const recovered = await call("POST", `/api/admin/organization/workspaces/${ws.workspaceId}/owners`, {
+      as: key.token,
+      body: {mentraUserId: heir.mentraUserId},
+    })
+    expect(recovered.status).toBe(200)
+    expect((await call("DELETE", `/api/admin/organization/credentials/${other.credentialId}`, {as: key.token})).status).toBe(204)
+    expect((await call("GET", "/api/admin/reports", {as: other.token})).status).toBe(401)
   })
 
   test("GET /api/admin/organization tells any principal what it may do", async () => {

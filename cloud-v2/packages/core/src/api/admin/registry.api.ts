@@ -1,19 +1,25 @@
 /**
  * @fileoverview The admin portal's miniapp registry (`/api/admin/registry`, `docs/registry.md`), mounted by
- * `admin.api.ts` behind `organization.registry.administer`, which only an Organization Admin holds: no operator key
- * carries it.
+ * `admin.api.ts` behind `organization.registry.administer`: an Organization Admin, or an operator key created with it.
  *
  *   GET  /entries?q=&status=&verification=&cursor=   every entry, newest first, 50 to a page
  *   GET  /export                                    every entry as CSV, for App Review
- *   POST /register   {urls}                         registers 1 to 50 URLs as the Organization Admin, verified as a
- *                                                  phone's registration would be
+ *   POST /register   {urls}                         registers 1 to 50 URLs, verified as a phone's registration would be
  *   GET  /coverage?kind=&value=                     what archiving a rule would cover, asked before archiving
  *   POST /archive    {rule: {kind, value}, reason?}  archives by URL, package, domain or account
  *   POST /unarchive  {rule: {kind, value}}
  *   GET  /rules?cursor=                             the archive rules, newest first
  *
+ * Who registers. An Organization Admin registers as themselves, as a phone would: a new entry records their Mentra
+ * user ID as its first registrant, and a private miniapp's sign-in challenge gets their own miniapp token. An operator
+ * key registers for the organization and is no account: a new entry records the key, `credential:<id>`, as its first
+ * registrant (an `account` archive rule with that value archives everything the key first registered), and a private
+ * miniapp's challenge goes unanswered, so the URL is recorded private with only its package, as when a person's token
+ * is refused. A key's creator is not used: a legacy admin key's creator has no Mentra account.
+ *
  * Archiving, unarchiving, each URL registered and each export are recorded in the admin audit log
- * (`admin_action_audit_logs`, the admin portal's Audit log page) with the Organization Admin's email.
+ * (`admin_action_audit_logs`, the admin portal's Audit log page) with the Organization Admin's email, or the
+ * key and the person who created it.
  * A malformed request is `400 invalid_request`.
  */
 
@@ -165,13 +171,21 @@ app.get("/export", async c => {
 
 app.post("/register", async c => {
   const principal = c.get("principal")!
-  if (principal.kind !== "user") return c.json({error: "forbidden", error_description: "a signed-in person is required"}, 403)
+  // The gate in front lets in only an Organization Admin or an operator key; a workspace key holds no capability.
+  if (principal.kind === "credential" && principal.credentialKind !== "organization") {
+    return c.json({error: "forbidden", error_description: "a signed-in person or an operator key is required"}, 403)
+  }
   const body = parse(registerSchema, await readJsonObject(c), "body must be {urls: [miniapp URLs]}")
   const urls = distinctUrls(body.urls)
   if (urls.length === 0 || urls.length > ADMIN_REGISTRY_REGISTER_MAX_URLS) {
     throw new InvalidRequest(`urls must name 1 to ${ADMIN_REGISTRY_REGISTER_MAX_URLS} miniapp URLs`)
   }
-  const results = await registerUrlsAsAdmin(urls, {mentraUserId: principal.mentraUserId, tenantId: principal.tenantId})
+  // A person registers as themselves; a key for the organization, as no account (see the file header).
+  const registrant =
+    principal.kind === "user"
+      ? {mentraUserId: principal.mentraUserId, tenantId: principal.tenantId}
+      : {credentialId: principal.credentialId}
+  const results = await registerUrlsAsAdmin(urls, registrant)
   await AdminActionAuditLogModel.insertMany(
     results.map((result, index) =>
       audit(c, {

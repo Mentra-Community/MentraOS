@@ -35,11 +35,13 @@ export const ORGANIZATION_CAPABILITIES = [
 ] as const
 export type OrganizationCapability = (typeof ORGANIZATION_CAPABILITIES)[number]
 
-/** Scopes an operator key may carry; never workspace administration, Fleet administration, licenses or the miniapp registry. */
-export const OPERATOR_KEY_SCOPES: readonly OrganizationCapability[] = [
-  "organization.incidents.read",
-  "organization.supportProfiles.read",
-]
+/**
+ * Scopes an operator key may carry: every organization capability, so a key can do whatever an Organization
+ * Admin can, as far as the scopes it was created with allow. A capability added to `ORGANIZATION_CAPABILITIES`
+ * later is grantable to keys too. One rule is not a scope: a key never creates a credential (an operator key,
+ * a workspace key or a website's client secret), so a leaked key cannot outlive its own revocation.
+ */
+export const OPERATOR_KEY_SCOPES: readonly OrganizationCapability[] = ORGANIZATION_CAPABILITIES
 
 /** Capabilities each role adds on top of the role below it. */
 const ROLE_ADDITIONS: Record<WorkspaceRole, readonly WorkspaceCapability[]> = {

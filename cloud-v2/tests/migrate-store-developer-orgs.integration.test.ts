@@ -819,6 +819,7 @@ describe("apply", () => {
       scopes: ["miniapps.publish"],
       packageNames: [],
       label: "Dev laptop",
+      createdByEmail: "dev@acme.example",
     })
     expect(await validateCredentialToken(keys.app.token)).toMatchObject({
       credentialId: keys.app.row.keyId,

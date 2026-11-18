@@ -35,6 +35,7 @@ import {
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {sha256Hex} from "../packages/core/src/services/signin/random"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
+import {ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {legacyAdminKey, legacyKeys} from "./support/legacy-admin-key"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
@@ -241,7 +242,7 @@ describe("Organization Admins (L06)", () => {
 })
 
 describe("admin keys keep working", () => {
-  test("an existing allowlisted admin key reads incidents once Core converts it at startup", async () => {
+  test("an existing allowlisted admin key reads incidents once Core converts it at startup, with every operator scope", async () => {
     const key = await legacyAdminKey({orgId: "org_ops", name: "incident reader"})
     process.env.CLOUD_CORE_ADMIN_EMAILS = `${ADMIN_EMAIL},api-key@${key.keyId}.local`
     expect((await convertLegacyAdminKeys()).converted).toEqual([key.keyId])
@@ -251,10 +252,7 @@ describe("admin keys keep working", () => {
     expect(me.status).toBe(200)
     const body = (await me.json()) as {credential: {credentialId: string; credentialKind: string}; organization: {capabilities: string[]}}
     expect(body.credential).toMatchObject({credentialId: key.keyId, credentialKind: "organization"})
-    expect(body.organization.capabilities.sort()).toEqual([
-      "organization.incidents.read",
-      "organization.supportProfiles.read",
-    ])
+    expect(body.organization.capabilities).toEqual([...ORGANIZATION_CAPABILITIES])
   })
 
   test("a key that is not allowlisted is no principal, and neither is an invalid one", async () => {
@@ -265,13 +263,23 @@ describe("admin keys keep working", () => {
     expect((await adminReports({authorization: "Bearer mak_local_01ABC.secret"})).status).toBe(401)
   })
 
-  test("a key gets 403 on the enterprise portal API and the workspace API, which are for people", async () => {
+  test("a key gets 403 on the enterprise portal API and on what only a person does, and administers the rest", async () => {
     const key = await legacyAdminKey({orgId: "org_ops", name: "key"})
     process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${key.keyId}.local`
     await convertLegacyAdminKeys()
-    expect((await portalMe({authorization: `Bearer ${key.token}`})).status).toBe(403)
-    expect((await app.request(`${ADMIN_ORIGIN}/api/workspaces`, {headers: {authorization: `Bearer ${key.token}`}})).status).toBe(403)
-    expect((await app.request(`${ADMIN_ORIGIN}/api/organization/credentials`, {headers: {authorization: `Bearer ${key.token}`}})).status).toBe(403)
+    const bearer = {authorization: `Bearer ${key.token}`}
+    expect((await portalMe(bearer)).status).toBe(403)
+    // A person's own workspaces, and creating a key, are a person's.
+    expect((await app.request(`${ADMIN_ORIGIN}/api/workspaces`, {headers: bearer})).status).toBe(403)
+    const mint = await app.request(`${ADMIN_ORIGIN}/api/organization/credentials`, {
+      method: "POST",
+      headers: {...bearer, "content-type": "application/json"},
+      body: JSON.stringify({name: "child", scopes: ["organization.incidents.read"]}),
+    })
+    expect(mint.status).toBe(403)
+    // Listing keys and every workspace is organization administration, which the key now holds.
+    expect((await app.request(`${ADMIN_ORIGIN}/api/organization/credentials`, {headers: bearer})).status).toBe(200)
+    expect((await app.request(`${ADMIN_ORIGIN}/api/organization/workspaces`, {headers: bearer})).status).toBe(200)
   })
 })
 

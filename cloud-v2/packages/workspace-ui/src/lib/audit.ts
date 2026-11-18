@@ -54,13 +54,19 @@ export function actionLabel(action: string): string {
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-/** Who did it, in words. */
+/**
+ * Who did it, in words. An operator key is named by its name (its id when an older Core sent none) and the
+ * person who created it, who answers for what it does: "Key Sales tooling, created by alex@acme.test".
+ */
 export function actorLabel(actor: AuditEventView["actor"]): string {
   switch (actor.kind) {
     case "user":
       return actor.email ?? "A user";
-    case "credential":
-      return actor.credentialId ? `Key ${actor.credentialId}` : "A key";
+    case "credential": {
+      const name = actor.credentialName?.trim() || actor.credentialId;
+      const key = name ? `Key ${name}` : "A key";
+      return actor.email ? `${key}, created by ${actor.email}` : key;
+    }
     case "service": {
       const service = actor.service ? `${capitalize(actor.service)} service` : "A service";
       return actor.email ? `${service}, for ${actor.email}` : service;
@@ -110,7 +116,15 @@ export function describeAuditEvent(event: AuditEventView): AuditDescription {
   switch (event.action) {
     case "workspace.created": {
       const name = text(after.name);
-      return done(name ? ["Created the workspace ", strong(name)] : ["Created the workspace"]);
+      const created: AuditText = name ? ["Created the workspace ", strong(name)] : ["Created the workspace"];
+      // Made for someone else (by an Organization Admin or a key), the event names its first Owner. A key's
+      // `email` is its creator's, never the owner's, so a key's event always names the owner.
+      const owner = text(target.email);
+      const ownCreation = event.actor.kind === "user" && sameAddress(owner, text(event.actor.email));
+      if (owner && !ownCreation) {
+        return done([...created, " with ", strong(owner), " as ", strong(ROLE_LABELS.owner)]);
+      }
+      return done(created);
     }
     case "workspace.renamed": {
       const from = text(before.name);

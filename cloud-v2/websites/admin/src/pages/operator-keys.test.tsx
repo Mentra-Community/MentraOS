@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { MutationObserver, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { OPERATOR_KEY_SCOPES, type CredentialView } from "@mentra/workspace-contract";
+import { OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES, type CredentialView } from "@mentra/workspace-contract";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   createKeyMutationOptions,
@@ -8,6 +8,7 @@ import {
   OPERATOR_KEYS_QUERY_KEY,
   OperatorKeysPage,
   parseCreateKeyForm,
+  SCOPE_DESCRIPTIONS,
   SCOPE_LABELS,
   scopeLabel,
   SecretGate,
@@ -60,29 +61,42 @@ function render(list: CredentialView[] | null = [harness, triage]): string {
 const gate = (secret: SecretState) => renderToStaticMarkup(<SecretGate secret={secret} onDone={() => {}} />);
 
 describe("operator keys page", () => {
-  test("labels each scope in words", () => {
+  test("labels and describes each scope in words", () => {
     expect(SCOPE_LABELS).toEqual({
+      "organization.workspaces.administer": "Administer every workspace",
+      "organization.credentials.manage": "Manage keys and sign-in websites",
       "organization.incidents.read": "Read incident reports",
       "organization.supportProfiles.read": "Look up support profiles",
+      "organization.fleet.administer": "Administer Fleet",
+      "organization.licenses.read": "Read every license",
+      "organization.registry.administer": "Administer the miniapp registry",
     });
-    // Every scope a key may carry has a label.
-    for (const scope of OPERATOR_KEY_SCOPES) expect(SCOPE_LABELS[scope]).toBeTruthy();
+    // Every scope a key may carry has a label and a description.
+    for (const scope of OPERATOR_KEY_SCOPES) {
+      expect(SCOPE_LABELS[scope]).toBeTruthy();
+      expect(SCOPE_DESCRIPTIONS[scope]).toBeTruthy();
+    }
     // A scope this page does not know yet is shown as it is, not hidden.
     expect(scopeLabel("organization.future.read")).toBe("organization.future.read");
   });
 
-  test("the create form offers one checkbox per operator scope, and no other", () => {
+  test("the create form offers one checkbox per operator scope, every organization capability", () => {
     const markup = render();
     const checkboxes = [...markup.matchAll(/<input[^>]*type="checkbox"[^>]*>/g)].map(match => match[0]);
     expect(checkboxes).toHaveLength(OPERATOR_KEY_SCOPES.length);
+    expect(OPERATOR_KEY_SCOPES).toEqual(ORGANIZATION_CAPABILITIES);
     for (const scope of OPERATOR_KEY_SCOPES) {
       expect(markup).toContain(`value="${scope}"`);
       expect(markup).toContain(SCOPE_LABELS[scope]!);
     }
-    expect(markup).not.toContain("organization.workspaces.administer");
-    expect(markup).not.toContain("organization.credentials.manage");
+    expect(markup).toContain('value="organization.workspaces.administer"');
+    expect(markup).toContain('value="organization.credentials.manage"');
     expect(markup).toContain("Expires (optional)");
     expect(markup).toContain("Create operator key");
+  });
+
+  test("says keys can't create keys", () => {
+    expect(render()).toContain("Keys can&#x27;t create keys");
   });
 
   test("lists keys by their display form with their scopes as labels", () => {

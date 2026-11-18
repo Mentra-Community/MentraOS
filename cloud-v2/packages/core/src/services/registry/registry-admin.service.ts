@@ -12,12 +12,15 @@
  * meanwhile never moves a row from one page to the next. The rules page the same way.
  *
  * **Search.** A query is plain text, trimmed, compared case-insensitively as a substring (never a pattern) of the
- * URL, the package name, the name or the registrable domain, or equal to the Mentra user id that first registered
- * the entry. It scans the entries rather than an index: the registry is read this way only by Organization Admins.
+ * URL, the package name, the name or the registrable domain, or equal to the Mentra user id (or `credential:<id>`)
+ * that first registered the entry. It scans the entries rather than an index: the registry is read this way only by Organization Admins.
  *
  * **Registering.** An Organization Admin's URLs are registered exactly as a phone's registration (`registerMiniappUrl`),
  * with the admin as the person registering: Core reads each URL, a sign-in challenge gets the admin's own miniapp
- * token, and the archive rules apply. There is no phone report, so a URL Core can't read records nothing.
+ * token, and the archive rules apply. There is no phone report, so a URL Core can't read records nothing. An
+ * operator key registers the same way for the organization, as no account: a new entry records the key
+ * (`credential:<id>`) as its first registrant, and a private miniapp's challenge goes unanswered, so its URL is
+ * recorded private with only its package (`OperatorKeyRegistrant`).
  */
 
 import {createLogger} from "@mentra/cloud-shared"
@@ -42,6 +45,7 @@ import {
   RegistryRequestError,
   ruleEntryFilter,
   ruleKindsCovering,
+  type OperatorKeyRegistrant,
   type RegistryArchiveRule,
   type RegistryEntryRow,
   type RegistryRegistrant,
@@ -278,12 +282,12 @@ export function distinctUrls(urls: readonly string[]): Array<{input: string; key
 }
 
 /**
- * Registers each URL as `registrant` (an Organization Admin), as a phone's registration would, a few at a time.
- * One result per URL, in order (see `AdminRegistryRegisterOutcome`).
+ * Registers each URL as `registrant` (an Organization Admin, or an operator key for the organization), as a phone's
+ * registration would, a few at a time. One result per URL, in order (see `AdminRegistryRegisterOutcome`).
  */
 export async function registerUrlsAsAdmin(
   urls: ReadonlyArray<{input: string; key: string}>,
-  registrant: RegistryRegistrant,
+  registrant: RegistryRegistrant | OperatorKeyRegistrant,
 ): Promise<AdminRegistryRegisterResult[]> {
   const results: AdminRegistryRegisterResult[] = new Array(urls.length)
   let next = 0
@@ -297,7 +301,10 @@ export async function registerUrlsAsAdmin(
   return results
 }
 
-async function registerOne(input: string, registrant: RegistryRegistrant): Promise<AdminRegistryRegisterResult> {
+async function registerOne(
+  input: string,
+  registrant: RegistryRegistrant | OperatorKeyRegistrant,
+): Promise<AdminRegistryRegisterResult> {
   try {
     const outcome = await registerMiniappUrl({url: input.trim(), registrant})
     switch (outcome.result) {

@@ -15,7 +15,7 @@
  *  - an operator key (`credentialKind: "organization"`): allowed only while the
  *    creator's email is still an Organization Admin, so removing the address from
  *    the allowlist ends the key on the next request. Scopes are the operator
- *    scopes the key was created with, which never include workspace administration.
+ *    scopes the key was created with: any organization capability.
  *  - a workspace credential issued by a service (the Store, for package keys): its
  *    own scopes, limited to its package names. It does not depend on anyone's
  *    membership.
@@ -34,6 +34,11 @@
  * and revoking one is a single write without a transaction, followed by its
  * audit event (`recordOrganizationEvent`): a Private Cloud database that cannot
  * run a transaction across collections still mints and revokes them.
+ *
+ * Only a person creates a credential: an operator key may revoke keys (with
+ * `organization.credentials.manage`, or in a workspace it administers) but
+ * never creates one, so a leaked key cannot mint another that outlives its own
+ * revocation.
  *
  * Workspace credential mutations follow the shape of `workspace.service`: one transaction that
  * checks the actor, writes the workspace document (workspace credentials only;
@@ -68,6 +73,7 @@ import {credentialEnvironmentLabels} from "./organization"
 import {fail} from "./workspace-error"
 import {
   actingRole,
+  actsForOrganization,
   auditActor,
   isId,
   loadActiveWorkspace,
@@ -91,7 +97,8 @@ const PACKAGE_NAMES_MAX = 50
 const LAST_USED_THROTTLE_MS = 60_000
 const PUBLISH_SCOPE = "miniapps.publish"
 
-export type ValidatedCredential = Extract<CorePrincipal, {kind: "credential"}>
+/** A key as validation resolves it: the contract's principal, and the address of the person who created it. */
+export type ValidatedCredential = Extract<CorePrincipal, {kind: "credential"}> & {createdByEmail: string | null}
 
 type CredentialRow = AccessCredentialRow
 
@@ -196,9 +203,9 @@ export async function mintServiceCredential(
 }
 
 /**
- * Create an organization operator key. Only an Organization Admin may, the
- * scopes must be a non-empty subset of {@link OPERATOR_KEY_SCOPES} (never
- * workspace administration), and the creator's email is recorded: the key works
+ * Create an organization operator key. Only an Organization Admin who is a
+ * person may (never a key), the scopes must be a non-empty subset of
+ * {@link OPERATOR_KEY_SCOPES}, and the creator's email is recorded: the key works
  * only while that email stays on the admin allowlist.
  */
 export async function createOperatorKey(
@@ -288,8 +295,10 @@ export async function listOperatorKeys(): Promise<CredentialView[]> {
 /**
  * Revoke a credential. A workspace key can be revoked by the member who created
  * it (while they still hold `miniapps.credentials.create`) or by anyone with
- * `workspace.credentials.revoke` in that workspace; an operator key only by an
- * Organization Admin. Revoking a revoked key changes nothing.
+ * `workspace.credentials.revoke` in that workspace (an operator key that
+ * administers workspaces included); an operator key by an Organization Admin or
+ * an operator key holding `organization.credentials.manage`. Revoking a revoked
+ * key changes nothing.
  */
 export async function revokeCredential(actor: Actor, credentialId: string): Promise<void> {
   if (!isId(credentialId)) fail("not_found", "credential not found")
@@ -297,7 +306,7 @@ export async function revokeCredential(actor: Actor, credentialId: string): Prom
   if (!found) fail("not_found", "credential not found")
 
   if (found.credentialKind === "organization") {
-    if (!(actor.kind === "system" || (actor.kind === "user" && actor.isOrganizationAdmin))) {
+    if (!actsForOrganization(actor, "organization.credentials.manage")) {
       fail("forbidden", "only an organization admin can revoke an operator key")
     }
     // One document, so no transaction: the audit event follows on its own.
@@ -409,7 +418,27 @@ export async function validateCredentialToken(token: string): Promise<ValidatedC
     scopes: grant.scopes,
     packageNames: grant.packageNames,
     label: row.name || `credential:${row.credentialId}`,
+    createdByEmail: row.createdByEmail ?? null,
   }
+}
+
+/**
+ * Whether the operator key `credentialId` would still be granted `capability` now: it exists, is an
+ * operator key, is neither revoked nor expired, still validates (its creator is an Organization Admin
+ * whose account is not deleted), and holds the capability among its operator scopes. What a key set in
+ * motion and is checked again later (an invitation it sent) asks this.
+ */
+export async function operatorKeyHolds(
+  credentialId: string | null | undefined,
+  capability: OrganizationCapability,
+  session: ClientSession | null = null,
+): Promise<boolean> {
+  if (!isId(credentialId)) return false
+  const row = await AccessCredentialModel.findOne({credentialId}).session(session).lean<CredentialRow>()
+  if (!row || row.credentialKind !== "organization" || row.revokedAt) return false
+  if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return false
+  const grant = await effectiveGrant(row)
+  return !!grant && OPERATOR_KEY_SCOPES.includes(capability) && grant.scopes.includes(capability)
 }
 
 /** What the credential may do right now, or null when it may do nothing. */
@@ -550,8 +579,8 @@ export function createdEvent(row: CredentialRow, actor: WorkspaceAuditEventInput
   }
 }
 
-/** Identifies the credential without any of its secret material. */
-function auditTarget(row: CredentialRow): Record<string, unknown> {
+/** Identifies the credential without any of its secret material: the target of every event about it. */
+export function auditTarget(row: CredentialRow): Record<string, unknown> {
   return {
     credentialId: row.credentialId,
     prefix: row.prefix,

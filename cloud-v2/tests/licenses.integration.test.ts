@@ -50,7 +50,7 @@ import {
   recordWorkspaceEvents,
   type WorkspaceAuditEventInput,
 } from "../packages/core/src/services/workspaces/audit.service"
-import {createWorkspaceCredential} from "../packages/core/src/services/workspaces/credential.service"
+import {createOperatorKey, createWorkspaceCredential} from "../packages/core/src/services/workspaces/credential.service"
 import {
   bumpRevision,
   createWorkspace,
@@ -1906,6 +1906,46 @@ describe("the workspace licenses routes", () => {
     )
     expect((await licenseRow(license.licenseId))!.seatsUsed).toBe(2)
     expect((await audit("seat.released")).map((event) => event.after?.reason)).toEqual(["unassigned"])
+  })
+
+  test("an operator key that administers workspaces lists and assigns seats as an Owner; one without the scope can't", async () => {
+    const ws = await newWorkspace()
+    const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
+    const license = await workspaceLicense(ws.workspaceId)
+    const administers = await createOperatorKey(actorOf(orgAdmin, true), {
+      name: "Sales tooling",
+      scopes: ["organization.workspaces.administer"],
+    })
+    const readsLicenses = await createOperatorKey(actorOf(orgAdmin, true), {
+      name: "Reader",
+      scopes: ["organization.licenses.read"],
+    })
+    const twoSeats = {
+      assignments: [
+        {licenseId: license.licenseId, membershipId: ws.memberMembershipId},
+        {licenseId: license.licenseId, membershipId: ws.developerMembershipId},
+      ],
+    }
+
+    expect((await call("GET", `/api/workspaces/${ws.workspaceId}/licenses`, readsLicenses.token)).status).toBe(403)
+    expect((await call("POST", `/api/workspaces/${ws.workspaceId}/seat-assignments`, readsLicenses.token, twoSeats)).status).toBe(403)
+    expect(await seatsOf(license.licenseId)).toEqual([])
+
+    const assigned = await call("POST", `/api/workspaces/${ws.workspaceId}/seat-assignments`, administers.token, twoSeats)
+    expect(assigned.status).toBe(200)
+    expect((await seatsOf(license.licenseId)).map((seat) => seat.membershipId).sort()).toEqual(
+      [ws.memberMembershipId, ws.developerMembershipId].sort(),
+    )
+    // A key is nobody's account: the seat records no assigner, and the audit log names the key and its creator.
+    expect((await seatsOf(license.licenseId)).map((seat) => seat.assignedBy)).toEqual([null, null])
+    expect((await audit("seat.assigned")).map((event) => event.actor)).toEqual([
+      {kind: "credential", credentialId: administers.credential.credentialId, credentialName: "Sales tooling", email: ADMIN_EMAIL},
+      {kind: "credential", credentialId: administers.credential.credentialId, credentialName: "Sales tooling", email: ADMIN_EMAIL},
+    ])
+    const listed = await call("GET", `/api/workspaces/${ws.workspaceId}/licenses`, administers.token)
+    expect(listed.status).toBe(200)
+    expect(listed.json.items[0].seats).toHaveLength(2)
+    expect((await call("DELETE", seatPath(ws.workspaceId, license.licenseId, ws.memberMembershipId), administers.token)).status).toBe(204)
   })
 })
 

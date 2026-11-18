@@ -18,7 +18,8 @@
  * **Private miniapps.** A server that answers with the sign-in challenge makes the entry private. Core checks the
  * challenge's package against the URL's domain, mints that package's miniapp token for the person registering
  * (`mintMiniappTokenFor`, so the token names their workspace only when it assigned the package), and retries once,
- * following no redirects. Core shows a private entry's name, version, rating and icon only to someone its server
+ * following no redirects. An operator key registering from the admin portal is no person and has no token, so its
+ * private URLs are recorded with the challenge's package only (`OperatorKeyRegistrant`). Core shows a private entry's name, version, rating and icon only to someone its server
  * admitted in that same request: the phone's own request decides whether it installs. An accepted answer describes
  * what this caller's own read found, never what another read stored meanwhile.
  *
@@ -27,7 +28,8 @@
  * started.
  *
  * **Archiving.** An entry is archived when its own status is, or when an archive rule names its URL, package name,
- * registrable domain or the account that first registered it. A rule also refuses URLs registered after it:
+ * registrable domain or the account that first registered it (a `mentraUserId`, or `credential:<id>` for an
+ * operator key). A rule also refuses URLs registered after it:
  * registration checks the rules before it reads anything and again once it knows the package, and creates no entry
  * for a URL a rule covers. It checks the stored entry and the rules once more after it writes, so a rule made while
  * Core was reading the URL still refuses the install. Archiving refuses installs and stops updates; installed copies
@@ -87,6 +89,22 @@ const REGISTRATION_WINDOW_SEC = 60 * 60
 export interface RegistryRegistrant {
   mentraUserId: string
   tenantId: string
+}
+
+/**
+ * An operator key registering URLs for the organization (the admin portal's register route, `registerUrlsAsAdmin`).
+ * A key is no Mentra account, so an entry it registers first records the key itself as its first registrant,
+ * `credential:<credentialId>` (`registrantId`), and Core has no miniapp token to answer a private miniapp's sign-in
+ * challenge with: such a URL is recorded private, with only the package its challenge named, as when a person's
+ * token is refused. An archive rule for that account value archives everything the key first registered.
+ */
+export interface OperatorKeyRegistrant {
+  credentialId: string
+}
+
+/** What an entry records as its first registrant: a person's `mentraUserId`, or `credential:<id>` for an operator key. */
+export function registrantId(registrant: RegistryRegistrant | OperatorKeyRegistrant): string {
+  return "credentialId" in registrant ? `credential:${registrant.credentialId}` : registrant.mentraUserId
 }
 
 /** Supplies the miniapp token for the package a sign-in challenge named. */
@@ -258,8 +276,16 @@ function registrableDomainOfUrl(url: string): string | null {
   }
 }
 
-/** The person's own miniapp token for a challenge's package, under the token service's rules. */
-function tokensFor(registrant: RegistryRegistrant): ChallengeTokenSource {
+/**
+ * The person's own miniapp token for a challenge's package, under the token service's rules. An operator key has
+ * none: its challenge goes unanswered, and the URL is recorded private (`private_refused`).
+ */
+function tokensFor(registrant: RegistryRegistrant | OperatorKeyRegistrant): ChallengeTokenSource {
+  if ("credentialId" in registrant) {
+    return async () => {
+      throw new Error("an operator key has no Mentra account to sign in to a private miniapp with")
+    }
+  }
   return async (packageName) =>
     (await mintMiniappTokenFor({mentraUserId: registrant.mentraUserId, tenantId: registrant.tenantId, packageName}))
       .token
@@ -309,22 +335,23 @@ export async function answerWithoutReading(input: {
 /**
  * Registers a miniapp URL for `registrant`, verifying it first (see the file comment). `reported` is what the phone
  * read; Core keeps it only when it can't read the URL itself. `tokenFor` answers a sign-in challenge; it defaults to
- * the registrant's own miniapp token. Throws `RegistryRequestError` for something that isn't a miniapp URL at all.
+ * the registrant's own miniapp token (an operator key has none, see `OperatorKeyRegistrant`). Throws
+ * `RegistryRequestError` for something that isn't a miniapp URL at all.
  */
 export async function registerMiniappUrl(input: {
   url: string
   reported?: RegistryReportedManifest
-  registrant: RegistryRegistrant
+  registrant: RegistryRegistrant | OperatorKeyRegistrant
   tokenFor?: ChallengeTokenSource
 }): Promise<RegisterMiniappUrlResult> {
   const classified = classifyUrl(input.url)
   if (!classified) throw new RegistryRequestError("url must be an HTTPS miniapp URL without credentials, a query or a fragment")
   if (classified.kind === "not_a_miniapp") return {result: "not_a_miniapp", reason: classified.reason}
   const target = classified.target
-  const registrant = input.registrant.mentraUserId
+  const registrant = registrantId(input.registrant)
 
   const existing = await findEntry(target.url)
-  // A new URL would be registered by this person, so an account rule for them covers it.
+  // A new URL would be registered by this person (or key), so an account rule for them covers it.
   const firstRegisteredBy = existing?.firstRegisteredBy ?? registrant
   const archivedFor = (packageName: string | null | undefined) =>
     archivedBy({...target, packageNames: packageName ? [packageName] : [], firstRegisteredBy})
@@ -752,7 +779,10 @@ function compareSemver(a: ParsedSemver, b: ParsedSemver): number {
 
 // --- Archiving ---------------------------------------------------------------
 
-/** An archive rule: a URL, a package name, a registrable domain, or the `mentraUserId` of an account. */
+/**
+ * An archive rule: a URL, a package name, a registrable domain, or an account: the `mentraUserId` of a person, or
+ * `credential:<id>` for the entries an operator key first registered.
+ */
 export interface RegistryArchiveRule {
   kind: MiniappRegistryArchiveRuleKind
   value: string

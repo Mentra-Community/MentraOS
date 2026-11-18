@@ -20,11 +20,17 @@ import {registerModel} from "./register-model"
 export const WORKSPACE_AUDIT_ACTOR_KINDS = ["user", "credential", "service", "system"] as const
 export type WorkspaceAuditActorKind = (typeof WORKSPACE_AUDIT_ACTOR_KINDS)[number]
 
+/**
+ * Who did it. A person (`user`) by `mentraUserId` and `email`; an operator key (`credential`) by
+ * `credentialId`, its name (`credentialName`) and the address of the person who created it (`email`); a
+ * service by `service` and the person it acted for (`email`); Core itself (`system`) by nothing more.
+ */
 const ActorSchema = new Schema(
   {
     kind: {type: String, enum: WORKSPACE_AUDIT_ACTOR_KINDS, required: true},
     mentraUserId: {type: String},
     credentialId: {type: String},
+    credentialName: {type: String},
     service: {type: String},
     email: {type: String},
   },

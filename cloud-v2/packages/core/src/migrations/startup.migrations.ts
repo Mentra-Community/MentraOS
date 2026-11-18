@@ -122,7 +122,8 @@ export async function runStartupMigrations(): Promise<void> {
     }
   }
   // Allowlisted admin API keys keep working as operator keys, before any
-  // request is served. A key that fails is logged and retried next start.
+  // request is served, and hold every operator scope (one converted earlier
+  // is widened). A key that fails is logged and retried next start.
   await convertLegacyAdminKeys();
   // A person may belong to several workspaces. The one-workspace guards an earlier release kept in the
   // memberships collection (`_id` "ows:<mentraUserId>") no longer mean anything: remove them. Idempotent; a

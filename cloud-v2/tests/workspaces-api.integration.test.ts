@@ -39,7 +39,11 @@ import {createPortalSession} from "../packages/core/src/services/signin/browser-
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {clearDeletionHold, setDeletionHold} from "../packages/core/src/services/workspaces/deletion-hold.service"
-import {OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
+import {
+  capabilitiesForRole,
+  OPERATOR_KEY_SCOPES,
+  ORGANIZATION_CAPABILITIES,
+} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {membershipRow} from "./support/membership-row"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
@@ -543,15 +547,13 @@ describe("authentication", () => {
 // --- Core keys -------------------------------------------------------------
 
 describe("Core keys", () => {
-  test("a workspace key and an operator key get 403 on every workspace route, and change nothing", async () => {
+  /** A workspace with a pending invitation and a workspace key, and every workspace route with a body for it. */
+  async function workspaceRoutes() {
     const ws = await newWorkspace()
     const id = ws.workspaceId
     const workspaceKey = (
       await call("POST", `/api/workspaces/${id}/credentials`, {as: ws.developer, body: {name: "ci"}})
     ).json as {token: string; credential: {credentialId: string}}
-    const admin = await person("org-admin", {email: ADMIN_EMAIL})
-    // Every scope an operator key can carry; none of them is workspace administration.
-    const operatorKey = await createOperatorKey(admin, OPERATOR_KEY_SCOPES)
     const invitation = await call("POST", `/api/workspaces/${id}/invitations`, {
       as: ws.owner,
       body: {email: "hire@example.test", role: "member"},
@@ -559,51 +561,227 @@ describe("Core keys", () => {
     expect(invitation.status).toBe(201)
     const token = (invitation.json.inviteUrl as string).slice(INVITE_PREFIX.length)
     const revision = await revisionOf(id, ws.owner)
-    const auditEvents = await WorkspaceAuditEventModel.countDocuments({})
-
-    const routes: Array<[method: string, path: string, body?: unknown]> = [
+    // The caller's own standing: a person's only, whatever a key holds.
+    const personOnly: Array<[method: string, path: string, body?: unknown]> = [
       ["GET", "/api/workspaces"],
       ["POST", "/api/workspaces", {name: "Sneaky"}],
+      ["POST", "/api/workspaces/ensure"],
+      ["GET", "/api/workspaces/invitations/mine"],
       ["POST", "/api/workspaces/invitations/peek", {token}],
       ["POST", "/api/workspaces/invitations/accept", {token}],
+      ["POST", "/api/workspaces/invitations/decline", {invitationId: invitation.json.invitationId}],
+      ["POST", `/api/workspaces/${id}/leave`],
+      // A key never creates a credential.
+      ["POST", `/api/workspaces/${id}/credentials`, {name: "sneaky"}],
+      // The workspace portal is for people.
+      ["GET", "/api/portal/workspaces"],
+      ["GET", `/api/portal/workspaces/${id}`],
+    ]
+    const administration: Array<[method: string, path: string, body?: unknown]> = [
       ["GET", `/api/workspaces/${id}`],
       ["PATCH", `/api/workspaces/${id}`, {name: "Sneaky", expectedRevision: revision}],
       ["DELETE", `/api/workspaces/${id}`, {confirmName: "Acme"}],
       ["GET", `/api/workspaces/${id}/members`],
       ["PATCH", `/api/workspaces/${id}/members/${ws.memberMembershipId}`, {role: "admin", expectedRevision: revision}],
       ["DELETE", `/api/workspaces/${id}/members/${ws.memberMembershipId}`, {expectedRevision: revision}],
-      ["POST", `/api/workspaces/${id}/leave`],
       ["GET", `/api/workspaces/${id}/invitations`],
       ["POST", `/api/workspaces/${id}/invitations`, {email: "sneaky@example.test", role: "owner"}],
       ["DELETE", `/api/workspaces/${id}/invitations/${invitation.json.invitationId}`],
       ["GET", `/api/workspaces/${id}/credentials`],
-      ["POST", `/api/workspaces/${id}/credentials`, {name: "sneaky"}],
       ["DELETE", `/api/workspaces/${id}/credentials/${workspaceKey.credential.credentialId}`],
+      ["GET", `/api/workspaces/${id}/licenses`],
+      ["PUT", `/api/workspaces/${id}/licenses/lic_missing/seats/${ws.memberMembershipId}`],
+      ["DELETE", `/api/workspaces/${id}/licenses/lic_missing/seats/${ws.memberMembershipId}`],
+      ["POST", `/api/workspaces/${id}/seat-assignments`, {assignments: []}],
       ["GET", `/api/workspaces/${id}/audit`],
-      // The same handlers under the portals' route groups refuse keys too.
-      ["GET", "/api/portal/workspaces"],
-      ["GET", `/api/portal/workspaces/${id}`],
       ["GET", `/api/admin/workspaces/${id}`],
     ]
-    for (const [label, key] of [
-      ["workspace key", workspaceKey.token],
-      ["operator key", operatorKey.token],
-    ] as const) {
-      for (const [method, path, body] of routes) {
-        const reply = await call(method, path, {as: key, body})
-        const route = `${label}: ${method} ${path}`
-        expect({route, status: reply.status}).toEqual({route, status: 403})
-        expect(reply.json.error).toBe("forbidden")
-      }
-    }
+    const snapshot = async () => ({
+      workspaces: await WorkspaceModel.countDocuments({}),
+      revision: await revisionOf(id, ws.owner),
+      members: await WorkspaceMembershipModel.countDocuments({workspaceId: id, status: "active"}),
+      invitations: await WorkspaceInvitationModel.countDocuments({workspaceId: id, status: "pending"}),
+      liveKeys: await AccessCredentialModel.countDocuments({revokedAt: null}),
+      events: await WorkspaceAuditEventModel.countDocuments({}),
+    })
+    return {ws, id, workspaceKey, personOnly, administration, snapshot}
+  }
 
-    // Nothing moved: no workspace, revision, membership, invitation or key changed, and nothing was audited.
-    expect(await WorkspaceModel.countDocuments({})).toBe(1)
-    expect(await revisionOf(id, ws.owner)).toBe(revision)
-    expect(await WorkspaceMembershipModel.countDocuments({workspaceId: id, status: "active"})).toBe(4)
-    expect(await WorkspaceInvitationModel.countDocuments({workspaceId: id, status: "pending"})).toBe(1)
-    expect(await AccessCredentialModel.countDocuments({revokedAt: null})).toBe(2)
-    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(auditEvents)
+  async function expectRefused(label: string, key: string, routes: Array<[string, string, unknown?]>) {
+    for (const [method, path, body] of routes) {
+      const reply = await call(method, path, {as: key, body})
+      const route = `${label}: ${method} ${path}`
+      expect({route, status: reply.status}).toEqual({route, status: 403})
+      expect(reply.json.error).toBe("forbidden")
+    }
+  }
+
+  test("a workspace key gets 403 on every workspace route, and changes nothing", async () => {
+    const {workspaceKey, personOnly, administration, snapshot} = await workspaceRoutes()
+    const before = await snapshot()
+    await expectRefused("workspace key", workspaceKey.token, [...personOnly, ...administration])
+    expect(await snapshot()).toEqual(before)
+  })
+
+  test("an operator key without organization.workspaces.administer gets 403 on every workspace route, and changes nothing", async () => {
+    const {personOnly, administration, snapshot} = await workspaceRoutes()
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    // Every scope an operator key can carry but workspace administration.
+    const operatorKey = await createOperatorKey(
+      admin,
+      OPERATOR_KEY_SCOPES.filter(scope => scope !== "organization.workspaces.administer"),
+    )
+    const before = await snapshot()
+    await expectRefused("operator key", operatorKey.token, [...personOnly, ...administration])
+    // Refused as a non-member, not as an unauthenticated or unknown caller.
+    const detail = await call("GET", administration[0]![1], {as: operatorKey.token})
+    expect(detail.json.reason).toBe("not_a_member")
+    expect(await snapshot()).toEqual(before)
+  })
+
+  test("an operator key that administers workspaces is still refused what only a person does, and creates no key", async () => {
+    const {personOnly, snapshot} = await workspaceRoutes()
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const operatorKey = await createOperatorKey(admin, OPERATOR_KEY_SCOPES)
+    const before = await snapshot()
+    await expectRefused("operator key with every scope", operatorKey.token, personOnly)
+    expect(await snapshot()).toEqual(before)
+  })
+})
+
+describe("an operator key that administers workspaces", () => {
+  async function administeringKey(name = "Sales tooling") {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const created = await call("POST", "/api/organization/credentials", {
+      as: admin,
+      body: {name, scopes: ["organization.workspaces.administer"]},
+    })
+    expect(created.status).toBe(201)
+    return {admin, token: created.json.token as string, credentialId: created.json.credential.credentialId as string}
+  }
+
+  test("acts as an Owner in a workspace it is not a member of, and the audit log names the key and its creator", async () => {
+    const ws = await newWorkspace()
+    const id = ws.workspaceId
+    const key = await administeringKey()
+
+    const detail = await call("GET", `/api/workspaces/${id}`, {as: key.token})
+    expect(detail.status).toBe(200)
+    expect(detail.json.membership).toBeNull()
+    expect(detail.json.organizationAdmin).toBe(true)
+    expect([...detail.json.capabilities].sort()).toEqual([...capabilitiesForRole("owner")].sort())
+
+    // The admin route group takes the key's bearer too.
+    expect((await call("GET", `/api/admin/workspaces/${id}`, {as: key.token})).status).toBe(200)
+
+    let revision = detail.json.authorizationRevision as number
+    const renamed = await call("PATCH", `/api/workspaces/${id}`, {as: key.token, body: {name: "Acme Two", expectedRevision: revision}})
+    expect(renamed.status).toBe(200)
+    expect(renamed.json.name).toBe("Acme Two")
+    revision = renamed.json.authorizationRevision
+
+    // Owner-only transitions: promote a plain member straight to Owner.
+    const members = await call("GET", `/api/workspaces/${id}/members`, {as: key.token})
+    expect(members.status).toBe(200)
+    expect(members.json.items).toHaveLength(4)
+    const promoted = await call("PATCH", `/api/workspaces/${id}/members/${ws.memberMembershipId}`, {
+      as: key.token,
+      body: {role: "owner", expectedRevision: revision},
+    })
+    expect(promoted.status).toBe(200)
+    revision = promoted.json.authorizationRevision
+    const removed = await call("DELETE", `/api/workspaces/${id}/members/${ws.adminMembershipId}`, {
+      as: key.token,
+      body: {expectedRevision: revision},
+    })
+    expect(removed.status).toBe(204)
+
+    // Invitations, any role.
+    const invited = await call("POST", `/api/workspaces/${id}/invitations`, {
+      as: key.token,
+      body: {email: "new-owner@example.test", role: "owner"},
+    })
+    expect(invited.status).toBe(201)
+    const pending = await call("GET", `/api/workspaces/${id}/invitations`, {as: key.token})
+    expect(pending.json.items.map((item: any) => item.email)).toEqual(["new-owner@example.test"])
+    expect(pending.json.items[0].invitedByMembershipId).toBeNull()
+    expect((await call("DELETE", `/api/workspaces/${id}/invitations/${invited.json.invitationId}`, {as: key.token})).status).toBe(204)
+
+    // Workspace keys: listed in full and revocable, never created.
+    const workspaceKey = await call("POST", `/api/workspaces/${id}/credentials`, {as: ws.developer, body: {name: "ci"}})
+    const keys = await call("GET", `/api/workspaces/${id}/credentials`, {as: key.token})
+    expect(keys.json.items.map((item: any) => item.credentialId)).toEqual([workspaceKey.json.credential.credentialId])
+    expect(
+      (await call("DELETE", `/api/workspaces/${id}/credentials/${workspaceKey.json.credential.credentialId}`, {as: key.token})).status,
+    ).toBe(204)
+    expect((await call("POST", `/api/workspaces/${id}/credentials`, {as: key.token, body: {name: "mine"}})).status).toBe(403)
+
+    expect((await call("GET", `/api/workspaces/${id}/licenses`, {as: key.token})).status).toBe(200)
+
+    // The audit log names the key, by id and name, and the person who created it, on every event it caused.
+    const audit = await call("GET", `/api/workspaces/${id}/audit?limit=50`, {as: key.token})
+    expect(audit.status).toBe(200)
+    const byKey = audit.json.items.filter((item: any) => item.actor.kind === "credential")
+    expect(byKey.map((item: any) => item.action).sort()).toEqual(
+      [
+        "credential.revoked",
+        "invitation.created",
+        "invitation.revoked",
+        "membership.removed",
+        "membership.role_changed",
+        "workspace.renamed",
+      ].sort(),
+    )
+    for (const item of byKey) {
+      expect(item.actor).toEqual({
+        kind: "credential",
+        email: ADMIN_EMAIL,
+        credentialId: key.credentialId,
+        credentialName: "Sales tooling",
+        service: null,
+      })
+    }
+    // The key never became a member.
+    expect(await WorkspaceMembershipModel.countDocuments({workspaceId: id, status: "active", mentraUserId: null})).toBe(0)
+
+    // And it deletes the workspace, as an Owner may.
+    const deleted = await call("DELETE", `/api/workspaces/${id}`, {as: key.token, body: {confirmName: "Acme Two"}})
+    expect(deleted.status).toBe(204)
+  })
+
+  test("an invitation it sends is accepted as usual, names no inviter, and is void once the key is revoked", async () => {
+    const ws = await newWorkspace()
+    const id = ws.workspaceId
+    const key = await administeringKey()
+    const invitee = await person("invitee")
+    const late = await person("late")
+
+    const send = async (email: string) => {
+      const reply = await call("POST", `/api/workspaces/${id}/invitations`, {as: key.token, body: {email, role: "admin"}})
+      expect(reply.status).toBe(201)
+      return (reply.json.inviteUrl as string).slice(INVITE_PREFIX.length)
+    }
+    const first = await send(invitee.email)
+    const second = await send(late.email)
+
+    const peek = await call("POST", "/api/workspaces/invitations/peek", {as: invitee, body: {token: first}})
+    expect(peek.status).toBe(200)
+    expect(peek.json.invitedByEmail).toBeNull()
+    expect(await WorkspaceInvitationModel.findOne({email: invitee.email}).lean()).toMatchObject({
+      invitedByAuthority: "operator_key",
+      invitedByCredentialId: key.credentialId,
+      invitedByMentraUserId: null,
+      invitedByEmail: null,
+    })
+    const accepted = await call("POST", "/api/workspaces/invitations/accept", {as: invitee, body: {token: first}})
+    expect(accepted.status).toBe(200)
+
+    // Revoking the key voids what it sent and has not been used.
+    expect((await call("DELETE", `/api/organization/credentials/${key.credentialId}`, {as: key.admin})).status).toBe(204)
+    expect((await call("POST", "/api/workspaces/invitations/peek", {as: late, body: {token: second}})).status).toBe(404)
+    expect((await call("POST", "/api/workspaces/invitations/accept", {as: late, body: {token: second}})).status).not.toBe(200)
+    expect((await call("GET", "/api/workspaces/invitations/mine", {as: late})).json.items).toEqual([])
+    expect(await WorkspaceMembershipModel.countDocuments({workspaceId: id, mentraUserId: late.mentraUserId})).toBe(0)
   })
 })
 
@@ -1631,10 +1809,10 @@ describe("audit", () => {
     expect(Object.keys(first).sort()).toEqual(
       ["action", "actor", "after", "before", "eventId", "occurredAt", "target"].sort(),
     )
-    expect(Object.keys(first.actor).sort()).toEqual(["credentialId", "email", "kind", "service"])
+    expect(Object.keys(first.actor).sort()).toEqual(["credentialId", "credentialName", "email", "kind", "service"])
     expect(Number.isNaN(Date.parse(first.occurredAt))).toBe(false)
     const created = all.json.items.find((item: any) => item.action === "workspace.created")
-    expect(created.actor).toEqual({kind: "user", email: ws.owner.email, credentialId: null, service: null})
+    expect(created.actor).toEqual({kind: "user", email: ws.owner.email, credentialId: null, credentialName: null, service: null})
     expect(created.target).toMatchObject({workspaceId: ws.workspaceId})
     expect(created.before).toBeNull()
     expect(created.after).toEqual({name: "Acme", role: "owner"})
@@ -2067,6 +2245,134 @@ describe("organization workspaces", () => {
     // Owning a workspace is not organization authority.
     expect((await call("GET", "/api/organization/workspaces", {as: await person("owner-one")})).status).toBe(403)
   })
+
+  test("an operator key holding organization.workspaces.administer lists every workspace too", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const one = await createWorkspace(await person("owner-one"), "One")
+    const key = await createOperatorKey(admin, ["organization.workspaces.administer"])
+    for (const base of ["/api/organization", "/api/admin/organization"]) {
+      const listed = await call("GET", `${base}/workspaces`, {as: key.token})
+      expect({base, status: listed.status}).toEqual({base, status: 200})
+      expect(listed.json.items.map((item: any) => item.workspaceId)).toEqual([one.workspaceId])
+    }
+  })
+
+  test("POST /workspaces: a key creates a workspace whose first Owner is the person named, and is no member of it", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const key = await createOperatorKey(admin, ["organization.workspaces.administer"])
+    const owner = await person("reseller-owner")
+
+    const created = await call("POST", "/api/organization/workspaces", {
+      as: key.token,
+      body: {name: "  Northwind  ", owner: {mentraUserId: owner.mentraUserId}},
+    })
+    expect(created.status).toBe(201)
+    const workspaceId: string = created.json.workspaceId
+    expect(created.json).toEqual({
+      workspaceId: expect.stringMatching(/^ws_/),
+      name: "Northwind",
+      status: "active",
+      authorizationRevision: 0,
+      owner: {membershipId: expect.stringMatching(/^wm_/), mentraUserId: owner.mentraUserId, email: null},
+    })
+
+    // The person named is its only member, an Owner; it is nobody's automatic workspace.
+    const members = await WorkspaceMembershipModel.find({workspaceId, status: "active"}).lean()
+    expect(members.map(row => [row.mentraUserId, row.role])).toEqual([[owner.mentraUserId, "owner"]])
+    const row = await WorkspaceModel.findOne({workspaceId}).lean()
+    expect(row!.automatic).toBeUndefined()
+    expect(row!.createdByMentraUserId).toBeNull()
+    const ownerView = await call("GET", `/api/workspaces/${workspaceId}`, {as: owner})
+    expect(ownerView.json.membership).toEqual({membershipId: created.json.owner.membershipId, role: "owner"})
+
+    // The audit log names the key, its creator and the Owner.
+    const event = await WorkspaceAuditEventModel.findOne({workspaceId, action: "workspace.created"}).lean()
+    expect(event).toMatchObject({
+      actor: {kind: "credential", credentialId: key.credential.credentialId, credentialName: "ops", email: ADMIN_EMAIL},
+      target: {workspaceId, membershipId: created.json.owner.membershipId, mentraUserId: owner.mentraUserId, email: null},
+      after: {name: "Northwind", role: "owner"},
+    })
+  })
+
+  test("POST /workspaces: an Organization Admin names the Owner by email, whose empty automatic workspace gives way", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const owner = await person("email-owner")
+    const ensured = await call("POST", "/api/workspaces/ensure", {as: owner})
+    expect(ensured.status).toBe(201)
+
+    const created = await call("POST", "/api/admin/organization/workspaces", {
+      as: admin,
+      body: {name: "Northwind", owner: {email: owner.email.toUpperCase()}},
+    })
+    expect(created.status).toBe(201)
+    expect(created.json.owner).toMatchObject({mentraUserId: owner.mentraUserId, email: owner.email.toLowerCase()})
+    // The admin is not a member; the person's automatic workspace, holding nothing, was deleted for them.
+    expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: admin.mentraUserId, status: "active"})).toBe(0)
+    expect((await WorkspaceModel.findOne({workspaceId: ensured.json.workspaceId}).lean())!.status).toBe("deleted")
+    const mine = await call("GET", "/api/workspaces", {as: owner})
+    expect(mine.json.items.map((item: any) => item.name)).toEqual(["Northwind"])
+    // A person creating for someone else: the event names the Owner.
+    const event = await WorkspaceAuditEventModel.findOne({workspaceId: created.json.workspaceId, action: "workspace.created"}).lean()
+    expect(event).toMatchObject({actor: {kind: "user", email: ADMIN_EMAIL}, target: {email: owner.email.toLowerCase()}})
+    expect((await WorkspaceModel.findOne({workspaceId: created.json.workspaceId}).lean())!.createdByMentraUserId).toBe(
+      admin.mentraUserId,
+    )
+  })
+
+  test("POST /workspaces validates the body and refuses an owner who is no live person, creating nothing", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const key = await createOperatorKey(admin, ["organization.workspaces.administer"])
+    const gone = await person("gone")
+    await UserModel.updateOne({mentraUserId: gone.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+    const owner = await person("fine")
+
+    for (const [body, status, error] of [
+      [{name: "X"}, 400, "invalid_request"],
+      [{name: "X", owner: "fine@example.test"}, 400, "invalid_request"],
+      [{name: "X", owner: {}}, 400, "invalid_request"],
+      [{name: "X", owner: {email: "not-an-email"}}, 400, "invalid_request"],
+      [{owner: {mentraUserId: owner.mentraUserId}}, 400, "invalid_request"],
+      [{name: "", owner: {mentraUserId: owner.mentraUserId}}, 400, "invalid_request"],
+      [{name: "x".repeat(81), owner: {mentraUserId: owner.mentraUserId}}, 400, "invalid_request"],
+      [{name: "X", owner: {mentraUserId: "mu_does_not_exist"}}, 404, "user_not_found"],
+      [{name: "X", owner: {mentraUserId: gone.mentraUserId}}, 404, "user_not_found"],
+      [{name: "X", owner: {email: "nobody@example.test"}}, 404, "user_not_found"],
+    ] as const) {
+      const reply = await call("POST", "/api/organization/workspaces", {as: key.token, body})
+      expect({body, status: reply.status, error: reply.json.error}).toEqual({body, status, error})
+    }
+    expect(await WorkspaceModel.countDocuments({})).toBe(0)
+    expect(await WorkspaceMembershipModel.countDocuments({})).toBe(0)
+  })
+
+  test("a reseller set up with a key alone: create the workspace, make a second Owner, as Core's own audit shows", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const key = await createOperatorKey(admin, ["organization.workspaces.administer"])
+    const first = await person("first-owner")
+    const second = await person("second-owner")
+
+    const created = await call("POST", "/api/organization/workspaces", {
+      as: key.token,
+      body: {name: "Reseller", owner: {email: first.email}},
+    })
+    expect(created.status).toBe(201)
+    const workspaceId: string = created.json.workspaceId
+    const owners = await call("POST", `/api/organization/workspaces/${workspaceId}/owners`, {
+      as: key.token,
+      body: {email: second.email},
+    })
+    expect(owners.status).toBe(200)
+
+    const members = await call("GET", `/api/workspaces/${workspaceId}/members`, {as: key.token})
+    expect(members.json.items.map((item: any) => [item.email, item.role]).sort()).toEqual(
+      [
+        [first.email, "owner"],
+        [second.email, "owner"],
+      ].sort(),
+    )
+    const recovered = await WorkspaceAuditEventModel.findOne({workspaceId, action: "membership.ownership_recovered"}).lean()
+    expect(recovered?.actor).toMatchObject({kind: "credential", credentialId: key.credential.credentialId, email: ADMIN_EMAIL})
+  })
 })
 
 describe("a deleted account is no principal", () => {
@@ -2292,10 +2598,16 @@ describe("operator keys", () => {
     expect(listed.json.items[0]).not.toHaveProperty("hash")
   })
 
-  test("a non-admin, a workspace owner, a workspace key and an operator key are all refused", async () => {
+  test("a non-admin, a workspace owner, a workspace key and an operator key without the scopes are all refused", async () => {
     const ws = await newWorkspace()
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
-    const operatorKey = await createOperatorKey(admin, OPERATOR_KEY_SCOPES)
+    // Every scope but the two these routes need.
+    const operatorKey = await createOperatorKey(
+      admin,
+      OPERATOR_KEY_SCOPES.filter(
+        scope => scope !== "organization.workspaces.administer" && scope !== "organization.credentials.manage",
+      ),
+    )
     const workspaceKey: string = (
       await call("POST", `/api/workspaces/${ws.workspaceId}/credentials`, {as: ws.developer, body: {name: "ci"}})
     ).json.token
@@ -2306,13 +2618,19 @@ describe("operator keys", () => {
         ["POST", "/api/organization/credentials"],
         ["DELETE", `/api/organization/credentials/${operatorKey.credential.credentialId}`],
         ["GET", "/api/organization/workspaces"],
+        ["POST", "/api/organization/workspaces"],
         ["POST", `/api/organization/workspaces/${ws.workspaceId}/owners`],
       ] as const) {
         const reply = await call(method, path, {
           as: caller,
           body:
             method === "POST"
-              ? {name: "x", scopes: ["organization.incidents.read"], mentraUserId: ws.stranger.mentraUserId}
+              ? {
+                  name: "x",
+                  scopes: ["organization.incidents.read"],
+                  mentraUserId: ws.stranger.mentraUserId,
+                  owner: {mentraUserId: ws.stranger.mentraUserId},
+                }
               : undefined,
         })
         expect({route: `${method} ${path}`, status: reply.status}).toEqual({route: `${method} ${path}`, status: 403})
@@ -2321,10 +2639,63 @@ describe("operator keys", () => {
     }
     expect(await AccessCredentialModel.countDocuments({credentialKind: "organization", revokedAt: null})).toBe(1)
     expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: ws.stranger.mentraUserId})).toBe(0)
+    expect(await WorkspaceModel.countDocuments({})).toBe(1)
   })
 
-  test("the body is validated, and workspace administration is never a valid scope", async () => {
+  test("a key never creates a key: an operator key holding every scope gets 403 and mints nothing", async () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const operatorKey = await createOperatorKey(admin, OPERATOR_KEY_SCOPES)
+    for (const scopes of [["organization.incidents.read"], [...OPERATOR_KEY_SCOPES]]) {
+      for (const base of ["/api/organization", "/api/admin/organization"]) {
+        const reply = await call("POST", `${base}/credentials`, {as: operatorKey.token, body: {name: "child", scopes}})
+        expect({base, status: reply.status}).toEqual({base, status: 403})
+        expect(reply.json.error).toBe("forbidden")
+      }
+    }
+    expect(await AccessCredentialModel.countDocuments({})).toBe(1)
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "credential.created"})).toBe(1)
+  })
+
+  test("a key holding organization.credentials.manage lists and revokes operator keys, itself included", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const manager = await createOperatorKey(admin, ["organization.credentials.manage"])
+    const other = await createOperatorKey(admin, ["organization.incidents.read"])
+
+    const listed = await call("GET", "/api/organization/credentials", {as: manager.token})
+    expect(listed.status).toBe(200)
+    expect(listed.json.items.map((item: any) => item.credentialId).sort()).toEqual(
+      [manager.credential.credentialId, other.credential.credentialId].sort(),
+    )
+    expect(listed.text).not.toContain(other.token.split(".")[1]!)
+
+    const revoked = await call("DELETE", `/api/organization/credentials/${other.credential.credentialId}`, {as: manager.token})
+    expect(revoked.status).toBe(204)
+    expect((await call("GET", "/api/organization", {as: other.token})).status).toBe(401)
+    // The organization-level event names the key and the person who created it.
+    const event = await WorkspaceAuditEventModel.findOne({
+      action: "credential.revoked",
+      "target.credentialId": other.credential.credentialId,
+    }).lean()
+    expect(event?.actor).toEqual({
+      kind: "credential",
+      credentialId: manager.credential.credentialId,
+      credentialName: "ops",
+      email: ADMIN_EMAIL,
+    })
+
+    expect((await call("DELETE", `/api/organization/credentials/${manager.credential.credentialId}`, {as: manager.token})).status).toBe(204)
+    expect((await call("GET", "/api/organization/credentials", {as: manager.token})).status).toBe(401)
+  })
+
+  test("the body is validated, and any organization capability is a valid scope", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const valid = await call("POST", "/api/organization/credentials", {
+      as: admin,
+      body: {name: "everything", scopes: ["organization.workspaces.administer", "organization.credentials.manage"]},
+    })
+    expect(valid.status).toBe(201)
+    expect(valid.json.credential.scopes).toEqual(["organization.workspaces.administer", "organization.credentials.manage"])
+    await AccessCredentialModel.deleteMany({})
 
     for (const body of [
       {},
@@ -2332,8 +2703,7 @@ describe("operator keys", () => {
       {name: "ops", scopes: []},
       {name: "ops", scopes: "organization.incidents.read"},
       {name: "ops", scopes: [1]},
-      {name: "ops", scopes: ["organization.workspaces.administer"]},
-      {name: "ops", scopes: ["organization.credentials.manage"]},
+      {name: "ops", scopes: ["workspace.delete"]},
       {name: "ops", scopes: ["nonsense"]},
       {name: "", scopes: ["organization.incidents.read"]},
       {name: "ops", scopes: ["organization.incidents.read"], expiresAt: "soon"},

@@ -6,13 +6,24 @@
  *  - `/api/admin/workspaces`, for the admin portal's session.
  * Each route group reads only its own session cookie (`principal.middleware`).
  *
- * Workspace administration is done by signed-in people: a Core credential
- * (`msk_` / `mak_`) is refused on every route here (403 `{error: "forbidden"}`)
- * before anything else runs. Each route then has a capability gate
- * (`requireWorkspaceCapability`), which decides from the caller's role in the
- * workspace; the services behind it enforce the finer rules (who may change
- * which role, the last-owner guard, who may revoke a credential), so the gates
- * here are deliberately the coarse "may you be looking at this at all".
+ * Who may call. A workspace key (`msk_` of a workspace) is refused on every
+ * route here (403 `{error: "forbidden"}`) before anything else runs. The routes
+ * about the caller's own standing are for signed-in people only, and an
+ * operator key gets 403 there too: the caller's workspaces (`GET`/`POST /`,
+ * `/ensure`), the invitations addressed to them (`/invitations/mine`, `peek`,
+ * `accept`, `decline`), and leaving. Creating a workspace key is a person's
+ * too: a key never creates a credential. Every other route administers one
+ * workspace and accepts a person or an operator key; an operator key holding
+ * `organization.workspaces.administer` acts there as an Owner, as an
+ * Organization Admin does, and one without it is refused (403 `not_a_member`).
+ *
+ * Each workspace route has a capability gate (`requireWorkspaceCapability`),
+ * which decides from the caller's standing in the workspace; the services
+ * behind it enforce the finer rules (who may change which role, the last-owner
+ * guard, who may revoke a credential), so the gates here are deliberately the
+ * coarse "may you be looking at this at all". The services act for the person
+ * or the key (`requestActor`), and the audit log names the key and the person
+ * who created it.
  *
  * Bodies are validated by hand (`request.ts`), failures of an expected kind
  * arrive as `WorkspaceError` and are rendered by the app's error handler.
@@ -65,6 +76,7 @@ import {
   releaseSeat,
 } from "../../services/licenses/license.service"
 import {listWorkspaceAudit, redactSecrets} from "../../services/workspaces/audit.service"
+import {organizationCapabilities} from "../../services/workspaces/authorization.service"
 import {ensureWorkspace} from "../../services/workspaces/automatic-workspace.service"
 import {
   createWorkspaceCredential,
@@ -99,7 +111,13 @@ import {
   renameWorkspace,
 } from "../../services/workspaces/workspace.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
-import {requireUserPrincipal, requireWorkspaceCapability, userActor} from "../middleware/principal.middleware"
+import {
+  requestActor,
+  requirePersonOrOperatorKey,
+  requireUserPrincipal,
+  requireWorkspaceCapability,
+  userActor,
+} from "../middleware/principal.middleware"
 import {
   expectedRevision,
   optionalDate,
@@ -114,17 +132,19 @@ import {
 export function createWorkspacesApi(): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
-  // People only. This also authenticates the request (401 without a principal), so no route is open.
-  app.use("*", requireUserPrincipal())
+  // People and operator keys; a workspace key is refused. This also authenticates the request (401 without a
+  // principal), so no route is open. The routes about the caller's own standing add `person`.
+  app.use("*", requirePersonOrOperatorKey())
+  const person = requireUserPrincipal()
 
   // --- The caller's workspaces -----------------------------------------------
 
-  app.get("/", async (c) => {
+  app.get("/", person, async (c) => {
     const items = await listWorkspacesForUser(userActor(c).mentraUserId)
     return c.json({items})
   })
 
-  app.post("/", async (c) => {
+  app.post("/", person, async (c) => {
     const actor = userActor(c)
     const body = await readJsonObject(c)
     const summary = await createWorkspace(actor, {name: requiredString(body, "name")})
@@ -142,7 +162,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
   // The caller's workspace, made for them when they have none: 201 and the new automatic workspace, or 200
   // and the workspace of their oldest membership. No body. Two at once, or a retry, still make one.
-  app.post("/ensure", async (c) => {
+  app.post("/ensure", person, async (c) => {
     const actor = userActor(c)
     const {created, workspace, membership} = await ensureWorkspace(actor)
     const detail: WorkspaceDetail = {
@@ -162,13 +182,13 @@ export function createWorkspacesApi(): Hono<AppEnv> {
   // never a workspace id, which all start `ws_`.)
 
   // The invitations addressed to the caller's verified email that they can accept now.
-  app.get("/invitations/mine", async (c) => {
+  app.get("/invitations/mine", person, async (c) => {
     const items: InvitationPreview[] = await listInvitationsForPerson(userActor(c))
     c.header("cache-control", "no-store")
     return c.json({items})
   })
 
-  app.post("/invitations/peek", async (c) => {
+  app.post("/invitations/peek", person, async (c) => {
     const body = await readJsonObject(c)
     const invitation: InvitationPreview | null = await peekInvitation(requiredString(body, "token"))
     if (!invitation) fail("invitation_not_found", "invitation not found")
@@ -177,7 +197,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
   })
 
   // Accept by the link's `token`, or by `invitationId` (one of `/invitations/mine`): the same checks either way.
-  app.post("/invitations/accept", async (c) => {
+  app.post("/invitations/accept", person, async (c) => {
     const actor = userActor(c)
     const body = await readJsonObject(c)
     if ((body.token === undefined) === (body.invitationId === undefined)) {
@@ -191,7 +211,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
   })
 
   // Turn down one of `/invitations/mine` by its id (idempotent; no membership changes). Authorized as accepting is.
-  app.post("/invitations/decline", async (c) => {
+  app.post("/invitations/decline", person, async (c) => {
     const body = await readJsonObject(c)
     c.header("cache-control", "no-store")
     return c.json(await declineInvitation(userActor(c), requiredString(body, "invitationId")))
@@ -204,7 +224,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
   app.patch("/:workspaceId", requireWorkspaceCapability("workspace.settings.manage"), async (c) => {
     const body = await readJsonObject(c)
     const summary = await renameWorkspace(
-      userActor(c),
+      requestActor(c),
       c.req.param("workspaceId"),
       requiredString(body, "name"),
       expectedRevision(body),
@@ -215,7 +235,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
   // Refused with 409 `workspace_has_holds` (and the holds) while any service holds the workspace.
   app.delete("/:workspaceId", requireWorkspaceCapability("workspace.delete"), async (c) => {
     const body = await readJsonObject(c)
-    await deleteWorkspace(userActor(c), c.req.param("workspaceId"), {confirmName: requiredString(body, "confirmName")})
+    await deleteWorkspace(requestActor(c), c.req.param("workspaceId"), {confirmName: requiredString(body, "confirmName")})
     return c.body(null, 204)
   })
 
@@ -229,7 +249,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
   app.patch("/:workspaceId/members/:membershipId", requireWorkspaceCapability("workspace.read"), async (c) => {
     const body = await readJsonObject(c)
     const summary = await changeRole(
-      userActor(c),
+      requestActor(c),
       c.req.param("workspaceId"),
       c.req.param("membershipId"),
       workspaceRole(body),
@@ -240,11 +260,11 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
   app.delete("/:workspaceId/members/:membershipId", requireWorkspaceCapability("workspace.read"), async (c) => {
     const body = await readJsonObject(c)
-    await removeMember(userActor(c), c.req.param("workspaceId"), c.req.param("membershipId"), expectedRevision(body))
+    await removeMember(requestActor(c), c.req.param("workspaceId"), c.req.param("membershipId"), expectedRevision(body))
     return c.body(null, 204)
   })
 
-  app.post("/:workspaceId/leave", requireWorkspaceCapability("workspace.read"), async (c) => {
+  app.post("/:workspaceId/leave", person, requireWorkspaceCapability("workspace.read"), async (c) => {
     await leaveWorkspace(userActor(c), c.req.param("workspaceId"))
     return c.body(null, 204)
   })
@@ -258,7 +278,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
   app.post("/:workspaceId/invitations", requireWorkspaceCapability("workspace.members.manage"), async (c) => {
     const body = await readJsonObject(c)
-    const created = await createInvitation(userActor(c), c.req.param("workspaceId"), {
+    const created = await createInvitation(requestActor(c), c.req.param("workspaceId"), {
       email: requiredString(body, "email"),
       role: workspaceRole(body),
     })
@@ -274,7 +294,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
     "/:workspaceId/invitations/:invitationId",
     requireWorkspaceCapability("workspace.members.manage"),
     async (c) => {
-      await revokeInvitation(userActor(c), c.req.param("workspaceId"), c.req.param("invitationId"))
+      await revokeInvitation(requestActor(c), c.req.param("workspaceId"), c.req.param("invitationId"))
       return c.body(null, 204)
     },
   )
@@ -292,7 +312,8 @@ export function createWorkspacesApi(): Hono<AppEnv> {
     return c.json({items})
   })
 
-  app.post("/:workspaceId/credentials", requireWorkspaceCapability("miniapps.credentials.create"), async (c) => {
+  // A person only: a key never creates a credential, so a leaked key cannot outlive its own revocation.
+  app.post("/:workspaceId/credentials", person, requireWorkspaceCapability("miniapps.credentials.create"), async (c) => {
     const body = await readJsonObject(c)
     const input: {name: string; packageNames?: string[]; expiresAt: Date | null} = {
       name: requiredString(body, "name"),
@@ -315,7 +336,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
     if (owner?.credentialKind !== "workspace" || owner.workspaceId !== workspaceId) {
       fail("not_found", "credential not found")
     }
-    await revokeCredential(userActor(c), credentialId)
+    await revokeCredential(requestActor(c), credentialId)
     return c.body(null, 204)
   })
 
@@ -337,7 +358,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
     requireWorkspaceCapability("workspace.licenses.assign"),
     async (c) => {
       const license: LicenseView = await assignSeat(
-        userActor(c),
+        requestActor(c),
         c.req.param("workspaceId"),
         c.req.param("licenseId"),
         c.req.param("membershipId"),
@@ -351,7 +372,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
     "/:workspaceId/licenses/:licenseId/seats/:membershipId",
     requireWorkspaceCapability("workspace.licenses.assign"),
     async (c) => {
-      await releaseSeat(userActor(c), c.req.param("workspaceId"), c.req.param("licenseId"), c.req.param("membershipId"))
+      await releaseSeat(requestActor(c), c.req.param("workspaceId"), c.req.param("licenseId"), c.req.param("membershipId"))
       return c.body(null, 204)
     },
   )
@@ -360,7 +381,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
   app.post("/:workspaceId/seat-assignments", requireWorkspaceCapability("workspace.licenses.assign"), async (c) => {
     const assignments = parseSeatAssignments(await readJsonObject(c))
     const answer: SeatAssignmentsResponse = {
-      licenses: await assignSeats(userActor(c), c.req.param("workspaceId"), assignments),
+      licenses: await assignSeats(requestActor(c), c.req.param("workspaceId"), assignments),
     }
     return c.json(answer)
   })
@@ -398,8 +419,10 @@ async function workspaceDetail(c: AppContext, summary?: WorkspaceSummary): Promi
     ...workspace,
     membership: decision.membership ?? null,
     capabilities: decision.capabilities,
-    // The caller's own standing, so a screen can say why they hold more than their membership's role.
-    organizationAdmin: principal?.kind === "user" && principal.isOrganizationAdmin,
+    // The caller's own standing, so a screen can say why they hold more than their membership's role: an
+    // Organization Admin, or an operator key that administers workspaces.
+    organizationAdmin:
+      !!principal && organizationCapabilities(principal).has("organization.workspaces.administer"),
     deletionHolds: await listDeletionHolds(workspace.workspaceId),
   }
 }
@@ -438,6 +461,7 @@ function auditEventView(row: WorkspaceAuditEventRow): AuditEventView {
       kind: row.actor.kind,
       email: row.actor.email ?? null,
       credentialId: row.actor.credentialId ?? null,
+      credentialName: row.actor.credentialName ?? null,
       service: row.actor.service ?? null,
     },
     target: snapshot(row.target),

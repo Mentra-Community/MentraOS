@@ -12,21 +12,28 @@
  *    page has anything to offer;
  *  - `/reports`: `organization.incidents.read`;
  *  - `/support-profiles`: `organization.supportProfiles.read`;
- *  - `/licenses`: `organization.licenses.read`, read-only (an Organization Admin; an operator key cannot hold it);
- *  - `/registry`: `organization.registry.administer`, the miniapp registry (an Organization Admin; an operator key
- *    cannot hold it);
- *  - `/workspaces`: the workspace API, for people, each route gated on the caller's
- *    standing in that workspace (an Organization Admin acts as its owner);
- *  - `/organization`: the organization API (every workspace, ownership
- *    recovery, operator keys), for people holding the organization capability;
- *  - `/website-clients`: the miniapp websites that sign people in with Mentra; an Organization Admin who is a
- *    person;
- *  - `/audit-log`: an Organization Admin who is a person;
+ *  - `/licenses`: `organization.licenses.read`, read-only;
+ *  - `/registry`: `organization.registry.administer`, the miniapp registry. A person registers URLs as themselves, as
+ *    a phone would; a key registers them for the organization, recorded as the key (`credential:<id>`);
+ *  - `/workspaces`: the workspace API, for people and operator keys, each route gated on the caller's
+ *    standing in that workspace (an Organization Admin, or a key holding `organization.workspaces.administer`,
+ *    acts as its owner);
+ *  - `/organization`: the organization API (every workspace, creating one for a person, ownership recovery,
+ *    operator keys), for a person or key holding the organization capability;
+ *  - `/website-clients`: the miniapp websites that sign people in with Mentra, `organization.credentials.manage`
+ *    (a website's client is how it signs people in). Registering one and replacing its secret create a credential,
+ *    so they need an Organization Admin who is a person;
+ *  - `/audit-log`: `organization.credentials.manage`. The log has no capability of its own; it is how whoever
+ *    oversees keys sees what people and keys did with their admin standing, so it goes with managing them;
+ *  - `/workspace-license-resets`: an Organization Admin who is a person (the billing module is told a person
+ *    asked);
  *  - `/fleet`: forwarded to the optional Fleet service, for a person holding
- *    `organization.fleet.administer` (an Organization Admin). The forwarder carries its own gates.
+ *    `organization.fleet.administer` (an Organization Admin). Fleet's admin API takes people only, so a key
+ *    gets 403 there. The forwarder carries its own gates.
  *
  * An Organization Admin holds every organization capability; an operator key
- * holds only the scopes it was created with; a workspace key holds none.
+ * holds the scopes it was created with (any of them, but it never creates a
+ * credential); a workspace key holds none.
  */
 
 import type {OrganizationCapability, PrincipalResponse} from "@mentra/workspace-contract"
@@ -98,8 +105,7 @@ const QUIET: ConfigLog = {error: () => {}}
  * any license exists. Billing is asked first, so a Core with billing never queries the licenses.
  */
 async function licensesAvailable(principal: CorePrincipal): Promise<boolean> {
-  // Only a person (an Organization Admin) holds it: it is not an operator key scope.
-  if (principal.kind !== "user" || !organizationCapabilities(principal).has("organization.licenses.read")) return false
+  if (!organizationCapabilities(principal).has("organization.licenses.read")) return false
   if (portalModuleConfig("billing", undefined, QUIET).state !== "not_installed") return true
   return anyLicenseExists()
 }

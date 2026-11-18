@@ -139,6 +139,19 @@ describe("audit events as sentences", () => {
     expect(say(event("workspace.created", { target: { workspaceId: "ws_1", membershipId: "wm_1" }, after: { name: "Acme", role: "owner" } }))).toBe(
       "Created the workspace Acme",
     );
+    // Made for someone else, it names the first Owner; a key's event always does, since its email is its creator's.
+    const forOwner = {
+      target: { workspaceId: "ws_1", membershipId: "wm_1", mentraUserId: "mu_1", email: "dana@acme.test" },
+      after: { name: "Northwind", role: "owner" },
+    };
+    expect(say(event("workspace.created", forOwner))).toBe("Created the workspace Northwind with dana@acme.test as Owner");
+    expect(say(event("workspace.created", { ...forOwner, target: { ...forOwner.target, email: "alex@acme.test" } }))).toBe(
+      "Created the workspace Northwind",
+    );
+    const KEY = { kind: "credential" as const, email: "alex@acme.test", credentialId: "01ABC", credentialName: "Sales", service: null };
+    expect(say(event("workspace.created", { ...forOwner, actor: KEY, target: { ...forOwner.target, email: "alex@acme.test" } }))).toBe(
+      "Created the workspace Northwind with alex@acme.test as Owner",
+    );
     expect(say(event("workspace.renamed", { before: { name: "A" }, after: { name: "B" } }))).toBe("Renamed the workspace from A to B");
     expect(say(event("workspace.deleted", { before: { name: "Acme", status: "active" }, after: { status: "deleted" } }))).toBe(
       "Deleted the workspace Acme",
@@ -246,5 +259,16 @@ describe("who did it", () => {
     expect(actorLabel({ kind: "service", email: null, credentialId: null, service: "store" })).toBe("Store service");
     expect(actorLabel({ kind: "credential", email: null, credentialId: "01ABC", service: null })).toBe("Key 01ABC");
     expect(actorLabel({ kind: "system", email: null, credentialId: null, service: null })).toBe("System");
+  });
+
+  test("an operator key by its name and the person who created it", () => {
+    expect(actorLabel({ kind: "credential", email: "alex@acme.test", credentialId: "01ABC", credentialName: "Sales tooling", service: null })).toBe(
+      "Key Sales tooling, created by alex@acme.test",
+    );
+    // An older Core sends no name: the id stands in for it.
+    expect(actorLabel({ kind: "credential", email: "alex@acme.test", credentialId: "01ABC", service: null })).toBe(
+      "Key 01ABC, created by alex@acme.test",
+    );
+    expect(actorLabel({ kind: "credential", email: null, credentialId: null, credentialName: null, service: null })).toBe("A key");
   });
 });

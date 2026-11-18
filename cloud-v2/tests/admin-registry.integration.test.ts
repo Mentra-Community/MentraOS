@@ -10,8 +10,10 @@
  * own token exchange. Entries are seeded straight into the collection, as registrations leave them, except where
  * a test registers through the route.
  *
- * What it pins: only an Organization Admin (`organization.registry.administer`) reaches any route, and an operator
- * key never does, whatever its scopes; the list shows every entry unredacted, newest first, searchable and
+ * What it pins: only `organization.registry.administer` reaches any route: an Organization Admin, or an operator
+ * key created with it (audited as the key and its creator), which registers URLs for the organization as no account:
+ * its entries' first registrant is `credential:<id>` and it has no miniapp token for a private server; the list
+ * shows every entry unredacted, newest first, searchable and
  * filterable, 50 to a page; archiving by URL, package, domain and account archives what it covers, refuses phones'
  * installs and updates, and refuses URLs registered later; the coverage answer counts what a rule covers before it
  * is made; unarchiving restores only what no other rule covers; an Organization Admin's registration is verified
@@ -450,11 +452,14 @@ describe("who may administer the registry", () => {
     expect(me.json.organization.capabilities).toContain("organization.registry.administer")
   })
 
-  test("a workspace owner or admin, an operator key, a workspace key and a phone token are refused, and change nothing", async () => {
+  test("a workspace owner or admin, an operator key without the scope, a workspace key and a phone token are refused, and change nothing", async () => {
     const entry = await seedEntry({name: "Secret Inventory"})
     const ws = await workspaceWithPeople()
-    // Every scope an operator key can carry.
-    const operator = await operatorKey("all-scopes", [...OPERATOR_KEY_SCOPES])
+    // Every scope an operator key can carry but this one.
+    const operator = await operatorKey(
+      "all-but-registry",
+      OPERATOR_KEY_SCOPES.filter(scope => scope !== "organization.registry.administer"),
+    )
     const phone = await phoneToken("holder")
     const writes: Array<[path: string, body: unknown]> = [
       [`${REGISTRY}/archive`, {rule: {kind: "url", value: entry.url}, reason: "spam"}],
@@ -467,7 +472,7 @@ describe("who may administer the registry", () => {
       ["workspace owner (bearer)", ws.owner, "bearer", 403],
       ["workspace admin (session)", ws.admin, "session", 403],
       ["workspace admin (bearer)", ws.admin, "bearer", 403],
-      ["operator key with every scope", operator, undefined, 403],
+      ["operator key without the scope", operator, undefined, 403],
       ["workspace key", ws.workspaceKey, undefined, 403],
       // A phone's access token is no credential on the admin surface at all.
       ["phone token", phone, undefined, 401],
@@ -493,17 +498,91 @@ describe("who may administer the registry", () => {
     expect(await AdminActionAuditLogModel.countDocuments({action: /^miniapp_registry\./})).toBe(0)
   })
 
-  test("no operator key holds the capability: it is not a scope a key can be created with", async () => {
-    const operator = await operatorKey("all-scopes", [...OPERATOR_KEY_SCOPES])
+  test("an operator key holding the scope reads, archives and unarchives, audited as the key and its creator", async () => {
+    const entry = await seedEntry()
+    const operator = await operatorKey("registry", ["organization.registry.administer"])
     const me = await call("GET", "/api/admin/me", {as: operator})
-    expect(me.json.organization.capabilities).not.toContain("organization.registry.administer")
+    expect(me.json.organization.capabilities).toEqual(["organization.registry.administer"])
 
-    const admin = await organizationAdmin()
-    const forged = await call("POST", "/api/admin/organization/credentials", {
-      as: admin,
-      body: {name: "registry", scopes: ["organization.registry.administer"]},
+    for (const path of READS) {
+      const reply = await call("GET", path, {as: operator})
+      expect([path, reply.status]).toEqual([path, 200])
+    }
+    const rule = {kind: "url", value: entry.url}
+    expect((await call("POST", `${REGISTRY}/archive`, {as: operator, body: {rule, reason: "spam"}})).status).toBe(200)
+    expect((await call("POST", `${REGISTRY}/unarchive`, {as: operator, body: {rule}})).status).toBe(200)
+
+    const audit = await AdminActionAuditLogModel.find({action: "miniapp_registry.archive"}).lean()
+    expect(audit).toHaveLength(1)
+    // The log names the key (by id and name) and the person who created it.
+    expect(audit[0]!.adminId).toMatch(/^credential:[0-9A-Z]{26} \(registry, created by /)
+    expect(audit[0]!.adminId).toContain(ADMIN_EMAIL)
+  })
+
+  test("an operator key holding the scope registers URLs for the organization, recorded as the key, never as an account", async () => {
+    const operator = await operatorKey("registry", ["organization.registry.administer"])
+    const credentialId = /^mak_[a-z0-9]+_([0-9A-HJKMNP-TV-Z]{26})\./.exec(operator)![1]!
+    const asKey = `credential:${credentialId}`
+    serve("https://notes.example.com/", manifest("com.example.notes"))
+    // A private server: it admits only a miniapp token, which a key has none of.
+    served.set("https://tools.acme.com/", ({claims}) =>
+      claims ? ok(manifest("com.acme.tools", {name: "Acme Tools"}), "https://tools.acme.com/miniapp.json") : {kind: "challenge", packageName: "com.acme.tools"},
+    )
+    // An entry a phone registered first keeps its first registrant.
+    serve("https://older.example.com/", manifest("com.example.older"))
+    expect((await phoneRegisters("https://older.example.com/")).result).toBe("accepted")
+    fetches = []
+
+    const reply = await call("POST", `${REGISTRY}/register`, {
+      as: operator,
+      body: {urls: ["https://notes.example.com/", "https://tools.acme.com/", "https://older.example.com/"]},
     })
-    expect(forged.status).toBe(400)
+
+    expect(reply.status).toBe(200)
+    expect(reply.json.results.map((result: any) => [result.input, result.result, result.packageName])).toEqual([
+      ["https://notes.example.com/", "accepted", "com.example.notes"],
+      ["https://tools.acme.com/", "accepted_unverified", "com.acme.tools"],
+      ["https://older.example.com/", "accepted", "com.example.older"],
+    ])
+    expect(await entryRow("https://notes.example.com/")).toMatchObject({verification: "verified", firstRegisteredBy: asKey})
+    expect(await entryRow("https://tools.acme.com/")).toMatchObject({private: true, firstRegisteredBy: asKey, name: null})
+    expect((await entryRow("https://older.example.com/"))!.firstRegisteredBy).toBe("mu_phone")
+    // No miniapp token was minted for the key: the private server was asked once, without one.
+    expect(fetches.filter((fetch) => fetch.url === "https://tools.acme.com/")).toEqual([
+      {url: "https://tools.acme.com/", claims: null},
+    ])
+
+    // The admin audit log names the key and the person who created it, for each URL.
+    const audit = await AdminActionAuditLogModel.find({action: "miniapp_registry.register"}).lean()
+    expect(audit).toHaveLength(3)
+    for (const row of audit) expect(row.adminId).toBe(`${asKey} (registry, created by ${ADMIN_EMAIL})`)
+
+    // Searching for the key finds what it first registered, and one account rule archives all of it.
+    const found = await call("GET", `${REGISTRY}/entries?q=${encodeURIComponent(asKey)}`, {as: operator})
+    expect([...urlsOf(found)].sort()).toEqual(["https://notes.example.com/", "https://tools.acme.com/"])
+    const archived = await call("POST", `${REGISTRY}/archive`, {as: operator, body: {rule: {kind: "account", value: asKey}}})
+    expect(archived.status).toBe(200)
+    expect(archived.json.entriesArchived).toBe(2)
+    expect((await entryRow("https://older.example.com/"))!.status).toBe("active")
+  })
+
+  test("a key without organization.registry.administer and a workspace key are refused registering, and nothing is read", async () => {
+    const ws = await workspaceWithPeople()
+    const operator = await operatorKey(
+      "all-but-registry",
+      OPERATOR_KEY_SCOPES.filter(scope => scope !== "organization.registry.administer"),
+    )
+    serve("https://notes.example.com/", manifest("com.example.notes"))
+    for (const [label, key] of [
+      ["operator key without the scope", operator],
+      ["workspace key", ws.workspaceKey],
+    ] as const) {
+      const reply = await call("POST", `${REGISTRY}/register`, {as: key, body: {urls: ["https://notes.example.com/"]}})
+      expect([label, reply.status, reply.json?.error]).toEqual([label, 403, "forbidden"])
+    }
+    expect(fetches).toEqual([])
+    expect(await MiniappRegistryEntryModel.countDocuments({})).toBe(0)
+    expect(await AdminActionAuditLogModel.countDocuments({action: "miniapp_registry.register"})).toBe(0)
   })
 
   test("an allowlisted address the identity provider has not verified is refused", async () => {

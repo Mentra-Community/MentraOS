@@ -5,13 +5,14 @@
  * two separate scopes:
  *  - organization capabilities (`organizationCapabilities`): what the caller may
  *    do to the deployment itself. Organization Admins have all of them, an
- *    operator key has the operator scopes it was created with and a workspace
- *    credential has none;
+ *    operator key has the operator scopes it was created with (any
+ *    organization capability) and a workspace credential has none;
  *  - workspace capabilities (`authorize`): what the caller may do inside one
  *    workspace. A member has their role's capabilities, an Organization Admin
- *    acts as owner anywhere (as `workspace.service` does for every mutation), a
- *    workspace credential has its scopes in its own workspace only, and an
- *    operator key never has workspace capabilities.
+ *    acts as owner anywhere (as `workspace.service` does for every mutation), an
+ *    operator key holding `organization.workspaces.administer` acts as owner
+ *    anywhere too (and without it has no workspace capabilities), and a
+ *    workspace credential has its scopes in its own workspace only.
  *
  * `authorize` answers with a full `AuthorizeResponse` and never throws for a
  * denial: the reason says why. Only a database failure throws.
@@ -37,10 +38,10 @@ import {getActiveMembership, getWorkspace, isWorkspaceRole} from "./workspace.se
 
 /**
  * What the principal may do to the organization itself. Organization Admins have
- * every organization capability. An operator key has only the operator scopes
- * (`OPERATOR_KEY_SCOPES`) among its stored scopes: anything else a row carries is
- * ignored, so a key can never hold workspace administration. A workspace
- * credential has none.
+ * every organization capability. An operator key has the operator scopes
+ * (`OPERATOR_KEY_SCOPES`, every organization capability) among its stored scopes:
+ * anything else a row carries, such as a capability this build does not know, is
+ * ignored. A workspace credential has none.
  */
 export function organizationCapabilities(p: CorePrincipal): Set<OrganizationCapability> {
   if (p.kind === "user") return new Set(p.isOrganizationAdmin ? ORGANIZATION_CAPABILITIES : [])
@@ -128,8 +129,16 @@ export async function authorize(
     }
     // Scopes are already what the key may do right now (credential.service).
     granted = new Set(p.scopes.filter(isWorkspaceCapability))
+  } else if (
+    p.credentialKind === "organization" &&
+    organizationCapabilities(p).has("organization.workspaces.administer")
+  ) {
+    // An operator key that administers workspaces acts as an Owner everywhere, as an Organization Admin
+    // does. It is never a member, so it has no membership to report.
+    membership = null
+    granted = capabilitiesForRole("owner")
   } else {
-    // An operator key, or a workspace credential presented for a different workspace.
+    // An operator key without workspace administration, or a workspace credential presented for a different workspace.
     return deny("not_a_member")
   }
 

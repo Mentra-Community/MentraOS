@@ -1,8 +1,8 @@
 /**
  * @fileoverview The admin portal's license list (`GET /api/admin/licenses?query=&cursor=`): every license,
  * newest first, 50 to a page, with the workspace that holds it. Mounted inside `/api/admin` by
- * `admin.api.ts` behind `organization.licenses.read`, which only an Organization Admin holds: an operator key
- * never does. It reads what billing wrote and has no route that changes a license or a seat.
+ * `admin.api.ts` behind `organization.licenses.read`: an Organization Admin, or an operator key created with it.
+ * It reads what billing wrote and has no route that changes a license or a seat.
  */
 
 import {Hono} from "hono"

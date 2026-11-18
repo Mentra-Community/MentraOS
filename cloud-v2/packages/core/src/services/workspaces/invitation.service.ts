@@ -26,13 +26,16 @@
  *
  * An invitation is only as good as the authority it was sent with, recorded on
  * it (`invitedByAuthority`) and checked again when it is peeked at or accepted:
- * the inviter's membership must still grant the role, or the inviter must still
- * be an Organization Admin whose account is not deleted. Ending the inviter's
- * membership, or deleting their account, also revokes what they sent.
+ * the inviter's membership must still grant the role, the inviter must still
+ * be an Organization Admin whose account is not deleted, or the operator key
+ * that sent it must still validate and administer workspaces. Ending the
+ * inviter's membership, or deleting their account, also revokes what they sent;
+ * revoking a key voids what it sent.
  *
  * The email is sent after the transaction commits, never inside the retried
  * callback, and a failed send never fails the invitation: the caller also gets
- * the link back. It names the inviter by their email address (`invitation-email`).
+ * the link back. It names the inviter by their email address (`invitation-email`);
+ * an invitation the system or an operator key sent names nobody.
  *
  * Every audit event about an invitation names the invited address in its
  * target (`target.email`), and the membership an accepted invitation starts
@@ -66,6 +69,7 @@ import {consumeRateLimit} from "../signin/rate-limit.service"
 import {isDeletedAccountId} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
 import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
+import {operatorKeyHolds} from "./credential.service"
 import {invitationEmail} from "./invitation-email"
 import {
   auditActor,
@@ -119,7 +123,7 @@ export interface InvitationRow {
  * role)`: admins invite members and developers, only owners invite admins and
  * owners. A person inviting must have a verified email (`email_unverified`
  * otherwise). A pending invitation to the same address is revoked (superseded), so
- * only the newest link works. A person may send at most 100 invitations an hour
+ * only the newest link works. A person (or an operator key) may send at most 100 invitations an hour
  * and a workspace hold at most 200 pending ones (`rate_limited`); replacing the
  * pending invitation to an address does not count against that. The invitation
  * records the authority it is sent with (`inviterOf`). `inviteUrl` is
@@ -138,8 +142,14 @@ export async function createInvitation(
   const role = input?.role
   if (!isWorkspaceRole(role)) fail("invalid_role", "role must be a workspace role")
 
-  if (actor.kind === "user" && isId(actor.mentraUserId)) {
-    const withinLimit = await consumeRateLimit(`workspace-invitations:${actor.mentraUserId}`, INVITATIONS_PER_PERSON_PER_HOUR, 3600)
+  const sender =
+    actor.kind === "user" && isId(actor.mentraUserId)
+      ? actor.mentraUserId
+      : actor.kind === "operatorKey"
+        ? `key:${actor.credentialId}`
+        : null
+  if (sender) {
+    const withinLimit = await consumeRateLimit(`workspace-invitations:${sender}`, INVITATIONS_PER_PERSON_PER_HOUR, 3600)
     if (!withinLimit) fail("rate_limited", "too many invitations sent in the last hour; try again later")
   }
 
@@ -587,14 +597,17 @@ interface Inviter {
   invitedByMembershipId: string | null
   invitedByMentraUserId: string | null
   invitedByEmail: string | null
+  invitedByCredentialId: string | null
 }
 
 /**
  * The authority `actor` invites `role` with. A membership whose role grants it comes first: such an
  * invitation stays valid while that membership could still send it. Otherwise an Organization Admin
  * invites on the organization's authority, recorded with the verified email that made them one; such
- * an invitation stays valid while that email is on the admin allowlist and the account exists. The
- * system needs neither. The caller has already checked that the actor may invite this role.
+ * an invitation stays valid while that email is on the admin allowlist and the account exists. An
+ * operator key invites on its own authority, recorded by its id; such an invitation stays valid while the
+ * key validates and administers workspaces. The system needs none of it. The caller has already checked
+ * that the actor may invite this role.
  */
 async function inviterOf(
   session: ClientSession,
@@ -602,8 +615,10 @@ async function inviterOf(
   workspaceId: string,
   role: WorkspaceRole,
 ): Promise<Inviter> {
-  if (actor.kind === "system") {
-    return {invitedByAuthority: "system", invitedByMembershipId: null, invitedByMentraUserId: null, invitedByEmail: null}
+  const nobody = {invitedByMembershipId: null, invitedByMentraUserId: null, invitedByEmail: null}
+  if (actor.kind === "system") return {invitedByAuthority: "system", ...nobody, invitedByCredentialId: null}
+  if (actor.kind === "operatorKey") {
+    return {invitedByAuthority: "operator_key", ...nobody, invitedByCredentialId: actor.credentialId}
   }
   if (actor.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "only a person can send an invitation")
   const membership = await WorkspaceMembershipModel.findOne({
@@ -620,6 +635,7 @@ async function inviterOf(
       invitedByMembershipId: membership.membershipId,
       invitedByMentraUserId: actor.mentraUserId,
       invitedByEmail: null,
+      invitedByCredentialId: null,
     }
   }
   const email = normalizeAddress(actor.email)
@@ -631,6 +647,7 @@ async function inviterOf(
     invitedByMembershipId: null,
     invitedByMentraUserId: actor.mentraUserId,
     invitedByEmail: email,
+    invitedByCredentialId: null,
   }
 }
 
@@ -663,6 +680,9 @@ async function inviterStillAuthorizes(
       }).session(session)
       return account !== null
     }
+    case "operator_key":
+      // An Owner in every workspace while it administers workspaces, so any role it could send it still grants.
+      return operatorKeyHolds(invitation.invitedByCredentialId, "organization.workspaces.administer", session)
     case "system":
       return true
     default:
@@ -769,7 +789,7 @@ function defaultInviteUrlTemplate(): string {
   }
 }
 
-/** The inviter the email names: a person's (verified) address; nobody when the system invites. */
+/** The inviter the email names: a person's (verified) address; nobody when the system or an operator key invites. */
 function inviterAddress(actor: Actor): string | null {
   return actor.kind === "user" ? actor.email?.trim() || null : null
 }

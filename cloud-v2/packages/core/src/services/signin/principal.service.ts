@@ -51,8 +51,14 @@ export type UserPrincipal = Extract<ContractPrincipal, {kind: "user"}> & {
   via: "session" | "bearer"
 }
 
-/** A Core credential: a workspace key or an organization operator key. */
-export type CredentialPrincipal = Extract<ContractPrincipal, {kind: "credential"}>
+/**
+ * A Core credential: a workspace key or an organization operator key. `createdByEmail` is the address of the
+ * person who created it (or asked a service for it), which Core records beside the key wherever the key acts;
+ * validation sets it, and it is never sent to another service (`wirePrincipal`).
+ */
+export type CredentialPrincipal = Extract<ContractPrincipal, {kind: "credential"}> & {
+  createdByEmail?: string | null
+}
 
 /** The caller of a Core API. `wirePrincipal` gives its contract shape for another service. */
 export type CorePrincipal = UserPrincipal | CredentialPrincipal

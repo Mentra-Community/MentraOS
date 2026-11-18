@@ -60,7 +60,8 @@ const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
 export function visiblePages(me: Pick<AdminMe, "organization" | "user" | "licenses">): AdminPageKey[] {
   const held = new Set<OrganizationCapability>(me.organization.capabilities);
   return PAGE_ORDER.filter(page => {
-    // No capability opens the audit log or the websites that sign in with Mentra, so no operator key sees them.
+    // Offered to an Organization Admin who is a person: registering a website and replacing its secret are a
+    // person's. Core also lets a key holding organization.credentials.manage read both, but this portal signs in people.
     if (page === "audit" || page === "websites") return me.user?.isOrganizationAdmin === true;
     // With no billing and no license on this Core there is nothing to list.
     if (page === "licenses" && me.licenses?.available !== true) return false;
