@@ -246,6 +246,11 @@ class OtaInstallCoordinator {
   private versionChangeInstallStarted = false
   // Latched when a reconnect reports buildNumber === versionChangeTarget.
   private versionChangeConverged = false
+  // Set when the glasses download the pin as the first step of a firmware pass: they hand it
+  // to recovery themselves after the firmware reboot (the detour only lands on the new MTK
+  // slot), so the firmware's completion starts the detour wait instead of ending the pass.
+  // Older glasses plan no apk step next to firmware in a downgrade and keep the two passes.
+  private versionChangeAfterReboot = false
   // Holds a legacy apk install FINISHED out of "complete" for the settle window.
   private legacyApkSettleHold = false
   // Display-only legacy MTK install stall simulation.
@@ -580,6 +585,7 @@ class OtaInstallCoordinator {
         besRestartRecovery: this.besRestartRecovery,
         versionChangeConverged: this.versionChangeConverged,
         versionChangeSession: this.versionChangeSession,
+        versionChangeAfterReboot: this.versionChangeAfterReboot && this.isInVersionChangeDetour(),
       }),
       errorMsg: this.errorMsg,
       errorCopyKey: this.errorCopyKey,
@@ -672,6 +678,7 @@ class OtaInstallCoordinator {
     this.versionChangeTarget = null
     this.versionChangeInstallStarted = false
     this.versionChangeConverged = false
+    this.versionChangeAfterReboot = false
     this.legacyApkSettleHold = false
     this.mtkSimulatedPercent = null
     this.lastRealMtkProgress = 0
@@ -861,7 +868,9 @@ class OtaInstallCoordinator {
 
     const legacySession = this.isLegacySessionShapeNow()
 
-    if (this.isBesRestartExpected(otaStatus, otaProgress, legacySession)) {
+    this.runVersionChangeAfterRebootPass(otaStatus)
+
+    if (!this.isInVersionChangeDetour() && this.isBesRestartExpected(otaStatus, otaProgress, legacySession)) {
       this.besRestartExpected = true
     }
 
@@ -886,6 +895,7 @@ class OtaInstallCoordinator {
       besRestartRecovery: this.besRestartRecovery,
       versionChangeConverged: this.versionChangeConverged,
       versionChangeSession: this.versionChangeSession,
+      versionChangeAfterReboot: this.versionChangeAfterReboot && this.isInVersionChangeDetour(),
     })
     if (otaStatusChanged && otaStatus?.status === "failed") this.reportFailure("device_failed")
     else if (otaProgressChanged && !otaStatus && otaProgress?.status === "FAILED") this.reportFailure("device_failed")
@@ -1002,7 +1012,10 @@ class OtaInstallCoordinator {
       (otaStatus.error === "downgrade_not_owned" ||
         otaStatus.error === "downgrade_handoff_refused" ||
         otaStatus.error === "downgrade_handoff_failed" ||
-        otaStatus.error === "downgrade_transaction_stalled")
+        otaStatus.error === "downgrade_transaction_stalled" ||
+        // Before the post-reboot handoff any failure (a firmware step's included) means no
+        // transaction owns the detour; only the unknown status keeps waiting.
+        (this.versionChangeAfterReboot && otaStatus.error !== "downgrade_status_unknown"))
     ) {
       console.log(
         `[OTA_PROGRESS] version-change: no transaction owns the detour (${otaStatus.error}) — releasing latch`,
@@ -1011,9 +1024,10 @@ class OtaInstallCoordinator {
       this.emitInternalChange()
     }
 
-    // Version-change convergence: the reconnected glasses report exactly the pinned
-    // target. This is the ONLY completion signal for a downgrade (lower build, no
-    // increase, wiped session). Mirrors the legacy build-increase latch but by equality.
+    // Version-change convergence: the reconnected glasses report the pinned target. This is
+    // the ONLY completion signal for a downgrade (lower build, no increase, wiped session).
+    // A build above the pin but below the one the session started from also converges: an
+    // older service app can update itself over Wi-Fi seconds after the pin starts.
     if (
       this.versionChangeSession &&
       this.versionChangeInstallStarted &&
@@ -1023,7 +1037,11 @@ class OtaInstallCoordinator {
       buildNumber
     ) {
       const currentBuild = Number.parseInt(buildNumber, 10)
-      if (Number.isFinite(currentBuild) && currentBuild === this.versionChangeTarget) {
+      const startBuild = Number.parseInt(this.initialBuildNumber ?? "", 10)
+      const reached =
+        currentBuild === this.versionChangeTarget ||
+        (currentBuild > this.versionChangeTarget && Number.isFinite(startBuild) && currentBuild < startBuild)
+      if (Number.isFinite(currentBuild) && reached) {
         console.log(`[OTA_PROGRESS] version-change converged: glasses report target ${currentBuild}, completing`)
         this.clearPerStepTimers()
         this.clearGlobalTimeout()
@@ -1409,6 +1427,32 @@ class OtaInstallCoordinator {
     return statusReadyToRestart || progressReadyToRestart || legacyInstallInProgress
   }
 
+  /**
+   * Firmware pass of a downgrade whose glasses hand the pin off after the firmware reboot: note
+   * the staging, then treat the firmware's completion as the handoff point. From there the detour
+   * wait owns the reboot and reconnects, and completion is exact-version convergence.
+   */
+  private runVersionChangeAfterRebootPass(otaStatus: OtaStatus | null): void {
+    if (!this.versionChangeSession || this.versionChangeInstallStarted) return
+    if (this.otaStartOwnership?.outcome !== "acknowledged" || !otaStatus) return
+    if (otaStatus.stepType === "apk" && otaStatus.phase === "download" && otaStatus.totalSteps > 1) {
+      if (!this.versionChangeAfterReboot) {
+        console.log("[OTA_PROGRESS] version-change: glasses stage the pin for after their firmware reboot")
+        this.versionChangeAfterReboot = true
+      }
+      return
+    }
+    const firmwareDone =
+      otaStatus.phase === "install" &&
+      ((otaStatus.stepType === "bes" && (otaStatus.status === "step_complete" || otaStatus.status === "complete")) ||
+        (otaStatus.stepType === "mtk" && otaStatus.status === "complete"))
+    if (!this.versionChangeAfterReboot || !firmwareDone) return
+    console.log("[OTA_PROGRESS] version-change: firmware done — entering detour wait across its reboot")
+    this.versionChangeInstallStarted = true
+    this.otaStartOwnership.versionChangeTarget = this.versionChangeTarget ?? undefined
+    this.emitInternalChange()
+  }
+
   /** Complete only after a protocol-authorized BES restart traverses disconnect -> reconnect. */
   private completeBesRestartRecovery(): void {
     if (!this.besRestartDisconnectObserved || this.besRestartRecovery !== "awaiting") return
@@ -1497,6 +1541,7 @@ class OtaInstallCoordinator {
       besRestartRecovery: this.besRestartRecovery,
       versionChangeConverged: this.versionChangeConverged,
       versionChangeSession: this.versionChangeSession,
+      versionChangeAfterReboot: this.versionChangeAfterReboot && this.isInVersionChangeDetour(),
     })
   }
 

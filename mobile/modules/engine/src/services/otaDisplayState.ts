@@ -53,6 +53,8 @@ export function deriveDisplayState(args: {
   versionChangeConverged?: boolean
   /** True for the whole downgrade (version-change) session. */
   versionChangeSession?: boolean
+  /** Detour wait that began at the firmware's completion, before the glasses' own handoff. */
+  versionChangeAfterReboot?: boolean
 }): DisplayState {
   const {
     otaStatus,
@@ -64,6 +66,7 @@ export function deriveDisplayState(args: {
     besRestartRecovery,
     versionChangeConverged,
     versionChangeSession,
+    versionChangeAfterReboot,
   } = args
 
   if (errorMsg) return "failed"
@@ -73,6 +76,13 @@ export function deriveDisplayState(args: {
   // a LOWER build so no build-number increase fires). Outranks the stale install
   // status still sitting in the store from before the handoff.
   if (versionChangeConverged) return "complete"
+
+  // The firmware's terminal status stays in the store across the reboot that applies it; it is
+  // the start of the glasses' own downgrade, not a result.
+  if (versionChangeAfterReboot) {
+    if (otaStatus?.status === "failed") return "failed"
+    return connected ? "updating" : "restarting"
+  }
 
   // A BES reboot destroys or strands the glasses-side OTA session on older
   // clients. Once the phone observed that reboot, stale pre-reboot progress must

@@ -36,6 +36,9 @@ export function resolveOtaManifestPolicy({
   engineReleasePin?: string | null
 }): string | null {
   if (isLegacyAsgOtaStartBuild(glassesBuildNumber)) {
+    // A service app before 39 can't take a manifest URL, so with an override set these glasses are where it took them
+    // (an older set): every check says up to date until the override is cleared, then they follow production.
+    if (trimmed(developerOverride)) return null
     return trimmed(glassesUrl) || OTA_VERSION_URL_LEGACY_PROD
   }
   return selectModernOtaManifestPin({developerOverride, hostReleasePin, engineReleasePin})

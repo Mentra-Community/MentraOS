@@ -35,7 +35,6 @@ describe("OTA manifest policy", () => {
       resolveOtaManifestPolicy({
         glassesBuildNumber: "38",
         glassesUrl: "https://updates.example.com/legacy-device.json",
-        developerOverride: "https://updates.example.com/ignored.json",
       }),
     ).toBe("https://updates.example.com/legacy-device.json")
 

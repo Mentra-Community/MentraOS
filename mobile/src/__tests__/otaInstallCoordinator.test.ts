@@ -1940,6 +1940,143 @@ describe("OtaInstallCoordinator legacy query-status fallback (WP 8C-b)", () => {
   })
 })
 
+describe("OtaInstallCoordinator downgrade handed off after the firmware reboot", () => {
+  const target = 302010070
+
+  async function startCombinedDowngrade(updates: string[]) {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 0,
+      wifi: {state: "connected", ssid: "test"},
+      buildNumber: "303000317",
+    })
+    otaInstallCoordinator.prepare({
+      ...checkResult(),
+      isApkDowngrade: true,
+      updates,
+      updateInfo: {
+        available: true,
+        isDowngrade: true,
+        versionCode: target,
+        versionName: "3.2.1",
+        updates,
+        totalSize: 1,
+      },
+    })
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    const totalSteps = updates.length
+    // The pin downloads first, next to the firmware steps.
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({totalSteps, stepPercent: 100, overallPercent: 30}))
+  }
+
+  it("waits across the BES reboot for the glasses' own handoff and completes on the pinned build", async () => {
+    await startCombinedDowngrade(["apk", "mtk", "bes"])
+    useGlassesStore
+      .getState()
+      .setOtaStatus(
+        inProgressStatus({totalSteps: 3, currentStep: 2, stepType: "mtk", phase: "install", status: "step_complete"}),
+      )
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+    useGlassesStore
+      .getState()
+      .setOtaStatus(
+        inProgressStatus({totalSteps: 3, currentStep: 3, stepType: "bes", phase: "install", status: "step_complete"}),
+      )
+    bluetoothSdkMock.queryOtaStatus.mockClear()
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    setGlassesConnected()
+    // The newest ASG boots on the new slot first; the BES reboot edge does not end the pass.
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+    expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(false)
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS + RETRY_INTERVAL_MS)
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install"}))
+    useGlassesStore.getState().setGlassesInfo({buildNumber: String(target)})
+    expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(true)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
+  it("treats a final MTK step's completion as the handoff point", async () => {
+    await startCombinedDowngrade(["apk", "mtk"])
+    useGlassesStore
+      .getState()
+      .setOtaStatus(
+        inProgressStatus({totalSteps: 2, currentStep: 2, stepType: "mtk", phase: "install", status: "complete"}),
+      )
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+    useGlassesStore.getState().setGlassesInfo({buildNumber: String(target)})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
+  it("converges on a build above the pin that the pinned service app updated itself to", async () => {
+    await startCombinedDowngrade(["apk", "bes"])
+    useGlassesStore
+      .getState()
+      .setOtaStatus(
+        inProgressStatus({totalSteps: 2, currentStep: 2, stepType: "bes", phase: "install", status: "step_complete"}),
+      )
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    // The factory floor, below the pin, is not the end.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "30"})
+    expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(false)
+    useGlassesStore.getState().setGlassesInfo({buildNumber: String(target + 1)})
+    expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(true)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
+  it("fails the pass when the glasses refuse the handoff after the reboot", async () => {
+    await startCombinedDowngrade(["apk", "bes"])
+    useGlassesStore
+      .getState()
+      .setOtaStatus(
+        inProgressStatus({totalSteps: 2, currentStep: 2, stepType: "bes", phase: "install", status: "step_complete"}),
+      )
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: "downgrade_handoff_refused"}))
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("installing")
+  })
+
+  it("keeps today's BES reboot completion for glasses that plan no apk step next to firmware", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      wifi: {state: "connected", ssid: "test"},
+    })
+    otaInstallCoordinator.prepare({
+      ...checkResult(),
+      isApkDowngrade: true,
+      updates: ["apk", "bes"],
+      updateInfo: {
+        available: true,
+        isDowngrade: true,
+        versionCode: target,
+        versionName: "3.2.1",
+        updates: ["apk", "bes"],
+        totalSize: 1,
+      },
+    })
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({stepType: "bes", phase: "install", status: "step_complete"}))
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+})
+
 describe("OtaInstallCoordinator BES reboot recovery", () => {
   function seedBesUpdate(besVersion?: string) {
     useGlassesStore.getState().setOtaUpdateAvailable({
