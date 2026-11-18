@@ -116,19 +116,9 @@ enum OtaManifestChecker {
         currentBuildNumber: String,
         currentMtkVersion: String,
         currentBesVersion: String,
-        manifest: OtaManifest,
-        // Mentra 3.0 is the oldest downgrade-safe target, matching Engine, ASG, and recovery.
-        // Coordinated releases guarantee higher supported ASG builds can downgrade; no source gate is needed.
-        // The shipped floor may increase, never decrease, and must stay aligned across all checkers.
-        // See asg_client/docs/mentra-live-spec.md#ota-and-updates.
-        // An explicit non-positive override still disables downgrades.
-        downgradeFloorVersionCode: Int = 51518114
+        manifest: OtaManifest
     ) throws -> Bool {
-        try hasApkUpdate(
-            currentBuildNumber: currentBuildNumber,
-            manifest: manifest,
-            downgradeFloorVersionCode: downgradeFloorVersionCode
-        ) ||
+        try hasApkUpdate(currentBuildNumber: currentBuildNumber, manifest: manifest) ||
             hasMtkUpdate(patches: manifest.mtkPatches, full: manifest.mtkFullOta, currentVersion: currentMtkVersion) ||
             hasBesUpdate(besFirmware: manifest.besFirmware, currentVersion: currentBesVersion)
     }
@@ -153,8 +143,7 @@ enum OtaManifestChecker {
 
     private static func hasApkUpdate(
         currentBuildNumber: String,
-        manifest: OtaManifest,
-        downgradeFloorVersionCode: Int
+        manifest: OtaManifest
     ) throws -> Bool {
         guard let currentVersion = Int(currentBuildNumber) else {
             throw BluetoothSdkError(
@@ -186,22 +175,10 @@ enum OtaManifestChecker {
             }
             return false
         }
-        if serverVersion > currentVersion {
-            return true
-        }
         // Exact match: already on the pin, no update.
-        if serverVersion == currentVersion {
-            return false
-        }
-        // Downgrade: only actionable at/above the enabled floor; a non-positive floor disables
-        // downgrades (fail closed, matching ASG and the engine).
-        return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
+        return serverVersion != currentVersion
     }
 
-    /// Mentra 3.0's MTK. No downgrade goes below it: downgrades keep userdata (photos and videos),
-    /// which holds only between builds with the same Android version, security patch level and AVB
-    /// rollback indexes. The glasses (MtkOtaSelector), the engine and Android keep the same floor.
-    static let mtkDowngradeFloor = "MentraLive_20260709"
     /// Each published downgrade's record, by its two versions.
     static let mtkDowngradeRecordBaseUrl = "https://mtkfirmware.mentraglass.com/"
 
@@ -224,8 +201,8 @@ enum OtaManifestChecker {
             (targetParts[0] == currentParts[0] && targetRevision > currentRevision)
     }
 
-    /// The older MTK this manifest pins, from Mentra 3.0's up: its full OTA's version, or else the
-    /// one version its patches all end at.
+    /// The older MTK this manifest pins: its full OTA's version, or else the one version its
+    /// patches all end at.
     static func mtkDowngradeTarget(_ manifest: OtaManifest, currentVersion: String) -> String? {
         var target: String?
         if let full = manifest.mtkFullOta {
@@ -237,7 +214,7 @@ enum OtaManifestChecker {
                 target = end
             }
         }
-        guard let target, isNewerMtk(currentVersion, target), !isNewerMtk(mtkDowngradeFloor, target) else { return nil }
+        guard let target, isNewerMtk(currentVersion, target) else { return nil }
         return target
     }
 

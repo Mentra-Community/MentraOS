@@ -9,20 +9,6 @@ import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
 import {isNewerMtk, normalizeMtkVersion, resolveMtkDowngrade, type MtkDowngrade} from "./mtkDowngrade"
 import {observeManifestNativeErrors} from "./otaNativeNetworkDiagnostics"
 
-/**
- * Phone-side mirror of ASG's `DOWNGRADE_FLOOR_VERSION_CODE`. Set to the versionCode of the first
- * release shipping the shared media root (the first downgrade-safe build). A non-positive value
- * means downgrades are disabled, so the phone must NOT offer them — offering a downgrade the
- * glasses' `DowngradeGate` will refuse leaves the version-change session with no install and the
- * glasses reporting a bare "complete", which would otherwise present as false success. Keep this
- * in lockstep with the ASG/recovery constant at release time.
- */
-// Mentra 3.0: matches OtaConstants and RecoveryConstants on the glasses.
-// Coordinated releases guarantee higher supported ASG builds can downgrade; no source gate is needed.
-// The shipped floor may increase, never decrease, and must stay aligned across all checkers.
-// See asg_client/docs/mentra-live-spec.md#ota-and-updates.
-export const DOWNGRADE_FLOOR_VERSION_CODE = 51518114
-
 export interface VersionInfo {
   versionCode: number
   versionName: string
@@ -133,8 +119,6 @@ export interface OtaCheckCurrentGlassesOptions {
   waitForLegacyMigrationMs?: number
   refreshVersionInfo?: boolean
   fixClockBeforeCheck?: boolean
-  /** Downgrade floor override (defaults to DOWNGRADE_FLOOR_VERSION_CODE); for tests. */
-  floorVersionCode?: number
 }
 
 function emptyCheckResult(
@@ -236,9 +220,8 @@ export async function fetchVersionInfo(url: string): Promise<VersionJson | null>
 export function checkVersionUpdateAvailable(
   currentBuildNumber: string | undefined,
   versionJson: VersionJson | null,
-  floorVersionCode: number = DOWNGRADE_FLOOR_VERSION_CODE,
 ): boolean {
-  return getApkUpdateDirection(currentBuildNumber, versionJson, floorVersionCode) !== null
+  return getApkUpdateDirection(currentBuildNumber, versionJson) !== null
 }
 
 /**
@@ -250,7 +233,6 @@ export function checkVersionUpdateAvailable(
 export function getApkUpdateDirection(
   currentBuildNumber: string | undefined,
   versionJson: VersionJson | null,
-  floorVersionCode: number = DOWNGRADE_FLOOR_VERSION_CODE,
 ): "upgrade" | "downgrade" | null {
   if (!currentBuildNumber || !versionJson) {
     return null
@@ -279,10 +261,8 @@ export function getApkUpdateDirection(
   if (serverVersion > currentVersion) {
     return "upgrade"
   }
-  // Downgrades require an exact pin AND a target at/above the enabled floor. A non-positive floor
-  // disables downgrades entirely, matching ASG's fail-closed DowngradeGate — so the phone never
-  // offers what the glasses would refuse.
-  if (serverVersion < currentVersion && exactPin && floorVersionCode > 0 && serverVersion >= floorVersionCode) {
+  // Downgrades require an exact pin.
+  if (serverVersion < currentVersion && exactPin) {
     return "downgrade"
   }
   return null
@@ -376,7 +356,6 @@ export async function checkForOtaUpdate(
   currentBuildNumber: string,
   currentMtkVersion?: string,
   currentBesVersion?: string,
-  floorVersionCode: number = DOWNGRADE_FLOOR_VERSION_CODE,
 ): Promise<OtaCheckResult> {
   try {
     console.log("OTA: Checking for OTA update - URL: " + otaVersionUrl + ", current build: " + currentBuildNumber)
@@ -431,7 +410,7 @@ export async function checkForOtaUpdate(
       }
     }
 
-    const apkDirection = getApkUpdateDirection(currentBuildNumber, versionJson, floorVersionCode)
+    const apkDirection = getApkUpdateDirection(currentBuildNumber, versionJson)
     const apkUpdateAvailable = apkDirection !== null
     console.log(
       `OTA: APK update available: ${apkUpdateAvailable} (current: ${currentBuildNumber}, direction: ${
@@ -565,7 +544,6 @@ export async function checkCurrentGlassesForUpdate(
     waitForLegacyMigrationMs = 0,
     refreshVersionInfo = true,
     fixClockBeforeCheck = true,
-    floorVersionCode = DOWNGRADE_FLOOR_VERSION_CODE,
   } = options
 
   if (deviceChanged() || !glassesConnectedNow()) {
@@ -661,13 +639,7 @@ export async function checkCurrentGlassesForUpdate(
     console.log("OTA: check skipped - no OTA manifest pin resolved")
     return emptyCheckResult("dev_build")
   }
-  const result = await checkForOtaUpdate(
-    manifestUrl,
-    buildNumber,
-    mtkFirmwareVersion,
-    besFirmwareVersion,
-    floorVersionCode,
-  )
+  const result = await checkForOtaUpdate(manifestUrl, buildNumber, mtkFirmwareVersion, besFirmwareVersion)
 
   if (deviceChanged()) return emptyCheckResult("disconnected")
   if (!result.hasCheckCompleted) {

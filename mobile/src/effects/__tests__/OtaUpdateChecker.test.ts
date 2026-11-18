@@ -134,15 +134,9 @@ describe("checkVersionUpdateAvailable", () => {
     expect(checkVersionUpdateAvailable("100", newFormatJson)).toBe(false)
   })
 
-  it("does not flag a downgrade below the shipped floor", () => {
-    // Synthetic build 100 predates the oldest supported downgrade target.
-    expect(checkVersionUpdateAvailable("200", newFormatJson)).toBe(false)
-  })
-
-  it("flags a downgrade when the floor is enabled at/below the pin", () => {
-    // With a positive floor at/below the pinned versionCode (100), the lower-than-installed pin
-    // is an actionable version change.
-    expect(checkVersionUpdateAvailable("200", newFormatJson, 100)).toBe(true)
+  it("flags a downgrade to a lower pin", () => {
+    // The lower-than-installed pin (100) is an actionable version change.
+    expect(checkVersionUpdateAvailable("200", newFormatJson)).toBe(true)
   })
 
   it("detects update available in legacy format", () => {

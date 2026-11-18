@@ -72,14 +72,8 @@ internal object OtaManifestChecker {
         currentMtkVersion: String,
         currentBesVersion: String,
         manifest: JSONObject,
-        // Mentra 3.0 is the oldest downgrade-safe target, matching Engine, ASG, and recovery.
-        // Coordinated releases guarantee higher supported ASG builds can downgrade; no source gate is needed.
-        // The shipped floor may increase, never decrease, and must stay aligned across all checkers.
-        // See asg_client/docs/mentra-live-spec.md#ota-and-updates.
-        // An explicit non-positive override still disables downgrades.
-        downgradeFloorVersionCode: Long = 51518114L,
     ): Boolean =
-        hasApkUpdate(currentBuildNumber, manifest, downgradeFloorVersionCode) ||
+        hasApkUpdate(currentBuildNumber, manifest) ||
             hasMtkUpdate(manifest, currentMtkVersion) ||
             hasBesUpdate(manifest.optJSONObject("bes_firmware"), currentBesVersion)
 
@@ -106,7 +100,6 @@ internal object OtaManifestChecker {
     private fun hasApkUpdate(
         currentBuildNumber: String,
         manifest: JSONObject,
-        downgradeFloorVersionCode: Long,
     ): Boolean {
         val currentVersion =
             currentBuildNumber.toLongOrNull()
@@ -137,24 +130,10 @@ internal object OtaManifestChecker {
             }
             return false
         }
-        if (serverVersion > currentVersion) {
-            return true
-        }
         // Exact match: already on the pin, no update.
-        if (serverVersion == currentVersion) {
-            return false
-        }
-        // Downgrade: only actionable at/above the enabled floor; a non-positive floor disables
-        // downgrades (fail closed, matching ASG and the engine).
-        return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
+        return serverVersion != currentVersion
     }
 
-    /**
-     * Mentra 3.0's MTK. No downgrade goes below it: downgrades keep userdata (photos and videos),
-     * which holds only between builds with the same Android version, security patch level and AVB
-     * rollback indexes. The glasses (MtkOtaSelector), the engine and iOS keep the same floor.
-     */
-    internal const val MTK_DOWNGRADE_FLOOR = "MentraLive_20260709"
     /** Each published downgrade's record, by its two versions. */
     internal const val MTK_DOWNGRADE_RECORD_BASE_URL = "https://mtkfirmware.mentraglass.com/"
 
@@ -173,8 +152,8 @@ internal object OtaManifestChecker {
     }
 
     /**
-     * The older MTK this manifest pins, from Mentra 3.0's up: its full OTA's version, or else the
-     * one version its patches all end at.
+     * The older MTK this manifest pins: its full OTA's version, or else the one version its
+     * patches all end at.
      */
     internal fun mtkDowngradeTarget(manifest: JSONObject, currentVersion: String): String? {
         val full = manifest.optJSONObject("mtk_full_ota")
@@ -187,7 +166,7 @@ internal object OtaManifestChecker {
                 target = end
             }
         }
-        if (target == null || !isNewerMtk(currentVersion, target) || isNewerMtk(MTK_DOWNGRADE_FLOOR, target)) return null
+        if (target == null || !isNewerMtk(currentVersion, target)) return null
         return target
     }
 

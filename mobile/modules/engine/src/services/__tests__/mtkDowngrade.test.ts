@@ -23,11 +23,11 @@ const downgrade = (start: string, end: string): MtkDowngrade => ({
 const release30 = (): VersionJson => ({mtk_full_ota: full("MentraLive_20260709")})
 
 describe("mtkDowngradeTarget", () => {
-  test("targets the older MTK the manifest pins, never below Mentra 3.0's", () => {
+  test("targets the older MTK the manifest pins", () => {
     expect(mtkDowngradeTarget(release30(), CURRENT)).toBe("20260709")
+    expect(mtkDowngradeTarget({mtk_full_ota: full("MentraLive_20260418")}, CURRENT)).toBe("20260418")
     expect(mtkDowngradeTarget(release30(), "MentraLive_20260709")).toBeNull()
     expect(mtkDowngradeTarget(release30(), "MentraLive_20260626")).toBeNull()
-    expect(mtkDowngradeTarget({mtk_full_ota: full("MentraLive_20260626")}, CURRENT)).toBeNull()
     expect(mtkDowngradeTarget({mtk_full_ota: full("MentraLive_20261001.0")}, CURRENT)).toBeNull()
     expect(mtkDowngradeTarget(release30(), undefined)).toBeNull()
   })
@@ -47,7 +47,6 @@ describe("isMtkDowngrade", () => {
   test("requires the exact versions and a complete entry", () => {
     expect(isMtkDowngrade(downgrade(CURRENT, "MentraLive_20260709"), CURRENT, "20260709")).toBe(true)
     expect(isMtkDowngrade(downgrade("MentraLive_20260801", "MentraLive_20260709"), CURRENT, "20260709")).toBe(false)
-    expect(isMtkDowngrade(downgrade(CURRENT, "MentraLive_20260626"), CURRENT, "20260626")).toBe(false)
     for (const key of ["url", "sha256", "size"] as const) {
       const invalid: Partial<MtkDowngrade> = downgrade(CURRENT, "MentraLive_20260709")
       delete invalid[key]

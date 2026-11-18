@@ -2,19 +2,12 @@
 import XCTest
 
 final class OtaManifestDowngradeTests: XCTestCase {
-    func testShippedFloorAllowsMentra30ButRejectsOlderTargets() throws {
-        for (target, expected) in [(51_518_113, false), (51_518_114, true), (51_518_115, true), (100_000_095, false)] {
+    func testAnyLowerPinIsADowngrade() throws {
+        for (target, expected) in [(36, true), (51_518_114, true), (100_000_095, false), (100_000_096, true)] {
             let manifest = OtaManifest(apps: ["com.mentra.asg_client": OtaManifestApp(versionCode: target)],
                                        mtkPatches: nil, mtkFullOta: nil, besFirmware: nil, versionCode: nil)
             XCTAssertEqual(try OtaManifestChecker.hasUpdate(currentBuildNumber: "100000095",
                                                             currentMtkVersion: "", currentBesVersion: "", manifest: manifest), expected)
         }
-    }
-
-    func testExplicitDisabledFloorStillRejectsDowngrades() throws {
-        let manifest = OtaManifest(apps: ["com.mentra.asg_client": OtaManifestApp(versionCode: 51_518_114)],
-                                   mtkPatches: nil, mtkFullOta: nil, besFirmware: nil, versionCode: nil)
-        XCTAssertFalse(try OtaManifestChecker.hasUpdate(currentBuildNumber: "100000095",
-                                                        currentMtkVersion: "", currentBesVersion: "", manifest: manifest, downgradeFloorVersionCode: 0))
     }
 }

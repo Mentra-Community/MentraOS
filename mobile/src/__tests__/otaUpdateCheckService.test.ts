@@ -770,11 +770,10 @@ describe("OtaUpdateCheckService", () => {
   })
 
   it.each([
-    [51518113, false],
+    [36, true],
     [51518114, true],
-    [51518115, true],
     [100000095, false],
-  ])("uses the shipped downgrade floor for target %i", async (versionCode, available) => {
+  ])("offers a downgrade to any lower pin, target %i", async (versionCode, available) => {
     useGlassesStore.getState().setGlassesInfo({buildNumber: "100000095"})
     global.fetch = jest.fn(
       async () =>
@@ -796,14 +795,12 @@ describe("OtaUpdateCheckService", () => {
   })
 
   it("downgrades default to skippable; explicit isRequired forces them", async () => {
-    // Use a small test-only floor for this synthetic manifest.
     const check = () =>
       checkCurrentGlassesForUpdate({
         refreshVersionInfo: false,
         fixClockBeforeCheck: false,
         waitForBesVersionMs: 0,
         waitForMtkVersionMs: 0,
-        floorVersionCode: 9,
       })
     const manifestWith = (extra: object) => ({
       apps: {
@@ -856,20 +853,6 @@ describe("OtaUpdateCheckService", () => {
     result = await check()
     expect(result.isApkDowngrade).toBe(false)
     expect(result.isRequired).toBe(true)
-
-    // An explicit floor 0 disables downgrades entirely: the same lower pin is not offered.
-    global.fetch = jest.fn(() =>
-      Promise.resolve({ok: true, json: () => Promise.resolve(manifestWith({}))} as unknown as Response),
-    ) as unknown as typeof fetch
-    result = await checkCurrentGlassesForUpdate({
-      refreshVersionInfo: false,
-      fixClockBeforeCheck: false,
-      waitForBesVersionMs: 0,
-      waitForMtkVersionMs: 0,
-      floorVersionCode: 0,
-    })
-    expect(result.isApkDowngrade).toBe(false)
-    expect(result.updateAvailable).toBe(false)
   })
 
   it("moves BES to the manifest's version whenever it differs, with a downgrade or an upgrade", async () => {
@@ -895,7 +878,6 @@ describe("OtaUpdateCheckService", () => {
         fixClockBeforeCheck: false,
         waitForBesVersionMs: 0,
         waitForMtkVersionMs: 0,
-        floorVersionCode: 9,
       })
     }
 

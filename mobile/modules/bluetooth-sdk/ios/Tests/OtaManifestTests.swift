@@ -57,15 +57,15 @@ final class OtaManifestTests: XCTestCase {
         XCTAssertFalse(try hasUpdate(manifest(invalid), "20260709"))
     }
 
-    func testDowngradeTargetsTheOlderPinnedMtkNeverBelowMentra30() throws {
+    func testDowngradeTargetsTheOlderPinnedMtk() throws {
         let current = "MentraLive_20260923.0"
         var older = full
         older["end_firmware"] = "MentraLive_20260709"
         XCTAssertEqual(OtaManifestChecker.mtkDowngradeTarget(try manifest(older), currentVersion: current), "20260709")
         XCTAssertNil(OtaManifestChecker.mtkDowngradeTarget(try manifest(older), currentVersion: "MentraLive_20260709"))
-        var belowFloor = full
-        belowFloor["end_firmware"] = "MentraLive_20260626"
-        XCTAssertNil(OtaManifestChecker.mtkDowngradeTarget(try manifest(belowFloor), currentVersion: current))
+        var april = full
+        april["end_firmware"] = "MentraLive_20260418"
+        XCTAssertEqual(OtaManifestChecker.mtkDowngradeTarget(try manifest(april), currentVersion: current), "20260418")
         let legacy = try manifest(patches: [["start_firmware": "MentraLive_20260113", "end_firmware": "MentraLive_20260709"],
                                             ["start_firmware": "MentraLive_20260626", "end_firmware": "MentraLive_20260709"]])
         XCTAssertEqual(OtaManifestChecker.mtkDowngradeTarget(legacy, currentVersion: current), "20260709")

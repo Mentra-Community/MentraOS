@@ -21,23 +21,13 @@ class OtaManifestDowngradeTest {
     private fun hasUpdate(
         currentBuildNumber: String,
         manifest: JSONObject,
-        floor: Long = 0L,
     ): Boolean =
         OtaManifestChecker.hasUpdate(
             currentBuildNumber = currentBuildNumber,
             currentMtkVersion = "",
             currentBesVersion = "",
             manifest = manifest,
-            downgradeFloorVersionCode = floor,
         )
-
-    @Test
-    fun shippedFloorAllowsMentra30ButRejectsOlderTargets() {
-        for ((target, expected) in listOf(51518113L to false, 51518114L to true, 51518115L to true, 100000095L to false)) {
-            assertEquals(expected, OtaManifestChecker.hasUpdate("100000095", "", "", manifest(target)))
-        }
-        assertFalse(OtaManifestChecker.hasUpdate("100000095", "", "", manifest(51518114L), downgradeFloorVersionCode = 0L))
-    }
 
     @Test
     fun upgradeIsAlwaysAnUpdate() {
@@ -45,18 +35,9 @@ class OtaManifestDowngradeTest {
     }
 
     @Test
-    fun exactPinIsNotAnUpdateEvenWithAnEnabledFloor() {
-        assertFalse(hasUpdate("49000000", manifest(49000000L), floor = 49000000L))
-    }
-
-    @Test
-    fun downgradeNeedsAnEnabledFloor() {
-        // Default floor 0 (fail closed) disables downgrades for native/OEM callers.
-        assertFalse(hasUpdate("49076573", manifest(49000000L)))
-        // A positive floor at/below the pin enables it.
-        assertTrue(hasUpdate("49076573", manifest(49000000L), floor = 49000000L))
-        // A pin below the floor is refused.
-        assertFalse(hasUpdate("49076573", manifest(48999999L), floor = 49000000L))
+    fun anyLowerPinIsADowngrade() {
+        assertTrue(hasUpdate("100000095", manifest(51518114L)))
+        assertTrue(hasUpdate("100000095", manifest(36L)))
     }
 
     @Test

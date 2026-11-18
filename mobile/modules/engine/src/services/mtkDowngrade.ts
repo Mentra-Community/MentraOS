@@ -9,12 +9,6 @@ export interface MtkDowngrade {
   size: number
 }
 
-/**
- * Mentra 3.0's MTK. No downgrade goes below it: downgrades keep userdata (photos and videos), which
- * holds only between builds with the same Android version, security patch level and AVB rollback
- * indexes. The glasses (MtkOtaSelector) and the Bluetooth SDKs keep the same floor.
- */
-export const MTK_DOWNGRADE_FLOOR = "MentraLive_20260709"
 /** Each published downgrade's record, by its two versions. */
 export const MTK_DOWNGRADE_RECORD_BASE_URL = "https://mtkfirmware.mentraglass.com/"
 
@@ -36,8 +30,8 @@ export function isNewerMtk(target: unknown, current: unknown): boolean {
 }
 
 /**
- * The older MTK this manifest pins, from Mentra 3.0's up: its full OTA's version, or else the one
- * version its patches all end at.
+ * The older MTK this manifest pins: its full OTA's version, or else the one version its patches all
+ * end at.
  */
 export function mtkDowngradeTarget(manifest: VersionJson | undefined, currentVersion: string | undefined): string | null {
   if (!manifest || !currentVersion) return null
@@ -51,7 +45,7 @@ export function mtkDowngradeTarget(manifest: VersionJson | undefined, currentVer
       target = end
     }
   }
-  if (!target || !isNewerMtk(currentVersion, target) || isNewerMtk(MTK_DOWNGRADE_FLOOR, target)) return null
+  if (!target || !isNewerMtk(currentVersion, target)) return null
   return target
 }
 
@@ -65,7 +59,6 @@ export function isMtkDowngrade(entry: unknown, currentVersion: string, target: s
     normalizeMtkVersion(value.start_firmware) === normalizeMtkVersion(currentVersion) &&
     normalizeMtkVersion(value.end_firmware) === normalizeMtkVersion(target) &&
     isNewerMtk(currentVersion, target) &&
-    !isNewerMtk(MTK_DOWNGRADE_FLOOR, target) &&
     typeof value.url === "string" &&
     /^https?:\/\/[^/\s]+\//.test(value.url) &&
     typeof value.sha256 === "string" &&

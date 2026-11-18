@@ -26,9 +26,9 @@ class OtaManifestMtkDowngradeTest {
         .put("start_firmware", start).put("end_firmware", end)
         .put("url", "https://mtkfirmware.mentraglass.com/down.zip").put("sha256", "b".repeat(64)).put("size", 15179481)
 
-    @Test fun targetsTheOlderPinnedMtkNeverBelowMentra30() {
+    @Test fun targetsTheOlderPinnedMtk() {
         assertEquals("20260709", OtaManifestChecker.mtkDowngradeTarget(pinning("MentraLive_20260709"), current))
-        assertNull(OtaManifestChecker.mtkDowngradeTarget(pinning("MentraLive_20260626"), current))
+        assertEquals("20260418", OtaManifestChecker.mtkDowngradeTarget(pinning("MentraLive_20260418"), current))
         assertNull(OtaManifestChecker.mtkDowngradeTarget(pinning("MentraLive_20260709"), "MentraLive_20260709"))
         assertNull(OtaManifestChecker.mtkDowngradeTarget(pinning("MentraLive_20261001.0"), current))
         val legacy = JSONArray()
@@ -46,6 +46,5 @@ class OtaManifestMtkDowngradeTest {
             OtaManifestChecker.hasMtkDowngrade(pinning("MentraLive_20260709"), current) { record(start = "MentraLive_20260801") },
         )
         assertFalse(OtaManifestChecker.hasMtkDowngrade(pinning("MentraLive_20260709"), current) { record().apply { remove("sha256") } })
-        assertFalse(OtaManifestChecker.hasMtkDowngrade(pinning("MentraLive_20260626"), current) { record(end = "MentraLive_20260626") })
     }
 }
