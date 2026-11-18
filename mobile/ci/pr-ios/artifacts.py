@@ -163,6 +163,81 @@ def probe_signing(output, keychain, framework=None):
         probe_framework_copy(framework, keychain, certificate)
 
 
+XCODE_VARIABLE = re.compile(r"\$[({]([A-Za-z0-9_]+)[)}]")
+
+
+def app_build_settings(entries):
+    """The application target's settings from `xcodebuild -showBuildSettings -json`."""
+    apps = [entry["buildSettings"] for entry in entries
+            if entry["buildSettings"].get("PRODUCT_TYPE") == "com.apple.product-type.application"]
+    if len(apps) != 1:
+        raise ValueError("Expected exactly one application target in the build settings")
+    return apps[0]
+
+
+def archive_entitlements(settings, profile):
+    """What Xcode signs a profiled app with: its entitlements file, expanded,
+    plus the profile's application identifier, team and get-task-allow."""
+    team = profile["TeamIdentifier"][0]
+    prefix = profile["ApplicationIdentifierPrefix"][0]
+    variables = {**settings, "AppIdentifierPrefix": f"{prefix}.", "TeamIdentifierPrefix": f"{team}."}
+
+    def expand(value):
+        if isinstance(value, str):
+            return XCODE_VARIABLE.sub(lambda match: variables[match.group(1)], value)
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        if isinstance(value, dict):
+            return {key: expand(item) for key, item in value.items()}
+        return value
+
+    entitlements = {}
+    if settings.get("CODE_SIGN_ENTITLEMENTS"):
+        file = Path(settings["PROJECT_DIR"]) / settings["CODE_SIGN_ENTITLEMENTS"]
+        entitlements = expand(plistlib.loads(file.read_bytes()))
+    if settings["PRODUCT_BUNDLE_IDENTIFIER"] != BUNDLE_ID:
+        raise ValueError(f"Expected the {BUNDLE_ID} application target")
+    application = f"{prefix}.{BUNDLE_ID}"
+    if profile["Entitlements"]["application-identifier"] != application:
+        raise ValueError("The profile does not match the application identifier")
+    return {**entitlements, "application-identifier": application,
+            "com.apple.developer.team-identifier": team,
+            "get-task-allow": profile["Entitlements"]["get-task-allow"]}
+
+
+def sign_archive(output, keychain, archive, settings_file):
+    """Sign an archive compiled with CODE_SIGNING_ALLOWED=NO as Xcode would have.
+
+    The compile runs outside the Mac signing lock; only these codesign calls
+    take it. -exportArchive then re-signs for distribution as before.
+    """
+    started = dt.datetime.now()
+    settings = app_build_settings(json.loads(settings_file.read_text()))
+    profile_file = output / "PR.mobileprovision"
+    entitlements = archive_entitlements(settings, read_profile(profile_file))
+    certificate = json.loads((output / "signing.json").read_text())["certificate"]
+    app = archive / "Products/Applications" / settings["FULL_PRODUCT_NAME"]
+    if any((app / folder).exists() for folder in ("PlugIns", "Extensions", "Watch", "AppClips")):
+        raise ValueError("App extensions need their own entitlements; sign them before the app")
+    # Inside out: a framework's nested code before the framework.
+    nested = sorted((path for path in app.rglob("*") if path.suffix in (".framework", ".dylib")),
+                    key=lambda path: -len(path.parts))
+    shutil.copy2(profile_file, app / "embedded.mobileprovision")
+    with tempfile.TemporaryDirectory(prefix="mentra-pr-entitlements-") as temporary:
+        entitlement_file = Path(temporary) / "app.entitlements"
+        entitlement_file.write_bytes(plistlib.dumps(entitlements))
+        sign = [sys.executable, HERE / "keychain-search.py", "run", keychain, "codesign", "--force",
+                "--sign", certificate, "--keychain", keychain, "--timestamp=none", "--generate-entitlement-der"]
+        if nested:
+            run(*sign, *nested)
+        run(*sign, "--entitlements", entitlement_file, app)
+    run("codesign", "--verify", "--deep", "--strict", app)
+    if plistlib.loads(run("codesign", "-d", "--entitlements", ":-", app)) != entitlements:
+        raise ValueError("Signed archive entitlements differ from the expected ones")
+    seconds = (dt.datetime.now() - started).total_seconds()
+    print(f"Signed {app.name} and {len(nested)} nested frameworks/libraries in the archive in {seconds:.0f} s")
+
+
 def configure(output, keychain):
     encoded = os.environ.get(APP["profile"])
     if not encoded:
@@ -300,12 +375,14 @@ def package(ipa, output, mac_signing):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["configure", "package", "probe"])
+    parser.add_argument("mode", choices=["configure", "package", "probe", "sign-archive"])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--keychain")
     parser.add_argument("--ipa", type=Path)
     parser.add_argument("--mac-signing", type=Path)
     parser.add_argument("--framework", type=Path)
+    parser.add_argument("--archive", type=Path)
+    parser.add_argument("--build-settings", type=Path)
     args = parser.parse_args()
     if args.mode == "configure":
         if not args.keychain:
@@ -315,6 +392,10 @@ if __name__ == "__main__":
         if not args.keychain:
             parser.error("probe requires --keychain")
         probe_signing(args.output, args.keychain, args.framework)
+    elif args.mode == "sign-archive":
+        if not args.keychain or not args.archive or not args.build_settings:
+            parser.error("sign-archive requires --keychain, --archive and --build-settings")
+        sign_archive(args.output, args.keychain, args.archive, args.build_settings)
     else:
         if not args.ipa or not args.mac_signing:
             parser.error("package requires --ipa and --mac-signing")

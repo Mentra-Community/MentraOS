@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import subprocess
 import sys
-from artifacts import BUNDLE_ID, digest, package_mac_app, packaged_backend, probe_framework_copy, probe_signing, validate_profile, verify_pr_ota, verify_private_signing
+from artifacts import BUNDLE_ID, app_build_settings, archive_entitlements, digest, package_mac_app, packaged_backend, probe_framework_copy, probe_signing, validate_profile, verify_pr_ota, verify_private_signing
 
 
 class MacPackageTests(unittest.TestCase):
@@ -195,6 +195,42 @@ class SigningProbeTests(unittest.TestCase):
                 probe_signing(output, "owned.keychain-db", Path("Turf.framework"))
             private.assert_called_once_with("owned.keychain-db", self.certificate)
             framework.assert_called_once_with(Path("Turf.framework"), "owned.keychain-db", self.certificate)
+
+
+class ArchiveEntitlementTests(unittest.TestCase):
+    def setUp(self):
+        self.profile = {"TeamIdentifier": ["TEAM"], "ApplicationIdentifierPrefix": ["TEAM"],
+                        "Entitlements": {"get-task-allow": False, "application-identifier": f"TEAM.{BUNDLE_ID}",
+                                         "aps-environment": "production", "keychain-access-groups": ["TEAM.*"]}}
+
+    def settings(self, folder, entitlements):
+        (Path(folder) / "App.entitlements").write_bytes(plistlib.dumps(entitlements))
+        return {"PROJECT_DIR": folder, "CODE_SIGN_ENTITLEMENTS": "App.entitlements",
+                "PRODUCT_BUNDLE_IDENTIFIER": BUNDLE_ID, "PRODUCT_TYPE": "com.apple.product-type.application"}
+
+    def test_expands_the_file_and_adds_only_the_profile_identity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings = self.settings(folder, {"aps-environment": "development", "keychain-access-groups": [
+                "$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)", "${TeamIdentifierPrefix}com.example.cache"]})
+            self.assertEqual(archive_entitlements(settings, self.profile), {
+                "aps-environment": "development",
+                "keychain-access-groups": [f"TEAM.{BUNDLE_ID}", "TEAM.com.example.cache"],
+                "application-identifier": f"TEAM.{BUNDLE_ID}",
+                "com.apple.developer.team-identifier": "TEAM", "get-task-allow": False})
+
+    def test_rejects_unknown_variables_and_another_app(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(KeyError):
+                archive_entitlements(self.settings(folder, {"group": "$(UNKNOWN)"}), self.profile)
+            with self.assertRaises(ValueError):
+                archive_entitlements({**self.settings(folder, {}), "PRODUCT_BUNDLE_IDENTIFIER": "other"}, self.profile)
+
+    def test_selects_the_one_application_target(self):
+        app = {"PRODUCT_TYPE": "com.apple.product-type.application"}
+        pod = {"PRODUCT_TYPE": "com.apple.product-type.framework"}
+        self.assertIs(app_build_settings([{"buildSettings": pod}, {"buildSettings": app}]), app)
+        with self.assertRaises(ValueError):
+            app_build_settings([{"buildSettings": pod}])
 
 
 if __name__ == "__main__":

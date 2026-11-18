@@ -1,5 +1,5 @@
-import {execFileSync, spawnSync} from "node:child_process"
-import {appendFileSync, existsSync, readFileSync} from "node:fs"
+import {execFileSync} from "node:child_process"
+import {readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {
   appendXcodeEnvironment,
@@ -7,7 +7,7 @@ import {
   xcodeBuildSettings,
 } from "../../scripts/release-bundle-config.mjs"
 import {prApp} from "../../../.github/scripts/pr-mobile-build.mjs"
-import {runXcode, signingOnlyFailure} from "./xcode-attempt.mjs"
+import {runXcode} from "./xcode-attempt.mjs"
 
 // The app is MENTRA_PR_APP's (PR_APPS in pr-mobile-build.mjs), compiled from its
 // root; the signing setup and the archive stay in mobile/build/pr-ios.
@@ -16,91 +16,34 @@ const project = app.xcodeProject
 const signed = process.env.PR_IOS_SIGNED === "true"
 const mobile = path.resolve("mobile")
 const ios = path.resolve(app.root, "ios")
-const archive = path.join(mobile, `build/pr-ios/${project}.xcarchive`)
+const output = path.join(mobile, "build/pr-ios")
+const archive = path.join(output, `${project}.xcarchive`)
 const env = {...process.env, NODE_ENV: "production", SENTRY_DISABLE_AUTO_UPLOAD: "true"}
-if (signed) {
-  execFileSync("security", ["unlock-keychain", "-p", env.PR_IOS_KEYCHAIN_PASSWORD, env.PR_IOS_KEYCHAIN])
-}
 await appendXcodeEnvironment(path.join(ios, ".xcode.env.local"), env, process.execPath)
-const args = [
-  signed ? "archive" : "build",
-  "-workspace",
-  `${project}.xcworkspace`,
-  "-scheme",
-  project,
-  "-configuration",
-  "Release",
-  "-destination",
-  "generic/platform=iOS",
-  "-derivedDataPath",
-  "build-device",
-]
+const target = ["-workspace", `${project}.xcworkspace`, "-scheme", project, "-configuration", "Release"]
+const args = [signed ? "archive" : "build", ...target, "-destination", "generic/platform=iOS"]
+args.push("-derivedDataPath", "build-device")
 // The workflow wrapper preserves the complete log and filters console output.
 // Keep timing rows for both signed archives and unsigned compile checks.
 args.push("-showBuildTimingSummary")
 if (process.argv.includes("--serial")) args.push("-jobs", "1")
-if (signed) {
-  args.push(
-    "-archivePath",
-    archive,
-    // Match the probe and repackaging signer. Ad hoc iOS distribution does not
-    // need a timestamp authority; avoid a system-dependent network dependency.
-    `OTHER_CODE_SIGN_FLAGS=--keychain ${process.env.PR_IOS_KEYCHAIN} --timestamp=none`,
-  )
-} else args.push("CODE_SIGN_IDENTITY=", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGNING_ALLOWED=NO")
+// A signed build archives unsigned, outside the Mac signing lock
+// (keychain-search.py), so two signed jobs on one Mac compile at once; the
+// workflow's export step signs it as Xcode would have (artifacts.py
+// sign-archive), under the lock.
+// Xcode refuses an ad hoc signed iOS archive, and a second, signed archive
+// compiles everything again.
+if (signed) args.push("-archivePath", archive, "CODE_SIGNING_ALLOWED=NO")
+else args.push("CODE_SIGN_IDENTITY=", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGNING_ALLOWED=NO")
 args.push(...xcodeBuildSettings(env, process.execPath))
-const options = {cwd: ios, env, keychain: signed ? env.PR_IOS_KEYCHAIN : undefined}
-let result = await runXcode(args, options)
-if (signed && signingOnlyFailure(result)) {
-  console.log("Signing failed after compilation. Unlocking the job keychain and retrying with existing build outputs.")
-  execFileSync("security", ["unlock-keychain", "-p", env.PR_IOS_KEYCHAIN_PASSWORD, env.PR_IOS_KEYCHAIN])
-  result = await runXcode(args, options)
-}
-if (signed && signingOnlyFailure(result) && env.GITHUB_OUTPUT) {
-  appendFileSync(env.GITHUB_OUTPUT, "failure_kind=signing\n")
-  console.error("Signing still failed; preserving compilation outputs instead of deleting caches and recompiling.")
-}
+const result = await runXcode(args, {cwd: ios, env})
 if (result.signal) console.error(`xcodebuild terminated by ${result.signal}`)
-if (signed && result.status !== 0) {
-  const probeArgs = [
-    path.join(mobile, "ci/pr-ios/artifacts.py"),
-    "probe",
-    "--keychain",
-    env.PR_IOS_KEYCHAIN,
-    "--output",
-    path.join(mobile, "build/pr-ios"),
-  ]
-  const framework = path.join(
-    ios,
-    `build-device/Build/Intermediates.noindex/ArchiveIntermediates/${project}/InstallationBuildProductsLocation/Applications/${project}.app/Frameworks/Turf.framework`,
-  )
-  if (signingOnlyFailure(result) && existsSync(framework) && result.output.includes("Turf.framework"))
-    probeArgs.push("--framework", framework)
-  console.error("Checking current iOS key access and the failed framework without changing the archive.")
-  const probe = spawnSync("python3", probeArgs, {stdio: "inherit", timeout: 90_000})
-  console.error(
-    `Signing diagnostic exit: ${probe.status ?? probe.signal ?? "unavailable"}; original xcodebuild failure is retained.`,
-  )
-  // Public signing metadata only; never dump keychain contents or credentials.
-  for (const args of [
-    ["list-keychains", "-d", "user"],
-    ["show-keychain-info", env.PR_IOS_KEYCHAIN],
-    ["find-identity", "-v", "-p", "codesigning", env.PR_IOS_KEYCHAIN],
-  ])
-    spawnSync("security", args, {stdio: "inherit", timeout: 20_000})
-  spawnSync(
-    "/usr/bin/log",
-    [
-      "show",
-      "--last",
-      "2m",
-      "--style",
-      "compact",
-      "--predicate",
-      'process == "securityd" AND (eventMessage CONTAINS[c] "codesign" OR eventMessage CONTAINS[c] "CSSM" OR eventMessage CONTAINS[c] "interaction")',
-    ],
-    {stdio: "inherit", timeout: 20_000},
-  )
+if (signed && result.status === 0) {
+  // For sign-archive: the app target's entitlements file and the variables it uses.
+  const query = ["-showBuildSettings", "-json", ...target, "-destination", "generic/platform=iOS"]
+  query.push(...xcodeBuildSettings(env, process.execPath))
+  const settings = execFileSync("xcodebuild", query, {cwd: ios, env, maxBuffer: 1024 ** 3})
+  writeFileSync(path.join(output, "build-settings.json"), settings)
 }
 // The Mentra App's backend configuration; the example app has none.
 if (signed && result.status === 0 && app.root === "mobile") {
