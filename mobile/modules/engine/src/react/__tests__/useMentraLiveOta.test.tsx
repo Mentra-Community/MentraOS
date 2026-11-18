@@ -375,6 +375,52 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
+  test("after an update, keeps checking through a network outage and finishes once it returns", async () => {
+    autoChainActive = true
+    autoChainRange = {fromVersion: "3.4.0", toVersion: "3.5.0", releaseVersion: "3.5.0"}
+    const offline = {...checkResult, hasCheckCompleted: false, checkFailureReason: "network" as const}
+    fakeOta.checkForUpdates
+      .mockImplementationOnce(() => Promise.resolve(offline))
+      .mockImplementationOnce(() => Promise.resolve(offline))
+      .mockImplementationOnce(() => Promise.resolve(offline))
+      .mockImplementationOnce(() => Promise.resolve({...checkResult, updateAvailable: false}))
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5_300))
+    })
+    expect(latestController.state).toMatchObject({screen: "check_failed", canRetry: true})
+    expect(stopAutoChain).not.toHaveBeenCalled()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 11_000))
+    })
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(4)
+    expect(latestController.state.screen).toBe("up_to_date")
+    await act(async () => renderer.unmount())
+  }, 20_000)
+
+  test("after an outage, an update found before the Wi-Fi status is known leaves the failure", async () => {
+    autoChainActive = true
+    autoChainRange = {fromVersion: "3.4.0", toVersion: "3.5.0", releaseVersion: "3.5.0"}
+    otaSnapshot = {...otaSnapshot, hotspotOtaVersion: 0, wifiStatusKnown: false}
+    const offline = {...checkResult, hasCheckCompleted: false, checkFailureReason: "network" as const}
+    fakeOta.checkForUpdates
+      .mockImplementationOnce(() => Promise.resolve(offline))
+      .mockImplementationOnce(() => Promise.resolve(offline))
+      .mockImplementationOnce(() => Promise.resolve(checkResult))
+    const renderer = await renderProbe("check")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5_300))
+    })
+    expect(latestController.state.screen).toBe("check_failed")
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5_500))
+    })
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(3)
+    expect(latestController.state.screen).not.toBe("check_failed")
+    await act(async () => renderer.unmount())
+    otaSnapshot = {...otaSnapshot, hotspotOtaVersion: 1, wifiStatusKnown: true}
+  }, 20_000)
+
   test("maps a glasses failure code to copy and keeps the raw code for support", async () => {
     const renderer = await renderProbe()
     installSnapshot = {

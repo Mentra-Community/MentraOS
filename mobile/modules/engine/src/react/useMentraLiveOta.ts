@@ -426,12 +426,22 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         }
         let result = await ota.checkForUpdates(checkOptions)
         if (!isCurrentCheck()) return
-        if (!result.hasCheckCompleted && result.checkFailureReason === "network" && isOtaAutoChainActive()) {
+        // Leaving the glasses hotspot after an update can leave the phone or Mac offline for a
+        // while: on 2026-11-18 the Mac's network was gone for 35 minutes. Keep checking, showing
+        // the failure after the first retry, until the internet returns or the person retries.
+        for (let retries = 0; !result.hasCheckCompleted && result.checkFailureReason === "network"; retries++) {
+          if (!isOtaAutoChainActive()) break
+          if (retries === 1) {
+            setErrorKind("network")
+            setCheckState("error")
+          }
           await new Promise((resolve) => setTimeout(resolve, AUTO_CHAIN_NETWORK_RETRY_DELAY_MS))
           if (!isCurrentCheck()) return
           result = await ota.checkForUpdates(checkOptions)
+          if (!isCurrentCheck()) return
+          // Back to checking once it answers: the paths below need not set a state of their own.
+          if (result.hasCheckCompleted) setCheckState("checking")
         }
-        if (!isCurrentCheck()) return
         selectedCheckResultRef.current = result
         selectedCheckDeviceRef.current = deviceRevision
         await new Promise((resolve) => setTimeout(resolve, Math.max(0, MIN_DISPLAY_TIME_MS - (Date.now() - startTime))))
