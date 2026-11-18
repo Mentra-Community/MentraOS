@@ -1130,8 +1130,9 @@ class OtaInstallCoordinator {
       }
     }
 
-    // Any glasses activity proves the logical ota_start was accepted.
-    if ((otaStatusChanged || otaProgressChanged) && (otaStatus || otaProgress)) {
+    // Any glasses activity proves the logical ota_start was accepted. An idle reply does not:
+    // a hotspot start still joining has sent the glasses nothing yet.
+    if ((otaStatusChanged || otaProgressChanged) && hasRecoveringOtaReply(otaStatus, otaProgress)) {
       this.onFirstActivity()
     }
 

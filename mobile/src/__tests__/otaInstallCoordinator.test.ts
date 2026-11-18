@@ -525,6 +525,38 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
+  it("keeps a hotspot start that is still joining when a reconnect query answers idle", async () => {
+    let finishJoin!: (url: string) => void
+    mockHotspotPrepare.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishJoin = resolve
+        }),
+    )
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    // The glasses have no session yet: nothing has been sent to them.
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+
+    expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
+    expect(mockHotspotTeardown).not.toHaveBeenCalled()
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+
+    finishJoin("http://192.168.43.2:8791/version.json")
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it("fails a phone preflight once without entering ota_start retry logic", async () => {
     mockHotspotPrepare.mockRejectedValueOnce({code: "artifact_verify_failed"})
     useGlassesStore.getState().setGlassesInfo({
