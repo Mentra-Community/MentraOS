@@ -42,6 +42,14 @@ const personUser: ForwardedPrincipal = {
   scope: {kind: "person"},
 }
 const anyone: ForwardedPrincipal = {kind: "public", scope: {kind: "public"}}
+const operatorKey: ForwardedPrincipal = {
+  kind: "credential",
+  credentialId: "01HZKEY",
+  label: "Sales tooling",
+  createdByEmail: "admin@example.com",
+  organizationCapabilities: ["organization.licenses.grant"],
+  scope: {kind: "workspace", workspaceId: "ws_1"},
+}
 
 /** A request whose headers are a plain string map, so a test can add, drop or replace one. */
 type SignedRequest = Omit<ForwardedRequest, "headers"> & {headers: Record<string, string>}
@@ -98,6 +106,7 @@ describe("verifyForwardedPrincipal", () => {
     expect(verify(forwarded(anyone, {method: "GET", pathWithQuery: "/v1/portal/public/products/mentra.call.unlimited", body: ""}))).toEqual(
       anyone,
     )
+    expect(verify(forwarded(operatorKey))).toEqual(operatorKey)
   })
 
   test("the principal header is base64url JSON and its signature is HMAC-SHA256 over `<ts>\\n<header>`", () => {
@@ -233,7 +242,7 @@ describe("verifyForwardedPrincipal", () => {
     })
   })
 
-  test("refuses a correctly signed credential principal", () => {
+  test("refuses a correctly signed credential in Core's own shape, which is not a forwarded principal", () => {
     const credential = {
       kind: "credential",
       credentialId: "01HZKEY",
@@ -254,6 +263,7 @@ describe("parseForwardedPrincipal", () => {
     expect(parseForwardedPrincipal(workspaceUser)).toEqual(workspaceUser)
     expect(parseForwardedPrincipal(personUser)).toEqual(personUser)
     expect(parseForwardedPrincipal(anyone)).toEqual(anyone)
+    expect(parseForwardedPrincipal(operatorKey)).toEqual(operatorKey)
   })
 
   test("returns a copy, not the object it was given", () => {
@@ -317,7 +327,7 @@ describe("parseForwardedPrincipal", () => {
     expect(parseForwardedPrincipal({...phone, email: null})).toEqual(phoneWithoutEmail)
   })
 
-  test("a credential-shaped principal is not a principal", () => {
+  test("a credential in Core's own shape (its scopes and packages) is not a forwarded principal", () => {
     expect(
       parseForwardedPrincipal({
         kind: "credential",
@@ -404,5 +414,33 @@ describe("parseForwardedPrincipal", () => {
       ...user,
       organizationCapabilities: [],
     })
+  })
+})
+
+describe("a key's principal", () => {
+  test("names the key and its organization capabilities, never a person, and drops capabilities this build does not know", () => {
+    const parsed = parseForwardedPrincipal({...operatorKey, mentraUserId: "mu_1", isOrganizationAdmin: true, organizationCapabilities: ["organization.licenses.grant", "organization.future"]})
+    expect(parsed).toEqual(operatorKey)
+    expect(Object.keys(parsed!).sort()).toEqual(["createdByEmail", "credentialId", "kind", "label", "organizationCapabilities", "scope"])
+    expect(parseForwardedPrincipal({...operatorKey, scope: {kind: "organization"}})).toEqual({...operatorKey, scope: {kind: "organization"}})
+  })
+
+  test("names its creator, or none: a Core that predates the field leaves it out", () => {
+    expect(parseForwardedPrincipal({...operatorKey, createdByEmail: null})).toEqual({...operatorKey, createdByEmail: null})
+    const {createdByEmail: _creator, ...older} = operatorKey as Extract<ForwardedPrincipal, {kind: "credential"}>
+    expect(parseForwardedPrincipal(older)).toEqual({...operatorKey, createdByEmail: null})
+    expect(parseForwardedPrincipal({...operatorKey, createdByEmail: 7})).toBeNull()
+  })
+
+  test("covers the organization or a workspace: a person's own account or the public scope refuse it", () => {
+    expect(parseForwardedPrincipal({...operatorKey, scope: {kind: "person"}})).toBeNull()
+    expect(parseForwardedPrincipal({...operatorKey, scope: {kind: "public"}})).toBeNull()
+    expect(parseForwardedPrincipal({...operatorKey, scope: undefined})).toBeNull()
+  })
+
+  test("needs its ID, a label and an array of capabilities", () => {
+    expect(parseForwardedPrincipal({...operatorKey, credentialId: " "})).toBeNull()
+    expect(parseForwardedPrincipal({...operatorKey, label: null})).toBeNull()
+    expect(parseForwardedPrincipal({...operatorKey, organizationCapabilities: "organization.licenses.grant"})).toBeNull()
   })
 })

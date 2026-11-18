@@ -5,6 +5,7 @@
 // and "@mentra/workspace-contract/portal-module-ui".
 export * from "./capabilities"
 export * from "./deletion-holds"
+export * from "./license-grants"
 export * from "./licenses"
 export * from "./registry-admin"
 export * from "./types"

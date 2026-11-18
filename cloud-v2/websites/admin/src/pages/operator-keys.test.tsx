@@ -70,6 +70,7 @@ describe("operator keys page", () => {
       "organization.fleet.administer": "Administer Fleet",
       "organization.licenses.read": "Read every license",
       "organization.registry.administer": "Administer the miniapp registry",
+      "organization.licenses.grant": "Grant licenses",
     });
     // Every scope a key may carry has a label and a description.
     for (const scope of OPERATOR_KEY_SCOPES) {

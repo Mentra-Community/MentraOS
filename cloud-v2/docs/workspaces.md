@@ -48,7 +48,8 @@ Roles are cumulative: each holds everything the one before it holds.
 They hold every organization capability (`organization.workspaces.administer`,
 `organization.credentials.manage`, `organization.incidents.read`,
 `organization.supportProfiles.read`, `organization.fleet.administer`,
-`organization.licenses.read`, `organization.registry.administer`) and act as
+`organization.licenses.read`, `organization.registry.administer`,
+`organization.licenses.grant`) and act as
 Owner in every workspace, which is how they recover a workspace whose Owners
 are gone. Recovery names an existing account; a deleted account is refused
 (`404 user_not_found`). An operator key may be given any of these capabilities
@@ -328,7 +329,10 @@ caller is not a member; the person's empty automatic workspace gives way), and
 `/api/organization/workspaces/:workspaceId/owners` makes a person (by Core user id, or on
 hosted Core by confirmed email) an Owner. With `organization.credentials.manage`,
 `/api/organization/credentials` lists and revokes operator keys; creating one is a person's
-only. A person or an operator key holding the capability may call each of them.
+only. A person or an operator key holding the capability may call each of them. With `organization.licenses.grant`,
+`POST /api/organization/workspaces/:workspaceId/license-grants` gives a workspace
+licenses of a product until a date without a sale
+([Granting licenses](licenses.md#granting-licenses)).
 
 `/api/admin/*` checks a capability per area: incidents
 (`organization.incidents.read`), support profiles

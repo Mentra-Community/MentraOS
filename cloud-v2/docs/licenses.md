@@ -125,6 +125,80 @@ request decide nothing, even after the person is unassigned, and deliveries
 that race decide it once. The request names the person who opened the session,
 never the buyer `assignTo` names. A Core that predates it ignores the field.
 
+## Granting licenses
+
+A sale made outside the workspace portal (by a reseller, for a pilot, prepaid by
+invoice) is collected outside billing, and its licenses are granted:
+`POST /api/organization/workspaces/:workspaceId/license-grants` gives the
+workspace a number of licenses of a product until a date, and nothing is ever
+charged. It needs `organization.licenses.grant`: an Organization Admin holds
+it, and so does an operator key created with it (a workspace key never may).
+Billing records a key's grant by the key's ID and name and the person who
+created it. It is also under `/api/admin/organization` for the admin portal's
+session.
+
+```sh
+curl -X POST "$MENTRA_CORE_URL/api/organization/workspaces/ws_123/license-grants" \
+  -H "Authorization: Bearer $MENTRA_OPERATOR_KEY" \
+  -H "Idempotency-Key: pilot-2026-11-17" \
+  -H "Content-Type: application/json" \
+  -d '{"product": "mentra.call.unlimited", "seats": 2, "endsAt": "2027-11-17", "note": "Pilot through a reseller"}'
+```
+
+| Field | Meaning |
+| --- | --- |
+| `product` | The product's key, such as `mentra.call.unlimited`. Billing must sell it at a price per license. |
+| `seats` | How many licenses: a whole number from 1 to 1000. |
+| `endsAt` | When they end: an RFC 3339 date-time with its offset (`2027-11-17T00:00:00Z`), or a date (`2027-11-17`), which is the start of that day in UTC. A new grant ends at least an hour and at most 730 days from now. |
+| `note` | Optional: why, in at most 500 characters, kept with the grant. |
+| `Idempotency-Key` (header) | Required: 1 to 200 visible ASCII characters of the caller's choosing. A repeat with the same key answers the grant it made and makes nothing new, however near or past that grant's end, so a request that timed out is repeated with its key. |
+
+Core checks the request and that the workspace is active, then forwards it to
+billing's `POST /v1/portal/workspaces/:workspaceId/license-grants`, signed as it
+forwards everything to billing ([Portal modules](portal-modules.md)), with the
+caller as its principal: the person, or the key (a `credential` principal, its
+ID and name). Of the end, Core refuses only one more than 730 days away: an end
+that is past or under an hour away may be a repeat's, so billing answers a
+repeat with the key's grant first, and holds only a new grant to the rule.
+Billing makes the grant a subscription of the product in a free
+trial that ends at `endsAt` and is cancelled then, and writes its license as it
+writes any ([Writing licenses](#writing-licenses)): quantity `seats`, paid through
+`endsAt` plus 3 days, assigned to nobody. It answers `201`, `200` for a repeat:
+
+```json
+{
+  "workspaceId": "ws_123",
+  "product": "mentra.call.unlimited",
+  "seats": 2,
+  "endsAt": "2027-11-17T00:00:00Z",
+  "status": "trialing",
+  "subscriptionId": "sub_...",
+  "licenseId": "01J...",
+  "replayed": false
+}
+```
+
+`licenseId` is the license in Core once billing has made it, which is within
+seconds (`null` until then). Assign its licenses with the seat-assignment routes
+([Assigning licenses](#assigning-licenses)). Core records each grant in the admin
+action log (`workspace.licenses.granted`, by the caller, with the note).
+
+| Answer | When |
+| --- | --- |
+| `400 invalid_request` | The request does not meet the table above; `error_description` says how. |
+| `400 not_for_sale` | Billing does not sell the product, or not at a price per license. |
+| `403 forbidden` | The caller does not hold `organization.licenses.grant`. |
+| `404 workspace_not_found` | The workspace is deleted or never existed. |
+| `409 already_licensed` | The workspace already holds the product (with its `licenseId` once billing has made it). A grant never changes a license the workspace holds. |
+| `409 idempotency_conflict` | The key made a grant of another product, number of licenses or end. |
+| `409 checkout_in_progress` | A purchase or another grant of the product is being set up in the workspace; try again in a minute, with the same key. |
+| `409 reset_in_progress` | On dev or staging, the workspace's licenses are being reset (a grant made meanwhile is cancelled); try again, with the same key. |
+| `503 billing_unavailable` | Billing is not installed on this Core, or did not answer. A repeat with the same key is safe. |
+
+A grant ends on its date. To end one sooner, or to change its licenses or its
+end, cancel it (the Store's billing runbook says how) and grant again, with a
+new key; the new grant is a new license, whose licenses are assigned again.
+
 ## Assigning licenses
 
 People assign licenses (Core calls an assigned license a seat) through the workspace routes, under each portal's route

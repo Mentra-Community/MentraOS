@@ -21,6 +21,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "organization.fleet.administer": "Administer Fleet",
   "organization.licenses.read": "Read every license",
   "organization.registry.administer": "Administer the miniapp registry",
+  "organization.licenses.grant": "Grant licenses",
 };
 
 /** What each scope lets a key do, under its name in the form. */
@@ -34,6 +35,8 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   "organization.fleet.administer": "Fleet Management across the organization. Fleet does not accept keys yet, so this has no effect for now.",
   "organization.licenses.read": "Read every license and the workspace that holds it.",
   "organization.registry.administer": "Search, export, register, archive and unarchive registry entries.",
+  "organization.licenses.grant":
+    "Give a workspace licenses of a product until a date, without a sale, for one paid some other way. Nothing is charged.",
 };
 
 /** A scope this page does not know yet shows as it is rather than disappearing. */

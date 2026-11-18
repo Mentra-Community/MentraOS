@@ -306,6 +306,11 @@ export type FleetScope = ForwardedScope
  *   what Core decided the person may do to the organization, and `scope` is what this request covers.
  * - `public`: a request Core forwards for anyone, signed in or not. It names no person, not even one who is
  *   signed in, and covers the `public` scope only: Core vouches that it sent the request, and for nobody.
+ * - `credential`: a Core key, which names no person: its ID, its name (`label`), its creator's address
+ *   (`createdByEmail`, who answers for it, not who is calling), what Core decided it may do to
+ *   the organization, and what this request covers (the organization or one workspace, never a person's own
+ *   account). Only an operator key holds organization capabilities. Only a route that takes keys accepts it:
+ *   billing's license grants, today; every other route refuses it.
  */
 export type ForwardedPrincipal =
   | {kind: "phone"; mentraUserId: string; tenantId: string; sessionId: string; email: string | null}
@@ -319,6 +324,15 @@ export type ForwardedPrincipal =
       scope: UserScope
     }
   | {kind: "public"; scope: {kind: "public"}}
+  | {
+      kind: "credential"
+      credentialId: string
+      label: string
+      /** The address of the person who created the key, answerable for what it does; null when Core has none. */
+      createdByEmail: string | null
+      organizationCapabilities: OrganizationCapability[]
+      scope: Exclude<UserScope, {kind: "person"}>
+    }
 
 /**
  * `error` values on 401 responses from the internal service API. The client treats only `invalid_token`

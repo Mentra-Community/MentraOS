@@ -32,6 +32,8 @@ export const ORGANIZATION_CAPABILITIES = [
   "organization.fleet.administer",
   "organization.licenses.read",
   "organization.registry.administer",
+  // Gives a workspace licenses without a sale (a license grant, Core's `docs/licenses.md`).
+  "organization.licenses.grant",
 ] as const
 export type OrganizationCapability = (typeof ORGANIZATION_CAPABILITIES)[number]
 

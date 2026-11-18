@@ -195,9 +195,25 @@ The principal on every module route is a user:
  "scope": {"kind": "workspace", "workspaceId": "..."} /* or {"kind": "person"} */}
 ```
 
-`/v1/portal` only ever receives user principals. `organizationCapabilities` is
+`/v1/portal` receives user principals, but for one route. `organizationCapabilities` is
 empty for anyone who is not an Organization Admin. A module's `email` is a display
 attribute: key records by `mentraUserId`.
+
+That route is billing's license grants, which Core forwards from the organization
+API rather than from `/api/portal`: `POST /api/organization/workspaces/:workspaceId/license-grants`
+goes to `${url}/v1/portal/workspaces/:workspaceId/license-grants`, with the
+workspace as its scope and the body Core checked in place of the caller's
+([Granting licenses](licenses.md#granting-licenses)). Its caller may be a key,
+which is forwarded as a `credential` principal and names no person:
+
+```jsonc
+{"kind": "credential", "credentialId": "...", "label": "...",
+ "createdByEmail": "..." /* the key's creator, or null */,
+ "organizationCapabilities": ["organization.licenses.grant"],
+ "scope": {"kind": "workspace", "workspaceId": "..."}}
+```
+
+Every other module route refuses a `credential` principal.
 
 The module's answer is mapped as Fleet's is, with `module_unavailable` for Core's
 `503`: an upstream `5xx`, a redirect (never followed), a timeout, an oversized body

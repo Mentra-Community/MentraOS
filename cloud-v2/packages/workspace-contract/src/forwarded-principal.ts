@@ -112,7 +112,10 @@ export function verifyForwardedPrincipal(
  * principal. `organizationCapabilities` must be an array of strings; the entries this build does not
  * know are dropped. A `public` principal is its kind and the `public` scope, nothing else: any other scope refuses
  * it, and a person's fields beside it are not read. A `user` principal with the `public` scope is refused, since
- * a person's request is never public.
+ * a person's request is never public. A `credential` principal needs a `label` string, and `createdByEmail` a string
+ * or null (left out, it is null), and covers the organization or a workspace: the `person` and `public` scopes
+ * refuse it. Core's own shape of a key (its `scopes` and
+ * `packageNames`) is not a forwarded principal.
  */
 export function parseForwardedPrincipal(value: unknown): ForwardedPrincipal | null {
   if (!isRecord(value)) return null
@@ -149,6 +152,27 @@ export function parseForwardedPrincipal(value: unknown): ForwardedPrincipal | nu
     }
     case "public":
       return parseForwardedScope(own(value, "scope"))?.kind === "public" ? {kind: "public", scope: {kind: "public"}} : null
+    case "credential": {
+      const credentialId = own(value, "credentialId")
+      const label = own(value, "label")
+      // A Core that predates it leaves the creator out: no creator, not a refusal.
+      const createdByEmail = own(value, "createdByEmail") ?? null
+      const organizationCapabilities = parseOrganizationCapabilities(own(value, "organizationCapabilities"))
+      const scope = parseForwardedScope(own(value, "scope"))
+      // A key covers the organization or one workspace: it has no account of its own, and is never public.
+      if (
+        !scope ||
+        scope.kind === "public" ||
+        scope.kind === "person" ||
+        !isId(credentialId) ||
+        typeof label !== "string" ||
+        !isNullableString(createdByEmail) ||
+        !organizationCapabilities
+      ) {
+        return null
+      }
+      return {kind: "credential", credentialId, label, createdByEmail, organizationCapabilities, scope}
+    }
     default:
       return null
   }

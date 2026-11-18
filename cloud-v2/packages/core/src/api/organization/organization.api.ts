@@ -21,6 +21,9 @@
  * `POST /workspaces/:workspaceId/owners` makes a person an Owner of an existing
  * one. All three need `organization.workspaces.administer`.
  *
+ * Licenses: `POST /workspaces/:workspaceId/license-grants` gives a workspace licenses of a product until a date,
+ * without a sale (`license-grants.api.ts`), with `organization.licenses.grant`.
+ *
  * Conventions match `workspaces.api.ts`: lists are `{items}` (`next` where they
  * page), creating is 201 (a key with `cache-control: no-store` and the token in
  * the body once), and DELETE is 204.
@@ -62,6 +65,7 @@ import {
   requiredStringArray,
   type JsonObject,
 } from "../workspaces/request"
+import {grantLicenses} from "./license-grants.api"
 
 /** The organization routes, for mounting under a route group. */
 export function createOrganizationApi(): Hono<AppEnv> {
@@ -113,6 +117,15 @@ export function createOrganizationApi(): Hono<AppEnv> {
       await recoverOwnership(requestActor(c), c.req.param("workspaceId"), owner.mentraUserId, {email: owner.email}),
     )
   })
+
+  // Give a workspace licenses of a product until a date, without a sale (`license-grants.api.ts`): a person or an
+  // operator key holding `organization.licenses.grant`.
+  app.post(
+    "/workspaces/:workspaceId/license-grants",
+    requirePersonOrOperatorKey(),
+    requireOrganizationCapability("organization.licenses.grant"),
+    grantLicenses,
+  )
 
   // --- Operator keys ---------------------------------------------------------
 

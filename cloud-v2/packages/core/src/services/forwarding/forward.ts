@@ -9,10 +9,10 @@
  * from nothing else. The gates, the scope and the paths are the routes' own (`api/fleet/fleet-forwarding.ts`,
  * `api/portal/portal-modules.api.ts`). Assets (the UI module a service serves) are `assets.ts`.
  *
- * What a service receives. Core copies the method, the query, the body and the `content-type` and `accept`
- * headers (the asset route copies two others). Every other inbound header is dropped, so nothing the caller
- * sent under `x-mentra-*`, `authorization` or `cookie` reaches the service. Core then adds, with `<ts>` the
- * request time in milliseconds:
+ * What a service receives. Core copies the method, the query, the body (or sends the one a route checked and built
+ * in its place, `ForwardRequest.body`) and the `content-type` and `accept` headers (the asset route copies two
+ * others). Every other inbound header is dropped, so nothing the caller sent under `x-mentra-*`, `authorization` or
+ * `cookie` reaches the service. Core then adds, with `<ts>` the request time in milliseconds:
  *
  *  - `x-mentra-service: core`, `x-mentra-service-timestamp: <ts>` and `x-mentra-service-signature`:
  *    `signServiceRequest` from `@mentra/workspace-contract/server` over `<ts>`, the method, the upstream path
@@ -96,7 +96,7 @@ import {bodyLimit} from "hono/body-limit"
 import type {StatusCode} from "hono/utils/http-status"
 import {ulid} from "ulid"
 import type {AppContext, AppEnv} from "../../types/hono.types"
-import type {UserPrincipal} from "../signin/principal.service"
+import type {CredentialPrincipal, UserPrincipal} from "../signin/principal.service"
 import {organizationCapabilities} from "../workspaces/authorization.service"
 import {joinUpstreamUrl, type ForwardingLimits} from "./upstream-url"
 
@@ -128,6 +128,11 @@ export interface ForwardRequest {
   query: string
   /** Who the caller is to the service, as logged: `client`, `admin`, `portal`. */
   audience: string
+  /**
+   * The body to send in place of the caller's, for a route that sends what it checked rather than what it received
+   * (a license grant). Without it, the caller's body is read, held to the limit and sent as it came.
+   */
+  body?: string
   /**
    * The caller as the service is told about it, built from the authenticated caller only. Asked for after
    * the request is known to be forwardable, so a refused request costs no lookup. `log` is the request's logger.
@@ -187,6 +192,22 @@ export function forwardedUser(person: UserPrincipal, scope: UserScope): Forwarde
     emailVerified: person.emailVerified,
     isOrganizationAdmin: person.isOrganizationAdmin,
     organizationCapabilities: [...organizationCapabilities(person)],
+    scope,
+  }
+}
+
+/**
+ * A Core key as a service is told about it: which key, its name, the person who created it, what Core lets it do to
+ * the organization, and what this request covers (the organization or one workspace), as Core's own audit names a
+ * key's acts. Only a route that takes keys forwards one.
+ */
+export function forwardedCredential(key: CredentialPrincipal, scope: Exclude<UserScope, {kind: "person"}>): ForwardedPrincipal {
+  return {
+    kind: "credential",
+    credentialId: key.credentialId,
+    label: key.label,
+    createdByEmail: key.createdByEmail ?? null,
+    organizationCapabilities: [...organizationCapabilities(key)],
     scope,
   }
 }
@@ -421,7 +442,9 @@ export async function forwardJson(c: AppContext, request: ForwardRequest): Promi
   const {limits} = upstream
 
   let body = ""
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+  if (request.body !== undefined) {
+    body = request.body
+  } else if (c.req.method !== "GET" && c.req.method !== "HEAD") {
     const bytes = await c.req.arrayBuffer()
     // The middleware has already refused a larger body; this holds even for a length it could not read.
     if (bytes.byteLength > limits.maxBodyBytes) return c.json({error: "payload_too_large"}, 413)

@@ -3,6 +3,7 @@
 export * from "./client"
 export * from "./deletion-holds"
 export * from "./forwarded-principal"
+export * from "./license-grants"
 export * from "./licenses"
 export * from "./service-signature"
 export * from "./types"

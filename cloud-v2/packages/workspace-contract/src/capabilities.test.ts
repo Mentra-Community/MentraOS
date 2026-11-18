@@ -114,4 +114,10 @@ describe("license capabilities", () => {
       expect({capability, owner: capabilitiesForRole("owner").has(capability)}).toEqual({capability, owner: true})
     }
   })
+
+  test("granting a workspace licenses is an organization capability, apart from reading them, and no workspace role's", () => {
+    expect(ORGANIZATION_CAPABILITIES).toContain("organization.licenses.grant")
+    expect(ORGANIZATION_CAPABILITIES).toContain("organization.licenses.read")
+    expect([...capabilitiesForRole("owner")] as string[]).not.toContain("organization.licenses.grant")
+  })
 })
