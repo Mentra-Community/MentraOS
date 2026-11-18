@@ -4,7 +4,7 @@ import {TextInput, View, ViewStyle, TextStyle, TouchableOpacity} from "react-nat
 import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {translate} from "@/i18n"
+import {translate, type TxKeyPath} from "@/i18n"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -13,6 +13,23 @@ interface SavedUrl {
   label: string
   url: string
 }
+
+const MANIFEST_BASE = "https://artifactscdn.mentraglass.com/Mentra-Community/Mentra/releases/test-manifests"
+
+// Published manifests that put Mentra Live back on a factory set. Built in, so they are not
+// stored in saved_ota_version_urls and cannot be removed like bookmarks.
+export const OTA_MANIFEST_PRESETS: ReadonlyArray<{labelTx: TxKeyPath; detail: string; url: string}> = [
+  {
+    labelTx: "debug:otaPresetBatch3April",
+    detail: "ASG 36 · MTK MentraLive_20260418 · BES 17.26.4.18",
+    url: `${MANIFEST_BASE}/ota-batch3-roundtrip-mac-f9503e2c5f78a6fb96907fdccb0a08a277ef8c4c3b0a3bf834582b639ec7a03d.json`,
+  },
+  {
+    labelTx: "debug:otaPresetDay1January",
+    detail: "ASG 27 · MTK MentraLive_20260113 · BES 17.26.1.13",
+    url: `${MANIFEST_BASE}/ota-day1-roundtrip-mac-6b2ec1146f3e85fc45fa7bf6ff004e63b57eb6941b283edc4e63c2ba0adbbdeb.json`,
+  },
+]
 
 export default function OtaVersionUrl() {
   const {theme, themed} = useAppTheme()
@@ -188,6 +205,22 @@ export default function OtaVersionUrl() {
             preset="alternate"
             flexContainer={false}
           />
+        </View>
+
+        <View style={themed($savedSection)}>
+          <Text style={themed($sectionLabel)}>{translate("debug:otaFactorySets")}</Text>
+          <View style={themed($chipContainer)}>
+            {OTA_MANIFEST_PRESETS.map((preset) => (
+              <TouchableOpacity
+                key={preset.url}
+                style={themed($chip)}
+                onPress={() => setCustomUrlInput(preset.url)}
+                activeOpacity={0.7}>
+                <Text style={themed($chipText)} tx={preset.labelTx} />
+                <Text style={themed($chipHint)}>{preset.detail}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
         {/* Saved URL bookmarks */}
