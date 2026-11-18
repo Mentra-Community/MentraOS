@@ -254,16 +254,27 @@ final class MacHotspotAssociationTests: XCTestCase {
         XCTAssertEqual(wifi.joins, 0)
     }
 
-    func testEmptyScansWaitForExactNetworkWithinTheSameDeadline() throws {
+    func testEmptyScansRescanWhenMacOSAllowsTheNextLiveScan() throws {
         let wifi = Wifi(); wifi.missingScans = 2
         var now: TimeInterval = 0
-        let join = MacHotspotAssociation(deadline: 5, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
+        let join = MacHotspotAssociation(deadline: 60, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
         XCTAssertEqual(try join.associate(ssid: "glasses", password: "private"), "en1")
         XCTAssertEqual(wifi.scans, 3)
         XCTAssertEqual(wifi.joins, 1)
-        XCTAssertEqual(now, 2)
+        XCTAssertEqual(now, 2 * MacHotspotAssociation.scanInterval)
         try join.leave()
         XCTAssertEqual(wifi.leaves, 1)
+    }
+
+    func testJoinWindowOutlastsTwoMissedMacScans() throws {
+        // A live scan takes about 22 s while the Mac is on another network; two missed the AP (2026-11-17).
+        let wifi = Wifi(); wifi.missingScans = 2
+        var now: TimeInterval = 0
+        wifi.onScan = { now += 22 }
+        let join = MacHotspotAssociation(deadline: MacHotspotAssociation.joinWindow, now: { now }, pause: { now += $0 }, makeInterface: { wifi })
+        XCTAssertEqual(try join.associate(ssid: "glasses", password: "private"), "en1")
+        XCTAssertEqual(wifi.scans, 3)
+        XCTAssertGreaterThan(now, 60)
     }
 
     func testAbsentHotspotStopsAtOriginalDeadlineWithoutAssociating() {
@@ -274,7 +285,7 @@ final class MacHotspotAssociationTests: XCTestCase {
             XCTAssertTrue($0.localizedDescription.contains("hotspot join timed out"))
         }
         XCTAssertEqual(now, 5)
-        XCTAssertEqual(wifi.scans, 2)
+        XCTAssertEqual(wifi.scans, 1)
         XCTAssertEqual(wifi.joins, 0)
     }
 
@@ -292,7 +303,7 @@ final class MacHotspotAssociationTests: XCTestCase {
     func testExactAutomaticAssociationBetweenScansNeedsNoFurtherScanOrJoin() throws {
         let wifi = Wifi(); wifi.missingScans = .max
         var now: TimeInterval = 0
-        let join = MacHotspotAssociation(deadline: 5, now: { now }, pause: { now += $0; wifi.ssid = "glasses" }, makeInterface: { wifi })
+        let join = MacHotspotAssociation(deadline: 60, now: { now }, pause: { now += $0; wifi.ssid = "glasses" }, makeInterface: { wifi })
         XCTAssertEqual(try join.associate(ssid: "glasses", password: "private"), "en1")
         XCTAssertEqual(wifi.scans, 1)
         XCTAssertEqual(wifi.joins, 0)

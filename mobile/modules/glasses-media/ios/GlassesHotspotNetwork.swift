@@ -72,7 +72,8 @@ public final class GlassesHotspotNetwork {
             self.ownershipToken = token
             self.generation += 1
             let gen = self.generation
-            let deadline = ProcessInfo.processInfo.systemUptime + 60
+            let window = ProcessInfo.processInfo.isiOSAppOnMac ? MacHotspotAssociation.joinWindow : 60
+            let deadline = ProcessInfo.processInfo.systemUptime + window
             self.joinDeadline = deadline
             self.promptSince = nil
             self.ssid = ssid
@@ -107,7 +108,7 @@ public final class GlassesHotspotNetwork {
     /// 23 s while it is on another network, so it can find the hotspot near the join deadline.
     private static let macAddressWait: TimeInterval = 30
 
-    /// The join gets 60 s of its own, plus however long the person takes to answer iOS's join
+    /// The join gets 60 s of its own (a Mac's longer scan window on a Mac), plus however long the person takes to answer iOS's join
     /// prompt, or a Mac's address wait once it has associated. The engine keeps the glasses AP up meanwhile.
     private func scheduleJoinDeadline(ssid: String, generation gen: Int) {
         queue.asyncAfter(deadline: .now() + max(1, joinDeadline - ProcessInfo.processInfo.systemUptime)) {

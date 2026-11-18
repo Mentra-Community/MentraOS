@@ -13,6 +13,12 @@ final class MacHotspotAssociation {
     static let autoJoinWait: TimeInterval = 15
     /// Auto-join after a Wi-Fi power cycle: 2 s on lab air-1.
     static let powerCycleWait: TimeInterval = 30
+    /// macOS answers an app without the scan entitlement from its cache until 10 s after its last live
+    /// scan returned (airportd, 2026-11-17), so scanning sooner only reads the scan that just missed.
+    static let scanInterval: TimeInterval = 10
+    /// Time to find and join the hotspot. A live scan takes about 22 s while the Mac is on another network,
+    /// so a minute holds two, and either can miss an AP that just came up (lab Mac, 2026-11-17). This holds four.
+    static let joinWindow: TimeInterval = 120
 
     private let condition = NSCondition()
     private var cancelled = false
@@ -26,7 +32,7 @@ final class MacHotspotAssociation {
     private let makeInterface: () throws -> MacWifiInterface
     private let authorization: MacHotspotAuthorization?
 
-    init(deadline: TimeInterval = ProcessInfo.processInfo.systemUptime + 60,
+    init(deadline: TimeInterval = ProcessInfo.processInfo.systemUptime + MacHotspotAssociation.joinWindow,
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          pause: ((TimeInterval) -> Void)? = nil,
          makeInterface: (() throws -> MacWifiInterface)? = nil,
@@ -174,9 +180,9 @@ final class MacHotspotAssociation {
             try checkDiscoveryCurrent()
             if try readSSID(interface) == ssid { return nil }
             if let network { return network }
-            // Successful empty scans remain pending within this same join window.
-            // Native scan errors escape immediately.
-            wait(min(1, max(0, deadline - now())))
+            // Successful empty scans remain pending within this same join window, rescanning when
+            // macOS allows the next live scan. Native scan errors escape immediately.
+            wait(min(Self.scanInterval, max(0, deadline - now())))
         }
     }
 
