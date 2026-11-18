@@ -276,8 +276,24 @@ if [ "$flag" = "-t" ]; then
     exit 1
   fi
 elif [ "$flag" = "-s" ]; then
-  if ! "$real" devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}' | grep -Fxq "$selector"; then
-    exit 1
+  listed() { "$real" devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}' | grep -Fxq "$selector"; }
+  if ! listed; then
+    # A Wi-Fi ADB serial (host:port) does not come back by itself after the
+    # glasses reboot: adb keeps it offline or drops it. Reconnect it, bounded,
+    # so reboot waits follow the glasses over Wi-Fi as they do over USB.
+    case "$selector" in
+      *:*)
+        "$real" disconnect "$selector" </dev/null >/dev/null 2>&1 &
+        pid=$!; start=$SECONDS
+        while kill -0 "$pid" 2>/dev/null && [ $((SECONDS - start)) -lt 5 ]; do /bin/sleep 0.05; done
+        kill -9 "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+        "$real" connect "$selector" </dev/null >/dev/null 2>&1 &
+        pid=$!; start=$SECONDS
+        while kill -0 "$pid" 2>/dev/null && [ $((SECONDS - start)) -lt 5 ]; do /bin/sleep 0.05; done
+        kill -9 "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+        ;;
+    esac
+    listed || exit 1
   fi
 fi
 # adb has no client deadline. A transport that dies under a running command
