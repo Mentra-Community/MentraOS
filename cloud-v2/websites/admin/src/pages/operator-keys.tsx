@@ -32,7 +32,8 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
     "List and revoke operator keys, change or remove the websites that sign in with Mentra, and read the audit log.",
   "organization.incidents.read": "Read bug reports, feedback and automatic reports, with their logs.",
   "organization.supportProfiles.read": "Look up a person's support profile, devices and recent reports.",
-  "organization.fleet.administer": "Fleet Management across the organization. Fleet does not accept keys yet, so this has no effect for now.",
+  "organization.fleet.administer":
+    "Read Fleet Management's organization views: the overview, devices and usage across every workspace. Not a workspace's Fleet pages.",
   "organization.licenses.read": "Read every license and the workspace that holds it.",
   "organization.registry.administer": "Search, export, register, archive and unarchive registry entries.",
   "organization.licenses.grant":

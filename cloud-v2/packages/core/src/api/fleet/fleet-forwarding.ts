@@ -5,7 +5,7 @@
  * caller, decides what the caller may do, then forwards the request to Fleet and relays the answer.
  *
  *   /api/client/fleet/<rest>  ->  ${CLOUD_CORE_FLEET_URL}/v1/client/<rest>   (a signed-in phone)
- *   /api/admin/fleet/<rest>   ->  ${CLOUD_CORE_FLEET_URL}/v1/admin/<rest>    (an Organization Admin)
+ *   /api/admin/fleet/<rest>   ->  ${CLOUD_CORE_FLEET_URL}/v1/admin/<rest>    (an Organization Admin, or an operator key)
  *   /api/portal/fleet/workspaces/:workspaceId/<rest>
  *                             ->  ${CLOUD_CORE_FLEET_URL}/v1/portal/workspaces/:workspaceId/<rest>
  *                                                                        (a workspace Admin or Owner, or an Organization Admin)
@@ -19,12 +19,13 @@
  * use as well; read its headers for those rules. Core's own error codes for Fleet are `fleet_unavailable` and
  * `fleet_not_installed`.
  *
- * Who may call. Only people reach Fleet.
+ * Who may call. People, and on the admin surface operator keys.
  *  - `/api/client/fleet`: a phone, by its access token (`userAuth`). Anything else, an admin portal
  *    session cookie included, is 401 and nothing is forwarded.
- *  - `/api/admin/fleet`: a signed-in person (`requireUserPrincipal("admin")`: a workspace key or an
- *    operator key is 403) who holds `organization.fleet.administer` (an Organization Admin; 403
- *    otherwise). The gates are this router's own, so every path under it has them, `ui/*` included. *
+ *  - `/api/admin/fleet`: a signed-in person or an operator key (`requirePersonOrOperatorKey("admin")`: a
+ *    workspace key is 403) who holds `organization.fleet.administer` (an Organization Admin, or a key created
+ *    with that scope; 403 otherwise). The gates are this router's own, so every path under it has them, `ui/*`
+ *    included.
  *  - `/api/portal/fleet`: a person signed in to the workspace portal by its session cookie (a bearer, a workspace
  *    key or an operator key is 403; the admin portal's cookie is not read here). A workspace path then needs a
  *    capability in that workspace, decided by Core's `authorize`: `fleet.read` for GET and HEAD, `miniapps.assign`
@@ -35,12 +36,14 @@
  *    otherwise), and is signed with the organization scope, as `/api/admin/fleet` is. The portal's Fleet screens
  *    are the portal's own code: nothing under `/api/portal/fleet` serves a UI.
  *
- * The scope is Core's decision. A person's Fleet request covers the organization (`scope:
+ * The scope is Core's decision. An admin Fleet request covers the organization (`scope:
  * {kind: "organization"}`) and nothing the request carries, in its query, body or headers, can say
  * otherwise: the principal is built from the authenticated caller and from nothing else. A phone's principal
  * is `{kind: "phone", mentraUserId, tenantId, sessionId, email}`, where `email` is the account's verified
  * email or null (a display attribute, never an identity key); a person's is `forwardedUser(person,
- * organization scope)`. `/v1/client` only ever receives phone principals and `/v1/admin` only user ones.
+ * organization scope)`, and an operator key's `forwardedCredential(key, organization scope)`: the key's ID,
+ * name and creator, never a person. `/v1/client` only ever receives phone principals, `/v1/admin` user and
+ * credential ones, and `/v1/portal` user ones.
  *
  * Configuration comes from `fleetConfig()` and `fleetLimits()` (`services/fleet/fleet-config.ts`),
  * read on every request. Outcomes, in this order:
@@ -75,6 +78,7 @@ import {fleetConfig, fleetLimits, type FleetConfig, type FleetLimits} from "../.
 import {phoneEmail} from "../../services/fleet/phone-email"
 import {assetResponseHeaders, methodNotAllowed, relayAsset, UI_ASSET_SEGMENT} from "../../services/forwarding/assets"
 import {
+  forwardedCredential,
   forwardJson,
   forwardedUser,
   jsonAnswerHeaders,
@@ -82,11 +86,11 @@ import {
   type Upstream,
 } from "../../services/forwarding/forward"
 import {isSafeSuffix, joinUpstreamUrl, rawPathAndQuery} from "../../services/forwarding/upstream-url"
-import type {UserPrincipal} from "../../services/signin/principal.service"
+import type {CredentialPrincipal, UserPrincipal} from "../../services/signin/principal.service"
 import type {AppContext, AppEnv, AppVariables} from "../../types/hono.types"
 import {InvalidGrant, InvalidRequest} from "../../types/oauth.types"
 import {authorize, organizationCapabilities} from "../../services/workspaces/authorization.service"
-import {denied, requireOrganizationCapability, requireUserPrincipal} from "../middleware/principal.middleware"
+import {denied, requireOrganizationCapability, requirePersonOrOperatorKey} from "../middleware/principal.middleware"
 import {userAuth} from "../middleware/user-auth.middleware"
 
 type Audience = "client" | "admin" | "portal"
@@ -101,7 +105,7 @@ const MOUNT_PREFIX: Record<Audience, string> = {
 /** The `error` of Core's 503 when Fleet is installed but cannot answer. */
 const FLEET_UNAVAILABLE = "fleet_unavailable"
 
-/** What a person's Fleet request covers: the organization. Core decides; nothing in a request can change it. */
+/** What an admin Fleet request covers: the organization. Core decides; nothing in a request can change it. */
 const ORGANIZATION_SCOPE = {kind: "organization"} as const
 
 /** The path Fleet is sent for an audience and the caller's own path suffix: `/v1/<audience>` then the suffix. */
@@ -121,10 +125,12 @@ export function upstreamTarget(baseUrl: URL, audience: Audience, suffix: string,
 type Caller =
   | {audience: "client"; phone: NonNullable<AppVariables["user"]>}
   | {audience: "admin" | "portal"; person: UserPrincipal}
+  | {audience: "admin"; key: CredentialPrincipal}
 
 /**
  * The caller, or the refusal to send. Fail closed: the gates in front of a route set the caller, and a
- * route mounted without them must not forward an anonymous request, nor a credential as a person.
+ * route mounted without them must not forward an anonymous request, nor a credential as a person. Only the
+ * admin surface takes a key, and only an operator key: a workspace's key is refused there too.
  */
 function callerOf(c: AppContext, audience: Audience): Caller | Response {
   if (audience === "client") {
@@ -133,7 +139,9 @@ function callerOf(c: AppContext, audience: Audience): Caller | Response {
   }
   const principal = c.get("principal")
   if (!principal) return c.json({error: "unauthorized"}, 401)
-  return principal.kind === "user" ? {audience, person: principal} : c.json({error: "forbidden"}, 403)
+  if (principal.kind === "user") return {audience, person: principal}
+  if (audience === "admin" && principal.credentialKind === "organization") return {audience, key: principal}
+  return c.json({error: "forbidden"}, 403)
 }
 
 /**
@@ -148,7 +156,7 @@ async function principalOf(caller: Caller, log: Logger): Promise<ForwardedPrinci
   // The workspace portal's scope is the authorized workspace in the path (`forwardPortal`); it must never fall
   // back to the organization's.
   if (caller.audience === "portal") throw new Error("a portal request's scope comes from its workspace path")
-  return forwardedUser(caller.person, ORGANIZATION_SCOPE)
+  return "key" in caller ? forwardedCredential(caller.key, ORGANIZATION_SCOPE) : forwardedUser(caller.person, ORGANIZATION_SCOPE)
 }
 
 /** A Fleet that is installed and usable. */
@@ -273,14 +281,15 @@ clientFleetApi.use("*", jsonAnswerHeaders, phoneAuth)
 clientFleetApi.all("/*", limitFleetBody, forward("client"))
 
 /**
- * The admin forwarder, mounted at `/fleet` inside the admin API. Its own gates are a signed-in person
- * (a key gets 403) who holds `organization.fleet.administer`. A request with no principal is refused (401).
+ * The admin forwarder, mounted at `/fleet` inside the admin API. Its own gates are a signed-in person or an
+ * operator key (a workspace key gets 403) that holds `organization.fleet.administer`. A request with no
+ * principal is refused (401).
  */
 export const adminFleetApi = new Hono<AppEnv>()
 adminFleetApi.use(
   "*",
   jsonAnswerHeaders,
-  requireUserPrincipal("admin"),
+  requirePersonOrOperatorKey("admin"),
   requireOrganizationCapability("organization.fleet.administer"),
 )
 // The UI assets, ahead of the JSON forwarder and behind the gates above: GET and HEAD relay the asset, any
@@ -381,7 +390,7 @@ function forwardOrganization(): Handler<AppEnv> {
 }
 
 /** The workspace portal's caller: a person on the portal's own session. A bearer (a Core access token) is not a portal. */
-function portalCaller(c: AppContext): Extract<Caller, {audience: "admin" | "portal"}> | Response {
+function portalCaller(c: AppContext): Extract<Caller, {person: UserPrincipal}> | Response {
   const caller = callerOf(c, "portal")
   if (caller instanceof Response) return caller
   if (caller.audience !== "portal") return c.json({error: "forbidden"}, 403)

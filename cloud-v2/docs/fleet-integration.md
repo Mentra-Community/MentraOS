@@ -107,7 +107,7 @@ setting above allows it. Core has no capabilities endpoint:
 | Core path                  | Forwarded to                               | Caller                                           |
 | -------------------------- | ------------------------------------------ | ------------------------------------------------ |
 | `/api/client/fleet/<rest>` | `${CLOUD_CORE_FLEET_URL}/v1/client/<rest>` | A signed-in phone                                |
-| `/api/admin/fleet/<rest>`  | `${CLOUD_CORE_FLEET_URL}/v1/admin/<rest>`  | An Organization Admin (`organization.fleet.administer`) |
+| `/api/admin/fleet/<rest>`  | `${CLOUD_CORE_FLEET_URL}/v1/admin/<rest>`  | An Organization Admin, or an operator key created with `organization.fleet.administer` |
 | `/api/portal/fleet/workspaces/<workspaceId>/<rest>` | `${CLOUD_CORE_FLEET_URL}/v1/portal/workspaces/<workspaceId>/<rest>` | A person on the workspace portal's session cookie (never a bearer) who `authorize` allows `fleet.read` (GET, HEAD) or `miniapps.assign` (every other method) in that workspace; an Organization Admin counts as Owner |
 | `/api/portal/fleet/organization/<rest>` | `${CLOUD_CORE_FLEET_URL}/v1/admin/<rest>` | The workspace portal's organization view: a person on the portal's session cookie (never a bearer) who holds `organization.fleet.administer` (`403` otherwise); `GET` and `HEAD` only (any other is `405`). Signed as `/api/admin/fleet` is, with `scope: {kind: "organization"}`; nothing under `ui` (`404`) |
 
@@ -121,16 +121,18 @@ prefix; Core joins it to `/v1/...` the same way with or without a trailing slash
 give `/v1/...`, `/fleet/v1/...` and `/fleet/v1/...`). The path and query Core signs
 are exactly the ones it sends.
 
-Only people reach Fleet. Core decides who may call, in this order:
+People reach Fleet, and on the admin surface operator keys too. Core decides who
+may call, in this order:
 
 1. **Authenticate.** A phone presents its access token. An admin portal session
    cookie, a token issued for a portal, a workspace key or an operator key is not
    one: `401`. The admin surface takes a signed-in person (a portal session or a
-   Core access token): none is `401`, a workspace key or an operator key is
-   `403 {"error":"forbidden"}`, and a person without
-   `organization.fleet.administer` (anyone who is not an Organization Admin) is
-   `403`. A cookie-authenticated write must come from the admin portal's origin,
-   like every other admin write.
+   Core access token) or an operator key (`mak_`): none is `401`, a workspace key
+   is `403 {"error":"forbidden"}`, and a person or key without
+   `organization.fleet.administer` (a person who is not an Organization Admin, a
+   key not created with that scope) is `403`. A cookie-authenticated write must
+   come from the admin portal's origin, like every other admin write. The
+   workspace portal's Fleet routes take people only: a key gets `403` there.
 2. **Installed?** `404 {"error":"fleet_not_installed"}` if not, `503
    {"error":"fleet_unavailable"}` if the URL or secret is unusable. An
    unauthenticated request never learns whether Fleet is installed.
@@ -288,6 +290,12 @@ if (!principal) return new Response(JSON.stringify({error: "forbidden"}), {statu
  "isOrganizationAdmin": true,
  "organizationCapabilities": ["organization.fleet.administer", "..."],
  "scope": {"kind": "organization"}}
+
+// /v1/admin: an operator key, which names no person
+{"kind": "credential", "credentialId": "...", "label": "...",
+ "createdByEmail": "..." /* the person who created the key, or null */,
+ "organizationCapabilities": ["organization.fleet.administer", "..."],
+ "scope": {"kind": "organization"}}
 ```
 
 - A phone's `email` is the account's **verified** email, or null when the
@@ -303,9 +311,13 @@ if (!principal) return new Response(JSON.stringify({error: "forbidden"}), {statu
   Fleet may rely on it. Its `email` may be unverified (`emailVerified` says
   whether the identity provider verified it); even a verified email is not an
   authorization.
-- `organizationCapabilities` is what Core decided this person may do to the
-  organization, and `scope` is what this request covers. Core sends
-  `{"kind": "organization"}` on the admin surface and the person must hold
+- An operator key's principal names the key (`credentialId`, its name `label`)
+  and the person who created it (`createdByEmail`, who answers for it, not who
+  is calling), never a person as the caller: it has no `mentraUserId`. Fleet
+  labels a key's acts `credential:<credentialId>`, as Core's audit does.
+- `organizationCapabilities` is what Core decided this person or key may do to
+  the organization, and `scope` is what this request covers. Core sends
+  `{"kind": "organization"}` on the admin surface and the caller must hold
   `organization.fleet.administer` for the request to be forwarded at all. The
   contract also defines `{"kind": "workspace", "workspaceId": "..."}` and
   `{"kind": "person"}` (the scopes of [portal modules](portal-modules.md)), which
@@ -336,7 +348,7 @@ this route relays therefore **runs in the admin portal**, which is why its rules
 are stricter than the JSON routes' and differ from them.
 
 The route is behind the same gates as the rest of `/api/admin/fleet` (a signed-in
-Organization Admin; `401` or `403` otherwise), then answers `404
+Organization Admin or an operator key with the scope; `401` or `403` otherwise), then answers `404
 fleet_not_installed`, `503 fleet_unavailable` or `400 invalid_path` as the JSON
 routes do. The request Fleet receives is signed and carries the principal like
 any other.
@@ -803,7 +815,7 @@ sending", the other "try again".
   say what still works.
 - `401 {"error":"unauthorized"}`: the caller is not signed in. A phone treats it
   as an expired session and refreshes.
-- `403 {"error":"forbidden"}`: the admin caller is a key, or lacks
+- `403 {"error":"forbidden"}`: the admin caller is a workspace key, or lacks
   `organization.fleet.administer`.
 
 A `401` from Fleet reaches the caller as a `403` with Fleet's body. Phones and

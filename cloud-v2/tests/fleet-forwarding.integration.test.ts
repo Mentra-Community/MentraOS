@@ -11,8 +11,10 @@
  *
  * What it pins: a phone session reaches `/v1/client` as a phone with the account's verified email (null
  * when unverified) and its body bytes and request id round-trip; an Organization Admin session reaches
- * `/v1/admin` with the organization scope whatever the request asks for; workspace keys, operator keys
- * and people without the Fleet capability never reach Fleet; a phone token is no admin credential and an
+ * `/v1/admin` with the organization scope whatever the request asks for; so does an operator key created
+ * with `organization.fleet.administer`, as the key itself (its ID, name and creator), never as a person, and
+ * only on the admin routes; workspace keys, operator keys without that scope and people without the Fleet
+ * capability never reach Fleet; a phone token is no admin credential and an
  * admin cookie is no phone token; Fleet's UI module (`/api/admin/fleet/ui/*`) is relayed whole through the
  * same session, behind the same gates, and keeps the session cookie Core rotated; and Core signs the exact
  * bytes it sends, which the fake Fleet shows by refusing a request changed after Core signed it.
@@ -852,7 +854,7 @@ describe("Fleet's UI module", () => {
     }
   })
 
-  test("it has the Fleet gates: keys, a member, a phone token and nobody never reach Fleet, and only GET and HEAD are allowed", async () => {
+  test("it has the Fleet gates: keys without the scope, a member, a phone token and nobody never reach Fleet, and only GET and HEAD are allowed", async () => {
     const keys = [await workspaceKey(), await operatorKey(["organization.supportProfiles.read", "organization.incidents.read"])]
     const member = await person("ws-owner")
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
@@ -883,10 +885,45 @@ describe("Fleet's UI module", () => {
   })
 })
 
+// --- An operator key ----------------------------------------------------------
+
+describe("an operator key", () => {
+  test("one created with the Fleet scope reaches /v1/admin as the key, with the organization scope", async () => {
+    const token = await operatorKey(["organization.fleet.administer"])
+
+    for (const method of ["GET", "HEAD"]) {
+      const reply = await send(method, "/api/admin/fleet/overview?range=7d", {headers: {authorization: `Bearer ${token}`}})
+      expect([method, reply.status]).toEqual([method, 200])
+    }
+    const reply = await send("GET", "/api/admin/fleet/devices?scope=workspace", {headers: {authorization: `Bearer ${token}`}})
+    const echo = reply.json as Echo
+    expect(echo.pathWithQuery).toBe("/v1/admin/devices?scope=workspace")
+    expect(echo.principal).toEqual({
+      kind: "credential",
+      credentialId: expect.any(String),
+      label: "ops",
+      createdByEmail: ADMIN_EMAIL,
+      organizationCapabilities: ["organization.fleet.administer"],
+      scope: {kind: "organization"},
+    })
+    expect(received.map(call => call.method)).toEqual(["GET", "HEAD", "GET"])
+  })
+
+  test("it stops at the admin routes: the workspace portal's Fleet routes still refuse it", async () => {
+    const token = await operatorKey(["organization.fleet.administer", "organization.workspaces.administer"])
+
+    for (const path of ["/api/portal/fleet/organization/overview", "/api/portal/fleet/workspaces/ws_any/people"]) {
+      const reply = await send("GET", path, {headers: {authorization: `Bearer ${token}`}})
+      expect([path, reply.status]).toEqual([path, 403])
+    }
+    expect(received).toHaveLength(0)
+  })
+})
+
 // --- Everyone else ---------------------------------------------------------
 
 describe("everyone else", () => {
-  test("a workspace key and an operator key get 403 and never reach Fleet", async () => {
+  test("a workspace key and an operator key without the Fleet scope get 403 and never reach Fleet", async () => {
     const keys = [await workspaceKey(), await operatorKey(["organization.supportProfiles.read", "organization.incidents.read"])]
     const fetched = spyOn(globalThis, "fetch")
 

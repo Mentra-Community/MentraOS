@@ -342,9 +342,10 @@ websites that sign in with Mentra and the admin audit log (`organization.credent
 registering a website and replacing its secret are a person's). Each is open to an operator key
 created with the scope. `/api/admin/me` answers any caller with its capabilities and whether
 Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwards
-to the optional Fleet service for a person holding `organization.fleet.administer`
-(an Organization Admin); keys get 403, since Fleet's admin API takes people only
-([Fleet integration](fleet-integration.md)).
+to the optional Fleet service for a person or an operator key holding
+`organization.fleet.administer` (an Organization Admin, or a key created with the
+scope), forwarded to Fleet as the key itself; the workspace portal's Fleet routes
+take people only ([Fleet integration](fleet-integration.md)).
 The Store calls Core through a signed service API ([Store integration](store-integration.md)),
 and its billing module writes licenses through it ([Licenses](licenses.md)).
 `/api/portal/billing/*` forwards the workspace portal's billing requests

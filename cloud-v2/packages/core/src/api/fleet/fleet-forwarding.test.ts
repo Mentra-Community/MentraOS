@@ -2142,16 +2142,17 @@ describe("Fleet UI assets", () => {
     expect(calls).toHaveLength(0)
   })
 
-  test("the admin gates apply to ui/*: a person without the capability, a key, a phone token and nobody are refused before Fleet", async () => {
+  test("the admin gates apply to ui/*: a person or key without the capability, a workspace key, a phone token and nobody are refused before Fleet", async () => {
     configure()
     const member = as("member", person(false))
     const workspaceKey = as("workspace-key", key("workspace", ["miniapps.publish"]))
-    const operatorKey = as("operator-key", key("organization", [...OPERATOR_KEY_SCOPES]))
-    const claimingKey = as("claiming-key", key("organization", ["organization.fleet.administer"]))
+    const unscopedKey = as("unscoped-key", key("organization", OPERATOR_KEY_SCOPES.filter(scope => scope !== "organization.fleet.administer")))
+    // A workspace's key that claims the Fleet scope holds no organization capability at all.
+    const claimingKey = as("claiming-key", key("workspace", ["organization.fleet.administer"]))
     const fetched = spyOn(globalThis, "fetch")
 
     for (const method of ["GET", "HEAD", "POST", "DELETE"]) {
-      for (const name of [member, workspaceKey, operatorKey, claimingKey]) {
+      for (const name of [member, workspaceKey, unscopedKey, claimingKey]) {
         const response = await admin(name, ENTRY, {method})
         expect([method, name, response.status]).toEqual([method, name, 403])
       }
@@ -2787,15 +2788,43 @@ describe("the admin surface", () => {
     }
   })
 
-  test("a workspace key and an operator key are refused with 403 and never reach Fleet", async () => {
+  test("an operator key with the Fleet scope is forwarded as the key, with the organization scope, never as a person", async () => {
+    configure()
+    const operatorKey = as("operator-key", {
+      ...key("organization", ["organization.incidents.read", "organization.fleet.administer"]),
+      createdByEmail: "admin@example.test",
+    } as CorePrincipal)
+
+    const response = await admin(operatorKey, "/overview?range=week", {headers: {"x-mentra-scope": "workspace"}})
+
+    expect(response.status).toBe(200)
+    expect(calls).toHaveLength(1)
+    const [call] = calls
+    expect(call.pathWithQuery).toBe("/v1/admin/overview?range=week")
+    expect(decodePrincipal(call.headers.get(FLEET_HEADERS.principal))).toEqual({
+      kind: "credential",
+      credentialId: "01HZKEY",
+      label: "ci key",
+      createdByEmail: "admin@example.test",
+      organizationCapabilities: ["organization.incidents.read", "organization.fleet.administer"],
+      scope: {kind: "organization"},
+    })
+    expect(verifies(call)).toMatchObject({kind: "credential", credentialId: "01HZKEY", scope: {kind: "organization"}})
+    expect(serviceSignatureVerifies(call)).toBe(true)
+    expect(principalSignatureVerifies(call)).toBe(true)
+    expect(call.headers.get("x-mentra-scope")).toBeNull()
+    expect(emailLookup).not.toHaveBeenCalled()
+  })
+
+  test("a workspace key, and an operator key without the Fleet scope, are refused with 403 and never reach Fleet", async () => {
     configure()
     const workspaceKey = as("workspace-key", key("workspace", ["miniapps.publish"]))
-    const operatorKey = as("operator-key", key("organization", [...OPERATOR_KEY_SCOPES]))
-    // Even a key that claims the Fleet scope: the capability is not one a key can hold.
-    const claimingKey = as("claiming-key", key("organization", ["organization.fleet.administer"]))
+    const unscopedKey = as("unscoped-key", key("organization", OPERATOR_KEY_SCOPES.filter(scope => scope !== "organization.fleet.administer")))
+    // A workspace's key that claims the Fleet scope: a workspace key holds no organization capability.
+    const claimingKey = as("claiming-key", key("workspace", ["organization.fleet.administer"]))
     const fetched = spyOn(globalThis, "fetch")
 
-    for (const name of [workspaceKey, operatorKey, claimingKey]) {
+    for (const name of [workspaceKey, unscopedKey, claimingKey]) {
       for (const method of ["GET", "POST", "PUT", "DELETE"]) {
         const response = await admin(name, "/overview", {method, body: method === "GET" ? undefined : "{}"})
         expect([name, method, response.status]).toEqual([name, method, 403])

@@ -27,9 +27,9 @@
  *    oversees keys sees what people and keys did with their admin standing, so it goes with managing them;
  *  - `/workspace-license-resets`: an Organization Admin who is a person (the billing module is told a person
  *    asked);
- *  - `/fleet`: forwarded to the optional Fleet service, for a person holding
- *    `organization.fleet.administer` (an Organization Admin). Fleet's admin API takes people only, so a key
- *    gets 403 there. The forwarder carries its own gates.
+ *  - `/fleet`: forwarded to the optional Fleet service, for a person or an operator key holding
+ *    `organization.fleet.administer` (an Organization Admin, or a key created with the scope); Fleet is told
+ *    which key it is. The forwarder carries its own gates.
  *
  * An Organization Admin holds every organization capability; an operator key
  * holds the scopes it was created with (any of them, but it never creates a
