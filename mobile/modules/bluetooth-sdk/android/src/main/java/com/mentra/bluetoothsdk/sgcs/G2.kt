@@ -3167,7 +3167,7 @@ class G2 : SGCManager() {
         currentBitmapBase64 = ""
         mainHandler.postDelayed({
             // activate the dashboard by setting depth to the current setting:
-            val currentDepth = DeviceStore.get("bluetooth", "dashboard_depth") as? Int ?: 0
+            val currentDepth = (DeviceStore.get("bluetooth", "dashboard_depth") as? Number)?.toInt() ?: 2
             setDashboardDepthOnly(currentDepth)
         }, 500)
     }
@@ -3186,8 +3186,9 @@ class G2 : SGCManager() {
     }
 
     override fun setDashboardDepthOnly(depth: Int) {
-        val clamped = depth.coerceIn(0, 2)
-        Bridge.log("G2: setDashboardDepthOnly($clamped)")
+        // Depth etting is 1..3. firmware coordinated levels are 0..2
+        val clamped = (depth - 1).coerceIn(0, 2)
+        Bridge.log("G2: setDashboardDepthOnly($depth -> level $clamped)")
         val msg = G2SettingProto.setScreenDepth(sendManager.nextMagicRandom(), clamped)
         sendG2SettingCommand(msg)
     }
