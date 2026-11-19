@@ -1,4 +1,4 @@
-import { ArrowUpRight, LogOut, Menu, MoreHorizontal, X } from "lucide-react";
+import { ArrowUpRight, LogOut, ShieldCheck, Menu, MoreHorizontal, X } from "lucide-react";
 import { useCallback, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Avatar } from "../components/common";
 import { cn } from "../lib/utils";
@@ -26,6 +26,8 @@ export type ExternalNavItem = {
 export type NavGroup = {
   key: string;
   label?: string;
+  /** A small tag after the label saying who the group is for, such as "Admin" for a part only admins see. */
+  badge?: string;
   items: readonly NavItem[];
 };
 
@@ -164,7 +166,15 @@ export function AppShell({
           {groups.map(group => (
             <div key={group.key}>
               {group.label ? (
-                <div className="text-muted-foreground px-4 pb-2 text-xs font-semibold">{group.label}</div>
+                <div className="text-muted-foreground flex items-center gap-2 px-4 pb-2 text-xs font-semibold">
+                  {group.label}
+                  {group.badge ? (
+                    <span className="bg-surface inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] leading-4">
+                      <ShieldCheck className="size-3" aria-hidden="true" />
+                      {group.badge}
+                    </span>
+                  ) : null}
+                </div>
               ) : null}
               <ul className="space-y-0.5">
                 {group.items.map(item => (

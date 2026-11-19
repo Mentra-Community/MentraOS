@@ -104,6 +104,14 @@ describe("the shell's navigation", () => {
     expect(hrefs(markup)).toEqual([]);
   });
 
+  test("a group's badge follows its label, and a group without one has none", () => {
+    const nav: NavGroup[] = [
+      { key: "everyone", label: "All users", badge: "Admin", items: [{ key: "people", label: "People", icon: Users, href: "/people" }] },
+    ];
+    expect(shell({ nav })).toMatch(/>All users<span[^>]*><svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>Admin<\/span><\/div>/);
+    expect(shell()).not.toContain("Admin");
+  });
+
   test("a group with no items renders nothing, its label included", () => {
     expect(shell()).not.toContain(">Fleet<");
   });
