@@ -219,10 +219,13 @@ pin_adb_transport() {
     cat << 'WRAPPER'
 state="$(dirname "$0")/selector"
 selector="$(cat "$state")"
-if [ "$flag" = "-t" ] && [ -n "$want_cid" ]; then
-  ready="$("$real" devices -l 2>/dev/null | awk 'NR>1 && $2=="device" {for (i=1;i<=NF;i++) if ($i ~ /^transport_id:/) {split($i,p,":"); print p[2]}}')"
-  if ! printf '%s\n' "$ready" | grep -Fxq "$selector"; then
-    for candidate in $ready; do
+# Once the unit was found on another connection, it is followed there by transport.
+[ -s "$state.flag" ] && flag="$(cat "$state.flag")"
+ready_transports() { "$real" devices -l 2>/dev/null | awk 'NR>1 && $2=="device" {for (i=1;i<=NF;i++) if ($i ~ /^transport_id:/) {split($i,p,":"); print p[2]}}'; }
+# The ready transport whose eMMC CID is want_cid, if any.
+find_by_cid() {
+    local candidate probe pid start got
+    for candidate in $(ready_transports); do
       # A transport still listed as ready can be the one that just died. Do not
       # let that CID read block the lookup of the unit that came back.
       probe="$(mktemp)"
@@ -241,11 +244,17 @@ if [ "$flag" = "-t" ] && [ -n "$want_cid" ]; then
       got="$(tr -d '\r\n' <"$probe" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
       rm -f "$probe"
       if [ "$got" = "$want_cid" ]; then
-        selector="$candidate"
-        printf '%s\n' "$selector" > "$state"
-        break
+        printf '%s\n' "$candidate"
+        return 0
       fi
     done
+    return 1
+}
+if [ "$flag" = "-t" ] && [ -n "$want_cid" ]; then
+  ready="$(ready_transports)"
+  if ! printf '%s\n' "$ready" | grep -Fxq "$selector" && found="$(find_by_cid)"; then
+    selector="$found"
+    printf '%s\n' "$selector" > "$state"
   fi
 fi
 args=()
@@ -293,7 +302,15 @@ elif [ "$flag" = "-s" ]; then
         kill -9 "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
         ;;
     esac
-    listed || exit 1
+    if ! listed; then
+      # Glasses that start on April's MTK have no USB adb until a replug, so a run can begin over Wi-Fi. After the
+      # MTK update reboots them, USB works and Wi-Fi adb is off: follow the same unit to whichever connection has it.
+      [ -n "$want_cid" ] && found="$(find_by_cid)" || exit 1
+      flag="-t"
+      selector="$found"
+      printf '%s\n' "$flag" > "$state.flag"
+      printf '%s\n' "$selector" > "$state"
+    fi
   fi
 fi
 # adb has no client deadline. A transport that dies under a running command
