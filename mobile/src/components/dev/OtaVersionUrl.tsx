@@ -14,7 +14,7 @@ interface SavedUrl {
   url: string
 }
 
-const MANIFEST_BASE = "https://artifactscdn.mentraglass.com/Mentra-Community/Mentra/releases/test-manifests"
+const MANIFEST_BASE = "https://artifactscdn.mentraglass.com/test-manifests"
 
 // Published manifests that put Mentra Live back on a factory set. Built in, so they are not
 // stored in saved_ota_version_urls and cannot be removed like bookmarks.
@@ -22,12 +22,12 @@ export const OTA_MANIFEST_PRESETS: ReadonlyArray<{labelTx: TxKeyPath; detail: st
   {
     labelTx: "debug:otaPresetBatch3April",
     detail: "ASG 36 · MTK MentraLive_20260418 · BES 17.26.4.18",
-    url: `${MANIFEST_BASE}/ota-batch3-roundtrip-mac-f9503e2c5f78a6fb96907fdccb0a08a277ef8c4c3b0a3bf834582b639ec7a03d.json`,
+    url: `${MANIFEST_BASE}/april-f9503e2c.json`,
   },
   {
     labelTx: "debug:otaPresetDay1January",
     detail: "ASG 27 · MTK MentraLive_20260113 · BES 17.26.1.13",
-    url: `${MANIFEST_BASE}/ota-day1-roundtrip-mac-6b2ec1146f3e85fc45fa7bf6ff004e63b57eb6941b283edc4e63c2ba0adbbdeb.json`,
+    url: `${MANIFEST_BASE}/january-6b2ec114.json`,
   },
 ]
 
