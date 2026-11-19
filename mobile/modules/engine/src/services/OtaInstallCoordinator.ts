@@ -59,6 +59,7 @@ import {
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
+  VERSION_CHANGE_VERSION_POLL_MS,
   isLegacyShapedOtaSession,
   isLegacyShapedOtaStatus,
   selectOtaProtocolProfile,
@@ -265,6 +266,7 @@ class OtaInstallCoordinator {
   private progressTimeout: ReturnType<typeof setTimeout> | null = null
   private progressTimeoutMs = 0
   private pingInterval: ReturnType<typeof setInterval> | null = null
+  private detourVersionPoll: ReturnType<typeof setInterval> | null = null
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
   private restartRecoveryTimeout: ReturnType<typeof setTimeout> | null = null
@@ -1130,6 +1132,19 @@ class OtaInstallCoordinator {
       }
     }
 
+    // The BES holds the BLE link while recovery swaps the service app, so a pin that starts
+    // after the phone's reconnect gets no connect edge, and one too old to announce a session
+    // change is never asked for its version. Ask while the detour waits on a live link; the
+    // reply converges it like any other version_info.
+    const askVersion = connected && this.isInVersionChangeDetour()
+    if (askVersion && !this.detourVersionPoll) {
+      this.detourVersionPoll = setInterval(() => {
+        void BluetoothSdk.requestVersionInfo().catch(() => {})
+      }, VERSION_CHANGE_VERSION_POLL_MS)
+    } else if (!askVersion) {
+      this.clearDetourVersionPoll()
+    }
+
     // Any glasses activity proves the logical ota_start was accepted. An idle reply does not:
     // a hotspot start still joining has sent the glasses nothing yet.
     if ((otaStatusChanged || otaProgressChanged) && hasRecoveringOtaReply(otaStatus, otaProgress)) {
@@ -1941,6 +1956,13 @@ class OtaInstallCoordinator {
     }
   }
 
+  private clearDetourVersionPoll(): void {
+    if (this.detourVersionPoll) {
+      clearInterval(this.detourVersionPoll)
+      this.detourVersionPoll = null
+    }
+  }
+
   private clearQueryReplyTimeout(): void {
     if (this.queryReplyTimeout) {
       clearTimeout(this.queryReplyTimeout)
@@ -1998,6 +2020,7 @@ class OtaInstallCoordinator {
     this.clearPerStepTimers()
     this.clearGlobalTimeout()
     this.clearPingInterval()
+    this.clearDetourVersionPoll()
     this.clearLegacyApkSettleTimer()
     this.clearMtkSimulationTimers()
     this.clearRestartRecoveryTimeout()

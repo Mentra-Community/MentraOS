@@ -33,6 +33,7 @@ import {
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
+  VERSION_CHANGE_VERSION_POLL_MS,
 } from "../../modules/engine/src/services/otaInstallPolicy"
 import {
   legacyOtaProgressFromOtaStatusEvent,
@@ -2032,6 +2033,34 @@ describe("OtaInstallCoordinator downgrade handed off after the firmware reboot",
     useGlassesStore.getState().setGlassesInfo({buildNumber: String(target)})
     expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(true)
     expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
+  it("asks for the version while the pin starts behind a link that never drops", async () => {
+    await startCombinedDowngrade(["apk", "mtk", "bes"])
+    useGlassesStore
+      .getState()
+      .setOtaStatus(
+        inProgressStatus({totalSteps: 3, currentStep: 3, stepType: "bes", phase: "install", status: "step_complete"}),
+      )
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    await jest.advanceTimersByTimeAsync(VERSION_CHANGE_VERSION_POLL_MS * 2)
+    expect(bluetoothSdkMock.requestVersionInfo).not.toHaveBeenCalled()
+
+    // The phone reconnects while the outgoing build still runs; recovery then installs the
+    // pin behind the BES-held link, so no connect edge or session change follows.
+    setGlassesConnected()
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "305000131"})
+    bluetoothSdkMock.requestVersionInfo.mockImplementationOnce(async () => {
+      useGlassesStore.getState().setGlassesInfo({buildNumber: String(target)})
+      return {} as never
+    })
+    await jest.advanceTimersByTimeAsync(VERSION_CHANGE_VERSION_POLL_MS)
+
+    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(true)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+    await jest.advanceTimersByTimeAsync(VERSION_CHANGE_VERSION_POLL_MS * 2)
+    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalledTimes(1)
   })
 
   it("treats a final MTK step's completion as the handoff point", async () => {

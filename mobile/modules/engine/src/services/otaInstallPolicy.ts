@@ -22,6 +22,8 @@ export const MTK_INSTALL_TIMEOUT_MS = 300_000
 export const GLOBAL_OTA_TIMEOUT_MS = 20 * 60 * 1000
 /** BLE keepalive during OTA */
 export const PING_INTERVAL_MS = 10_000
+/** Version request cadence while a version-change detour waits on a live link */
+export const VERSION_CHANGE_VERSION_POLL_MS = 5_000
 /**
  * If we sent ota_query_status (e.g. on reconnect) and the glasses haven't
  * replied with an ota_status by then, fall back to ota_start. This recovers
