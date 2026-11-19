@@ -166,6 +166,13 @@ const pairing = useMentraLivePairing({onExit, onFinished})
 // MyScanPage receives {state, controller}: state.glasses, controller.select(glasses), scanAgain(), back()
 ```
 
+Each of `state.glasses` has a `label` (its code, for example `E511`) and
+`speaksCode`. Glasses on firmware 3.4.0 and later list only after 3 presses of
+the power button and speak `label`, so `speaksCode` is true. Older firmware lists
+without the button and speaks nothing: show those rows without asking the person
+to match a code. Before any glasses are listed, the firmware is unknown, so keep
+the 3-press instruction while searching.
+
 As with OTA, customize presentation only: the Bluetooth SDK and Engine decide
 when glasses are ready, whether audio needs the person, and what a failure means.
 The customer guide is

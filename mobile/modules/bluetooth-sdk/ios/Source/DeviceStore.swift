@@ -134,7 +134,7 @@ class DeviceStore {
         dashboardHeightDebounceTask?.cancel()
         dashboardHeightDebounceTask = Task { @MainActor in
             try? await Task.yield()
-            let h = store.get("bluetooth", "dashboard_height") as? Int ?? 4
+            let h = intValue(store.get("bluetooth", "dashboard_height")) ?? 4
             DeviceManager.shared.sgc?.setDashboardHeightOnly(h)
         }
     }
@@ -143,7 +143,7 @@ class DeviceStore {
         dashboardDepthDebounceTask?.cancel()
         dashboardDepthDebounceTask = Task { @MainActor in
             try? await Task.yield()
-            let d = store.get("bluetooth", "dashboard_depth") as? Int ?? 2
+            let d = intValue(store.get("bluetooth", "dashboard_depth")) ?? 2
             DeviceManager.shared.sgc?.setDashboardDepthOnly(d)
         }
     }
@@ -230,7 +230,7 @@ class DeviceStore {
             }
 
         case ("bluetooth", "brightness"):
-            let b = value as? Int ?? 50
+            let b = intValue(value) ?? 50
             let auto = store.get("bluetooth", "auto_brightness") as? Bool ?? true
             Task {
                 guard let device = DeviceManager.shared.sgc else { return }
@@ -242,7 +242,7 @@ class DeviceStore {
             }
 
         case ("bluetooth", "auto_brightness"):
-            let b = store.get("bluetooth", "brightness") as? Int ?? 50
+            let b = intValue(store.get("bluetooth", "brightness")) ?? 50
             let auto = value as? Bool ?? true
             let autoBrightnessChanged = (oldValue as? Bool) != auto
             Task {
@@ -264,7 +264,7 @@ class DeviceStore {
             scheduleDashboardDepthToGlasses()
 
         case ("bluetooth", "head_up_angle"):
-            if let angle = value as? Int {
+            if let angle = intValue(value) {
                 DeviceManager.shared.sgc?.setHeadUpAngle(angle)
             }
 

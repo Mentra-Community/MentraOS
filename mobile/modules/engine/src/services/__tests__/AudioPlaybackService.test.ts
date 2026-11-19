@@ -19,6 +19,8 @@ import {reactNative, reactNativeAppState} from "./reactNativeTestMock"
 const setAudioModeAsync = mock(async () => {})
 const tailTimerCallbacks: Array<() => void> = []
 const startupTimerCallbacks = new Map<number, () => void>()
+// The iOS audio session release waits 250 ms; tests run it when they choose.
+const sessionTimerCallbacks = new Map<number, () => void>()
 let nextStartupTimerId = 2
 const silentAudioSource = 9001
 
@@ -32,9 +34,13 @@ const audioPlayer = {
   volume: 1,
 }
 
+const createAudioPlayer = mock((_source: unknown, _options?: Record<string, unknown>) => audioPlayer)
+const setIsAudioActiveAsync = mock(async (_active: boolean) => {})
+
 mock.module("expo-audio", () => ({
-  createAudioPlayer: () => audioPlayer,
+  createAudioPlayer,
   setAudioModeAsync,
+  setIsAudioActiveAsync,
 }))
 
 mock.module("../audioPlaybackAssets", () => ({
@@ -48,11 +54,17 @@ mock.module("../../utils/timers", () => ({
   BgTimer: {
     clearTimeout: (timerId: number) => {
       startupTimerCallbacks.delete(timerId)
+      sessionTimerCallbacks.delete(timerId)
     },
     setTimeout: (callback: () => void, delayMs: number) => {
       if (delayMs === 5000) {
         const timerId = nextStartupTimerId++
         startupTimerCallbacks.set(timerId, callback)
+        return timerId
+      }
+      if (delayMs === 250) {
+        const timerId = nextStartupTimerId++
+        sessionTimerCallbacks.set(timerId, callback)
         return timerId
       }
       if (delayMs === 700) {
@@ -943,5 +955,238 @@ describe("AudioPlaybackService cloud speech from a PCM URL", () => {
     emitLc3Frame([2])
     expect(sendAudioFrame).toHaveBeenCalledTimes(1)
     stopAudioCloudUplink()
+  })
+})
+
+describe("AudioPlaybackService and the shared iOS audio session", () => {
+  // The service holds the Platform object it imported: change its OS in place.
+  const setPlatform = (os: string) => ((reactNative.Platform as {OS: string}).OS = os)
+  const finishClip = () =>
+    (
+      audioPlaybackService as unknown as {
+        onPlaybackStatusUpdate(status: {didJustFinish: boolean; duration: number}): void
+      }
+    ).onPlaybackStatusUpdate({didJustFinish: true, duration: 0.2})
+  const drainTails = () => {
+    for (const callback of tailTimerCallbacks.splice(0)) callback()
+  }
+  /** The 250 ms of idle the release waits for pass. */
+  const idleWaitPasses = () => {
+    for (const [timerId, callback] of [...sessionTimerCallbacks]) {
+      sessionTimerCallbacks.delete(timerId)
+      callback()
+    }
+  }
+  const click = () =>
+    audioPlaybackService.play(
+      {
+        requestId: `click-${Math.random()}`,
+        audioUrl: "data:audio/wav;base64,AAAA",
+        appId: "app",
+        stopOtherAudio: false,
+      },
+      () => {},
+    )
+
+  beforeEach(async () => {
+    await audioPlaybackService.stopAll()
+    drainTails()
+    sessionTimerCallbacks.clear()
+    resetAudioTestMocks()
+    setPlatform("ios")
+    pcmStreamPlayUrl.mockClear()
+    pcmStreamPlayUrl.mockImplementation(async () => ({durationMs: 2_000}))
+    setIsAudioActiveAsync.mockClear()
+    setIsAudioActiveAsync.mockImplementation(async () => {})
+  })
+
+  afterEach(async () => {
+    await audioPlaybackService.stopAll()
+    drainTails()
+    setPlatform("android")
+  })
+
+  test("expo-audio is never left to release the session: it can't see native speech", async () => {
+    await click()
+    expect(createAudioPlayer).toHaveBeenCalledWith(null, {keepAudioSessionActive: true})
+  })
+
+  test("speech that starts during a click's Bluetooth tail plays to its end before the session is released", async () => {
+    // rep_01M7DRAJVXQXSKQZT873YPV5A5: the click finished, speech started 64 ms later, and
+    // clearing the click's source after its 700 ms tail released the session under the speech.
+    await click()
+    finishClip()
+    let finishSpeech!: () => void
+    pcmStreamPlayUrl.mockImplementationOnce(
+      () => new Promise<{durationMs: number}>((resolve) => (finishSpeech = () => resolve({durationMs: 1_800}))),
+    )
+    const onComplete = mock(() => {})
+    const speaking = audioPlaybackService.playPcmUrl(
+      {requestId: "tts", appId: "app", url: "https://runtime.test/tts", sampleRate: 24000, stopOtherAudio: false},
+      onComplete,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    drainTails()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalled()
+
+    idleWaitPasses()
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalled()
+
+    finishSpeech()
+    await speaking
+    idleWaitPasses()
+    expect(onComplete).toHaveBeenCalledWith("tts", true, null, 1_800, "completed")
+    // Released once, after the speech: other apps' ducked audio comes back up.
+    expect(setIsAudioActiveAsync.mock.calls).toEqual([[false]])
+  })
+
+  test("a click on its own still releases the session once its tail has drained", async () => {
+    await click()
+    finishClip()
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalled()
+    drainTails()
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalled()
+    idleWaitPasses()
+    expect(setIsAudioActiveAsync.mock.calls).toEqual([[false]])
+  })
+
+  test("speech asked for while a release is in flight starts only after it, on a fresh session", async () => {
+    let releaseDone!: () => void
+    setIsAudioActiveAsync.mockImplementationOnce(() => new Promise<void>((resolve) => (releaseDone = resolve)))
+    await click()
+    finishClip()
+    drainTails()
+    idleWaitPasses()
+    expect(setIsAudioActiveAsync).toHaveBeenCalledTimes(1)
+
+    const speaking = audioPlaybackService.playPcmUrl(
+      {requestId: "tts-2", appId: "app", url: "https://runtime.test/tts", sampleRate: 24000},
+      () => {},
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(pcmStreamPlayUrl).not.toHaveBeenCalled()
+    releaseDone()
+    await speaking
+    expect(pcmStreamPlayUrl).toHaveBeenCalledTimes(1)
+  })
+
+  test("a live stream being opened holds the release until it has ended", async () => {
+    await click()
+    finishClip()
+    const opening = audioPlaybackService.openStream({
+      streamId: "live",
+      appId: "app",
+      sampleRate: 24000,
+      channels: 1,
+      stopOtherAudio: false,
+      onEnded: () => {},
+    })
+    drainTails()
+    idleWaitPasses()
+    await opening
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalled()
+    await audioPlaybackService.closeStream("live")
+    idleWaitPasses()
+    expect(setIsAudioActiveAsync.mock.calls).toEqual([[false]])
+  })
+
+  test("Android never touches the session", async () => {
+    setPlatform("android")
+    await click()
+    finishClip()
+    drainTails()
+    idleWaitPasses()
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalled()
+  })
+
+  test("speech asked for just before a release puts it off until the speech has ended", async () => {
+    await click()
+    finishClip()
+    drainTails()
+    // The release is due in 250 ms when speech starts.
+    let finishSpeech!: () => void
+    pcmStreamPlayUrl.mockImplementationOnce(
+      () => new Promise<{durationMs: number}>((resolve) => (finishSpeech = () => resolve({durationMs: 900}))),
+    )
+    const speaking = audioPlaybackService.playPcmUrl(
+      {requestId: "tts-3", appId: "app", url: "https://runtime.test/tts", sampleRate: 24000, stopOtherAudio: false},
+      () => {},
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    idleWaitPasses()
+    expect(setIsAudioActiveAsync).not.toHaveBeenCalled()
+    finishSpeech()
+    await speaking
+    idleWaitPasses()
+    // Still released, once, so audio the click ducked comes back up.
+    expect(setIsAudioActiveAsync.mock.calls).toEqual([[false]])
+  })
+
+  test("a silent stream prepared in the moment before a release doesn't put it off for good", async () => {
+    await click()
+    finishClip()
+    drainTails()
+    // The release is due in 250 ms when a cue is prepared; it never plays.
+    await audioPlaybackService.openStream({
+      streamId: "cue-2",
+      appId: "app",
+      sampleRate: 24000,
+      channels: 1,
+      stopOtherAudio: false,
+      prewarm: true,
+      onEnded: () => {},
+    })
+    idleWaitPasses()
+    expect(setIsAudioActiveAsync.mock.calls).toEqual([[false]])
+    await audioPlaybackService.closeStream("cue-2")
+  })
+
+  test("a stream that fails to open in the moment before a release doesn't put it off for good", async () => {
+    await click()
+    finishClip()
+    drainTails()
+    pcmStreamOpen.mockImplementationOnce(async () => {
+      throw new Error("open failed")
+    })
+    await expect(
+      audioPlaybackService.openStream({
+        streamId: "broken",
+        appId: "app",
+        sampleRate: 24000,
+        channels: 1,
+        stopOtherAudio: false,
+        onEnded: () => {},
+      }),
+    ).rejects.toThrow("open failed")
+    idleWaitPasses()
+    expect(setIsAudioActiveAsync.mock.calls).toEqual([[false]])
+  })
+
+  test("a silent prewarmed stream doesn't hold the session, and its first write waits for a release under way", async () => {
+    await audioPlaybackService.openStream({
+      streamId: "cue",
+      appId: "app",
+      sampleRate: 24000,
+      channels: 1,
+      stopOtherAudio: false,
+      prewarm: true,
+      onEnded: () => {},
+    })
+    await click()
+    finishClip()
+    drainTails()
+    let releaseDone!: () => void
+    setIsAudioActiveAsync.mockImplementationOnce(() => new Promise<void>((resolve) => (releaseDone = resolve)))
+    idleWaitPasses()
+    expect(setIsAudioActiveAsync.mock.calls).toEqual([[false]])
+
+    const writing = audioPlaybackService.writeStreamChunk("cue", "AAAA")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(pcmStreamWrite).not.toHaveBeenCalled()
+    releaseDone()
+    await writing
+    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
+    await audioPlaybackService.closeStream("cue")
   })
 })

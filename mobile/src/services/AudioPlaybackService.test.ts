@@ -43,6 +43,7 @@ async function flushAsyncVolumeGuard() {
 jest.mock("expo-audio", () => ({
   createAudioPlayer: jest.fn(() => mockPlayer),
   setAudioModeAsync: jest.fn(() => Promise.resolve()),
+  setIsAudioActiveAsync: jest.fn(() => Promise.resolve()),
 }))
 
 describe("AudioPlaybackService", () => {

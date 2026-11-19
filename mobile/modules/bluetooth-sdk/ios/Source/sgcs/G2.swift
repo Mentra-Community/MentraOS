@@ -3303,7 +3303,7 @@ class G2: NSObject, SGCManager {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
             // activate the dashboard by setting dept to the current setting:
-            let currentDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 0
+            let currentDepth = intValue(DeviceStore.shared.get("bluetooth", "dashboard_depth")) ?? 0
             self.setDashboardDepthOnly(currentDepth)
         }
     }

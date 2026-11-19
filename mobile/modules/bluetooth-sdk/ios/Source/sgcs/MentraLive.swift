@@ -4789,7 +4789,7 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func sendGalleryMode() {
-        let active = DeviceStore.shared.get("bluetooth", "gallery_mode") as! Bool
+        let active = DeviceStore.shared.get("bluetooth", "gallery_mode") as? Bool ?? true
         sendGalleryMode(requestId: nil, active: active)
     }
 
@@ -8423,7 +8423,7 @@ extension MentraLive {
         sendButtonVideoRecordingSettings()
 
         // Send button max recording time
-        let maxTime = DeviceStore.shared.get("bluetooth", "button_max_recording_time") as! Int
+        let maxTime = intValue(DeviceStore.shared.get("bluetooth", "button_max_recording_time")) ?? 10
         sendButtonMaxRecordingTime(maxTime)
 
         // Send button photo settings
@@ -8752,7 +8752,7 @@ extension MentraLive {
     }
 
     func sendButtonMaxRecordingTime() {
-        let maxTime = DeviceStore.shared.get("bluetooth", "button_max_recording_time") as? Int ?? 10
+        let maxTime = intValue(DeviceStore.shared.get("bluetooth", "button_max_recording_time")) ?? 10
         sendButtonMaxRecordingTime(requestId: nil, minutes: maxTime)
     }
 
@@ -8783,10 +8783,10 @@ extension MentraLive {
         let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool ?? legacyZslMfnr
         let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
         let edgeEnhancement = DeviceStore.shared.get("bluetooth", "button_photo_edge_enhancement") as? Bool
-        let ispDigitalGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_digital_gain") as? Int
+        let ispDigitalGain = intValue(DeviceStore.shared.get("bluetooth", "button_photo_isp_digital_gain"))
         let ispAnalogGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_analog_gain") as? String
-        let aeExposureDivisor = DeviceStore.shared.get("bluetooth", "button_photo_ae_exposure_divisor") as? Int
-        let isoCap = DeviceStore.shared.get("bluetooth", "button_photo_iso_cap") as? Int
+        let aeExposureDivisor = intValue(DeviceStore.shared.get("bluetooth", "button_photo_ae_exposure_divisor"))
+        let isoCap = intValue(DeviceStore.shared.get("bluetooth", "button_photo_iso_cap"))
         let compressStr = DeviceStore.shared.get("bluetooth", "button_photo_compress") as? String
         if let compressStr, PhotoCompression(rawValue: compressStr) == nil {
             Bridge.log("LIVE: Invalid stored photo compression: \(compressStr)")
