@@ -86,6 +86,26 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(self.output.with_name('release.tar.gz.sha256').read_text().split()[0],
                          package.sha(self.output.read_bytes()))
 
+    def test_monorepo_layout_packages_the_same_files_from_the_given_image_commit(self):
+        # The Mentra monorepo holds MentraOS under public/mentraos, and its image record carries a public MentraOS
+        # commit, so the release passes the monorepo commit the image was built from.
+        expected = self.build()
+        monorepo = self.repo / 'public/mentraos'
+        monorepo.mkdir(parents=True)
+        for name in ('cloud-v2', 'mobile'):
+            (self.repo / name).rename(monorepo / name)
+        self.git('add', '-A', '.')
+        self.git('commit', '-qm', 'Move MentraOS under public/mentraos')
+        commit = self.git('rev-parse', 'HEAD')
+        self.publication.write_text(json.dumps(dict(self.record, sourceCommit='c' * 40)))
+        with patch.object(package, 'REPO', monorepo):
+            release = package.build(self.publication, self.sbom, self.output, commit)
+        self.assertEqual(release['imageSourceCommit'], commit)
+        self.assertEqual(release['installerSourceCommit'], commit)
+        self.assertEqual(release['managedMiniapps'], expected['managedMiniapps'])
+        self.assertEqual({k: v for k, v in release['files'].items() if k != 'runtime-image-publication.json'},
+                         {k: v for k, v in expected['files'].items() if k != 'runtime-image-publication.json'})
+
     def test_install_guide_names_the_operator_key_flow(self):
         self.build()
         with tarfile.open(self.output) as archive:

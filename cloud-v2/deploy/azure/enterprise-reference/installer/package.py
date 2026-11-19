@@ -12,6 +12,8 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+# MentraOS's root, which is the repository's in MentraOS and public/mentraos in the Mentra monorepo. Every git path
+# is read relative to it (./), so both layouts package the same files.
 REPO = ROOT.parents[3]
 FILES = ('setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep', 'network.bicep',
          'access.bicep', 'deployment.config.example.json', 'answers.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
@@ -25,7 +27,7 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def build(publication_path, sbom_path, output):
+def build(publication_path, sbom_path, output, image_source_commit=None):
     publication = json.loads(Path(publication_path).read_text())
     if (publication.get('schemaVersion') != 1 or publication.get('component') != 'mentra-cloud-image'
             or publication.get('status') != 'published'
@@ -38,8 +40,12 @@ def build(publication_path, sbom_path, output):
     metadata = publication['sbom']
     if metadata['format'] != 'spdx-json' or sha(sbom) != metadata['sha256'] or len(sbom) != metadata['size']:
         raise ValueError('SBOM bytes do not match publication evidence')
-    source = publication['sourceCommit']
-    client_version = json.loads(subprocess.check_output(['git', 'show', f'{source}:mobile/package.json'], cwd=REPO))['version']
+    # The commit the image was built from: the record's in MentraOS; in the monorepo, whose record carries the public
+    # MentraOS commit, the monorepo commit it was built from.
+    source = image_source_commit or publication['sourceCommit']
+    if not re.fullmatch(r'[0-9a-f]{40}', source):
+        raise ValueError('Expected the full commit the image was built from')
+    client_version = json.loads(subprocess.check_output(['git', 'show', f'{source}:./mobile/package.json'], cwd=REPO))['version']
     if not re.fullmatch(r'\d+\.\d+\.\d+', client_version):
         raise ValueError('Image source must declare a valid Mentra App marketing version')
     if not re.fullmatch(r'\d+\.\d+\.\d+', CLIENT_MIN_VERSION) or (
@@ -47,7 +53,7 @@ def build(publication_path, sbom_path, output):
         raise ValueError(f'The minimum Mentra App version {CLIENT_MIN_VERSION} must be a version no newer than '
                          f'the app built with this image ({client_version})')
     prefix = 'cloud-v2/deploy/azure/enterprise-reference/'
-    manifest = json.loads(subprocess.check_output(['git', 'show', f'{source}:{prefix}mentra-deployment.json'], cwd=REPO))
+    manifest = json.loads(subprocess.check_output(['git', 'show', f'{source}:./{prefix}mentra-deployment.json'], cwd=REPO))
     apps = []
     for app in manifest['miniapps']['managed']:
         if not re.fullmatch(r'[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+', app.get('packageName', '')):
@@ -55,7 +61,7 @@ def build(publication_path, sbom_path, output):
         filename = f"{app['packageName']}-{app['version']}.zip"
         if '/' in filename or '\\' in filename:
             raise ValueError('Invalid managed miniapp filename')
-        blob = subprocess.check_output(['git', 'show', f'{source}:{prefix}miniapps/{filename}'], cwd=REPO)
+        blob = subprocess.check_output(['git', 'show', f'{source}:./{prefix}miniapps/{filename}'], cwd=REPO)
         if sha(blob) != app['sha256']:
             raise ValueError('Managed miniapp hash does not match image source manifest')
         apps.append({k: app[k] for k in ('packageName', 'version', 'sha256')} | {'bundlePath': '/miniapps/' + filename})
@@ -64,7 +70,7 @@ def build(publication_path, sbom_path, output):
     installer_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
     # Package committed bytes only. A local working-tree modification must never
     # masquerade as the recorded installer source commit.
-    contents = {name: subprocess.check_output(['git', 'show', f'{installer_commit}:{prefix}{name}'], cwd=REPO)
+    contents = {name: subprocess.check_output(['git', 'show', f'{installer_commit}:./{prefix}{name}'], cwd=REPO)
                 for name in FILES}
     contents['runtime-image-publication.json'] = Path(publication_path).read_bytes()
     contents['runtime-image.spdx.json'] = sbom
@@ -122,6 +128,7 @@ if __name__ == '__main__':
     parser.add_argument('--publication', required=True)
     parser.add_argument('--sbom', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--image-source-commit', help="The commit the image was built from (default: the record's)")
     args = parser.parse_args()
-    build(args.publication, args.sbom, args.output)
+    build(args.publication, args.sbom, args.output, args.image_source_commit)
     print(args.output)
