@@ -9,8 +9,7 @@ import {buildPost, DOCS, otaTargets, postToWebhook, slackText} from "./slack-bui
 const CHANNELS = {
   dev: {label: "Dev", webhook: "DEV_SLACK_WEBHOOK_URL"},
   staging: {label: "Staging", webhook: "STAGING_SLACK_WEBHOOK_URL"},
-  // A production release is announced with the betas it promotes.
-  production: {label: "Production", webhook: "STAGING_SLACK_WEBHOOK_URL"},
+  production: {label: "Production", webhook: "PRODUCTION_SLACK_WEBHOOK_URL"},
 }
 // Why a slot has no install, from the job that builds it.
 const MISSING = {failure: "failed", timed_out: "timed out", cancelled: "cancelled", skipped: "not built", success: "not published"}
@@ -109,7 +108,10 @@ export async function releasePost(env, {check = reachable, fetchImpl = fetch} = 
   const android = env.ANDROID_RESULT || env.MOBILE_RESULT
   const ios = env.IOS_RESULT || env.MOBILE_RESULT
   const name = identity === "unknown" ? "(identity allocation failed)" : slackText(identity, 80)
+  // Production submitted to the stores waits for publish-release.yml, which PUBLISH_URL links.
+  const waiting = env.PUBLISH_URL && env.FINALIZE_RESULT !== "success" && android === "success" && ios === "success"
   const [title, summary] = env.FINALIZE_RESULT === "success" ? [`*✅ ${label} ${name} released*`, "released"]
+    : waiting ? [`*⏳ ${label} ${name} submitted to the stores*`, "submitted"]
     : [android, ios, env.OTA_RESULT].includes("success") ? [`*⚠️ ${label} release ${name} incomplete*`, "incomplete"]
       : [`*❌ ${label} release ${name} failed*`, "failed"]
 
@@ -131,7 +133,7 @@ export async function releasePost(env, {check = reachable, fetchImpl = fetch} = 
       slot("macOS", [env.EXAMPLE_MAC_URL], undefined, check),
     ]),
     glasses(env, fetchImpl),
-    env.FINALIZE_RESULT === "success" || env.RELEASE_SCOPE === "examples" ? undefined : releaseFailureDetail(env, fetchImpl),
+    env.FINALIZE_RESULT === "success" || waiting || env.RELEASE_SCOPE === "examples" ? undefined : releaseFailureDetail(env, fetchImpl),
   ])
   const unfinished = Object.entries(UNFINISHED).flatMap(([result, word]) => {
     const names = CHECKS.filter(([key]) => env[key] === result).map(([, check]) => check)
@@ -147,7 +149,9 @@ export async function releasePost(env, {check = reachable, fetchImpl = fetch} = 
       // The build numbers Google Play Console and App Store Connect show.
       ...(env.ANDROID_VERSION_CODE ? [`Android ${env.ANDROID_VERSION_CODE}`] : []),
       ...(env.IOS_BUILD_NUMBER ? [`iOS ${env.IOS_BUILD_NUMBER}`] : []),
+      ...(waiting ? [`Once the stores approve it and it's released there, anyone can press Publish and run it on main with version ${name}`] : []),
     ],
+    actions: waiting ? [{label: ":rocket: Publish", url: env.PUBLISH_URL}] : [],
     apps: [{name: "Mentra", installs: mentra}, {name: "Bluetooth example", installs: example}],
     docs: DOCS[env.BRANCH],
     ...ota,

@@ -897,13 +897,54 @@ test("reports an editable version attached to an earlier build as not yet promot
   assert.equal(status.promoted, false)
   assert.equal(status.state, "REJECTED")
   assert.equal(status.attachedBuildId, "build-old")
-  const submitted = client([
-    {data: [{id: "version-1", attributes: {versionString: "3.1.1", appStoreState: "IN_REVIEW"}}]},
+})
+
+test("replaces an earlier build still waiting for or in review", async () => {
+  for (const state of ["WAITING_FOR_REVIEW", "IN_REVIEW"]) {
+    const api = client([
+      {data: [{id: "version-1", attributes: {versionString: "3.1.1", appStoreState: state}}]},
+      {data: {type: "builds", id: "build-old"}},
+    ])
+    const status = await productionSubmissionStatus(api, {appId: "app-1", versionString: "3.1.1", buildId: "build-new"})
+    assert.equal(status.promoted, false)
+    assert.equal(status.replacing, true)
+    assert.equal(status.attachedBuildId, "build-old")
+  }
+})
+
+test("keeps waiting while a replaced build's review is cancelled", async () => {
+  const api = client([
+    {data: [{id: "version-1", attributes: {versionString: "3.1.1", appStoreState: "WAITING_FOR_REVIEW"}}]},
+    {data: {type: "builds", id: "build-old"}},
+    {data: [{id: "version-1", attributes: {versionString: "3.1.1", appStoreState: "WAITING_FOR_REVIEW"}}]},
+    {data: {type: "builds", id: "build-new"}},
+  ])
+  const status = await waitForProductionSubmission(api, {
+    appId: "app-1",
+    versionString: "3.1.1",
+    buildId: "build-new",
+    attempts: 2,
+    delay: 0,
+  })
+  assert.equal(status.promoted, true)
+})
+
+test("refuses to replace an approved or released build", async () => {
+  const approved = client([
+    {data: [{id: "version-1", attributes: {versionString: "3.1.1", appStoreState: "PENDING_DEVELOPER_RELEASE"}}]},
     {data: {type: "builds", id: "build-old"}},
   ])
   await assert.rejects(
-    productionSubmissionStatus(submitted, {appId: "app-1", versionString: "3.1.1", buildId: "build-new"}),
-    /attached to build build-old, not build-new/,
+    productionSubmissionStatus(approved, {appId: "app-1", versionString: "3.1.1", buildId: "build-new"}),
+    /PENDING_DEVELOPER_RELEASE with build build-old, not build-new\. .*Developer Reject/,
+  )
+  const released = client([
+    {data: [{id: "version-1", attributes: {versionString: "3.1.1", appStoreState: "READY_FOR_SALE"}}]},
+    {data: {type: "builds", id: "build-old"}},
+  ])
+  await assert.rejects(
+    productionSubmissionStatus(released, {appId: "app-1", versionString: "3.1.1", buildId: "build-new"}),
+    /READY_FOR_SALE with build build-old, not build-new\. A new build needs a new version/,
   )
 })
 
