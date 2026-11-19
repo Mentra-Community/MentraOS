@@ -24,8 +24,15 @@ resource network 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   properties: {
     addressSpace: { addressPrefixes: [addressPrefix] }
     subnets: [
-      // A Consumption-only environment needs a /23 that is not delegated.
-      { name: 'apps', properties: { addressPrefix: appsPrefix } }
+      // main.bicep's environment has workload profiles, whose subnet must be
+      // delegated to Container Apps (at least a /27; the /23 leaves room).
+      {
+        name: 'apps'
+        properties: {
+          addressPrefix: appsPrefix
+          delegations: [{ name: 'containerapps', properties: { serviceName: 'Microsoft.App/environments' } }]
+        }
+      }
       { name: 'endpoints', properties: { addressPrefix: endpointsPrefix } }
     ]
   }

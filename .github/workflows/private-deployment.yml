@@ -103,6 +103,7 @@ jobs:
           WORKSPACE_CERTIFICATE=ca-mentra-ent-demo-dev-workspace
           WORKSPACE_ALIASES=[]
           CORE_ADMIN_EMAILS=operator@private-cloud.local
+          VIRTUAL_NETWORK=vnet-mentra-enterprise-demo-dev
           EOF
               ;;
             beta)
@@ -125,6 +126,7 @@ jobs:
           WORKSPACE_CERTIFICATE=ca-mentra-enterprise-reference-acme-demo
           WORKSPACE_ALIASES=[{"hostname":"mentra.acmeworkspace.com","certificateName":"ca-mentra-enterprise-reference-acme-workspace"},{"hostname":"enterprisedev.mentraglass.com","certificateName":"ca-mentra-enterprise-reference-workspace"}]
           CORE_ADMIN_EMAILS=api-key@01M35AKTFB5SWCXM35KYEH61VF.local
+          VIRTUAL_NETWORK=
           EOF
               ;;
             *)
@@ -286,6 +288,7 @@ jobs:
                 keyVaultName:{value:$keyVaultName},
                 communicationName:{value:$communicationName},
                 environmentName:{value:$environmentName},
+                virtualNetworkName:{value:env.VIRTUAL_NETWORK},
                 runtimeName:{value:$runtimeName},
                 coreName:{value:$coreName},
                 coreIdentityName:{value:$coreIdentityName},

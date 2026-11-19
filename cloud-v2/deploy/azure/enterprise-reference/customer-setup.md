@@ -66,8 +66,8 @@ to start over with another user.
 ### Connecting Atlas privately
 
 Every new deployment's Container Apps environment is created in its own virtual
-network, `vnet-<deployment>` (`network.bicep`): a `/23` subnet for the
-environment and a `/27` for private endpoints, in `10.40.0.0/16`. Core reaches
+network, `vnet-<deployment>` (`network.bicep`): a `/23` subnet delegated to
+the environment and a `/27` for private endpoints, in `10.40.0.0/16`. Core reaches
 Atlas through an Azure private endpoint in that network, which Atlas accepts
 only once it is registered there. The apps stay public. Atlas's private
 hostnames are public DNS records that resolve to the endpoint's private IP, so
