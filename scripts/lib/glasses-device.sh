@@ -177,30 +177,20 @@ remove_pinned_adb() {
 }
 
 # Rewrite later adb calls onto one device. Child processes inherit PATH.
-# Pin by serial whenever one is stable across reboots; the adb server reassigns
-# transport_id when the glasses drop and return, so a transport is only a last
-# resort for placeholder/duplicate serials.
+# One path for USB and Wi-Fi ADB alike: the wrapper keeps the device's current
+# transport and, when it's gone, finds the same unit again by eMMC CID, after
+# reconnecting its Wi-Fi ADB address if it had one. adb renumbers transports on
+# every reboot, and a pair can come back on the other connection: April's MTK
+# has no USB adb until a replug, and later firmware turns Wi-Fi adb off.
 pin_adb_transport() {
   local transport="$1"
   local serial="${2:-}"
   local cid="${3:-}"
-  local real dir selector_flag selector_value serial_matches=0 lower_cid
+  local real dir lower_cid wifi=""
   real="$(command -v adb)"
   [ -n "$real" ] || return 1
   [ -n "$transport" ] || return 1
-  # A real serial is the stable selector, but only when it maps to exactly one
-  # ready device. The placeholder is shared by design, and distinct glasses can
-  # report the same real serial, so count the ready matches before trusting it.
-  if [ -n "$serial" ] && [ "$serial" != "$PLACEHOLDER_ADB_SERIAL" ]; then
-    serial_matches="$(list_ready_transports | awk -F '\t' -v s="$serial" '$1==s {c++} END{print c+0}')"
-  fi
-  if [ "$serial_matches" -eq 1 ]; then
-    selector_flag="-s"
-    selector_value="$serial"
-  else
-    selector_flag="-t"
-    selector_value="$transport"
-  fi
+  case "$serial" in *:*) wifi="$serial" ;; esac
   lower_cid="$(printf '%s' "$cid" | tr '[:upper:]' '[:lower:]')"
   if [ -n "${STOCK_UPDATE_ADB_BIN:-}" ]; then
     dir="$STOCK_UPDATE_ADB_BIN"
@@ -210,53 +200,62 @@ pin_adb_transport() {
     export STOCK_UPDATE_ADB_DIR
   fi
   mkdir -p "$dir"
-  printf '%s\n' "$selector_value" > "$dir/selector"
-  # adb transport ids change on every reboot. When the pinned transport is
-  # gone, find the same unit again by eMMC CID so reboot waits and the MTK
-  # observer keep following it instead of a dead id.
+  printf '%s\n' "$transport" > "$dir/selector"
   {
-    printf '#!/bin/bash\nreal=%q\nflag=%q\nwant_cid=%q\n' "$real" "$selector_flag" "$lower_cid"
+    printf '#!/bin/bash\nreal=%q\nwant_cid=%q\nwifi=%q\n' "$real" "$lower_cid" "$wifi"
     cat << 'WRAPPER'
 state="$(dirname "$0")/selector"
 selector="$(cat "$state")"
-# Once the unit was found on another connection, it is followed there by transport.
-[ -s "$state.flag" ] && flag="$(cat "$state.flag")"
 ready_transports() { "$real" devices -l 2>/dev/null | awk 'NR>1 && $2=="device" {for (i=1;i<=NF;i++) if ($i ~ /^transport_id:/) {split($i,p,":"); print p[2]}}'; }
+is_ready() { [ -n "$selector" ] && ready_transports | grep -Fxq "$selector"; }
+# Runs "$@" for at most 5 seconds: adb on a transport that just died waits forever.
+bounded() {
+  "$@" </dev/null >/dev/null 2>&1 &
+  local pid=$! start=$SECONDS
+  while kill -0 "$pid" 2>/dev/null && [ $((SECONDS - start)) -lt 5 ]; do /bin/sleep 0.05; done
+  kill -9 "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+}
 # The ready transport whose eMMC CID is want_cid, if any.
 find_by_cid() {
-    local candidate probe pid start got
-    for candidate in $(ready_transports); do
-      # A transport still listed as ready can be the one that just died. Do not
-      # let that CID read block the lookup of the unit that came back.
-      probe="$(mktemp)"
-      "$real" -t "$candidate" shell cat /sys/block/mmcblk0/device/cid </dev/null >"$probe" 2>/dev/null &
-      pid=$!
-      start=$SECONDS
-      while kill -0 "$pid" 2>/dev/null; do
-        if [ $((SECONDS - start)) -ge 5 ]; then
-          kill -9 "$pid" 2>/dev/null || true
-          wait "$pid" 2>/dev/null || true
-          break
-        fi
-        /bin/sleep 0.05
-      done
-      wait "$pid" 2>/dev/null || true
-      got="$(tr -d '\r\n' <"$probe" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
-      rm -f "$probe"
-      if [ "$got" = "$want_cid" ]; then
-        printf '%s\n' "$candidate"
-        return 0
+  local candidate probe pid start got
+  for candidate in $(ready_transports); do
+    # A transport still listed as ready can be the one that just died. Do not
+    # let that CID read block the lookup of the unit that came back.
+    probe="$(mktemp)"
+    "$real" -t "$candidate" shell cat /sys/block/mmcblk0/device/cid </dev/null >"$probe" 2>/dev/null &
+    pid=$!
+    start=$SECONDS
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ $((SECONDS - start)) -ge 5 ]; then
+        kill -9 "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        break
       fi
+      /bin/sleep 0.05
     done
-    return 1
+    wait "$pid" 2>/dev/null || true
+    got="$(tr -d '\r\n' <"$probe" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    rm -f "$probe"
+    if [ "$got" = "$want_cid" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
-if [ "$flag" = "-t" ] && [ -n "$want_cid" ]; then
-  ready="$(ready_transports)"
-  if ! printf '%s\n' "$ready" | grep -Fxq "$selector" && found="$(find_by_cid)"; then
+if ! is_ready && [ -n "$want_cid" ]; then
+  # A Wi-Fi ADB address doesn't come back by itself after a reboot: adb keeps it
+  # offline or drops it. Reconnect it first, then look on every connection.
+  if [ -n "$wifi" ]; then bounded "$real" disconnect "$wifi"; bounded "$real" connect "$wifi"; fi
+  if found="$(find_by_cid)"; then
     selector="$found"
     printf '%s\n' "$selector" > "$state"
   fi
 fi
+# A missing transport makes adb print "- waiting for device -" and block
+# forever on an id that a replug will not reuse. Fail here so the caller can
+# ask for the cable and follow the saved CID.
+is_ready || exit 1
 args=()
 leading=true
 skip=""
@@ -274,45 +273,6 @@ for arg in "$@"; do
   fi
   args+=("$arg")
 done
-# A missing transport makes adb print "- waiting for device -" and block
-# forever on an id that a replug will not reuse. Fail here so the caller can
-# ask for the cable and follow the saved CID.
-if [ "$flag" = "-t" ]; then
-  if [ -z "${ready+x}" ]; then
-    ready="$("$real" devices -l 2>/dev/null | awk 'NR>1 && $2=="device" {for (i=1;i<=NF;i++) if ($i ~ /^transport_id:/) {split($i,p,":"); print p[2]}}')"
-  fi
-  if [ -z "$selector" ] || ! printf '%s\n' "$ready" | grep -Fxq "$selector"; then
-    exit 1
-  fi
-elif [ "$flag" = "-s" ]; then
-  listed() { "$real" devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}' | grep -Fxq "$selector"; }
-  if ! listed; then
-    # A Wi-Fi ADB serial (host:port) does not come back by itself after the
-    # glasses reboot: adb keeps it offline or drops it. Reconnect it, bounded,
-    # so reboot waits follow the glasses over Wi-Fi as they do over USB.
-    case "$selector" in
-      *:*)
-        "$real" disconnect "$selector" </dev/null >/dev/null 2>&1 &
-        pid=$!; start=$SECONDS
-        while kill -0 "$pid" 2>/dev/null && [ $((SECONDS - start)) -lt 5 ]; do /bin/sleep 0.05; done
-        kill -9 "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-        "$real" connect "$selector" </dev/null >/dev/null 2>&1 &
-        pid=$!; start=$SECONDS
-        while kill -0 "$pid" 2>/dev/null && [ $((SECONDS - start)) -lt 5 ]; do /bin/sleep 0.05; done
-        kill -9 "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-        ;;
-    esac
-    if ! listed; then
-      # Glasses that start on April's MTK have no USB adb until a replug, so a run can begin over Wi-Fi. After the
-      # MTK update reboots them, USB works and Wi-Fi adb is off: follow the same unit to whichever connection has it.
-      [ -n "$want_cid" ] && found="$(find_by_cid)" || exit 1
-      flag="-t"
-      selector="$found"
-      printf '%s\n' "$flag" > "$state.flag"
-      printf '%s\n' "$selector" > "$state"
-    fi
-  fi
-fi
 # adb has no client deadline. A transport that dies under a running command
 # blocks that command forever, and so the script around it. Every call gets a
 # deadline sized to the command. Only a log follow and the wait-for-* commands
@@ -345,12 +305,12 @@ if [ -n "${STOCK_UPDATE_ADB_CALL_SECONDS:-}" ] && [ -n "$limit" ]; then
   limit="$STOCK_UPDATE_ADB_CALL_SECONDS"
 fi
 if [ -z "$limit" ]; then
-  exec "$real" "$flag" "$selector" "${args[@]}"
+  exec "$real" -t "$selector" "${args[@]}"
 fi
 child=""
 trap '[ -z "$child" ] || kill -9 "$child" 2>/dev/null; exit 143' TERM INT HUP
 # <&0 keeps the caller's stdin; a bare background job would read /dev/null.
-"$real" "$flag" "$selector" "${args[@]}" <&0 &
+"$real" -t "$selector" "${args[@]}" <&0 &
 child=$!
 started=$SECONDS
 while kill -0 "$child" 2>/dev/null; do
@@ -359,7 +319,7 @@ while kill -0 "$child" 2>/dev/null; do
     wait "$child" 2>/dev/null || true
     # Forget a transport that did not answer so the next call finds this unit
     # again by its eMMC CID instead of reusing the dead id.
-    [ "$flag" != "-t" ] || : > "$state" 2>/dev/null || true
+    : > "$state" 2>/dev/null || true
     echo "adb ${args[*]:0:4} did not finish within ${limit}s. The USB connection may have dropped." >&2
     exit 124
   fi
@@ -372,16 +332,10 @@ WRAPPER
   } > "$dir/adb"
   chmod +x "$dir/adb"
   export PATH="$dir:$PATH"
-  if [ "$selector_flag" = "-s" ]; then
-    export ANDROID_SERIAL="$selector_value"
-    unset ADB_TRANSPORT STOCK_UPDATE_ADB_SELECTOR || true
-  else
-    unset ANDROID_SERIAL ADB_SERIAL ADB_TRANSPORT || true
-    # Cleared after an adb call times out, so the next call does not reuse it.
-    export STOCK_UPDATE_ADB_SELECTOR="$dir/selector"
-  fi
-  # Reboot waits read $SERIAL to tell USB from Wi-Fi ADB and run under `set -u`;
-  # keep it populated even when we had to fall back to a transport_id.
+  unset ANDROID_SERIAL ADB_SERIAL ADB_TRANSPORT || true
+  # Cleared after an adb call times out, so the next call does not reuse it.
+  export STOCK_UPDATE_ADB_SELECTOR="$dir/selector"
+  # Reboot waits read $SERIAL to tell USB from Wi-Fi ADB and run under `set -u`.
   SERIAL="$serial"
   export SERIAL
   ADB=(adb)
