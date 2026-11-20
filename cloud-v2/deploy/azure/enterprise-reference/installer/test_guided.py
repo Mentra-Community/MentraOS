@@ -638,7 +638,7 @@ class GuidedTests(unittest.TestCase):
     def test_teams_settings_email_domains_and_portal_sign_in_are_the_only_post_install_changes(self):
         self.assertEqual(setup.UPDATABLE_KEYS, {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId',
                                                 'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains',
-                                                'adminPortalSignIn'})
+                                                'adminPortalSignIn', 'fleet', 'coreAdminEmailDomains'})
         self.assertTrue(setup.UPDATABLE_KEYS.isdisjoint(setup.BINDING_KEYS))
 
     def test_entra_handoffs_link_consent_and_assignment_when_not_admin(self):
@@ -926,6 +926,74 @@ class GuidedTests(unittest.TestCase):
             vault_set, prompt, _ = self.ensure_database('mongodb://old/db', tty=False, mongo_url_stdin=True)
         prompt.assert_not_called()
         vault_set.assert_called_once_with(self.config, 'mongo-url', url)
+
+    def test_fleet_keeps_its_own_database_connection_string_in_key_vault(self):
+        self.config['fleet'] = True
+        url = 'mongodb+srv://mfm:' + 's3cret' + '@cluster0.abcde.mongodb.net/mentra-fleet?retryWrites=true'  # not one literal, for secret scanners
+        saved = {'mongo-url': 'mongodb://saved/core'}
+        found = setup.subprocess.CompletedProcess([], 0, '', '')
+        with patch.object(setup.subprocess, 'run', return_value=found), \
+             patch.object(setup, 'vault_get', side_effect=lambda config, name: {'value': saved[name]} if name in saved else None), \
+             patch.object(setup.sys.stdin, 'isatty', return_value=True), patch.object(setup, 'vault_set') as vault_set, \
+             patch.object(setup.getpass, 'getpass', return_value=url) as prompt, contextlib.redirect_stdout(io.StringIO()) as out:
+            setup.ensure_database(argparse.Namespace(), self.config)
+        prompt.assert_called_once()
+        vault_set.assert_called_once_with(self.config, 'fleet-mongo-url', url)
+        self.assertNotIn('s3cret', out.getvalue())
+        # Without a terminal it comes from standard input.
+        def headless(**flags):
+            with patch.object(setup.subprocess, 'run', return_value=found), \
+                 patch.object(setup, 'vault_get', side_effect=lambda config, name: {'value': saved[name]} if name in saved else None), \
+                 patch.object(setup.sys.stdin, 'isatty', return_value=False), patch.object(setup, 'vault_set') as vault_set, \
+                 patch.object(setup.sys.stdin, 'readline', return_value=url + '\n'), contextlib.redirect_stdout(io.StringIO()):
+                setup.ensure_database(argparse.Namespace(**flags), self.config)
+            return vault_set
+        with self.assertRaisesRegex(setup.SetupError, '--fleet-mongo-url-stdin'):
+            headless()
+        headless(fleet_mongo_url_stdin=True).assert_called_once_with(self.config, 'fleet-mongo-url', url)
+        # Without Fleet nothing is asked for it.
+        self.config['fleet'] = False
+        vault_set, prompt, _ = self.ensure_database(None, 'mongodb://h/core')
+        vault_set.assert_called_once_with(self.config, 'mongo-url', 'mongodb://h/core')
+
+    def test_fleet_needs_a_release_with_the_portal_and_mfm_images(self):
+        release = {'portalImage': 'ghcr.io/mentra-community/mentra-portal@sha256:' + 'b' * 64,
+                   'fleetImage': 'ghcr.io/mentra-community/mentra-fleet@sha256:' + 'c' * 64}
+        self.assertEqual(setup.fleet_settings(dict(self.config, fleet=False), release), {})
+        with self.assertRaisesRegex(setup.SetupError, 'no Mentra Portal or MFM images'):
+            setup.fleet_settings(dict(self.config, fleet=True), {})
+        name = self.config['deploymentId']
+        self.assertEqual(setup.fleet_settings(dict(self.config, fleet=True), release), dict(
+            release, portalName=f'ca-{name}-portal', fleetName=f'ca-{name}-fleet', fleetWorkerName=f'ca-{name}-fleet-wk',
+            portalIdentityName=f'id-{name}-portal', fleetIdentityName=f'id-{name}-fleet'))
+        # --fleet turns it on for an installed deployment, and the next install rolls it out.
+        state = self.write_state('infrastructure_verified')
+        with patch.object(setup, 'check_release', return_value=release):
+            self.assertFalse(setup.update_fleet(argparse.Namespace(fleet=False), self.directory, self.config, state))
+            self.assertTrue(setup.update_fleet(argparse.Namespace(fleet=True), self.directory, self.config, state))
+        self.assertIs(json.loads((self.directory / 'deployment.config.json').read_text())['fleet'], True)
+        self.assertEqual(json.loads((self.directory / 'state.json').read_text())['phase'], 'deploying')
+
+    def test_every_deploy_script_call_gets_the_fleet_settings(self):
+        release = {'portalImage': 'ghcr.io/mentra-community/mentra-portal@sha256:' + 'b' * 64,
+                   'fleetImage': 'ghcr.io/mentra-community/mentra-fleet@sha256:' + 'c' * 64}
+        saved = dict(json.loads((setup.ROOT / 'deployment.config.example.json').read_text()), fleet=True,
+                     tenantId=TENANT, coreApiClientId=SUB, mobileClientId=TENANT,
+                     sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64)
+        def validate(config):
+            path = self.directory / 'check.json'
+            setup.write_json(path, config)
+            return subprocess.run(['bash', str(setup.ROOT / 'scripts/deploy.sh'), '--validate-only', str(path)],
+                                  capture_output=True, text=True)
+        # The saved configuration alone lacks the release's images, so deploy.sh refuses it.
+        self.assertNotEqual(validate(saved).returncode, 0)
+        with patch.object(setup, 'check_release', return_value=release):
+            result = validate(setup.script_config(saved))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # deploy, preview, validation and the vault bootstrap all take it from script_config.
+        source = (setup.ROOT / 'installer/setup.py').read_text()
+        self.assertEqual(source.count("str(ROOT / 'scripts/deploy.sh')"), 4)
+        self.assertEqual(source.count('script_config(config'), 5)  # the definition and its four calls
 
     def test_an_atlas_private_endpoint_is_registered_before_its_connection_string(self):
         # Atlas writes the resource ID in lower case.

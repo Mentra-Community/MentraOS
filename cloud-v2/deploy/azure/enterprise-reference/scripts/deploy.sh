@@ -118,6 +118,15 @@ jq -e '
   (.communicationName | nonempty) and
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
+  ((.fleet // false) | type == "boolean") and
+  ((.coreAdminEmailDomains // "") | type == "string") and
+  # Mentra Portal and MFM: their images, pinned by digest, and their apps.
+  ((.fleet // false) == false or (
+    (.portalImage | type == "string" and test("^ghcr\\.io/mentra-community/mentra-portal@sha256:[0-9a-f]{64}$")) and
+    (.fleetImage | type == "string" and test("^ghcr\\.io/mentra-community/mentra-fleet@sha256:[0-9a-f]{64}$")) and
+    (.portalName | container_app_name) and (.fleetName | container_app_name) and (.fleetWorkerName | container_app_name) and
+    (.portalIdentityName | nonempty) and (.fleetIdentityName | nonempty) and
+    ([.coreIdentityName, .runtimeIdentityName, .portalIdentityName, .fleetIdentityName] | unique | length == 4))) and
   ((.virtualNetworkName // "") | type == "string" and (. == "" or test("^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,52}[a-zA-Z0-9_]$"))) and
   ((.atlasPrivateLinkServiceId // "") | type == "string" and (. == "" or test("^/subscriptions/[0-9a-f-]{36}/resourcegroups/[^/]+/providers/microsoft\\.network/privatelinkservices/[^/]+$"; "i"))) and
   ((.atlasPrivateLinkServiceId // "") == "" or (.virtualNetworkName // "") != "") and
@@ -159,6 +168,10 @@ RUNTIME_IDENTITY="$(jq -r .runtimeIdentityName "$CONFIG")"
 TEAMS_CLIENT_ID="$(jq -r '.teamsGraphClientId // ""' "$CONFIG")"
 ADMIN_PORTAL_SIGN_IN="$(jq -r '.adminPortalSignIn // false' "$CONFIG")"
 VIRTUAL_NETWORK="$(jq -r '.virtualNetworkName // ""' "$CONFIG")"
+# Mentra Portal and MFM. Their identities exist whether or not Fleet is installed.
+FLEET="$(jq -r '.fleet // false' "$CONFIG")"
+PORTAL_IDENTITY="$(jq -r '.portalIdentityName // ("id-" + .deploymentId + "-portal")' "$CONFIG")"
+FLEET_IDENTITY="$(jq -r '.fleetIdentityName // ("id-" + .deploymentId + "-fleet")' "$CONFIG")"
 
 # Wizard calls are bound to an explicit subscription without changing az defaults.
 if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
@@ -182,22 +195,25 @@ fi
   exit 1
 }
 
-BOOTSTRAP_PARAMETERS=(registryName="$REGISTRY_NAME" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY" keyVaultName="$KEY_VAULT"
+BOOTSTRAP_PARAMETERS=(registryName="$REGISTRY_NAME" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY"
+  portalIdentityName="$PORTAL_IDENTITY" fleetIdentityName="$FLEET_IDENTITY" keyVaultName="$KEY_VAULT"
   operatorPrincipalId="$OPERATOR_ID" operatorPrincipalType="$OPERATOR_TYPE" resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
 NETWORK_PARAMETERS=(virtualNetworkName="$VIRTUAL_NETWORK" atlasPrivateLinkServiceId="$(jq -r '.atlasPrivateLinkServiceId // ""' "$CONFIG")"
   resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
 ACCESS_PARAMETERS=(keyVaultName="$KEY_VAULT" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY"
-  teamsGraphClientId="$TEAMS_CLIENT_ID" adminPortalSignIn="$ADMIN_PORTAL_SIGN_IN")
+  fleetIdentityName="$FLEET_IDENTITY" teamsGraphClientId="$TEAMS_CLIENT_ID" adminPortalSignIn="$ADMIN_PORTAL_SIGN_IN" fleet="$FLEET")
 
 umask 077
 PARAMETERS="$(mktemp "${TMPDIR:-/tmp}/mentra-private-parameters.XXXXXX")"
 ERRORS="$(mktemp "${TMPDIR:-/tmp}/mentra-private-errors.XXXXXX")"
 trap 'rm -f "$PARAMETERS" "$ERRORS"' EXIT
 
+# Arguments: the Mentra Cloud image, then Mentra Portal's and MFM's (empty without Fleet).
 write_parameters() {
 jq -n \
   --slurpfile config "$CONFIG" \
-  --arg cloudImage "$1" '
+  --arg cloudImage "$1" --arg portalImage "${2:-}" --arg fleetImage "${3:-}" \
+  --arg portalIdentityName "$PORTAL_IDENTITY" --arg fleetIdentityName "$FLEET_IDENTITY" '
   ($config[0]) as $c |
   {
     "$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
@@ -212,6 +228,7 @@ jq -n \
       coreApiClientId:{value:$c.coreApiClientId},
       mobileClientId:{value:$c.mobileClientId},
       coreAdminEmails:{value:($c.coreAdminEmails // "")},
+      coreAdminEmailDomains:{value:($c.coreAdminEmailDomains // "")},
       verifiedEmailDomains:{value:($c.verifiedEmailDomains // [])},
       adminPortalSignIn:{value:($c.adminPortalSignIn // false)},
       workspaceHostname:{value:($c.workspaceHostname // "")},
@@ -227,6 +244,11 @@ jq -n \
       coreName:{value:$c.coreName},
       coreIdentityName:{value:$c.coreIdentityName},
       runtimeIdentityName:{value:$c.runtimeIdentityName},
+      portalIdentityName:{value:$portalIdentityName},
+      fleetIdentityName:{value:$fleetIdentityName},
+      fleet:{value:($c.fleet // false)},
+      portalImage:{value:$portalImage},
+      fleetImage:{value:$fleetImage},
       communicationName:{value:$c.communicationName},
       communicationDataLocation:{value:($c.communicationDataLocation // "United States")},
       teamsGraphTenantId:{value:(if ($c.teamsGraphTenantId // "") == "" then $c.tenantId else $c.teamsGraphTenantId end)},
@@ -245,6 +267,8 @@ jq -n \
       supportUrl:{value:($c.supportUrl // "")}
     }
   } | if ($c.reportStorageAccountName // "") != "" then .parameters.reportStorageAccountName={value:$c.reportStorageAccountName} else . end
+    | if ($c.fleet // false) then .parameters += {portalName:{value:$c.portalName}, fleetName:{value:$c.fleetName},
+        fleetWorkerName:{value:$c.fleetWorkerName}} else . end
   ' > "$PARAMETERS"
 }
 
@@ -256,7 +280,13 @@ if [[ "$MODE" == what-if ]]; then
       "$RESOURCE_GROUP" "$RESOURCE_GROUP" "$LOCATION" >&2
     exit 1
   }
-  write_parameters "$REGISTRY_NAME.azurecr.io/mentra-cloud-enterprise@${SOURCE_IMAGE##*@}"
+  if [[ "$FLEET" == true ]]; then
+    write_parameters "$REGISTRY_NAME.azurecr.io/mentra-cloud-enterprise@${SOURCE_IMAGE##*@}" \
+      "$REGISTRY_NAME.azurecr.io/mentra-portal@$(jq -r '.portalImage | split("@")[1]' "$CONFIG")" \
+      "$REGISTRY_NAME.azurecr.io/mentra-fleet@$(jq -r '.fleetImage | split("@")[1]' "$CONFIG")"
+  else
+    write_parameters "$REGISTRY_NAME.azurecr.io/mentra-cloud-enterprise@${SOURCE_IMAGE##*@}"
+  fi
   PREVIEWS="$(mktemp -d "${TMPDIR:-/tmp}/mentra-preview.XXXXXX")"
   trap 'rm -rf "$PARAMETERS" "$ERRORS" "$PREVIEWS"' EXIT
   az deployment group what-if --name "$DEPLOYMENT_NAME-bootstrap" --resource-group "$RESOURCE_GROUP" \
@@ -330,7 +360,17 @@ if [[ "$MODE" == bootstrap ]]; then
 fi
 
 progress "Checking the signing keys in Key Vault..."
-"$SCRIPT_DIR/ensure-vault-secrets.sh" "$KEY_VAULT" "$RESOURCE_GROUP" "$CORE_NAME"
+if [[ "$FLEET" == true ]]; then
+  "$SCRIPT_DIR/ensure-vault-secrets.sh" --fleet "$KEY_VAULT" "$RESOURCE_GROUP" "$CORE_NAME"
+  # MFM keeps its data in its own database, which setup stores in Key Vault too.
+  az keyvault secret show --vault-name "$KEY_VAULT" --name fleet-mongo-url --query id --output none 2>/dev/null || {
+    printf 'Fleet is on, but Key Vault %s has no fleet-mongo-url, the connection string of MFM'"'"'s own MongoDB database. Run setup again; it asks for it.\n' \
+      "$KEY_VAULT" >&2
+    exit 1
+  }
+else
+  "$SCRIPT_DIR/ensure-vault-secrets.sh" "$KEY_VAULT" "$RESOURCE_GROUP" "$CORE_NAME"
+fi
 # Core's database is the company's own MongoDB replica set (see
 # customer-setup.md); setup stores its connection string in Key Vault.
 az keyvault secret show --vault-name "$KEY_VAULT" --name mongo-url --query id --output none 2>/dev/null || {
@@ -378,7 +418,21 @@ IMPORTED_IMAGE="$("$SCRIPT_DIR/import-runtime-image.sh" "$REGISTRY_NAME" "$SOURC
   printf 'Import helper returned an unexpected image reference: %s\n' "$IMPORTED_IMAGE" >&2
   exit 1
 }
-write_parameters "$IMPORTED_IMAGE"
+if [[ "$FLEET" == true ]]; then
+  # Mentra Portal and MFM are private images: SOURCE_REGISTRY_USERNAME and
+  # SOURCE_REGISTRY_PASSWORD carry Mentra's pull credential.
+  progress "Copying Mentra Portal and MFM into your registry..."
+  IMPORTED_PORTAL="$("$SCRIPT_DIR/import-runtime-image.sh" "$REGISTRY_NAME" "$(jq -r .portalImage "$CONFIG")" "$RELEASE_TAG" mentra-portal | tail -n 1)"
+  IMPORTED_FLEET="$("$SCRIPT_DIR/import-runtime-image.sh" "$REGISTRY_NAME" "$(jq -r .fleetImage "$CONFIG")" "$RELEASE_TAG" mentra-fleet | tail -n 1)"
+  [[ "$IMPORTED_PORTAL" =~ ^[a-zA-Z0-9]+\.azurecr\.io/mentra-portal@sha256:[0-9a-f]{64}$ &&
+    "$IMPORTED_FLEET" =~ ^[a-zA-Z0-9]+\.azurecr\.io/mentra-fleet@sha256:[0-9a-f]{64}$ ]] || {
+    printf 'Import helper returned an unexpected image reference: %s %s\n' "$IMPORTED_PORTAL" "$IMPORTED_FLEET" >&2
+    exit 1
+  }
+  write_parameters "$IMPORTED_IMAGE" "$IMPORTED_PORTAL" "$IMPORTED_FLEET"
+else
+  write_parameters "$IMPORTED_IMAGE"
+fi
 
 # Azure requires an unbound hostname on the app before issuing its managed
 # certificate. A fresh custom-domain install first deploys on the generated
@@ -417,7 +471,7 @@ az deployment group validate \
   --parameters "@$PARAMETERS" \
   --output none
 
-progress "Deploying Core and Runtime (about 10 minutes)..."
+progress "Deploying the services (about 10 minutes)..."
 wait_for_deployment "$DEPLOYMENT_NAME"
 # New Key Vault access can take up to 10 minutes to reach Container Apps, which
 # then cannot read a secret yet. Retry only that.
@@ -440,11 +494,13 @@ for attempt in $(seq 1 "${MENTRA_KEYVAULT_ATTEMPTS:-10}"); do
   sleep "${MENTRA_KEYVAULT_RETRY_SECONDS:-60}"
 done
 
-progress "Waiting for both services to start..."
-# ARM completion precedes Container Apps readiness. Wait until both services run
-# their new revisions; until then the previous Runtime still serves the old
+progress "Waiting for the services to start..."
+# ARM completion precedes Container Apps readiness. Wait until every service runs
+# its new revision; until then the previous Runtime still serves the old
 # manifest (for example the Azure address instead of the custom one).
-for app in "$CORE_NAME" "$(jq -r .runtimeName "$CONFIG")"; do
+APPS_TO_WAIT=("$CORE_NAME" "$(jq -r .runtimeName "$CONFIG")")
+[[ "$FLEET" == true ]] && APPS_TO_WAIT+=($(jq -r '.portalName, .fleetName, .fleetWorkerName' "$CONFIG"))
+for app in "${APPS_TO_WAIT[@]}"; do
   READY=false
   for attempt in $(seq 1 "${MENTRA_READY_ATTEMPTS:-60}"); do
     if az containerapp show --name "$app" --resource-group "$RESOURCE_GROUP" --output json | jq -e '

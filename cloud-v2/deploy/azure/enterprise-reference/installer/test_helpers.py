@@ -1,5 +1,6 @@
 """Exercise standalone helper compatibility with local provider fakes."""
 import json
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -216,12 +217,14 @@ else:sys.exit(9)
         calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()]
         self.assertFalse(any('hostname' in call for call in calls))
 
-    def parameters(self, config):
+    def parameters(self, config, portal='', fleet=''):
         source = (ROOT / 'scripts/deploy.sh').read_text()
-        expression = source.split('--arg cloudImage "$1" \'\n', 1)[1].split("\n  ' > \"$PARAMETERS\"", 1)[0]
+        expression = source.split('--arg fleetIdentityName "$FLEET_IDENTITY" \'\n', 1)[1].split("\n  ' > \"$PARAMETERS\"", 1)[0]
         (self.path / 'config.json').write_text(json.dumps(config))
         result = subprocess.run(['jq', '-n', '--slurpfile', 'config', str(self.path / 'config.json'),
-                                 '--arg', 'cloudImage', 'test.azurecr.io/cloud@sha256:' + 'a' * 64, expression],
+                                 '--arg', 'cloudImage', 'test.azurecr.io/cloud@sha256:' + 'a' * 64,
+                                 '--arg', 'portalImage', portal, '--arg', 'fleetImage', fleet,
+                                 '--arg', 'portalIdentityName', 'id-portal', '--arg', 'fleetIdentityName', 'id-fleet', expression],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)['parameters']
@@ -235,15 +238,16 @@ else:sys.exit(9)
             self.assertNotIn(name, parameters)
         template = (ROOT / 'main.bicep').read_text()
         self.assertNotIn('@secure()', template)
-        # Core's database and 5 more Core secrets, the admin portal's 3 sign-in secrets, the Graph secret and the
-        # demo's 2 speech keys. The template creates no database: Core reads the company's from Key Vault.
-        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 12)
+        # Core's database and 5 more Core secrets, the admin portal's 3 sign-in secrets, Core's 3 Fleet secrets, the
+        # Graph secret, the demo's 2 speech keys and MFM's 3. The template creates no database: Core and MFM read the
+        # company's from Key Vault.
+        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 18)
         self.assertIn("{ name: 'mongo-url', keyVaultUrl: '${vaultUri}secrets/mongo-url', identity: coreIdentity.id }", template)
         self.assertIn("'mongo-url'", (ROOT / 'access.bicep').read_text())
         self.assertNotIn('Microsoft.DocumentDB', template)
         # Each app reads only its own secrets with its own identity; nothing reads the admin key.
         core = template[template.index("resource core '"):template.index("resource runtime '")]
-        runtime = template[template.index("resource runtime '"):]
+        runtime = template[template.index("resource runtime '"):template.index("resource portal '")]
         self.assertNotIn('runtimeIdentity.id', core)
         self.assertNotIn('coreIdentity.id', runtime)
         # Each Graph app has its own secret, so a new app ID and its secret switch together.
@@ -287,7 +291,7 @@ else:sys.exit(9)
             self.assertIn(line, core)
         # The admin portal signs in through Core's sign-in server on Core's host; there is no separate sign-out URL.
         self.assertNotIn('CLOUD_CORE_IDP_SIGNOUT_URL', template)
-        clients = template[template.index('var oidcClients = ['):template.index('var resolvedManagedMiniapps')]
+        clients = template[template.index('var oidcClients = concat(['):template.index('var resolvedManagedMiniapps')]
         for line in ("clientId: 'admin-portal'", "kind: 'admin_portal'", "secretEnv: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET'",
                      "redirectUris: ['${coreOrigin}/api/admin/auth/callback']"):
             self.assertIn(line, clients)
@@ -299,19 +303,19 @@ else:sys.exit(9)
                      'verifiedEmailDomains: verifiedEmailDomains'):
             self.assertIn(line, provider)
         # With sign-in on, Core reads its secret from Key Vault and signs in as the Core API app itself.
-        # With it off, each of these is an empty array or object.
+        # With it off, each of these is an empty array or object. Fleet's settings follow them.
         gated = [
             (core, r"\], adminPortalSignIn \? \[\s*\{ name: 'entra-browser-client-secret', "
                    r"keyVaultUrl: '\$\{vaultUri\}secrets/entra-browser-client-secret', identity: coreIdentity\.id \}\s*"
                    r"\{ name: 'oidc-cookie-keys', keyVaultUrl: '\$\{vaultUri\}secrets/oidc-cookie-keys', identity: coreIdentity\.id \}\s*"
                    r"\{ name: 'oidc-admin-portal-client-secret', keyVaultUrl: '\$\{vaultUri\}secrets/oidc-admin-portal-client-secret', "
-                   r"identity: coreIdentity\.id \}\s*\] : \[\]\)"),
+                   r"identity: coreIdentity\.id \}\s*\] : \[\](?:\)|, fleet \?)"),
             (core, r"\], adminPortalSignIn \? \[\s*(?://[^\n]*\s*)*\{ name: 'ENTRA_BROWSER_CLIENT_SECRET', "
                    r"secretRef: 'entra-browser-client-secret' \}\s*"
                    r"\{ name: 'CLOUD_CORE_OIDC_ISSUER', value: coreOrigin \}\s*"
                    r"\{ name: 'CLOUD_CORE_OIDC_COOKIE_KEYS', secretRef: 'oidc-cookie-keys' \}\s*"
                    r"\{ name: 'CLOUD_CORE_OIDC_CLIENTS', value: string\(oidcClients\) \}\s*"
-                   r"\{ name: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET', secretRef: 'oidc-admin-portal-client-secret' \}\s*\] : \[\]\)"),
+                   r"\{ name: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET', secretRef: 'oidc-admin-portal-client-secret' \}\s*\] : \[\](?:\)|, fleet \?)"),
             (provider, r"\}, adminPortalSignIn \? \{\s*browser: \{\s*clientId: coreApiClientId\s*"
                        r"clientSecretEnv: 'ENTRA_BROWSER_CLIENT_SECRET'\s*scopes: \['openid', 'email', 'profile'\]\s*"
                        r"emailClaim: 'email'\s*displayName: displayName\s*\}\s*\} : \{\}\)"),
@@ -330,7 +334,7 @@ else:sys.exit(9)
         access = (ROOT / 'access.bicep').read_text()
         self.assertIn('param adminPortalSignIn bool = false', access)
         self.assertRegex(access, r"var coreSecrets = concat\(\[[^\]]*\], adminPortalSignIn \? \['entra-browser-client-secret', "
-                                 r"'oidc-cookie-keys', 'oidc-admin-portal-client-secret'\] : \[\]\)")
+                                 r"'oidc-cookie-keys', 'oidc-admin-portal-client-secret'\] : \[\],")
         self.assertEqual(access.count("'entra-browser-client-secret'"), 1)
 
     def test_configuration_requires_canonical_email_domains(self):
@@ -713,9 +717,84 @@ else:sys.exit(9)
                     (self.path / name).unlink(missing_ok=True)
                 self.env.update(FAILURES=str(failures), FAILURE=failure)
                 result, calls = self.deploy_block('# New Key Vault access can take up to 10 minutes',
-                                                  'progress "Waiting for both services', fake)
+                                                  'progress "Waiting for the services', fake)
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertEqual(len(calls), tries)
+
+    def test_fleet_runs_the_portal_and_mfm_in_the_stack_with_their_own_secrets(self):
+        config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+        parameters = self.parameters(config)
+        self.assertIs(parameters['fleet']['value'], False)
+        self.assertNotIn('portalName', parameters)
+        portal = 'acr.azurecr.io/mentra-portal@sha256:' + 'b' * 64
+        fleet = 'acr.azurecr.io/mentra-fleet@sha256:' + 'c' * 64
+        on = dict(config, fleet=True, portalName='ca-acme-portal', fleetName='ca-acme-fleet', fleetWorkerName='ca-acme-fleet-wk',
+                  coreAdminEmailDomains='acme.example')
+        parameters = self.parameters(on, portal, fleet)
+        self.assertEqual({k: parameters[k]['value'] for k in ('fleet', 'portalImage', 'fleetImage', 'portalName', 'fleetName',
+                                                              'fleetWorkerName', 'portalIdentityName', 'fleetIdentityName',
+                                                              'coreAdminEmailDomains')},
+                         {'fleet': True, 'portalImage': portal, 'fleetImage': fleet, 'portalName': 'ca-acme-portal',
+                          'fleetName': 'ca-acme-fleet', 'fleetWorkerName': 'ca-acme-fleet-wk', 'portalIdentityName': 'id-portal',
+                          'fleetIdentityName': 'id-fleet', 'coreAdminEmailDomains': 'acme.example'})
+        template = (ROOT / 'main.bicep').read_text()
+        core = template[template.index("resource core '"):template.index("resource runtime '")]
+        portal_app = template[template.index("resource portal '"):template.index('var fleetSecrets')]
+        mfm = template[template.index('var fleetSecrets'):template.index('output workspaceOrigin')]
+        # Core forwards to this stack's own MFM, which only apps in the environment reach.
+        self.assertIn("var fleetOrigin = 'https://${fleetName}.internal.${environment.properties.defaultDomain}'", template)
+        for line in ("{ name: 'CLOUD_CORE_FLEET_URL', value: fleetOrigin }",
+                     "{ name: 'CLOUD_CORE_ENABLED_FEATURES', value: 'fleet.managed' }",
+                     "{ name: 'CLOUD_CORE_FLEET_SECRET', secretRef: 'fleet-forwarding-secret' }",
+                     "{ name: 'CLOUD_CORE_SERVICE_SECRETS', secretRef: 'core-service-secrets' }",
+                     "{ name: 'CLOUD_CORE_ENTERPRISE_PORTAL_URL', value: portalOrigin }"):
+            self.assertIn(line, core)
+        self.assertEqual(mfm.count('external: false'), 1)
+        self.assertNotIn('ingress', mfm[mfm.index("resource fleetWorker '"):])
+        # Mentra Portal reads no secret; MFM reads only its own database and its side of the shared secrets.
+        self.assertNotIn('secrets', portal_app)
+        self.assertIn("{ name: 'CORE_URL', value: coreOrigin }", portal_app)
+        self.assertNotIn('coreIdentity', mfm + portal_app)
+        self.assertEqual(sorted(re.findall(r"secrets/([a-z-]+)'", mfm)),
+                         ['fleet-forwarding-secrets', 'fleet-mongo-url', 'fleet-service-secret'])
+        self.assertNotIn("secrets/mongo-url'", mfm)
+        access = (ROOT / 'access.bicep').read_text()
+        self.assertIn("var fleetSecrets = fleet ? ['fleet-mongo-url', 'fleet-forwarding-secrets', 'fleet-service-secret'] : []", access)
+        self.assertIn('scope: fleetSecret[i]', access)
+        bootstrap = (ROOT / 'bootstrap.bicep').read_text()
+        self.assertIn('var identityNames = [coreIdentityName, runtimeIdentityName, portalIdentityName, fleetIdentityName]', bootstrap)
+
+    def test_fleet_secrets_are_created_together_once(self):
+        script = (ROOT / 'scripts/ensure-vault-secrets.sh').read_text()
+        self.env['HELPER_TEST_DIRECTORY'] = str(self.path)
+        self.executable('openssl', 'import sys\nprint("r" * 44)\n')
+        self.executable('az', 'import json,os,sys\nfrom pathlib import Path\np=Path(os.environ["HELPER_TEST_DIRECTORY"]);a=sys.argv[1:]\n'
+                        'if a[:3]==["keyvault","secret","list"]:print(json.dumps(json.loads(os.environ["PRESENT"])))\n'
+                        'elif a[:3]==["keyvault","secret","set"]:\n'
+                        ' n=a[a.index("--name")+1];(p/"set").mkdir(exist_ok=True);(p/"set"/n).write_text(Path(a[a.index("--file")+1]).read_text())\n'
+                        'else:sys.exit(9)\n')
+        present = ['refresh-token-pepper', 'mentra-jwt-public-key', 'miniapp-jwt-public-key', 'mentra-jwt-private-key',
+                   'miniapp-jwt-private-key', 'oidc-cookie-keys', 'oidc-admin-portal-client-secret']
+        self.env['PRESENT'] = json.dumps(present)
+        result = subprocess.run(['bash', '-c', script, 'ensure', '--fleet', 'kvacme', 'rg', 'ca-core'], env=self.env, text=True,
+                                capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        made = {path.name: path.read_text() for path in (self.path / 'set').iterdir()}
+        self.assertEqual(set(made), {'oidc-workspace-portal-client-secret', 'fleet-forwarding-secret', 'fleet-forwarding-secrets',
+                                     'fleet-service-secret', 'core-service-secrets'})
+        self.assertEqual(json.loads(made['fleet-forwarding-secrets']), [made['fleet-forwarding-secret']])
+        self.assertEqual(json.loads(made['core-service-secrets']), {'fleet': [made['fleet-service-secret']]})
+        self.assertNotEqual(made['fleet-forwarding-secret'], '')
+        # Without --fleet nothing of Fleet's is made; with only some of them present, nothing is replaced.
+        for extra, flags, code in (([], [], 0), (['fleet-service-secret'], ['--fleet'], 1)):
+            with self.subTest(extra=extra, flags=flags):
+                for path in (self.path / 'set').iterdir():
+                    path.unlink()
+                self.env['PRESENT'] = json.dumps(present + ['oidc-workspace-portal-client-secret'] + extra)
+                result = subprocess.run(['bash', '-c', script, 'ensure', *flags, 'kvacme', 'rg', 'ca-core'], env=self.env,
+                                        text=True, capture_output=True)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(list((self.path / 'set').iterdir()), [])
 
     def test_source_mirror_validation_rejects_boolean_and_nonregistry_values(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()

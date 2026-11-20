@@ -4,9 +4,15 @@ set -euo pipefail
 # Create the deployment's signing keys directly in Key Vault, exactly once.
 # They exist on this machine only in a private temporary directory that is
 # removed on exit. A deployed Core is never given new keys: that would sign
-# every employee out and invalidate issued tokens.
+# every employee out and invalidate issued tokens. --fleet also creates the
+# secrets Core and MFM share.
+FLEET=false
+if [[ "${1:-}" == --fleet ]]; then
+  FLEET=true
+  shift
+fi
 if [[ $# -ne 3 ]]; then
-  printf 'Usage: %s <key-vault-name> <resource-group> <core-app-name>\n' "$0" >&2
+  printf 'Usage: %s [--fleet] <key-vault-name> <resource-group> <core-app-name>\n' "$0" >&2
   exit 2
 fi
 VAULT="$1"
@@ -59,6 +65,8 @@ done
 # it. New values sign nobody out, so a missing one is created on any run that
 # finds or creates the signing keys.
 GENERATED=(oidc-cookie-keys oidc-admin-portal-client-secret)
+# Mentra Portal's client secret at Core's sign-in server, likewise.
+[[ "$FLEET" == true ]] && GENERATED+=(oidc-workspace-portal-client-secret)
 generate_secret() {
   local dir status
   dir="$(mktemp -d)"
@@ -77,6 +85,48 @@ ensure_generated() {
       printf 'Created %s in Key Vault %s.\n' "$name" "$VAULT" >&2
     fi
   done
+  [[ "$FLEET" == true ]] && ensure_fleet
+  return 0
+}
+
+# The two secrets Core and MFM share, each stored the way its reader takes it:
+# Core signs what it forwards with fleet-forwarding-secret, which MFM checks
+# against fleet-forwarding-secrets (a JSON array, newest first); MFM calls Core
+# with fleet-service-secret, which Core finds under "fleet" in
+# core-service-secrets (its CLOUD_CORE_SERVICE_SECRETS). The four are created
+# together, once; a rotation edits them by hand (operations.md).
+FLEET_SECRETS=(fleet-forwarding-secret fleet-forwarding-secrets fleet-service-secret core-service-secrets)
+set_fleet_secret() {
+  az keyvault secret set --vault-name "$VAULT" --name "$1" --file "$2" --encoding utf-8 --content-type text/plain --output none
+}
+ensure_fleet() {
+  local name present=0 dir
+  for name in "${FLEET_SECRETS[@]}"; do
+    jq -e --arg name "$name" 'index($name) != null' <<<"$PRESENT" >/dev/null && present=$((present + 1))
+  done
+  [[ "$present" == "${#FLEET_SECRETS[@]}" ]] && return 0
+  if [[ "$present" != 0 ]]; then
+    printf 'Key Vault %s holds only some of %s. Recover the missing ones with "az keyvault secret recover", or delete them all and run setup again to create a new set.\n' \
+      "$VAULT" "${FLEET_SECRETS[*]}" >&2
+    exit 1
+  fi
+  dir="$(mktemp -d)"
+  (
+    umask 077
+    random() { openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\r\n'; }
+    forwarding="$(random)"
+    service="$(random)"
+    printf '%s' "$forwarding" > "$dir/fleet-forwarding-secret"
+    jq -cn --arg s "$forwarding" '[$s]' | tr -d '\n' > "$dir/fleet-forwarding-secrets"
+    printf '%s' "$service" > "$dir/fleet-service-secret"
+    jq -cn --arg s "$service" '{fleet: [$s]}' | tr -d '\n' > "$dir/core-service-secrets"
+  )
+  for name in "${FLEET_SECRETS[@]}"; do
+    [[ -s "$dir/$name" ]] || { rm -rf "$dir"; printf 'Secret generation produced an empty %s\n' "$name" >&2; exit 1; }
+    vault_call set_fleet_secret "$name" "$dir/$name" || { rm -rf "$dir"; exit 1; }
+  done
+  rm -rf "$dir"
+  printf 'Created the secrets Core and MFM share in Key Vault %s.\n' "$VAULT" >&2
 }
 
 if [[ ${#MISSING[@]} -eq 0 ]]; then

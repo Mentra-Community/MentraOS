@@ -108,9 +108,12 @@ demo-dev, and `staging` releases deploy the sales demo. The release:
 1. builds `ghcr.io/mentra-community/mentra-cloud` from the exact release commit;
 2. signs build provenance and an SPDX SBOM;
 3. imports that digest into the stack's ACR;
-4. deploys Core and Runtime from the same imported digest;
+4. deploys Core and Runtime from the same imported digest, with Fleet:
+   Mentra Portal and MFM, imported from the release's private
+   `mentra-portal` and `mentra-fleet` images, MFM on its own database;
 5. verifies Core health/readiness/JWKS and Runtime health/readiness/version/
-   manifest/legal/branding/auth boundaries; and
+   manifest/legal/branding/auth boundaries, that Core reaches MFM's computed
+   organization overview, and that Mentra Portal starts sign-in at Core; and
 6. records both revisions and the immutable digest in release evidence.
 
 The channel's Private Cloud download (`dev` or `beta`) then moves to that
@@ -133,6 +136,19 @@ each stack's Key Vault, which `bootstrap.bicep` created once with Owner rights,
 together with `access.bicep`'s per-secret grants. Each Container App reads only
 its own secrets with its own identity, so the CI deployment passes just the
 vault name. Customer deployments get their own vault the same way.
+
+Fleet's were made the same way, once per stack, before its first release with
+Fleet: `bootstrap.bicep` with `portalIdentityName` and `fleetIdentityName`,
+MFM's own Atlas database user on `private-cloud-demo` (`<stack>-fleet`,
+`readWrite` on the database `<stack>-fleet`) stored as `fleet-mongo-url`,
+`scripts/ensure-vault-secrets.sh --fleet` for the shared secrets, the Core API
+app's client secret as `entra-browser-client-secret` with
+`scripts/configure-entra.sh --admin-portal-only` for the stack's Core, then
+`access.bicep` with `fleet=true adminPortalSignIn=true`. The operator key is
+minted again with `installer/admin-key.ts` once the stack's Core runs a release
+with Fleet, so it holds Fleet's `organization.fleet.administer`; until then the
+release warns that it could not check Fleet's overview. Alice (`alice@acmeworkspace.com`) is the demo's
+Organization Admin.
 
 Each stack's deployer is federated to its branch only, and is Contributor on
 its resource group plus **Key Vault Secrets User** on that vault's

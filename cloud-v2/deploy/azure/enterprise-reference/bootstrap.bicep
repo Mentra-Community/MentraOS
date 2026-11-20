@@ -16,6 +16,12 @@ param coreIdentityName string = 'id-mentra-enterprise-reference-core'
 @description('Runtime\'s identity: pulls the image and reads only the Teams Graph secret.')
 param runtimeIdentityName string = 'id-mentra-enterprise-reference-runtime'
 
+@description('Mentra Portal\'s identity: pulls its image and reads no secret.')
+param portalIdentityName string = 'id-mentra-enterprise-reference-portal'
+
+@description('MFM\'s identity (Mentra Fleet Management, both of its apps): pulls its image and reads only MFM\'s Key Vault secrets.')
+param fleetIdentityName string = 'id-mentra-enterprise-reference-fleet'
+
 @minLength(3)
 @maxLength(24)
 @description('Globally unique Key Vault holding the signing keys and other deployment secrets.')
@@ -44,14 +50,17 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   properties: { adminUserEnabled: false }
 }
 
-// One identity per app, so a compromised app cannot read the other's secrets.
-resource identities 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = [for name in [coreIdentityName, runtimeIdentityName]: {
+// One identity per app, so a compromised app cannot read another's secrets.
+// Mentra Portal and MFM have theirs even where Fleet is not installed.
+var identityNames = [coreIdentityName, runtimeIdentityName, portalIdentityName, fleetIdentityName]
+
+resource identities 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = [for name in identityNames: {
   name: name
   location: location
   tags: resourceTags
 }]
 
-resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (name, i) in [coreIdentityName, runtimeIdentityName]: {
+resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (name, i) in identityNames: {
   name: guid(registry.id, identities[i].id, acrPullRoleDefinitionId)
   scope: registry
   properties: {
@@ -97,3 +106,5 @@ output keyVaultName string = vault.name
 output keyVaultUri string = vault.properties.vaultUri
 output coreIdentityId string = identities[0].id
 output runtimeIdentityId string = identities[1].id
+output portalIdentityId string = identities[2].id
+output fleetIdentityId string = identities[3].id

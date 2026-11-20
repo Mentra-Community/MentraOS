@@ -336,7 +336,7 @@ class InstallerTests(unittest.TestCase):
         database.assert_called_once_with(self.args, self.config)
         validate = [argv for argv in calls if '--validate-only' in argv]
         self.assertEqual(len(validate), 2)
-        self.assertEqual(validate[0][-1], str(self.directory / 'deployment.config.json'))
+        self.assertEqual(validate[0][-1], str(self.directory / 'effective.config.json'))
         self.assertFalse(any('secrets' in part for argv in calls for part in argv))
         self.assertEqual(sorted(p.name for p in self.directory.iterdir() if 'secret' in p.name), [])
     def test_dns_handoff_cannot_be_verified_as_final_customer_domain(self):
@@ -638,6 +638,12 @@ class InstallerTests(unittest.TestCase):
                 self.assertFalse(setup.admin_key_refused('https://core.example', 'mak_local_x'))
         with patch.object(setup.urllib.request, 'urlopen', side_effect=OSError('offline')):
             self.assertFalse(setup.admin_key_refused('https://core.example', 'mak_local_x'))
+        # A key from before Fleet is refused Fleet's organization view (403), and only that counts there.
+        for code, refused in ((403, True), (404, False), (503, False)):
+            with patch.object(setup.urllib.request, 'urlopen', side_effect=raising(code)) as urlopen:
+                self.assertIs(setup.admin_key_refused('https://core.example', 'mak_local_x', '/api/admin/fleet/overview', 403),
+                              refused)
+            self.assertEqual(urlopen.call_args[0][0].full_url, 'https://core.example/api/admin/fleet/overview')
 
     def test_admin_bootstrap_replaces_a_saved_key_whose_creator_is_not_allowlisted(self):
         calls, azure = self.admin_context(setup.OPERATOR_EMAIL)

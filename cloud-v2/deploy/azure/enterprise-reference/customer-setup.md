@@ -109,6 +109,50 @@ To set or change the connection string, run setup again with
 when Key Vault has none. Core reads a changed one within about 30 minutes, when
 Container Apps refreshes its Key Vault references, or at its next restart.
 
+## Fleet
+
+Fleet adds **Mentra Portal**, the workspace portal with Fleet Management and,
+for Organization Admins, the organization view (Overview, People and Devices
+of every account on the deployment), and **MFM** (Mentra Fleet Management), the
+service behind them, to the deployment. Turn it on with `setup.sh --fleet` (or
+`"fleet": true` in `--config`). Both run in the deployment's own Container Apps
+environment, from the release's images imported into its own registry:
+
+- Mentra Portal is its own app, on its own Azure address
+  (`ca-<deployment>-portal`), and relays its API to Core. People sign in to it
+  through Core's sign-in server with their Entra account, as they do to the
+  admin portal.
+- MFM runs as two apps, `ca-<deployment>-fleet` (requests) and
+  `ca-<deployment>-fleet-wk` (aggregation and the 15-minute overview). Its
+  ingress is internal: only Core reaches it, and Core forwards phones' reports
+  and the portals' Fleet requests to it and nowhere else. Fleet data stays in
+  the deployment.
+- MFM keeps its data in **its own database**, never Core's: a second database
+  on the same replica set (or another one), with its own database user that has
+  `readWrite` on that database only, reached the same private way. Setup asks
+  for its connection string (hidden; `--fleet-mongo-url-stdin` for automation)
+  and stores it in Key Vault as `fleet-mongo-url`; only MFM reads it. On Atlas:
+
+  ```bash
+  atlas dbusers create --projectId ATLAS_PROJECT_ID --username mentra-fleet \
+    --password "$(openssl rand -hex 24)" --role readWrite@mentra-fleet --scope CLUSTER_NAME
+  ```
+
+  then use the cluster's private endpoint connection string with that user and
+  `/mentra-fleet` as the database.
+- Core and MFM share two secrets, which setup creates in Key Vault
+  (`fleet-forwarding-secret`, `fleet-service-secret`, and each in the form its
+  reader takes it, `fleet-forwarding-secrets` and `core-service-secrets`).
+- Organization Admins are the addresses in `coreAdminEmails` and, for a whole
+  domain, `coreAdminEmailDomains`, each a verified email in one of
+  `verifiedEmailDomains`.
+
+Mentra Portal's and MFM's images are private: set `SOURCE_REGISTRY_USERNAME`
+and `SOURCE_REGISTRY_PASSWORD` to the pull credential Mentra gives you before
+running setup. MFM keeps no raw-record archive on a Private Cloud yet: a raw
+record leaves its database once aggregated and past its 15 days, and every
+Fleet view reads the aggregates, which it keeps.
+
 ## Customer delivery package
 
 - Official signed Mentra App through the customer's Android/iOS channel.

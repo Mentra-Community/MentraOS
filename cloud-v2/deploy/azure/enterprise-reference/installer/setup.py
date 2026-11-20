@@ -40,10 +40,15 @@ MONGO_SECRET = 'mongo-url'
 ATLAS_SERVICE = re.compile(r'^/subscriptions/[0-9a-f-]{36}/resourcegroups/[^/]+/providers/microsoft\.network/privatelinkservices/[^/]+$',
                            re.IGNORECASE)
 MONGO_URL = re.compile(r'^mongodb(\+srv)?://[^/?#\s]+/[^/?#\s]+(\?\S*)?$')
+# Fleet (Mentra Portal and MFM): MFM keeps its data in its own database, never Core's.
+FLEET_MONGO_SECRET = 'fleet-mongo-url'
+# The release's private images, pinned by digest; Mentra's pull credential reads them.
+FLEET_IMAGES = {'portalImage': re.compile(r'ghcr\.io/mentra-community/mentra-portal@sha256:[0-9a-f]{64}'),
+                'fleetImage': re.compile(r'ghcr\.io/mentra-community/mentra-fleet@sha256:[0-9a-f]{64}')}
 # Teams settings, email domains and admin portal sign-in may be added after
 # installation; resume rolls them out.
 UPDATABLE_KEYS = {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId', 'teamsGraphClientId',
-                  'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn'}
+                  'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn', 'fleet', 'coreAdminEmailDomains'}
 GUID = re.compile(r'^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$')
 # Admin portal sign-in: Core's sign-in server signs people in as the Core API app,
 # with this client secret from Key Vault, and Entra returns them to this path on
@@ -149,6 +154,10 @@ def check_release():
             raise SetupError(f'Release file changed: {filename}. Obtain the original installer package.')
     if not re.fullmatch(r'[A-Za-z0-9._-]+', release.get('releaseTag', '')):
         raise SetupError('Invalid image release tag')
+    images = [key for key in FLEET_IMAGES if key in release]
+    if images and (len(images) != len(FLEET_IMAGES)
+                   or not all(isinstance(release[k], str) and FLEET_IMAGES[k].fullmatch(release[k]) for k in images)):
+        raise SetupError('Invalid Mentra Portal or MFM image in the release')
     apps = release.get('managedMiniapps')
     if not isinstance(apps, list) or not any(isinstance(a, dict) and a.get('packageName') == 'com.mentra.call' for a in apps):
         raise SetupError('Release must include Mentra Call')
@@ -439,7 +448,8 @@ RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName
                  'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
                  'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn',
                  'miniappConfiguration', 'miniappVariants', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
-                 'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'reportStorageAccountName', 'virtualNetworkName')
+                 'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'reportStorageAccountName', 'virtualNetworkName',
+                 'fleet', 'coreAdminEmailDomains')
 # Restored even when empty: an empty value there is a deliberate choice.
 RESTORED_AS_IS = ('managedMiniappDirectory',)
 
@@ -642,6 +652,9 @@ def init(args, directory):
     config = read_json(ROOT / 'deployment.config.example.json')
     config.update(inputs)
     config['deploymentName'] = 'mentra-private'
+    if getattr(args, 'fleet', False):
+        config['fleet'] = True
+    fleet_settings(config, release)
     config.update(sourceImage=release['sourceImage'], releaseTag=release['releaseTag'],
                   managedMiniapps=release['managedMiniapps'], clientMinVersion=release['clientMinVersion'],
                   clientRecommendedVersion=release['clientMinVersion'])
@@ -731,7 +744,9 @@ class NoRegistryRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def check_source_image(config):
+def check_source_image(config, image=None):
+    # The release's Mentra Cloud image (through the mirror when one is set), or
+    # another image of the release, read from its own registry.
     username = os.environ.get('SOURCE_REGISTRY_USERNAME', '')
     password = os.environ.get('SOURCE_REGISTRY_PASSWORD', '')
     if bool(username) != bool(password):
@@ -747,14 +762,14 @@ def check_source_image(config):
     mirror = config.get('sourceRegistryMirror', '')
     if mirror and not re.fullmatch(r'[a-z0-9]+\.azurecr\.io/[a-z0-9]+(?:[._/-][a-z0-9]+)*', mirror):
         raise SetupError('sourceRegistryMirror must be an Azure registry/repository without a tag, digest or credentials.')
-    registry, repository = (mirror or 'ghcr.io/mentra-community/mentra-cloud').split('/', 1)
+    registry, repository = (image.split('@', 1)[0] if image else mirror or 'ghcr.io/mentra-community/mentra-cloud').split('/', 1)
     token_path = '/token' if registry == 'ghcr.io' else '/oauth2/token'
     token_url = 'https://' + registry + token_path + '?service=' + registry + '&scope=' + urllib.parse.quote('repository:' + repository + ':pull', safe='')
     try:
         with opener.open(urllib.request.Request(token_url, headers=token_headers), timeout=30) as response:
             data = json.load(response)
             token = data.get('token') or data['access_token']
-        pin = config['sourceImage'].split('@', 1)[1]
+        pin = (image or config['sourceImage']).split('@', 1)[1]
         url = 'https://' + registry + '/v2/' + repository + '/manifests/' + pin
         headers = {'Authorization': 'Bearer ' + token,
                    'Accept': 'application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, '
@@ -763,6 +778,10 @@ def check_source_image(config):
             if response.headers.get('Docker-Content-Digest') != pin:
                 raise SetupError('Source registry did not confirm the pinned image digest.')
     except (urllib.error.URLError, OSError, ValueError, KeyError):
+        if image:
+            raise SetupError('Cannot read Mentra Portal and MFM, the private images Fleet runs. Obtain package read access '
+                             'from Mentra and set SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD in this shell, then '
+                             'run setup again. No Azure resources are changed by this image-access check.') from None
         raise SetupError('Cannot read the pinned release image. '
                          'For a private release, obtain package read access or an approved ACR mirror from Mentra and set '
                          'SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD in this shell. '
@@ -807,6 +826,10 @@ def preflight(config, require_identity=False):
                 except ValueError:
                     pass
         source_access = 'verified in customer registry' if staged else check_source_image(config)
+        if config.get('fleet'):
+            for image in fleet_settings(config, check_release()).values():
+                if isinstance(image, str) and image.startswith('ghcr.io/'):
+                    check_source_image(config, image)
     return {'tenant': account['tenantId'], 'subscription': account['id'], 'providers': providers,
             'sourceImageAccess': source_access,
             'resourceGroup': 'owned' if group else 'new',
@@ -832,9 +855,29 @@ def checkpoint(directory, state, phase, **values):
     write_json(directory / 'state.json', state)
 
 
+def fleet_settings(config, release):
+    """Mentra Portal's and MFM's apps, identities and images for deploy.sh; nothing without Fleet."""
+    if not config.get('fleet'):
+        return {}
+    if not all(key in release for key in FLEET_IMAGES):
+        raise SetupError('This release has no Mentra Portal or MFM images, so it cannot install Fleet. '
+                         'Run the install command for a release that has them.')
+    name = config['deploymentId']
+    names = dict(portalName=f'ca-{name}-portal', fleetName=f'ca-{name}-fleet', fleetWorkerName=f'ca-{name}-fleet-wk',
+                 portalIdentityName=f'id-{name}-portal', fleetIdentityName=f'id-{name}-fleet')
+    return dict({key: config.get(key) or value for key, value in names.items()},
+                **{key: release[key] for key in FLEET_IMAGES})
+
+
+def script_config(config, **overrides):
+    """The configuration every deploy.sh call gets: the saved one with the release's Fleet settings, which come from
+    release.json (checked by load()) and are not saved settings."""
+    fleet = fleet_settings(config, check_release()) if config.get('fleet') else {}
+    return dict(config, **fleet, **overrides)
+
+
 def deploy(directory, config, state, hostname):
-    effective = dict(config, workspaceHostname=hostname)
-    write_json(directory / 'effective.config.json', effective)
+    write_json(directory / 'effective.config.json', script_config(config, workspaceHostname=hostname))
     output = run(['bash', str(ROOT / 'scripts/deploy.sh'), str(directory / 'effective.config.json')], env=environment(config),
                  explain=True)
     # Helpers may print progress before the final output; parse only the final
@@ -851,8 +894,8 @@ def deploy(directory, config, state, hostname):
     if not candidates:
         raise SetupError('Deployment completed without recognized public outputs. Inspect Azure Portal, then run setup again.')
     outputs = {k: v['value'] for k, v in candidates[-1].items() if k in
-               ('workspaceOrigin', 'coreOrigin', 'generatedRuntimeHostname', 'generatedCoreHostname', 'customDomainVerificationId',
-                'communicationResourceId', 'registryLoginServer', 'keyVaultName')}
+               ('workspaceOrigin', 'coreOrigin', 'portalOrigin', 'generatedRuntimeHostname', 'generatedCoreHostname',
+                'customDomainVerificationId', 'communicationResourceId', 'registryLoginServer', 'keyVaultName')}
     checkpoint(directory, state, 'deployed', outputs=outputs)
     # Lets setup continue this deployment from another computer (see init).
     azure(config, 'group', 'update', '--name', config['resourceGroup'], '--set', f"tags.mentraRelease={config['releaseTag']}")
@@ -949,7 +992,8 @@ def install(args, directory, config, state):
         return verify(args, directory, config, state)
     checks = preflight(config, require_identity=True)
     checkpoint(directory, state, state['phase'], checks=checks)
-    run(['bash', str(ROOT / 'scripts/deploy.sh'), '--validate-only', str(directory / 'deployment.config.json')],
+    write_json(directory / 'effective.config.json', script_config(config))
+    run(['bash', str(ROOT / 'scripts/deploy.sh'), '--validate-only', str(directory / 'effective.config.json')],
         env=environment(config), explain=True)
     ensure_group(config, state, checks)
     ensure_portal_secret(directory, config, state)
@@ -1172,6 +1216,10 @@ def bootstrap_admin(args, directory, config, state):
     if creator and admin_key_refused(state['outputs']['coreOrigin'], credential['value']):
         # Allowlisted but refused: revoked in the admin portal, say. admin-key.ts replaces it.
         creator = None
+    if creator and config.get('fleet') and admin_key_refused(state['outputs']['coreOrigin'], credential['value'],
+                                                             '/api/admin/fleet/overview', 403):
+        # Minted before Fleet, so it lacks organization.fleet.administer; admin-key.ts mints one with every scope.
+        creator = None
     if not creator:
         # No key yet, a saved key whose creator is not allowlisted, or one Core refuses.
         # Core returns the journaled key while it still works, and mints a mak_ key otherwise.
@@ -1199,15 +1247,15 @@ def admin_key_command(config):
             f"--subscription {config['subscriptionId']} --query value --output tsv")
 
 
-def admin_key_refused(core_origin, token):
-    """True only when Core answers 401 for the key: it is revoked, expired or unknown. Anything else is not a refusal."""
-    request = urllib.request.Request(core_origin.rstrip('/') + '/api/admin/reports?limit=1',
-                                     headers={'Authorization': 'Bearer ' + token})
+def admin_key_refused(core_origin, token, path='/api/admin/reports?limit=1', refusal=401):
+    """True only when Core answers `refusal` for the key: 401 for reports when it is revoked, expired or unknown, 403
+    for Fleet when it predates Fleet's scope. Anything else is not a refusal."""
+    request = urllib.request.Request(core_origin.rstrip('/') + path, headers={'Authorization': 'Bearer ' + token})
     try:
         with urllib.request.urlopen(request, timeout=30):
             return False
     except urllib.error.HTTPError as error:
-        return error.code == 401
+        return error.code == refusal
     except (OSError, http.client.HTTPException):
         return False
 
@@ -1363,7 +1411,7 @@ def grant_vault_access(config):
     # deployment someone else finished gets it here, from the same template.
     with tempfile.TemporaryDirectory(prefix='mentra-config-') as temp:
         path = Path(temp) / 'deployment.config.json'
-        write_json(path, config)
+        write_json(path, script_config(config))
         run(['bash', str(ROOT / 'scripts/deploy.sh'), '--bootstrap-only', str(path)], env=environment(config), explain=True)
 
 
@@ -1524,14 +1572,50 @@ def ensure_database(args, config):
             print('  ' + register.replace('\n', '\n  '))
         given = ask('Its connection string, naming the database (mongodb+srv://USER:PASSWORD@HOST/DATABASE?...; hidden)',
                     '', True, secret=True).strip()
-    if not given:
-        return
+    if given:
+        save_connection_string(config, MONGO_SECRET, given)
+    if config.get('fleet'):
+        ensure_fleet_database(args, config)
+
+
+def save_connection_string(config, name, given):
     if not MONGO_URL.fullmatch(given):
         # The value is never echoed: it holds a password.
         raise SetupError('That is not a MongoDB connection string naming a database: it must start with mongodb:// or '
                          'mongodb+srv:// and name the database after the host, for example .../mentra-private?retryWrites=true.')
-    vault_set(config, MONGO_SECRET, given)
-    print(f"  Saved the connection string in Key Vault {config['keyVaultName']} as {MONGO_SECRET}.")
+    vault_set(config, name, given)
+    print(f"  Saved the connection string in Key Vault {config['keyVaultName']} as {name}.")
+
+
+def ensure_fleet_database(args, config):
+    # MFM's own database on the same replica set (or another one), with its own user: Fleet's data stays in the
+    # company's database and MFM never reads Core's. A saved connection string is kept.
+    given = ''
+    if getattr(args, 'fleet_mongo_url_stdin', False):
+        given = sys.stdin.readline().strip()
+    elif not vault_get(config, FLEET_MONGO_SECRET):
+        if not (sys.stdin.isatty() and not getattr(args, 'yes', False)):
+            raise SetupError(f"Fleet is on, and Key Vault {config['keyVaultName']} has no {FLEET_MONGO_SECRET}, the connection "
+                             "string of MFM's own MongoDB database. Provide it with --fleet-mongo-url-stdin (see \"Fleet\" "
+                             'in customer-setup.md).')
+        print('  Fleet keeps its data in a database of its own, with a database user that can read and write only it '
+              '(see "Fleet" in customer-setup.md).')
+        given = ask("MFM's connection string, naming its database (mongodb+srv://USER:PASSWORD@HOST/DATABASE?...; hidden)",
+                    '', True, secret=True).strip()
+    if given:
+        save_connection_string(config, FLEET_MONGO_SECRET, given)
+
+
+def update_fleet(args, directory, config, state):
+    """Turns Fleet on for --fleet; True when the setting changed. Fleet is not turned off by setup."""
+    if not getattr(args, 'fleet', False) or config.get('fleet') is True:
+        return False
+    fleet_settings(dict(config, fleet=True), check_release())
+    if state['phase'] == 'infrastructure_verified':
+        # The next install rolls Mentra Portal and MFM out.
+        checkpoint(directory, state, 'deploying')
+    update_configuration(directory, config, state, fleet=True)
+    return True
 
 
 def atlas_registration(config):
@@ -1658,8 +1742,7 @@ def summarize_preview(preview):
 def preview(directory, config, state):
     # A first install with a custom address deploys on Azure's address first.
     hostname = config['workspaceHostname'] if (state.get('dns') or state.get('domainVerified')) else ''
-    effective = dict(config, workspaceHostname=hostname)
-    write_json(directory / 'effective.config.json', effective)
+    write_json(directory / 'effective.config.json', script_config(config, workspaceHostname=hostname))
     output = run(['bash', str(ROOT / 'scripts/deploy.sh'), '--what-if', str(directory / 'effective.config.json')],
                  env=environment(config), explain=True)
     return summarize_preview(json.loads(output))
@@ -2464,6 +2547,8 @@ def guided(args, directory):
     relink()
     if update_email_domains(args, directory, config, state, interactive):
         config, state, release = load(directory)
+    if update_fleet(args, directory, config, state):
+        config, state, release = load(directory)
     section('Checking the Azure subscription')
     ensure_providers(config, interactive)
     checks = preflight(config)
@@ -2516,8 +2601,9 @@ def guided(args, directory):
     handoffs = entra_handoffs(args, config, interactive)
     checkpoint(directory, state, state['phase'], handoffs=handoffs)
     result = {'status': state['phase']}
-    if state['phase'] == 'infrastructure_verified' and getattr(args, 'mongo_url_stdin', False):
-        # A new connection string for a running deployment: Core reads it from Key Vault, no rollout needed.
+    if state['phase'] == 'infrastructure_verified' and (getattr(args, 'mongo_url_stdin', False)
+                                                         or getattr(args, 'fleet_mongo_url_stdin', False)):
+        # A new connection string for a running deployment: Core and MFM read them from Key Vault, no rollout needed.
         section('The database')
         ensure_database(args, config)
     if state['phase'] != 'infrastructure_verified':
@@ -2605,6 +2691,10 @@ def finish(directory, result):
         expires = (state.get('adminPortal') or {}).get('secretExpires')
         if expires:
             print(f'Its client secret expires {expires[:10]}; rotate it before then (see operations.md).')
+        portal = state.get('outputs', {}).get('portalOrigin')
+        if portal and config.get('fleet'):
+            print(f'Mentra Portal: {portal}/ (workspaces and Fleet Management; Organization Admins also see the '
+                  'organization view)')
         print(f'Administrator key: {admin_key_command(config)}')
         if core:
             print(f'Feedback reports: curl -H "Authorization: Bearer $({admin_key_command(config)})" {core}/api/admin/reports')
@@ -2663,6 +2753,10 @@ def main():
     parser.add_argument('--teams-organizer', help='Licensed account (email or object ID) that hosts meetings for guests')
     parser.add_argument('--mongo-url-stdin', action='store_true',
                         help="Read Core's MongoDB connection string from standard input and store it in Key Vault")
+    parser.add_argument('--fleet', action='store_true',
+                        help='Install Fleet: Mentra Portal and MFM, with Fleet Management and the organization view')
+    parser.add_argument('--fleet-mongo-url-stdin', action='store_true',
+                        help="Read MFM's own MongoDB connection string from standard input and store it in Key Vault")
     parser.add_argument('--teams-secret-stdin', action='store_true', help='Read the Graph app client secret from standard input')
     parser.add_argument('--backup-confirmed', action='store_true', help='Confirm the database and report files are backed up before upgrade')
     parser.add_argument('--previous-package', help='Package the deployment currently runs (default: found automatically)')

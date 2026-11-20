@@ -109,6 +109,32 @@ Use the release identity and Mentra Cloud digest from one coordinated Mentra
 release bill of materials. Do not combine a Runtime from one release with a
 Mentra App selected from another without explicit compatibility qualification.
 
+## Fleet secrets
+
+With Fleet on, Core and MFM share two secrets in Key Vault, each stored once
+raw and once the way its other reader takes it:
+
+| Secret | Read by | Holds |
+| --- | --- | --- |
+| `fleet-forwarding-secret` | Core (`CLOUD_CORE_FLEET_SECRET`) | the secret Core signs forwarded requests with |
+| `fleet-forwarding-secrets` | MFM (`MFM_CORE_FORWARDING_SECRETS`) | a JSON array of those secrets, newest first |
+| `fleet-service-secret` | MFM (`MFM_CORE_SERVICE_SECRET`) | the secret MFM calls Core with |
+| `core-service-secrets` | Core (`CLOUD_CORE_SERVICE_SECRETS`) | `{"fleet": [...]}`, those secrets newest first |
+| `fleet-mongo-url` | MFM (`MONGO_URL`) | MFM's own database |
+
+`scripts/ensure-vault-secrets.sh --fleet` creates the four shared ones together
+and refuses a vault that holds only some of them. To rotate the forwarding
+secret, put a new one first in `fleet-forwarding-secrets` and restart MFM's two
+apps, then set `fleet-forwarding-secret` to it and restart Core, then drop the
+old one from `fleet-forwarding-secrets`. To rotate the service secret, add a new
+one first under `fleet` in `core-service-secrets` and restart Core, then set
+`fleet-service-secret` to it and restart MFM, then drop the old one. Container
+Apps reads a changed secret at the next restart, or within about 30 minutes.
+
+An operator key minted before Fleet lacks `organization.fleet.administer`;
+running setup again (the Administrator key step) replaces it with one that holds
+every current scope and revokes the old one.
+
 ## Import an immutable Mentra Cloud image
 
 Mentra provides a digest-pinned source such as:

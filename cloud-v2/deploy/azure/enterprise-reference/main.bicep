@@ -20,6 +20,9 @@ param mobileClientId string
 @description('Comma-separated administrator emails for existing Core admin authorization. For an org API key, allowlist api-key@<keyId>.local. This is not a bearer credential.')
 param coreAdminEmails string = ''
 
+@description('Comma-separated email domains whose verified addresses are Organization Admins, as coreAdminEmails lists single addresses.')
+param coreAdminEmailDomains string = ''
+
 @description('Email domains the customer\'s Entra directory issues, each subdomain listed separately: lowercase, no trailing dot, no Mentra domain. Core treats an Entra email as verified only in these domains.')
 param verifiedEmailDomains array = []
 
@@ -54,6 +57,18 @@ param coreName string = 'ca-mentra-ent-ref-core'
 @description('Existing per-app identities created by bootstrap.bicep. Each pulls the image and reads only its own secrets.')
 param coreIdentityName string = 'id-mentra-enterprise-reference-core'
 param runtimeIdentityName string = 'id-mentra-enterprise-reference-runtime'
+param portalIdentityName string = 'id-mentra-enterprise-reference-portal'
+param fleetIdentityName string = 'id-mentra-enterprise-reference-fleet'
+
+@description('Mentra Portal (the workspace portal, with Fleet Management and the organization view) and MFM (Mentra Fleet Management), beside Core. MFM keeps its data in its own database, whose connection string is the Key Vault secret fleet-mongo-url, and is reachable only from inside the environment: Core forwards phones\' reports and the portal\'s requests to it. Requires portalImage, fleetImage and the Key Vault secrets fleet-forwarding-secret, fleet-forwarding-secrets, fleet-service-secret and core-service-secrets (and, with adminPortalSignIn, oidc-workspace-portal-client-secret), granted by access.bicep with the same setting.')
+param fleet bool = false
+@description('Mentra Portal\'s image in this deployment\'s registry, pinned by digest, for fleet.')
+param portalImage string = ''
+@description('MFM\'s image in this deployment\'s registry, pinned by digest, for fleet.')
+param fleetImage string = ''
+param portalName string = 'ca-mentra-ent-ref-portal'
+param fleetName string = 'ca-mentra-ent-ref-fleet'
+param fleetWorkerName string = 'ca-mentra-ent-ref-fleet-wk'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 @description('ACS data location approved by the customer, for example United States or Europe.')
 param communicationDataLocation string = 'United States'
@@ -101,6 +116,14 @@ resource coreIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-
 
 resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: runtimeIdentityName
+}
+
+resource portalIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: portalIdentityName
+}
+
+resource fleetIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: fleetIdentityName
 }
 
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
@@ -196,6 +219,9 @@ var generatedRuntimeHostname = '${runtimeName}.${environment.properties.defaultD
 var generatedCoreHostname = '${coreName}.${environment.properties.defaultDomain}'
 var workspaceOrigin = 'https://${empty(workspaceHostname) ? generatedRuntimeHostname : workspaceHostname}'
 var coreOrigin = 'https://${generatedCoreHostname}'
+var portalOrigin = 'https://${portalName}.${environment.properties.defaultDomain}'
+// MFM's ingress is internal: only apps in this environment reach it.
+var fleetOrigin = 'https://${fleetName}.internal.${environment.properties.defaultDomain}'
 // The workforce directory. The Mentra App signs in through the Mobile client;
 // the admin portal, served by Core on its own host, signs in through the Core
 // API app itself, so both tokens carry the same audience and the same oid.
@@ -224,15 +250,23 @@ var oidcProviders = [
     }
   } : {})
 ]
-// The admin portal is the one client of Core's sign-in server on a Private Cloud.
-var oidcClients = [
+// The admin portal is a client of Core's sign-in server on a Private Cloud, and
+// with Fleet so is Mentra Portal, on its own host.
+var oidcClients = concat([
   {
     clientId: 'admin-portal'
     kind: 'admin_portal'
     secretEnv: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET'
     redirectUris: ['${coreOrigin}/api/admin/auth/callback']
   }
-]
+], fleet ? [
+  {
+    clientId: 'mentra-portal'
+    kind: 'workspace_portal'
+    secretEnv: 'CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET'
+    redirectUris: ['${portalOrigin}/api/portal/auth/callback']
+  }
+] : [])
 var resolvedManagedMiniapps = map(managedMiniapps, app => {
       packageName: app.packageName
       version: app.version
@@ -355,6 +389,11 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
         { name: 'entra-browser-client-secret', keyVaultUrl: '${vaultUri}secrets/entra-browser-client-secret', identity: coreIdentity.id }
         { name: 'oidc-cookie-keys', keyVaultUrl: '${vaultUri}secrets/oidc-cookie-keys', identity: coreIdentity.id }
         { name: 'oidc-admin-portal-client-secret', keyVaultUrl: '${vaultUri}secrets/oidc-admin-portal-client-secret', identity: coreIdentity.id }
+      ] : [], fleet ? [
+        { name: 'fleet-forwarding-secret', keyVaultUrl: '${vaultUri}secrets/fleet-forwarding-secret', identity: coreIdentity.id }
+        { name: 'core-service-secrets', keyVaultUrl: '${vaultUri}secrets/core-service-secrets', identity: coreIdentity.id }
+      ] : [], fleet && adminPortalSignIn ? [
+        { name: 'oidc-workspace-portal-client-secret', keyVaultUrl: '${vaultUri}secrets/oidc-workspace-portal-client-secret', identity: coreIdentity.id }
       ] : [])
     }
     template: {
@@ -373,6 +412,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'MENTRA_MINIAPP_JWT_PUBLIC_KEY', secretRef: 'miniapp-jwt-public-key' }
             { name: 'CLOUD_CORE_ISSUER', value: coreOrigin }
             { name: 'CLOUD_CORE_ADMIN_EMAILS', value: coreAdminEmails }
+            { name: 'CLOUD_CORE_ADMIN_EMAIL_DOMAINS', value: coreAdminEmailDomains }
             { name: 'CLOUD_STORAGE_PROVIDER', value: 'local' }
             { name: 'CLOUD_STORAGE_LOCAL_DIR', value: '/mnt/core-attachments' }
             { name: 'CLOUD_CORE_OIDC_PROVIDERS', value: string(oidcProviders) }
@@ -390,6 +430,18 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'CLOUD_CORE_OIDC_COOKIE_KEYS', secretRef: 'oidc-cookie-keys' }
             { name: 'CLOUD_CORE_OIDC_CLIENTS', value: string(oidcClients) }
             { name: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET', secretRef: 'oidc-admin-portal-client-secret' }
+          ] : [], fleet ? [
+            // Fleet installed: Core forwards phones' reports and Fleet's
+            // screens to this stack's own MFM, and nowhere else.
+            { name: 'CLOUD_CORE_ENABLED_FEATURES', value: 'fleet.managed' }
+            { name: 'CLOUD_CORE_FLEET_URL', value: fleetOrigin }
+            { name: 'CLOUD_CORE_FLEET_SECRET', secretRef: 'fleet-forwarding-secret' }
+            { name: 'CLOUD_CORE_SERVICE_SECRETS', secretRef: 'core-service-secrets' }
+            // The Overview's membership history reaches 114 days back.
+            { name: 'CLOUD_CORE_FLEET_HISTORY_MAX_DAYS', value: '120' }
+            { name: 'CLOUD_CORE_ENTERPRISE_PORTAL_URL', value: portalOrigin }
+          ] : [], fleet && adminPortalSignIn ? [
+            { name: 'CLOUD_CORE_OIDC_WORKSPACE_PORTAL_CLIENT_SECRET', secretRef: 'oidc-workspace-portal-client-secret' }
           ] : [])
           resources: { cpu: json('0.5'), memory: '1Gi' }
           volumeMounts: [{ volumeName: 'core-attachments', mountPath: '/mnt/core-attachments' }]
@@ -516,8 +568,142 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
+// Mentra Portal: the workspace portal's site, which relays /api/* to Core.
+resource portal 'Microsoft.App/containerApps@2024-03-01' = if (fleet) {
+  name: portalName
+  location: location
+  tags: resourceTags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${portalIdentity.id}': {} }
+  }
+  properties: {
+    managedEnvironmentId: environment.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: true
+        targetPort: 5175
+        transport: 'auto'
+        allowInsecure: false
+      }
+      registries: [{ server: registry.properties.loginServer, identity: portalIdentity.id }]
+    }
+    template: {
+      containers: [
+        {
+          name: 'portal'
+          image: portalImage
+          env: [
+            { name: 'CORE_URL', value: coreOrigin }
+          ]
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+          probes: [
+            { type: 'Liveness', httpGet: { path: '/_portal/health', port: 5175 }, initialDelaySeconds: 5, periodSeconds: 10 }
+            { type: 'Readiness', httpGet: { path: '/_portal/health', port: 5175 }, initialDelaySeconds: 5, periodSeconds: 5 }
+          ]
+        }
+      ]
+      scale: { minReplicas: 1, maxReplicas: 1 }
+    }
+  }
+}
+
+// MFM runs as two apps from one image and settings, as on Mentra's own
+// environments: the web role serves Core's forwarded requests with every
+// background job off, the worker role runs aggregation, the overview, Core's
+// change feed and expiry, and serves nothing. Its raw-record archive is off:
+// a record leaves MFM's database once aggregated and past the replay window.
+var fleetSecrets = [
+  { name: 'mongo-url', keyVaultUrl: '${vaultUri}secrets/fleet-mongo-url', identity: fleetIdentity.id }
+  { name: 'forwarding-secrets', keyVaultUrl: '${vaultUri}secrets/fleet-forwarding-secrets', identity: fleetIdentity.id }
+  { name: 'service-secret', keyVaultUrl: '${vaultUri}secrets/fleet-service-secret', identity: fleetIdentity.id }
+]
+var fleetEnv = [
+  { name: 'MONGO_URL', secretRef: 'mongo-url' }
+  { name: 'MFM_CORE_FORWARDING_SECRETS', secretRef: 'forwarding-secrets' }
+  { name: 'MFM_CORE_URL', value: coreOrigin }
+  { name: 'MFM_CORE_SERVICE_SECRET', secretRef: 'service-secret' }
+  { name: 'LOG_STDOUT_JSON', value: 'true' }
+]
+
+resource fleetWeb 'Microsoft.App/containerApps@2024-03-01' = if (fleet) {
+  name: fleetName
+  location: location
+  tags: resourceTags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${fleetIdentity.id}': {} }
+  }
+  properties: {
+    managedEnvironmentId: environment.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: false
+        targetPort: 3004
+        transport: 'auto'
+        allowInsecure: false
+      }
+      registries: [{ server: registry.properties.loginServer, identity: fleetIdentity.id }]
+      secrets: fleetSecrets
+    }
+    template: {
+      containers: [
+        {
+          name: 'fleet'
+          image: fleetImage
+          command: ['bun', 'fleet/src/index.ts', '--role=web']
+          env: fleetEnv
+          resources: { cpu: json('0.5'), memory: '1Gi' }
+          probes: [
+            { type: 'Startup', httpGet: { path: '/healthz', port: 3004 }, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 60 }
+            { type: 'Liveness', httpGet: { path: '/healthz', port: 3004 }, initialDelaySeconds: 15, periodSeconds: 10 }
+            { type: 'Readiness', httpGet: { path: '/ready', port: 3004 }, initialDelaySeconds: 15, periodSeconds: 5 }
+          ]
+        }
+      ]
+      scale: { minReplicas: 1, maxReplicas: 1 }
+    }
+  }
+}
+
+resource fleetWorker 'Microsoft.App/containerApps@2024-03-01' = if (fleet) {
+  name: fleetWorkerName
+  location: location
+  tags: resourceTags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${fleetIdentity.id}': {} }
+  }
+  properties: {
+    managedEnvironmentId: environment.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      registries: [{ server: registry.properties.loginServer, identity: fleetIdentity.id }]
+      secrets: fleetSecrets
+    }
+    template: {
+      containers: [
+        {
+          name: 'fleet-worker'
+          image: fleetImage
+          command: ['bun', 'fleet/src/index.ts', '--role=worker']
+          env: fleetEnv
+          // No route, and Container Apps has no command probes, so nothing
+          // reads the heartbeat the worker writes; a worker that exits restarts.
+          resources: { cpu: json('1'), memory: '2Gi' }
+        }
+      ]
+      // One worker: a second would wait on the first's leases.
+      scale: { minReplicas: 1, maxReplicas: 1 }
+    }
+  }
+}
+
 output workspaceOrigin string = workspaceOrigin
 output coreOrigin string = coreOrigin
+output portalOrigin string = fleet ? portalOrigin : ''
 output generatedRuntimeHostname string = generatedRuntimeHostname
 output generatedCoreHostname string = generatedCoreHostname
 output customDomainVerificationId string = environment.properties.customDomainConfiguration.customDomainVerificationId

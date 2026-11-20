@@ -27,7 +27,12 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def build(publication_path, sbom_path, output, image_source_commit=None):
+# Mentra Portal and MFM, the private images Fleet runs beside Mentra Cloud, published under the same release.
+FLEET_IMAGES = {'portalImage': r'ghcr\.io/mentra-community/mentra-portal@sha256:[0-9a-f]{64}',
+                'fleetImage': r'ghcr\.io/mentra-community/mentra-fleet@sha256:[0-9a-f]{64}'}
+
+
+def build(publication_path, sbom_path, output, image_source_commit=None, fleet_images=None):
     publication = json.loads(Path(publication_path).read_text())
     if (publication.get('schemaVersion') != 1 or publication.get('component') != 'mentra-cloud-image'
             or publication.get('status') != 'published'
@@ -67,6 +72,10 @@ def build(publication_path, sbom_path, output, image_source_commit=None):
         apps.append({k: app[k] for k in ('packageName', 'version', 'sha256')} | {'bundlePath': '/miniapps/' + filename})
     if not any(app['packageName'] == 'com.mentra.call' for app in apps):
         raise ValueError('Image release must include Mentra Call')
+    fleet_images = fleet_images or {}
+    if fleet_images and (set(fleet_images) != set(FLEET_IMAGES)
+                         or not all(re.fullmatch(FLEET_IMAGES[k], v or '') for k, v in fleet_images.items())):
+        raise ValueError('Expected both the Mentra Portal and MFM images, pinned by digest')
     installer_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
     # Package committed bytes only. A local working-tree modification must never
     # masquerade as the recorded installer source commit.
@@ -76,7 +85,8 @@ def build(publication_path, sbom_path, output, image_source_commit=None):
     contents['runtime-image.spdx.json'] = sbom
     release = dict(schemaVersion=1, sourceImage=publication['reference'], releaseTag=publication['releaseIdentity'],
                    imageSourceCommit=source, installerSourceCommit=installer_commit, managedMiniapps=apps,
-                   clientMinVersion=CLIENT_MIN_VERSION, files={name: sha(data) for name, data in contents.items()})
+                   clientMinVersion=CLIENT_MIN_VERSION, **fleet_images,
+                   files={name: sha(data) for name, data in contents.items()})
     contents['release.json'] = (json.dumps(release, indent=2) + '\n').encode()
     contents['INSTALL.txt'] = b'''Mentra Private Cloud Azure installer
 Run it in Azure Cloud Shell (Bash) from any browser, or any Bash terminal with Azure CLI and Python 3.
@@ -129,6 +139,9 @@ if __name__ == '__main__':
     parser.add_argument('--sbom', required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--image-source-commit', help="The commit the image was built from (default: the record's)")
+    parser.add_argument('--portal-image', help='Mentra Portal, ghcr.io/mentra-community/mentra-portal@sha256:..., for Fleet')
+    parser.add_argument('--fleet-image', help='MFM, ghcr.io/mentra-community/mentra-fleet@sha256:..., for Fleet')
     args = parser.parse_args()
-    build(args.publication, args.sbom, args.output, args.image_source_commit)
+    images = {k: v for k, v in (('portalImage', args.portal_image), ('fleetImage', args.fleet_image)) if v}
+    build(args.publication, args.sbom, args.output, args.image_source_commit, images)
     print(args.output)

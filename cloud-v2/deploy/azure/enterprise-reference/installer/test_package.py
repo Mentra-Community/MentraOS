@@ -22,6 +22,9 @@ class PackageTests(unittest.TestCase):
         self.git('init', '-q')
         self.git('config', 'user.email', 'test@example.invalid')
         self.git('config', 'user.name', 'Installer tests')
+        # No background gc or maintenance writing into .git while cleanup removes it.
+        self.git('config', 'gc.auto', '0')
+        self.git('config', 'maintenance.auto', 'false')
         for name in package.FILES:
             path = self.repo / PREFIX / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +108,19 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(release['managedMiniapps'], expected['managedMiniapps'])
         self.assertEqual({k: v for k, v in release['files'].items() if k != 'runtime-image-publication.json'},
                          {k: v for k, v in expected['files'].items() if k != 'runtime-image-publication.json'})
+
+    def test_fleet_images_are_recorded_only_as_a_digest_pinned_pair(self):
+        images = {'portalImage': 'ghcr.io/mentra-community/mentra-portal@sha256:' + 'b' * 64,
+                  'fleetImage': 'ghcr.io/mentra-community/mentra-fleet@sha256:' + 'c' * 64}
+        self.publication.write_text(json.dumps(self.record))
+        with patch.object(package, 'REPO', self.repo):
+            self.assertNotIn('portalImage', package.build(self.publication, self.sbom, self.output))
+            release = package.build(self.publication, self.sbom, self.output, fleet_images=images)
+            self.assertEqual({k: release[k] for k in images}, images)
+            for wrong in ({'portalImage': images['portalImage']},
+                          dict(images, fleetImage='ghcr.io/mentra-community/mentra-fleet:latest')):
+                with self.assertRaises(ValueError):
+                    package.build(self.publication, self.sbom, self.output, fleet_images=wrong)
 
     def test_install_guide_names_the_operator_key_flow(self):
         self.build()

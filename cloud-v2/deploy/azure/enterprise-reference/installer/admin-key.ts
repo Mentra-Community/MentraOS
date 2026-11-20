@@ -38,10 +38,13 @@ let credential: Credential;
 // as an operator key, created by api-key@<keyId>.local, while that address stays
 // in CLOUD_CORE_ADMIN_EMAILS.
 const TOKEN = /^(mak|msk)_local_([0-9A-HJKMNP-TV-Z]{26})\.[A-Za-z0-9_-]{43}$/;
+// A key minted by an earlier release lacks the scopes added since (Fleet's
+// organization.fleet.administer, for one), so it is replaced like a revoked one.
 async function usable(value: Credential | null): Promise<boolean> {
   if (!value || TOKEN.exec(value.value)?.[2] !== value.id) return false;
   const principal = await validateCredentialToken(value.value);
-  return principal?.credentialKind === "organization" && principal.credentialId === value.id;
+  return principal?.credentialKind === "organization" && principal.credentialId === value.id &&
+    OPERATOR_KEY_SCOPES.every(scope => principal.scopes.includes(scope));
 }
 const creatorOf = (value: Credential) => value.value.startsWith("msk_") ? `api-key@${value.id}.local` : OPERATOR_EMAIL;
 try {
