@@ -177,3 +177,26 @@ test("posts once to the channel's webhook, and skips a channel without one", asy
   assert.equal(requests.length, 1)
   assert.match(log.mock.calls.map((call) => call.arguments[0]).join("\n"), /DEV_SLACK_WEBHOOK_URL is not set[\s\S]*branch main/)
 })
+
+test("production submitted to the stores waits with a Publish button, not a failure", async () => {
+  const publish = "https://github.com/Mentra-Community/Mentra/actions/workflows/publish-release.yml"
+  const post = await releasePost({...env, BRANCH: "production", RELEASE_IDENTITY: "3.4.1", FINALIZE_RESULT: "skipped",
+    NPM_RESULT: "skipped", SDK_NATIVE_RESULT: "skipped", IPHONE_MANIFEST_URL: "", PUBLISH_URL: publish},
+  {check: ok, fetchImpl: async (url) => (url === env.OTA_MANIFEST_URL ? json(manifest) : assert.fail(`Unexpected request ${url}`))})
+  assert.equal(post.blocks[0].text.text, "*⏳ Production 3.4.1 submitted to the stores*")
+  assert.equal(buttons(post)[0], ":rocket: Publish")
+  assert.equal(post.blocks.find((block) => block.type === "actions").elements[0].url, publish)
+  assert.match(post.blocks[1].elements[0].text, /run it on main with version 3\.4\.1/)
+  assert.doesNotMatch(text(post), /did not finish/)
+})
+
+test("production posts to #prod-builds", async () => {
+  const posted = []
+  await notifyRelease({...env, BRANCH: "production", PRODUCTION_SLACK_WEBHOOK_URL: "https://hooks.slack.test/prod",
+    STAGING_SLACK_WEBHOOK_URL: "https://hooks.slack.test/staging"}, {check: ok, fetchImpl: async (url, init) => {
+    if (url === env.OTA_MANIFEST_URL) return json(manifest)
+    posted.push(url)
+    return new Response("ok")
+  }})
+  assert.deepEqual(posted, ["https://hooks.slack.test/prod"])
+})

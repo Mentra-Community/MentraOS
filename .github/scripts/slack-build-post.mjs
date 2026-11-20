@@ -92,8 +92,8 @@ export const glassesLine = ({asg, bes, mtk}) =>
  *   glasses?: {asg: {versionName: string, versionCode: number}, bes: string, mtk: string}, glassesNote?: string,
  *   problems?: {text: string, url?: string, icon?: string}[]}} post
  */
-export function buildPost({text, title, details, facts = [], apps = [], docs, glasses, glassesNote, problems = []}) {
-  const buttons = [...installButtons(apps), ...(installable(docs) ? [button(":books: Docs", docs)] : [])]
+export function buildPost({text, title, details, facts = [], actions = [], apps = [], docs, glasses, glassesNote, problems = []}) {
+  const buttons = [...actions.map(({label, url}) => button(label, url)), ...installButtons(apps), ...(installable(docs) ? [button(":books: Docs", docs)] : [])]
   const missing = installSlots(apps).filter(({url}) => !url)
   const top = [
     {type: "section", text: {type: "mrkdwn", text: title}, ...(details ? {accessory: button("Details", details)} : {})},

@@ -22,33 +22,56 @@ already tested: it never ships a source staging didn't release.
    `promotion_lab` job then checks that beta on the lab, about an hour: the
    current production app, and the beta's app updating the glasses from
    production's software (see "What the lab checks first").
-4. **The merge is the approval.** The push to `main` starts `release.yml`,
-   whose gate names the beta it promotes in the run summary, and the release
-   runs without waiting for anyone. Review the PR as the release decision.
-5. **The release runs** (about the time of a beta):
+4. **The merge is the approval to submit.** The push to `main` starts
+   `release.yml`, whose gate names the beta it promotes in the run summary,
+   and the submission runs without waiting for anyone. Review the PR as the
+   release decision.
+5. **The submission runs** (about the time of a beta):
    - Cloud V2 prod is deployed from the same source, after its environment
      group is checked against `cloud-config-contract.json`.
    - The Mentra App is built with the production backend. Android goes to
      Google Play's production track as a draft. iOS is uploaded, attached to
      the App Store version `X.Y.Z` and submitted for App Review, with manual
      release and phased release.
-   - npm publishes `X.Y.Z` under `latest`, Maven Central publishes `X.Y.Z`,
-     and the Swift package gets the tag `X.Y.Z`.
    - The OTA manifest and bundle are byte-identical copies of the beta's, so
      production glasses get exactly the software the beta tested.
+   - The run then stops. It saves what publishing needs, and #prod-builds
+     gets a post with a **Publish** button. Nothing below happens until step 7.
+6. **Go live in the stores.** In Play Console, send the production draft for
+   review and roll it out. In App Store Connect, release the approved version.
+7. **Publish.** Anyone who can merge to `main` presses **Publish** in the
+   Slack post (or opens **Publish production release** in the Actions tab),
+   chooses **Run workflow** on branch `main` with version `X.Y.Z`. It
+   publishes the version's latest submission, within 90 days. Then:
+   - npm publishes `X.Y.Z` under `latest`, Maven Central publishes `X.Y.Z`,
+     and the Swift package gets the tag `X.Y.Z`.
    - `finalize` writes `mentra-release-<X.Y.Z>.json` and tags `mentra-v<X.Y.Z>`
      on MentraOS `main`. The GitHub release `mentra-v<X.Y.Z>` is published as
      MentraOS's latest release, and Slack gets the result.
    - The production docs go live last: MentraOS `production-docs` moves to
      the released commit, and Mintlify deploys it to `docs.mentraglass.com`.
      The merge alone changes nothing there.
-6. **Go live in the stores.** In Play Console, send the production draft for
-   review and roll it out. In App Store Connect, release the approved version.
-   These are the only manual steps after the merge.
 
 A failed job is rerun in place: every upload is immutable and a rerun reuses
-what it published. A beta that turns out wrong is fixed on staging and
-promoted again as a new beta; a published `X.Y.Z` is never replaced.
+what it published. A published `X.Y.Z` is never replaced.
+
+## Submit the same version again
+
+Until step 7, `X.Y.Z` can be submitted again with new builds, for example
+after App Review rejects it or a bug turns up in review:
+
+1. Don't publish it.
+2. Fix it on staging, which releases a new beta of `X.Y.Z`, and promote that
+   beta to `main` as above.
+3. The new run takes over the draft `mentra-v<X.Y.Z>`, clearing the earlier
+   submission's files, and builds with new build numbers. iOS cancels the
+   review of the earlier build if it is still waiting for or in review, and
+   submits the new one. An approved build that wasn't released must be
+   rejected first in App Store Connect (Developer Reject); the run stops and
+   says so. Play's production draft is replaced by the new one.
+
+Once publishing starts, the version is final: a fix ships as the
+next version (`bun run release:prepare-next-family`).
 
 ## What runs on staging instead
 
@@ -102,6 +125,12 @@ production's values.
 - Environment `prod` (branch `main`): `DOPPLER_TOKEN_CI_PRD` and
   `DOPPLER_TOKEN_MOBILE_PRD`, and access to the Copybara App's key. Its
   miniapp, Call, Store and website deploys use the same environment.
+- `SLACK_WEBHOOK_PROD_BUILDS` in Doppler `mentra-monorepo-ci/prd`: the
+  #prod-builds webhook. Until it exists, production posts to the betas'
+  channel.
+- To rehearse publishing: run the Release workflow by hand with channel
+  `production`, then **Publish production release** with its version and that
+  run's ID. Nothing is published.
 - Mintlify's production deployment (`docs.mentraglass.com`) follows MentraOS
   `production-docs`, not `main`.
 - npm trusts `coordinated-release.yml` on MentraOS for every package, and the
