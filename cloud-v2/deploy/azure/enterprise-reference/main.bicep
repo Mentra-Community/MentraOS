@@ -689,10 +689,14 @@ resource fleetWorker 'Microsoft.App/containerApps@2024-03-01' = if (fleet) {
           name: 'fleet-worker'
           image: fleetImage
           command: ['bun', 'fleet/src/index.ts', '--role=worker']
-          env: fleetEnv
-          // No route, and Container Apps has no command probes, so nothing
-          // reads the heartbeat the worker writes; a worker that exits restarts.
+          // Container Apps has no command probes, so the worker answers its
+          // heartbeat check (stale after a minute) on a port of its own.
+          env: concat(fleetEnv, [{ name: 'MFM_WORKER_HEALTH_PORT', value: '3005' }])
           resources: { cpu: json('1'), memory: '2Gi' }
+          probes: [
+            { type: 'Startup', httpGet: { path: '/healthz', port: 3005 }, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 60 }
+            { type: 'Liveness', httpGet: { path: '/healthz', port: 3005 }, periodSeconds: 30, timeoutSeconds: 5, failureThreshold: 3 }
+          ]
         }
       ]
       // One worker: a second would wait on the first's leases.

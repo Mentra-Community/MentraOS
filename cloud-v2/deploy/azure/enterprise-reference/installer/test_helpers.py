@@ -750,7 +750,11 @@ else:sys.exit(9)
                      "{ name: 'CLOUD_CORE_ENTERPRISE_PORTAL_URL', value: portalOrigin }"):
             self.assertIn(line, core)
         self.assertEqual(mfm.count('external: false'), 1)
-        self.assertNotIn('ingress', mfm[mfm.index("resource fleetWorker '"):])
+        worker = mfm[mfm.index("resource fleetWorker '"):]
+        self.assertNotIn('ingress', worker)
+        # Its heartbeat check over HTTP, as Container Apps has no command probes.
+        self.assertIn("{ name: 'MFM_WORKER_HEALTH_PORT', value: '3005' }", worker)
+        self.assertIn("type: 'Liveness', httpGet: { path: '/healthz', port: 3005 }", worker)
         # Mentra Portal reads no secret; MFM reads only its own database and its side of the shared secrets.
         self.assertNotIn('secrets', portal_app)
         self.assertIn("{ name: 'CORE_URL', value: coreOrigin }", portal_app)
