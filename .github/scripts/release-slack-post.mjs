@@ -129,8 +129,8 @@ export async function releasePost(env, {check = reachable, fetchImpl = fetch} = 
     Promise.all([
       slot("Android", [env.EXAMPLE_APK_URL, env.EXAMPLE_GOOGLE_PLAY_INSTALL_URL], env.EXAMPLES_RESULT, check),
       slot("iOS", [env.EXAMPLE_TESTFLIGHT_INSTALL_URL, env.EXAMPLE_IPHONE_SHARE_URL], env.EXAMPLE_TESTFLIGHT_RESULT, check),
-      // No release job builds the example for macOS yet.
-      slot("macOS", [env.EXAMPLE_MAC_URL], undefined, check),
+      // The example's App Store job exports its registered-device iPhone and Mac downloads.
+      slot("macOS", [env.EXAMPLE_MAC_URL], env.EXAMPLE_TESTFLIGHT_RESULT, check),
     ]),
     glasses(env, fetchImpl),
     env.FINALIZE_RESULT === "success" || waiting || env.RELEASE_SCOPE === "examples" ? undefined : releaseFailureDetail(env, fetchImpl),

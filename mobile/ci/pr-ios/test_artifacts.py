@@ -21,7 +21,7 @@ class MacPackageTests(unittest.TestCase):
             (app / "Mentra").write_bytes(b"test app")
             (app / "main.jsbundle").write_bytes(b"test JavaScript")
             (app / "EXConstants.bundle/app.config").write_bytes(b"{}")
-            manifest = {"executableSha256": digest(app / "Mentra"), "javascriptSha256": digest(app / "main.jsbundle")}
+            manifest = {"app": "Mentra.app", "executableSha256": digest(app / "Mentra"), "javascriptSha256": digest(app / "main.jsbundle")}
             packaged = None
 
             def command(*args):

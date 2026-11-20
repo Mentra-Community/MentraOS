@@ -280,7 +280,7 @@ def package_mac_app(app, output, manifest, folder_name="Mentra PR", readme=None)
         root = Path(tmp)
         mac = root / folder_name
         mac.mkdir()
-        run("ditto", app, mac / "Mentra.app")
+        run("ditto", app, mac / manifest["app"])
         shutil.copy2(HERE.parent.parent / "scripts/install-ios-mac.mjs", mac / "install.mjs")
         shutil.copy2(HERE.parent.parent / "scripts/app-ownership.mjs", mac / "app-ownership.mjs")
         launcher = mac / "launch-ios-on-mac"
@@ -297,7 +297,7 @@ def package_mac_app(app, output, manifest, folder_name="Mentra PR", readme=None)
             (mac / "README.md").write_text(readme)
         run("ditto", "-c", "-k", "--keepParent", mac, output)
         run("ditto", "-x", "-k", output, root / "verify")
-        delivered = root / "verify" / folder_name / "Mentra.app"
+        delivered = root / "verify" / folder_name / manifest["app"]
         run("codesign", "--verify", "--deep", "--strict", delivered)
         info = plistlib.loads((delivered / "Info.plist").read_bytes())
         if (digest(delivered / info["CFBundleExecutable"]) != manifest["executableSha256"]

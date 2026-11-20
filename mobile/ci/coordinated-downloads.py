@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Export registered-device downloads from the coordinated store IPA, without compiling."""
+"""Export registered-device downloads from the coordinated store IPA, without compiling.
+
+The app is MENTRA_PR_APP's (pr-ios/pr_apps.py): the Mentra App, or the
+Bluetooth example app from its own App Store IPA, with its own profile and the
+names coordinated-install-downloads.mjs gives its files."""
 import datetime as dt
 import hashlib
 import json
@@ -17,8 +21,9 @@ from repackage import unpack
 
 def validate_app(app, plan, ota_url):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
-    # The plan's app (release-family.mjs appIdOf); MENTRA_APP_TRACK picks its profile (pr_apps.py).
-    if (info.get('CFBundleIdentifier') != BUNDLE_ID or BUNDLE_ID != plan['native'].get('appId', 'com.mentra.mentra')
+    # The plan's app (release-family.mjs appIdOf), MENTRA_APP_TRACK picking its profile (pr_apps.py), or the example.
+    expected = plan['native'].get('appId', 'com.mentra.mentra') if APP['prefix'] == 'mentra' else APP['bundleId']
+    if (info.get('CFBundleIdentifier') != BUNDLE_ID or BUNDLE_ID != expected
             or info.get('CFBundleVersion') != str(plan['native']['buildNumber'])
             or info.get('CFBundleShortVersionString') != plan['native']['marketingVersion']
             or 'iPhoneOS' not in info.get('CFBundleSupportedPlatforms', [])
@@ -72,7 +77,7 @@ def package(plan_path, ipa, output):
     ota_url = os.environ['COORDINATED_OTA_URL']
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    prefix = f"mentraos-{plan['releaseIdentity']}"
+    prefix = f"{APP['releasePrefix']}-{plan['releaseIdentity']}"
     with tempfile.TemporaryDirectory(prefix='mentra-release-downloads-') as tmp:
         root = Path(tmp)
         source = unpack(ipa, root / 'store')
@@ -80,12 +85,12 @@ def package(plan_path, ipa, output):
         # An exported, unencrypted CI IPA contains the same compiled app. A
         # minimal archive lets Xcode perform its normal profile/entitlement
         # conversion on both a fresh build and an immutable-release retry.
-        archive = root / 'Mentra.xcarchive'
+        archive = root / 'App.xcarchive'
         target = archive / 'Products/Applications' / source.name
         target.parent.mkdir(parents=True)
         run('ditto', source, target)
         archive_info = {'ArchiveVersion': 2, 'CreationDate': dt.datetime.now(dt.timezone.utc).replace(tzinfo=None),
-            'Name': 'Mentra', 'SchemeName': 'Mentra', 'ApplicationProperties': {
+            'Name': source.stem, 'SchemeName': source.stem, 'ApplicationProperties': {
                 'ApplicationPath': f'Applications/{source.name}', 'CFBundleIdentifier': BUNDLE_ID,
                 'CFBundleShortVersionString': info['CFBundleShortVersionString'],
                 'CFBundleVersion': info['CFBundleVersion']}}
@@ -106,7 +111,7 @@ def package(plan_path, ipa, output):
         if (source / 'main.jsbundle').read_bytes() != (app / 'main.jsbundle').read_bytes():
             raise ValueError('Export changed the JavaScript bundle')
         verify_compiled_code(source, app, info['CFBundleExecutable'], root, output / 'export-diagnostics')
-        manifest = {'bundleId': BUNDLE_ID, 'app': 'Mentra.app', 'headSha': plan['sourceCommit'],
+        manifest = {'bundleId': BUNDLE_ID, 'app': APP['product'], 'headSha': plan['sourceCommit'],
             'buildSha': plan['sourceCommit'], 'releaseIdentity': plan['releaseIdentity'],
             'backend': BACKENDS[plan['channel']], 'otaManifestUrl': ota_url,
             'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'],
@@ -115,11 +120,11 @@ def package(plan_path, ipa, output):
             'profileExpires': profile['ExpirationDate'].isoformat(), 'teamId': team}
         files = {'iphone': f'{prefix}-iphone.ipa', 'mac': f'{prefix}-mac.zip'}
         shutil.copy2(exported[0], output / files['iphone'])
-        package_mac_app(app, output / files['mac'], manifest, folder_name='Mentra Release', readme=f'''# {APP['name']} {plan['releaseIdentity']}
+        package_mac_app(app, output / files['mac'], manifest, folder_name=APP['releaseFolder'], readme=f'''# {APP['name']} {plan['releaseIdentity']}
 
 This is the {manifest['backend']} build. The same signed iOS app runs on a registered iPhone or Apple Silicon Mac.
 
-Mac: install Bun from https://bun.sh if needed, unzip, then open Install.command. macOS may require Open Anyway under Privacy & Security and approval to trust Mentra Labs software. The installer preserves your existing Mentra data. The bundled app retains its Apple signature.
+Mac: install Bun from https://bun.sh if needed, unzip, then open Install.command. macOS may require Open Anyway under Privacy & Security and approval to trust Mentra Labs software. The installer preserves your existing {APP['name']} data. The bundled app retains its Apple signature.
 
 Your device must be included in this build's provisioning profile. Installing this replaces the current {APP['name']} app. Connect your glasses and follow the OTA prompt to reach this release's pinned firmware.
 ''')

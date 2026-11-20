@@ -11,7 +11,7 @@ const repository = "Mentra-Community/MentraOS"
 const ota = "https://artifactscdn.mentraglass.com/release.json"
 // Production is the bare X.Y.Z in mentra-v<X.Y.Z>; dev and beta are prereleases in mentra-builds-v<X.Y.Z>.
 const backends = {dev: "dev", beta: "staging", production: "prod"}
-function fixture(t, channel = "dev") {
+function fixture(t, channel = "dev", app = "mentra") {
   const directory = mkdtempSync(path.join(tmpdir(), "coordinated-downloads-test-"))
   t.after(() => rmSync(directory, {recursive: true, force: true}))
   const identity = channel === "production" ? "3.2.1" : `3.2.1-${channel}.57`
@@ -26,13 +26,13 @@ function fixture(t, channel = "dev") {
     native: {buildNumber: 302010057, marketingVersion: "3.2.1"},
     artifactNames: {iosApp: `mentraos-${identity}-ios.ipa`},
   }
-  const names = downloadNames(plan)
+  const names = downloadNames(plan, app)
   const receipt = {
     schemaVersion: 1,
     releaseIdentity: identity,
     sourceCommit: plan.sourceCommit,
     app: {
-      bundleId: "com.mentra.mentra",
+      bundleId: app === "mentra" ? "com.mentra.mentra" : "com.mentra.bluetoothsdkexample",
       build: "302010057",
       version: "3.2.1",
       headSha: plan.sourceCommit,
@@ -156,3 +156,15 @@ test("restore accepts only a complete matching published receipt and its origina
   await assert.rejects(restoreDownloads(restored, plan, repository, ota, deps), /bytes disagree/)
 })
 
+
+test("the example's downloads take its release names and its own app identity", (t) => {
+  const {plan, directory, receipt, names} = fixture(t, "dev", "example")
+  assert.equal(names.mac, "mentra-example-react-native-3.2.1-dev.57-mac.zip")
+  assert.equal(names.install, "mentra-example-react-native-3.2.1-dev.57-install.html")
+  const prepared = prepareDownloads(directory, plan, repository, ota, "example")
+  assert.equal(prepared.artifacts.install.name, names.install)
+  assert.match(readFileSync(path.join(directory, names.manifest), "utf8"), /com\.mentra\.bluetoothsdkexample/)
+  // The Mentra App's names and identity refuse it.
+  assert.throws(() => validateDownloads(receipt, plan, ota, {complete: false}), /Incomplete|do not match/)
+  assert.equal(downloadLinks(plan, repository, "example").mac_url.endsWith(names.mac), true)
+})

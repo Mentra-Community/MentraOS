@@ -41,16 +41,15 @@ const missing = (post) => post.blocks.find((block) => block.type === "context" &
 test("a finished release is a title, one row of buttons and the glasses versions", async () => {
   const post = await releasePost({...env, ANDROID_VERSION_CODE: "304000123", IOS_BUILD_NUMBER: "304000120",
     EXAMPLES_RESULT: "success", EXAMPLE_APK_URL: `${cdn}/example.apk`, EXAMPLE_TESTFLIGHT_RESULT: "success",
-    EXAMPLE_TESTFLIGHT_INSTALL_URL: "https://testflight.apple.com/join/abc"}, {check: ok, fetchImpl: otaOnly})
-  assert.deepEqual(post.blocks.map((block) => block.type), ["section", "context", "actions", "context", "context"])
+    EXAMPLE_TESTFLIGHT_INSTALL_URL: "https://testflight.apple.com/join/abc", EXAMPLE_MAC_URL: `${cdn}/example-mac.zip`},
+  {check: ok, fetchImpl: otaOnly})
+  assert.deepEqual(post.blocks.map((block) => block.type), ["section", "context", "actions", "context"])
   assert.equal(post.blocks[0].text.text, "*✅ Dev 3.2.0-dev.265 released*")
   assert.equal(post.blocks[0].accessory.url, "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.2.0-dev.265")
   assert.equal(post.blocks[1].elements[0].text, "aaaaaaa Ship the &lt;thing&gt; &amp; more · by Someone · Android 304000123 · iOS 304000120")
   assert.deepEqual(buttons(post), [":robot_face: Install Mentra", ":apple: Install Mentra", ":computer: Install Mentra",
-    ":robot_face: Install Bluetooth example", ":apple: Install Bluetooth example", ":books: Docs"])
-  // The release builds no macOS example: its slot says so, for symmetry with the Mentra App's.
-  assert.equal(missing(post), ":heavy_minus_sign: Missing: :computer: Bluetooth example (not built)")
-  assert.match(post.blocks[4].elements[0].text, /ASG \*3\.2\.0\* \(build 302000265\) · BES \*26\.9\.21\.1\* · MTK \*MentraLive_20260915\.0\*/)
+    ":robot_face: Install Bluetooth example", ":apple: Install Bluetooth example", ":computer: Install Bluetooth example", ":books: Docs"])
+  assert.match(post.blocks[3].elements[0].text, /ASG \*3\.2\.0\* \(build 302000265\) · BES \*26\.9\.21\.1\* · MTK \*MentraLive_20260915\.0\*/)
   // No inline links anywhere: every URL is a button's.
   assert.doesNotMatch(text(post), /<https?:|itms-services/)
 })

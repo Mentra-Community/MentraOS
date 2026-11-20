@@ -5,6 +5,10 @@
 // release page, the docs and Slack link them by these names, so no separate
 // result record is passed between jobs.
 //
+// The React Native example's registered-device iPhone and Mac downloads, which
+// its App Store job exports (release-example-testflight.yml), take its prefix
+// and the Mentra App's suffixes (coordinated-install-downloads.mjs).
+//
 //   names  prints each file name, one per line
 //   urls   writes <key>_name and <key>_url outputs (keys in snake_case)
 import {appendFileSync, readFileSync} from "node:fs"
