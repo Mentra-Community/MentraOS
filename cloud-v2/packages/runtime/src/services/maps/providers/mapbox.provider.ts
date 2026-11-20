@@ -255,7 +255,9 @@ export function createMapboxProvider(): MapsProvider {
         throw new Error(`mapbox directions failed: ${res.status}`);
       }
       const data = (await res.json()) as MapboxDirectionsResponse;
-      return (data.routes ?? []).map(toNeutralRoute);
+      // `alternatives` is the TOTAL route count. Mapbox's `alternatives=true`
+      // can return the primary plus two alternates, so cap to what was asked.
+      return (data.routes ?? []).slice(0, req.alternatives ?? 1).map(toNeutralRoute);
     },
 
     async reverseGeocode(
