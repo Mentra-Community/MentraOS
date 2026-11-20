@@ -767,6 +767,18 @@ else:sys.exit(9)
         self.assertIn('scope: fleetSecret[i]', access)
         bootstrap = (ROOT / 'bootstrap.bicep').read_text()
         self.assertIn('var identityNames = [coreIdentityName, runtimeIdentityName, portalIdentityName, fleetIdentityName]', bootstrap)
+        # The archive: on by default, in a keyless storage account, MFM's identity alone on its one container.
+        self.assertIs(parameters['fleetArchive']['value'], True)
+        self.assertIs(self.parameters(dict(on, fleetArchive=False), portal, fleet)['fleetArchive']['value'], False)
+        self.assertIn('param fleetArchive bool = true', template)
+        self.assertIn("{ name: 'MFM_ARCHIVE_AZURE_CLIENT_ID', value: fleetIdentity.properties.clientId }", mfm)
+        self.assertIn('fleet && fleetArchive ? [', mfm)
+        self.assertNotIn('S3', mfm)
+        self.assertIn('allowSharedKeyAccess: false', bootstrap)
+        archive_access = bootstrap[bootstrap.index("resource fleetArchiveAccess '"):]
+        self.assertIn('scope: fleetArchiveContainer', archive_access)
+        self.assertIn('principalId: identities[3].properties.principalId', archive_access)
+        self.assertIn("'ba92f5b4-2d11-453d-a403-e96b0029c9fe'", bootstrap)
 
     def test_fleet_secrets_are_created_together_once(self):
         script = (ROOT / 'scripts/ensure-vault-secrets.sh').read_text()

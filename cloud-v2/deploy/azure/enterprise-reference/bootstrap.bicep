@@ -27,6 +27,12 @@ param fleetIdentityName string = 'id-mentra-enterprise-reference-fleet'
 @description('Globally unique Key Vault holding the signing keys and other deployment secrets.')
 param keyVaultName string = take('kv${uniqueString(subscription().id, resourceGroup().id)}', 24)
 
+@description('MFM\'s raw-record archive (main.bicep fleet and fleetArchive): a storage account with one container, in which only MFM\'s identity may read, write and delete (Storage Blob Data Contributor on the container). The account takes no keys: MFM signs in with its managed identity.')
+param fleetArchive bool = false
+
+@description('The archive\'s storage account. The default is stable for this resource group; main.bicep has the same.')
+param fleetArchiveStorageAccountName string = 'mfm${uniqueString(subscription().id, resourceGroup().id)}'
+
 @description('Object ID of the person or automation running setup; gets Key Vault Secrets Officer to create deployment secrets. Empty skips the assignment.')
 param operatorPrincipalId string = ''
 
@@ -97,6 +103,49 @@ resource vaultOperator 'Microsoft.Authorization/roleAssignments@2022-04-01' = if
     principalId: operatorPrincipalId
     principalType: operatorPrincipalType
     roleDefinitionId: secretsOfficerRoleDefinitionId
+  }
+}
+
+var blobContributorRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+)
+
+resource fleetArchiveStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = if (fleetArchive) {
+  name: fleetArchiveStorageAccountName
+  location: location
+  tags: resourceTags
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    allowBlobPublicAccess: false
+    // Entra sign-in only: no account keys or SAS work against it.
+    allowSharedKeyAccess: false
+    defaultToOAuthAuthentication: true
+  }
+}
+
+resource fleetArchiveBlobs 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = if (fleetArchive) {
+  parent: fleetArchiveStorage
+  name: 'default'
+}
+
+resource fleetArchiveContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (fleetArchive) {
+  parent: fleetArchiveBlobs
+  name: 'fleet-archive'
+  properties: { publicAccess: 'None' }
+}
+
+// MFM's identity, and nothing else, on this one container.
+resource fleetArchiveAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (fleetArchive) {
+  name: guid(fleetArchiveContainer.id, identities[3].id, blobContributorRoleDefinitionId)
+  scope: fleetArchiveContainer
+  properties: {
+    principalId: identities[3].properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: blobContributorRoleDefinitionId
   }
 }
 

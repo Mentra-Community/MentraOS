@@ -48,7 +48,8 @@ FLEET_IMAGES = {'portalImage': re.compile(r'ghcr\.io/mentra-community/mentra-por
 # Teams settings, email domains and admin portal sign-in may be added after
 # installation; resume rolls them out.
 UPDATABLE_KEYS = {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId', 'teamsGraphClientId',
-                  'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn', 'fleet', 'coreAdminEmailDomains'}
+                  'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn', 'fleet', 'fleetArchive',
+                  'coreAdminEmailDomains'}
 GUID = re.compile(r'^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$')
 # Admin portal sign-in: Core's sign-in server signs people in as the Core API app,
 # with this client secret from Key Vault, and Entra returns them to this path on
@@ -449,7 +450,7 @@ RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName
                  'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn',
                  'miniappConfiguration', 'miniappVariants', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
                  'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'reportStorageAccountName', 'virtualNetworkName',
-                 'fleet', 'coreAdminEmailDomains')
+                 'fleet', 'fleetArchive', 'coreAdminEmailDomains')
 # Restored even when empty: an empty value there is a deliberate choice.
 RESTORED_AS_IS = ('managedMiniappDirectory',)
 

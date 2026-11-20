@@ -119,6 +119,7 @@ jq -e '
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
   ((.fleet // false) | type == "boolean") and
+  (.fleetArchive == null or (.fleetArchive | type == "boolean")) and
   ((.coreAdminEmailDomains // "") | type == "string") and
   # Mentra Portal and MFM: their images, pinned by digest, and their apps.
   ((.fleet // false) == false or (
@@ -170,6 +171,8 @@ ADMIN_PORTAL_SIGN_IN="$(jq -r '.adminPortalSignIn // false' "$CONFIG")"
 VIRTUAL_NETWORK="$(jq -r '.virtualNetworkName // ""' "$CONFIG")"
 # Mentra Portal and MFM. Their identities exist whether or not Fleet is installed.
 FLEET="$(jq -r '.fleet // false' "$CONFIG")"
+# MFM's raw-record archive, on by default with Fleet: bootstrap.bicep makes its storage.
+FLEET_ARCHIVE="$(jq -r '(.fleet // false) and .fleetArchive != false' "$CONFIG")"
 PORTAL_IDENTITY="$(jq -r '.portalIdentityName // ("id-" + .deploymentId + "-portal")' "$CONFIG")"
 FLEET_IDENTITY="$(jq -r '.fleetIdentityName // ("id-" + .deploymentId + "-fleet")' "$CONFIG")"
 
@@ -196,7 +199,7 @@ fi
 }
 
 BOOTSTRAP_PARAMETERS=(registryName="$REGISTRY_NAME" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY"
-  portalIdentityName="$PORTAL_IDENTITY" fleetIdentityName="$FLEET_IDENTITY" keyVaultName="$KEY_VAULT"
+  portalIdentityName="$PORTAL_IDENTITY" fleetIdentityName="$FLEET_IDENTITY" fleetArchive="$FLEET_ARCHIVE" keyVaultName="$KEY_VAULT"
   operatorPrincipalId="$OPERATOR_ID" operatorPrincipalType="$OPERATOR_TYPE" resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
 NETWORK_PARAMETERS=(virtualNetworkName="$VIRTUAL_NETWORK" atlasPrivateLinkServiceId="$(jq -r '.atlasPrivateLinkServiceId // ""' "$CONFIG")"
   resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
@@ -247,6 +250,7 @@ jq -n \
       portalIdentityName:{value:$portalIdentityName},
       fleetIdentityName:{value:$fleetIdentityName},
       fleet:{value:($c.fleet // false)},
+      fleetArchive:{value:($c.fleetArchive != false)},
       portalImage:{value:$portalImage},
       fleetImage:{value:$fleetImage},
       communicationName:{value:$c.communicationName},

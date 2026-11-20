@@ -149,9 +149,17 @@ environment, from the release's images imported into its own registry:
 
 Mentra Portal's and MFM's images are private: set `SOURCE_REGISTRY_USERNAME`
 and `SOURCE_REGISTRY_PASSWORD` to the pull credential Mentra gives you before
-running setup. MFM keeps no raw-record archive on a Private Cloud yet: a raw
-record leaves its database once aggregated and past its 15 days, and every
-Fleet view reads the aggregates, which it keeps.
+running setup.
+
+MFM keeps every raw record a phone reports, for as long as the account exists,
+in an archive in the deployment's own storage account (`mfm<unique>`, container
+`fleet-archive`), which setup creates. The account takes no keys: only MFM's
+identity may read, write and delete there (Storage Blob Data Contributor on the
+container), and it reaches it with Entra sign-in over the storage account's
+public endpoint. An account deleted in Core is deleted from the archive too. To
+keep no archive, set `"fleetArchive": false`: a raw record then leaves MFM's
+database once aggregated and 15 days old, and every Fleet view still reads the
+aggregates, which it keeps.
 
 ## Customer delivery package
 

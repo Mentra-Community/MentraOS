@@ -138,7 +138,9 @@ its own secrets with its own identity, so the CI deployment passes just the
 vault name. Customer deployments get their own vault the same way.
 
 Fleet's were made the same way, once per stack, before its first release with
-Fleet: `bootstrap.bicep` with `portalIdentityName` and `fleetIdentityName`,
+Fleet: `bootstrap.bicep` with `portalIdentityName`, `fleetIdentityName` and
+`fleetArchive=true` (the archive's storage account, its container and MFM's
+grant on it),
 MFM's own Atlas database user on `private-cloud-demo` (`<stack>-fleet`,
 `readWrite` on the database `<stack>-fleet`) stored as `fleet-mongo-url`,
 `scripts/ensure-vault-secrets.sh --fleet` for the shared secrets, the Core API

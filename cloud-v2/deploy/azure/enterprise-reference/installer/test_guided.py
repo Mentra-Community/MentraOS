@@ -638,7 +638,7 @@ class GuidedTests(unittest.TestCase):
     def test_teams_settings_email_domains_and_portal_sign_in_are_the_only_post_install_changes(self):
         self.assertEqual(setup.UPDATABLE_KEYS, {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId',
                                                 'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains',
-                                                'adminPortalSignIn', 'fleet', 'coreAdminEmailDomains'})
+                                                'adminPortalSignIn', 'fleet', 'fleetArchive', 'coreAdminEmailDomains'})
         self.assertTrue(setup.UPDATABLE_KEYS.isdisjoint(setup.BINDING_KEYS))
 
     def test_entra_handoffs_link_consent_and_assignment_when_not_admin(self):

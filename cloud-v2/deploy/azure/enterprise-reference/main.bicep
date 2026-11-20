@@ -69,6 +69,9 @@ param fleetImage string = ''
 param portalName string = 'ca-mentra-ent-ref-portal'
 param fleetName string = 'ca-mentra-ent-ref-fleet'
 param fleetWorkerName string = 'ca-mentra-ent-ref-fleet-wk'
+@description('MFM keeps every raw record for the account\'s life in the archive, the container fleet-archive of this storage account, which bootstrap.bicep creates with fleetArchive and in which only MFM\'s identity may write. False keeps no archive: a raw record leaves MFM\'s database once aggregated and 15 days old.')
+param fleetArchive bool = true
+param fleetArchiveStorageAccountName string = 'mfm${uniqueString(subscription().id, resourceGroup().id)}'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 @description('ACS data location approved by the customer, for example United States or Europe.')
 param communicationDataLocation string = 'United States'
@@ -129,6 +132,7 @@ resource fleetIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
+
 
 // Container Apps read the latest version of each secret with their own
 // identity; nothing secret passes through deployment parameters. That includes
@@ -612,20 +616,26 @@ resource portal 'Microsoft.App/containerApps@2024-03-01' = if (fleet) {
 // MFM runs as two apps from one image and settings, as on Mentra's own
 // environments: the web role serves Core's forwarded requests with every
 // background job off, the worker role runs aggregation, the overview, Core's
-// change feed and expiry, and serves nothing. Its raw-record archive is off:
-// a record leaves MFM's database once aggregated and past the replay window.
+// change feed and expiry, and serves nothing. With fleetArchive, the worker
+// keeps every raw record in the stack's own storage account, through MFM's
+// identity; without it, a record leaves MFM's database once aggregated and
+// past the replay window.
 var fleetSecrets = [
   { name: 'mongo-url', keyVaultUrl: '${vaultUri}secrets/fleet-mongo-url', identity: fleetIdentity.id }
   { name: 'forwarding-secrets', keyVaultUrl: '${vaultUri}secrets/fleet-forwarding-secrets', identity: fleetIdentity.id }
   { name: 'service-secret', keyVaultUrl: '${vaultUri}secrets/fleet-service-secret', identity: fleetIdentity.id }
 ]
-var fleetEnv = [
+var fleetEnv = concat([
   { name: 'MONGO_URL', secretRef: 'mongo-url' }
   { name: 'MFM_CORE_FORWARDING_SECRETS', secretRef: 'forwarding-secrets' }
   { name: 'MFM_CORE_URL', value: coreOrigin }
   { name: 'MFM_CORE_SERVICE_SECRET', secretRef: 'service-secret' }
   { name: 'LOG_STDOUT_JSON', value: 'true' }
-]
+], fleet && fleetArchive ? [
+  // Signed in as MFM's own identity; the account takes no keys.
+  { name: 'MFM_ARCHIVE_AZURE_CONTAINER_URL', value: 'https://${fleetArchiveStorageAccountName}.blob.${az.environment().suffixes.storage}/fleet-archive' }
+  { name: 'MFM_ARCHIVE_AZURE_CLIENT_ID', value: fleetIdentity.properties.clientId }
+] : [])
 
 resource fleetWeb 'Microsoft.App/containerApps@2024-03-01' = if (fleet) {
   name: fleetName
