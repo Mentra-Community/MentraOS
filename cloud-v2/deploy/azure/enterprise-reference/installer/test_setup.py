@@ -344,11 +344,53 @@ class InstallerTests(unittest.TestCase):
         self.state['outputs'] = {'workspaceOrigin': 'https://azure.example.com'}
         with self.assertRaisesRegex(setup.SetupError, 'domain is not deployed'):
             setup.verify(self.args, self.directory, self.config, self.state)
-        self.state['dns'] = [{'value': 'azure.example.com'}, {'value': 'verification'}]
+        self.state['dns'] = [{'type': 'CNAME', 'name': 'mentra.example.com', 'value': 'azure.example.com'},
+                             {'type': 'TXT', 'name': 'asuid.mentra.example.com', 'value': 'verification'}]
         with patch.object(setup.shutil, 'which', return_value='/dig'), \
              patch.object(setup, 'run', side_effect=['wrong.example.com.', '"verification"']):
             with self.assertRaisesRegex(setup.SetupError, 'do not match'):
                 setup.check_dns(self.config, self.state)
+
+    def test_mentra_portal_hostname_joins_the_dns_handoff_and_its_checks(self):
+        self.config.update(workspaceHostname='mentra.example.com', fleet=True, portalHostname='portal.example.com',
+                           runtimeName='ca-acme', deploymentId='acme')
+        apps = {'ca-acme': 'runtime.azure.example', 'ca-acme-portal': 'portal.azure.example'}
+        def azure(config, *args):
+            name = args[args.index('--name') + 1]
+            return {'properties': {'configuration': {'ingress': {'fqdn': apps[name]}}, 'customDomainVerificationId': 'VERIFY'}}
+        with patch.object(setup, 'azure', side_effect=azure):
+            records = setup.dns_records(self.config)
+        self.assertEqual([(r['type'], r['name'], r['value']) for r in records], [
+            ('CNAME', 'mentra.example.com', 'runtime.azure.example'), ('TXT', 'asuid.mentra.example.com', 'VERIFY'),
+            ('CNAME', 'portal.example.com', 'portal.azure.example'), ('TXT', 'asuid.portal.example.com', 'VERIFY')])
+        self.state['dns'] = records
+        answers = {('CNAME', 'mentra.example.com'): 'runtime.azure.example.', ('TXT', 'asuid.mentra.example.com'): '"VERIFY"',
+                   ('CNAME', 'portal.example.com'): 'portal.azure.example.', ('TXT', 'asuid.portal.example.com'): '"VERIFY"'}
+        with patch.object(setup.shutil, 'which', return_value='/dig'), \
+             patch.object(setup, 'run', side_effect=lambda argv: answers[(argv[2], argv[3])]):
+            setup.check_dns(self.config, self.state)
+        answers[('CNAME', 'portal.example.com')] = 'elsewhere.example.'
+        with patch.object(setup.shutil, 'which', return_value='/dig'), \
+             patch.object(setup, 'run', side_effect=lambda argv: answers[(argv[2], argv[3])]):
+            with self.assertRaisesRegex(setup.SetupError, 'do not match'):
+                setup.check_dns(self.config, self.state)
+        # A portal address alone still waits for its DNS step, and for the deployment that binds it.
+        portal_only = dict(self.config, workspaceHostname='')
+        self.state['outputs'] = {'workspaceOrigin': 'https://azure.example.com', 'portalOrigin': 'https://portal.azure.example'}
+        self.state.pop('domainVerified', None)
+        for verified in (False, True):
+            self.state['domainVerified'] = verified
+            with self.assertRaisesRegex(setup.SetupError, 'domain is not deployed'):
+                setup.verify(self.args, self.directory, portal_only, self.state)
+        self.assertFalse(setup.upgradable_phase(portal_only, dict(self.state, phase='deployed', domainVerified=False)))
+        # Without Fleet the portal has no address of its own.
+        self.assertEqual(setup.custom_hostnames(dict(self.config, fleet=False)), [('mentra.example.com', 'ca-acme')])
+        # The first deployment binds neither address.
+        with patch.object(setup, 'run', return_value='{"workspaceOrigin": {"value": "https://x"}}'), \
+             patch.object(setup, 'azure'), patch.object(setup, 'script_config', side_effect=lambda c, **o: dict(c, **o)):
+            setup.deploy(self.directory, self.config, self.state, False)
+        effective = json.loads((self.directory / 'effective.config.json').read_text())
+        self.assertEqual((effective['workspaceHostname'], effective['portalHostname']), ('', ''))
 
     def test_private_image_failure_blocks_resource_creation(self):
         def azure(config, *args):

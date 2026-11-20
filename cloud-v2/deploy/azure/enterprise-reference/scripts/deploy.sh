@@ -128,6 +128,9 @@ jq -e '
     (.portalName | container_app_name) and (.fleetName | container_app_name) and (.fleetWorkerName | container_app_name) and
     (.portalIdentityName | nonempty) and (.fleetIdentityName | nonempty) and
     ([.coreIdentityName, .runtimeIdentityName, .portalIdentityName, .fleetIdentityName] | unique | length == 4))) and
+  ((.portalHostname // "") | . == "" or (type == "string" and length <= 253 and test("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$"))) and
+  ((.portalHostname // "") == "" or (.fleet // false)) and
+  ((.portalHostname // "") == "" or .portalHostname != (.workspaceHostname // "")) and
   ((.virtualNetworkName // "") | type == "string" and (. == "" or test("^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,52}[a-zA-Z0-9_]$"))) and
   ((.atlasPrivateLinkServiceId // "") | type == "string" and (. == "" or test("^/subscriptions/[0-9a-f-]{36}/resourcegroups/[^/]+/providers/microsoft\\.network/privatelinkservices/[^/]+$"; "i"))) and
   ((.atlasPrivateLinkServiceId // "") == "" or (.virtualNetworkName // "") != "") and
@@ -272,7 +275,8 @@ jq -n \
     }
   } | if ($c.reportStorageAccountName // "") != "" then .parameters.reportStorageAccountName={value:$c.reportStorageAccountName} else . end
     | if ($c.fleet // false) then .parameters += {portalName:{value:$c.portalName}, fleetName:{value:$c.fleetName},
-        fleetWorkerName:{value:$c.fleetWorkerName}} else . end
+        fleetWorkerName:{value:$c.fleetWorkerName}, portalHostname:{value:($c.portalHostname // "")},
+        portalCertificateName:{value:($c.portalCertificateName // ($c.portalName + "-hostname"))}} else . end
   ' > "$PARAMETERS"
 }
 
@@ -443,27 +447,36 @@ fi
 # hostname; add this DNS-verified binding before the certificate deployment.
 # Existing bindings must remain intact on an unchanged rerun.
 WORKSPACE_HOSTNAME="$(jq -r '.workspaceHostname // ""' "$CONFIG")"
-if [[ -n "$WORKSPACE_HOSTNAME" ]]; then
+# Mentra Portal's hostname follows the same two phases, on the portal app.
+PORTAL_HOSTNAME="$(jq -r '.portalHostname // ""' "$CONFIG")"
+if [[ -n "$WORKSPACE_HOSTNAME" || -n "$PORTAL_HOSTNAME" ]]; then
   RUNTIME_NAME="$(jq -r .runtimeName "$CONFIG")"
+  PORTAL_NAME="$(jq -r '.portalName // ""' "$CONFIG")"
   APPS="$(az containerapp list --resource-group "$RESOURCE_GROUP" --output json)"
-  if ! jq -e --arg app "$RUNTIME_NAME" 'any(.name == $app)' <<<"$APPS" >/dev/null; then
+  if { [[ -n "$WORKSPACE_HOSTNAME" ]] && ! jq -e --arg app "$RUNTIME_NAME" 'any(.name == $app)' <<<"$APPS" >/dev/null; } ||
+    { [[ -n "$PORTAL_HOSTNAME" ]] && ! jq -e --arg app "$PORTAL_NAME" 'any(.name == $app)' <<<"$APPS" >/dev/null; }; then
     # The standalone entry point needs the same two-phase DNS handoff as the
     # packaged installer. Azure cannot bind a hostname to an absent app.
     az deployment group validate --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
-      --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" --output none
+      --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" portalHostname="" --output none
     wait_for_deployment "$DEPLOYMENT_NAME"
     az deployment group create --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
-      --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" --output none
+      --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" portalHostname="" --output none
     az deployment group show --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
       --query properties.outputs --output json
-    printf 'Initial app created. Configure DNS for %s using the generated hostname and custom-domain verification ID, then rerun this same command. Signing keys and image pins must remain unchanged.\n' "$WORKSPACE_HOSTNAME" >&2
+    printf 'Initial apps created. Configure DNS for %s using the generated hostnames and custom-domain verification ID, then rerun this same command. Signing keys and image pins must remain unchanged.\n' \
+      "$(printf '%s ' $WORKSPACE_HOSTNAME $PORTAL_HOSTNAME)" >&2
     exit 3
   fi
-  HOSTNAMES="$(az containerapp hostname list --name "$RUNTIME_NAME" --resource-group "$RESOURCE_GROUP" --output json)"
-  if ! jq -e --arg host "$WORKSPACE_HOSTNAME" 'any(.name == $host)' <<<"$HOSTNAMES" >/dev/null; then
-    az containerapp hostname add --name "$RUNTIME_NAME" --resource-group "$RESOURCE_GROUP" \
-      --hostname "$WORKSPACE_HOSTNAME" --output none
-  fi
+  attach_hostname() {
+    local app="$1" host="$2"
+    [[ -n "$host" ]] || return 0
+    az containerapp hostname list --name "$app" --resource-group "$RESOURCE_GROUP" --output json |
+      jq -e --arg host "$host" 'any(.name == $host)' >/dev/null && return 0
+    az containerapp hostname add --name "$app" --resource-group "$RESOURCE_GROUP" --hostname "$host" --output none
+  }
+  attach_hostname "$RUNTIME_NAME" "$WORKSPACE_HOSTNAME"
+  attach_hostname "$PORTAL_NAME" "$PORTAL_HOSTNAME"
 fi
 
 # Provider validation checks permissions, policy and parameters before the

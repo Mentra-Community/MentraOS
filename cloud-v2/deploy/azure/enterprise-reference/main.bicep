@@ -67,6 +67,10 @@ param portalImage string = ''
 @description('MFM\'s image in this deployment\'s registry, pinned by digest, for fleet.')
 param fleetImage string = ''
 param portalName string = 'ca-mentra-ent-ref-portal'
+@description('Optional hostname for Mentra Portal, such as portal.example.com. Its CNAME must point to the portal app and its asuid TXT hold the environment\'s verification ID before it is set; empty serves the portal on its Azure address.')
+param portalHostname string = ''
+@description('Managed certificate resource name for portalHostname. Use a new name when changing the hostname.')
+param portalCertificateName string = '${portalName}-hostname'
 param fleetName string = 'ca-mentra-ent-ref-fleet'
 param fleetWorkerName string = 'ca-mentra-ent-ref-fleet-wk'
 @description('MFM keeps every raw record for the account\'s life in the archive, the container fleet-archive of this storage account, which bootstrap.bicep creates with fleetArchive and in which only MFM\'s identity may write. False keeps no archive: a raw record leaves MFM\'s database once aggregated and 15 days old.')
@@ -175,6 +179,16 @@ resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertific
   }
 }
 
+resource portalCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (fleet && !empty(portalHostname)) {
+  parent: environment
+  name: portalCertificateName
+  location: location
+  properties: {
+    subjectName: portalHostname
+    domainControlValidation: 'CNAME'
+  }
+}
+
 // Reuse Core's filesystem storage provider on a durable Azure Files mount.
 // No attachment bytes or storage keys are exposed by the workspace manifest.
 resource reportStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -223,7 +237,7 @@ var generatedRuntimeHostname = '${runtimeName}.${environment.properties.defaultD
 var generatedCoreHostname = '${coreName}.${environment.properties.defaultDomain}'
 var workspaceOrigin = 'https://${empty(workspaceHostname) ? generatedRuntimeHostname : workspaceHostname}'
 var coreOrigin = 'https://${generatedCoreHostname}'
-var portalOrigin = 'https://${portalName}.${environment.properties.defaultDomain}'
+var portalOrigin = 'https://${empty(portalHostname) ? '${portalName}.${environment.properties.defaultDomain}' : portalHostname}'
 // MFM's ingress is internal: only apps in this environment reach it.
 var fleetOrigin = 'https://${fleetName}.internal.${environment.properties.defaultDomain}'
 // The workforce directory. The Mentra App signs in through the Mobile client;
@@ -590,6 +604,13 @@ resource portal 'Microsoft.App/containerApps@2024-03-01' = if (fleet) {
         targetPort: 5175
         transport: 'auto'
         allowInsecure: false
+        customDomains: empty(portalHostname) ? [] : [
+          {
+            name: portalHostname
+            bindingType: 'SniEnabled'
+            certificateId: portalCertificate.id
+          }
+        ]
       }
       registries: [{ server: registry.properties.loginServer, identity: portalIdentity.id }]
     }

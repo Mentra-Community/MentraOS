@@ -143,6 +143,12 @@ environment, from the release's images imported into its own registry:
 - Core and MFM share two secrets, which setup creates in Key Vault
   (`fleet-forwarding-secret`, `fleet-service-secret`, and each in the form its
   reader takes it, `fleet-forwarding-secrets` and `core-service-secrets`).
+- Mentra Portal can have its own web address: with `--fleet`, setup asks for
+  one (`portalHostname`, such as `portal.example.com`; Enter keeps its Azure
+  address). It joins the workspace address's DNS step: a DNS-only CNAME to the
+  portal app and an `asuid.` TXT record, which setup prints, adds itself when
+  the zone is in Azure DNS, and checks before binding the address and its
+  certificate. Setup asks only when Fleet is turned on at installation.
 - Organization Admins are the addresses in `coreAdminEmails` and, for a whole
   domain, `coreAdminEmailDomains`, each a verified email in one of
   `verifiedEmailDomains`.

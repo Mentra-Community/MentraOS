@@ -758,6 +758,13 @@ else:sys.exit(9)
         # Mentra Portal reads no secret; MFM reads only its own database and its side of the shared secrets.
         self.assertNotIn('secrets', portal_app)
         self.assertIn("{ name: 'CORE_URL', value: coreOrigin }", portal_app)
+        # Its own custom hostname, with its own managed certificate, which Core's portal URL follows.
+        self.assertEqual(parameters['portalHostname']['value'], '')
+        self.assertEqual(parameters['portalCertificateName']['value'], 'ca-acme-portal-hostname')
+        self.assertEqual(self.parameters(dict(on, portalHostname='portal.acme.example'), portal, fleet)['portalHostname']['value'],
+                         'portal.acme.example')
+        self.assertIn("certificateId: portalCertificate.id", portal_app)
+        self.assertIn("var portalOrigin = 'https://${empty(portalHostname) ?", template)
         self.assertNotIn('coreIdentity', mfm + portal_app)
         self.assertEqual(sorted(re.findall(r"secrets/([a-z-]+)'", mfm)),
                          ['fleet-forwarding-secrets', 'fleet-mongo-url', 'fleet-service-secret'])

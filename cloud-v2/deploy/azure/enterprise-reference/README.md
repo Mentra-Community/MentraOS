@@ -227,6 +227,17 @@ DNS-only CNAME to the printed `generatedRuntimeHostname`, and create
 helper. The Core reference uses its Azure-generated TLS hostname and is declared
 separately in `services.coreUrl`.
 
+Mentra Portal takes a custom hostname the same way, on its own app: with Fleet
+on, `portalHostname` (for example `portal.example.com`, never the workspace's)
+needs a DNS-only CNAME to the portal app's Azure address and an
+`asuid.<portal-hostname>` TXT with the same `customDomainVerificationId`. The
+helper deploys without it first when the portal app does not exist yet, then
+adds the hostname to the portal app and binds its managed certificate
+(`portalCertificateName`, default `<portalName>-hostname`). Core's portal URL and
+the portal's sign-in callback follow it. demo-dev's is
+`portal-dev.acmeworkspace.com`; the sales demo's portal stays on its Azure
+address.
+
 When migrating an existing hostname, set `workspaceCertificateName` to a new
 managed-certificate resource name; Azure certificates cannot change their subject
 in place. Azure issues it only for a hostname already on an app in the

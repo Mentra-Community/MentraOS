@@ -317,7 +317,7 @@ def check_upgradable(config):
 def upgradable_phase(config, state):
     # Deployed and verified, or deployed but failing verification (a newer release may fix that).
     return state['phase'] == 'infrastructure_verified' or (
-        state['phase'] == 'deployed' and (not config.get('workspaceHostname') or state.get('domainVerified')))
+        state['phase'] == 'deployed' and (not custom_hostnames(config) or state.get('domainVerified')))
 
 
 def config_for_phase(directory):
@@ -450,7 +450,7 @@ RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName
                  'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn',
                  'miniappConfiguration', 'miniappVariants', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
                  'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'reportStorageAccountName', 'virtualNetworkName',
-                 'fleet', 'fleetArchive', 'coreAdminEmailDomains')
+                 'fleet', 'portalHostname', 'fleetArchive', 'coreAdminEmailDomains')
 # Restored even when empty: an empty value there is a deliberate choice.
 RESTORED_AS_IS = ('managedMiniappDirectory',)
 
@@ -473,7 +473,7 @@ def clean_answer(key, value):
         return value if re.fullmatch(r'[a-z0-9]+', value) else None
     if key == 'atlasPrivateLinkServiceId':
         return value if not value or ATLAS_SERVICE.fullmatch(value) else None
-    if key == 'workspaceHostname':
+    if key in ('workspaceHostname', 'portalHostname'):
         value = re.sub(r'^https?://', '', value.lower()).rstrip('/')
         if value and (not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}', value) or len(value) > 253
                       or value.count('.') < 2):
@@ -531,6 +531,7 @@ ANSWER_HELP = {'subscriptionId': 'an Azure subscription ID (a UUID)', 'tenantId'
                'displayName': 'a company name', 'deploymentId': '4-19 lowercase letters, digits or single hyphens, starting with a letter',
                'location': 'an Azure region such as westus2 or westeurope',
                'workspaceHostname': 'a subdomain such as mentra.example.com, or nothing',
+               'portalHostname': 'a subdomain such as portal.example.com (not the workspace address), or nothing',
                'atlasPrivateLinkServiceId': 'the resource ID /subscriptions/.../providers/Microsoft.Network/privateLinkServices/pls_..., '
                                             'or nothing'}
 
@@ -591,6 +592,9 @@ def init(args, directory):
                ('workspaceHostname', 'Custom web address, e.g. mentra.example.com (Enter to use an Azure address)', ''),
                ('atlasPrivateLinkServiceId', 'MongoDB Atlas private endpoint service resource ID (see "The database" in '
                 'customer-setup.md; Enter if your database is not Atlas)', '')]
+    if getattr(args, 'fleet', False) or inputs.get('fleet'):
+        prompts.append(('portalHostname', 'Custom web address for Mentra Portal, e.g. portal.example.com (Enter to use an '
+                        'Azure address)', ''))
     for key, label, default in prompts:
         if key == 'deploymentId' and default is None:
             default = suggested_deployment_id(inputs.get('displayName', ''))
@@ -606,7 +610,7 @@ def init(args, directory):
             inputs[key] = value
             continue
         if not interactive:
-            if key in ('location', 'workspaceHostname', 'atlasPrivateLinkServiceId'):
+            if key in ('location', 'workspaceHostname', 'portalHostname', 'atlasPrivateLinkServiceId'):
                 inputs[key] = default
                 continue
             raise SetupError(f'{key} is required in --config for unattended initialization')
@@ -627,6 +631,8 @@ def init(args, directory):
                          'the email domains your Entra directory issues, such as ["acme.com"].')
     if inputs.get('subscriptionId') is None or not GUID.fullmatch(inputs.get('subscriptionId', '')):
         raise SetupError('subscriptionId must be a UUID')
+    if inputs.get('portalHostname') and inputs['portalHostname'] == inputs.get('workspaceHostname'):
+        raise SetupError('Mentra Portal needs a web address of its own, not the workspace address.')
     for key in ('coreApiClientId', 'mobileClientId'):
         if inputs.get(key):
             inputs[key] = inputs[key].strip().lower()
@@ -704,8 +710,10 @@ def init(args, directory):
                  owner=ownership, phase='initialized', createdAt=now(), secretsCreated=False, checks={}, outputs={})
     if earlier:
         state['recoveredAt'] = now()
-        if deployed.get('workspaceHostname') and deployed['workspaceHostname'] == config['workspaceHostname']:
-            # The custom address is already live; keep it bound through the next rollout.
+        hosts = custom_hostnames(config)
+        if hosts and all(deployed.get(key) == config.get(key) for key in ('workspaceHostname', 'portalHostname')
+                         if config.get(key)):
+            # The custom addresses are already live; keep them bound through the next rollout.
             state.update(dns=dns_records(config), domainVerified=True)
     write_json(directory / 'state.json', state)
     return {'status': 'initialized', 'directory': str(directory), 'next': 'Run setup.sh to continue.'}
@@ -877,8 +885,11 @@ def script_config(config, **overrides):
     return dict(config, **fleet, **overrides)
 
 
-def deploy(directory, config, state, hostname):
-    write_json(directory / 'effective.config.json', script_config(config, workspaceHostname=hostname))
+def deploy(directory, config, state, custom_domains):
+    # The first deployment of a custom address runs without it: Azure binds a hostname only once its DNS points at an
+    # app that exists.
+    hosts = {} if custom_domains else {'workspaceHostname': '', 'portalHostname': ''}
+    write_json(directory / 'effective.config.json', script_config(config, **hosts))
     output = run(['bash', str(ROOT / 'scripts/deploy.sh'), str(directory / 'effective.config.json')], env=environment(config),
                  explain=True)
     # Helpers may print progress before the final output; parse only the final
@@ -903,11 +914,23 @@ def deploy(directory, config, state, hostname):
     return outputs
 
 
+def custom_hostnames(config):
+    """The custom addresses, each with the app it points at: the workspace's on Runtime, and with Fleet Mentra Portal's."""
+    hosts = []
+    if config.get('workspaceHostname'):
+        hosts.append((config['workspaceHostname'], config.get('runtimeName')))
+    if config.get('fleet') and config.get('portalHostname'):
+        hosts.append((config['portalHostname'], config.get('portalName') or f"ca-{config['deploymentId']}-portal"))
+    return hosts
+
+
 def dns_records(config):
-    app = azure(config, 'containerapp', 'show', '--name', config['runtimeName'], '--resource-group', config['resourceGroup'])
-    host = config['workspaceHostname']
-    return [{'type': 'CNAME', 'name': host, 'value': app['properties']['configuration']['ingress']['fqdn'], 'proxy': False},
-            {'type': 'TXT', 'name': 'asuid.' + host, 'value': app['properties']['customDomainVerificationId']}]
+    records = []
+    for host, app_name in custom_hostnames(config):
+        app = azure(config, 'containerapp', 'show', '--name', app_name, '--resource-group', config['resourceGroup'])
+        records += [{'type': 'CNAME', 'name': host, 'value': app['properties']['configuration']['ingress']['fqdn'], 'proxy': False},
+                    {'type': 'TXT', 'name': 'asuid.' + host, 'value': app['properties']['customDomainVerificationId']}]
+    return records
 
 
 def dns_handoff(directory, config, state):
@@ -921,11 +944,14 @@ def dns_handoff(directory, config, state):
 def check_dns(config, state):
     if not shutil.which('dig'):
         raise SetupError('dig is required for DNS verification; Azure Cloud Shell includes it.')
-    host = config['workspaceHostname']
-    cname = run(['dig', '+short', 'CNAME', host]).strip().rstrip('.').lower()
-    txt = run(['dig', '+short', 'TXT', 'asuid.' + host]).replace('"', '').strip()
-    if cname != state['dns'][0]['value'].lower() or txt != state['dns'][1]['value']:
-        raise SetupError('DNS records do not match dns-records.json yet. Confirm DNS-only CNAME and asuid TXT, wait, then run setup again.')
+    for record in state['dns']:
+        if record['type'] == 'CNAME':
+            matches = run(['dig', '+short', 'CNAME', record['name']]).strip().rstrip('.').lower() == record['value'].lower()
+        else:
+            matches = run(['dig', '+short', 'TXT', record['name']]).replace('"', '').strip() == record['value']
+        if not matches:
+            raise SetupError('DNS records do not match dns-records.json yet. Confirm DNS-only CNAME and asuid TXT, wait, then '
+                             'run setup again.')
 
 
 def configure_azure_dns(args, directory, config, state):
@@ -940,10 +966,9 @@ def configure_azure_dns(args, directory, config, state):
         raise SetupError('DNS subscription must belong to this deployment tenant')
     zone = azure(zone_config, 'network', 'dns', 'zone', 'show', '--name', args.dns_zone,
                  '--resource-group', args.dns_resource_group)
-    host = config['workspaceHostname']
     zone_name = zone['name'].lower().rstrip('.')
-    if not host.endswith('.' + zone_name):
-        raise SetupError('Customer hostname must be a subdomain of the selected Azure DNS zone')
+    if not all(host.endswith('.' + zone_name) for host, _ in custom_hostnames(config)):
+        raise SetupError('Customer hostnames must be subdomains of the selected Azure DNS zone')
     records = azure(zone_config, 'network', 'dns', 'record-set', 'list', '--zone-name', zone['name'],
                     '--resource-group', args.dns_resource_group)
     desired = []
@@ -988,7 +1013,7 @@ def ensure_group(config, state, checks=None):
 
 def install(args, directory, config, state):
     # Returns the resulting status; signing keys are created in Key Vault by deploy.sh.
-    if state['phase'] == 'deployed' and (not config['workspaceHostname'] or state.get('domainVerified')):
+    if state['phase'] == 'deployed' and (not custom_hostnames(config) or state.get('domainVerified')):
         # The final deployment already finished; only its verification remained.
         return verify(args, directory, config, state)
     checks = preflight(config, require_identity=True)
@@ -1001,17 +1026,17 @@ def install(args, directory, config, state):
     ensure_database(args, config)
     domain_verified = state.get('domainVerified', False)
     checkpoint(directory, state, 'deploying', configHash=digest(directory / 'deployment.config.json'))
-    if config['workspaceHostname']:
+    if custom_hostnames(config):
         if not state.get('dns'):
-            deploy(directory, config, state, '')
+            deploy(directory, config, state, False)
             records = dns_handoff(directory, config, state)
             return {'status': 'awaiting_dns', 'records': records, 'next': 'Add the DNS records, then run setup again.'}
         if not args.dns_ready and not domain_verified:
             checkpoint(directory, state, 'awaiting_dns')
             return {'status': 'awaiting_dns', 'records': state['dns'], 'next': 'Run setup again once the DNS records resolve.'}
         check_dns(config, state)
-    deploy(directory, config, state, config['workspaceHostname'])
-    if config['workspaceHostname']:
+    deploy(directory, config, state, True)
+    if custom_hostnames(config):
         checkpoint(directory, state, 'deployed', domainVerified=True)
     return verify(args, directory, config, state)
 
@@ -1022,7 +1047,10 @@ def verify(args, directory, config, state):
     origin = state.get('outputs', {}).get('workspaceOrigin')
     if not origin:
         raise SetupError('No deployment outputs saved. Run setup again first.')
-    if config['workspaceHostname'] and (not state.get('domainVerified') or origin != 'https://' + config['workspaceHostname']):
+    outputs = state.get('outputs', {})
+    deployed = {config.get('workspaceHostname'): origin, config.get('portalHostname'): outputs.get('portalOrigin')}
+    if custom_hostnames(config) and (not state.get('domainVerified') or any(
+            deployed.get(host) != 'https://' + host for host, _ in custom_hostnames(config))):
         raise SetupError('Final customer domain is not deployed yet. Add the DNS records and run setup again.')
     run(['bash', str(ROOT / 'scripts/smoke-test.sh'), origin], env=environment(config), explain=True)
     # Azure resource administrators need not have Entra license-read rights.
@@ -1742,8 +1770,8 @@ def summarize_preview(preview):
 
 def preview(directory, config, state):
     # A first install with a custom address deploys on Azure's address first.
-    hostname = config['workspaceHostname'] if (state.get('dns') or state.get('domainVerified')) else ''
-    write_json(directory / 'effective.config.json', script_config(config, workspaceHostname=hostname))
+    hosts = {} if (state.get('dns') or state.get('domainVerified')) else {'workspaceHostname': '', 'portalHostname': ''}
+    write_json(directory / 'effective.config.json', script_config(config, **hosts))
     output = run(['bash', str(ROOT / 'scripts/deploy.sh'), '--what-if', str(directory / 'effective.config.json')],
                  env=environment(config), explain=True)
     return summarize_preview(json.loads(output))
@@ -2125,9 +2153,11 @@ def handle_dns(args, directory, config, state, interactive):
         return True
     except SetupError:
         pass
-    host = config['workspaceHostname']
-    zone = find_azure_dns_zone(config, host)
-    if zone and confirm(f"The DNS zone {zone['name']} is in this Azure subscription. Add the two records now?", True, interactive):
+    hosts = [host for host, _ in custom_hostnames(config)]
+    zone = find_azure_dns_zone(config, hosts[0])
+    if zone and not all(host.endswith('.' + zone['name'].lower().rstrip('.')) for host in hosts):
+        zone = None
+    if zone and confirm(f"The DNS zone {zone['name']} is in this Azure subscription. Add the records now?", True, interactive):
         dns_args = argparse.Namespace(**dict(vars(args), dns_zone=zone['name'], dns_resource_group=zone['resourceGroup'],
                                              dns_subscription=None))
         try:
@@ -2140,7 +2170,8 @@ def handle_dns(args, directory, config, state, interactive):
                 return True
             print(f"  They don't resolve yet. If {zone['name']} is not delegated to Azure DNS at your domain registrar "
                   '(check its NS records), add the records where your DNS is actually hosted.')
-    print(f'Your DNS administrator needs to add these records for {host} (DNS only, no proxy; leave mail records alone):')
+    print(f"Your DNS administrator needs to add these records for {' and '.join(hosts)} (DNS only, no proxy; leave mail "
+          'records alone):')
     for record in state['dns']:
         print(f"  {record['type']:5} {record['name']}  ->  {record['value']}")
     print(f'They are also saved in {directory / "dns-records.json"}. When the records are in place, run setup again.')

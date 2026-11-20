@@ -22,6 +22,7 @@
   "coreAdminEmailDomains": "",
   "fleet": false,
   "fleetArchive": true,
+  "portalHostname": "",
   "verifiedEmailDomains": ["acme.example"],
   "adminPortalSignIn": false,
   "coreIdentityName": "id-acme-mentra-core",

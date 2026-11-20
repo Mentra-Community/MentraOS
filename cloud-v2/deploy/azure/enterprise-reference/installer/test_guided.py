@@ -1334,6 +1334,16 @@ class GuidedTests(unittest.TestCase):
             self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
                                 workspaceHostname='acme.example'), where='apex')
 
+    def test_a_lost_setup_folder_keeps_a_live_portal_hostname_bound(self):
+        earlier = {'owner': '22222222-2222-2222-2222-222222222222', 'release': RELEASE['releaseTag'], 'group': 'rg-acme-mentra',
+                   'settings': {'displayName': 'ACME', 'coreApiClientId': SUB, 'mobileClientId': TENANT,
+                                'fleet': True, 'portalHostname': 'portal.acme.example'}}
+        _, state = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra'),
+                                  earlier=earlier)
+        # Its DNS step is done: the next rollout keeps the address, its certificate and the portal's callback.
+        self.assertIs(state.get('domainVerified'), True)
+        self.assertTrue(state.get('dns'))
+
     def test_placeholders_from_the_example_are_refused(self):
         with self.assertRaisesRegex(setup.SetupError, 'placeholders.*coreApiClientId'):
             self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
