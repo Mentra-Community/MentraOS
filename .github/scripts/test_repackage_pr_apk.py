@@ -27,8 +27,8 @@ def manifest():
 
 
 def config():
-    return {"android": {"versionCode": 12}, "extra": {"unrelated": "keep", "mentraPrBuild": {
-        "schemaVersion": 1, "mobileFingerprint": FP, "mobileSourceCommit": SHA,
+    return {"android": {"versionCode": 12}, "extra": {"unrelated": "keep", "mentraBuild": {
+        "schemaVersion": 2, "mobileFingerprint": FP, "mobileSourceCommit": SHA,
         "otaManifestUrl": "https://example.com/old.json"}}}
 
 
@@ -52,7 +52,8 @@ class RepackagingTests(unittest.TestCase):
                 output.writestr("lib/arm64-v8a/libtest.so", b"native payload")
                 output.writestr("META-INF/CERT.RSA", b"signature")
                 output.writestr("META-INF/services/keep", b"resource")
-            inputs = dict(fingerprint=FP, ota_url="https://example.com/new.json", head_sha=SHA, build_number=999)
+            inputs = dict(fingerprint=FP, ota_url="https://example.com/new.json", build_number=999,
+                          metadata={"commit": SHA, "branch": "feature", "user": "tester", "time": "now"})
             apk.rewrite_apk(source, target, **inputs)
             apk.verify_payload(source, target, **inputs)
             with zipfile.ZipFile(target) as result:

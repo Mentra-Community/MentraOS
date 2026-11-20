@@ -72,10 +72,10 @@ def read_config(apk):
     return config, read_build(config)
 
 
-def rewrite_apk(source, destination, *, fingerprint, ota_url, head_sha, build_number, metadata=None):
+def rewrite_apk(source, destination, *, fingerprint, ota_url, build_number, metadata):
     with zipfile.ZipFile(source) as original:
         config, _ = read_config(original)
-        config = packaged_config(config, fingerprint=fingerprint, ota_url=ota_url, head_sha=head_sha,
+        config = packaged_config(config, fingerprint=fingerprint, ota_url=ota_url,
                                   build_number=build_number, platform="android", build_info=metadata)
         with zipfile.ZipFile(destination, "w") as output:
             for entry in original.infolist():
@@ -89,15 +89,15 @@ def rewrite_apk(source, destination, *, fingerprint, ota_url, head_sha, build_nu
                 output.writestr(entry, content)
 
 
-def verify_payload(source, output, *, fingerprint, ota_url, head_sha, build_number, metadata=None):
+def verify_payload(source, output, *, fingerprint, ota_url, build_number, metadata):
     with zipfile.ZipFile(source) as before, zipfile.ZipFile(output) as after:
         old_config, old_build = read_config(before)
         config, build = read_config(after)
-        expected_config = packaged_config(old_config, fingerprint=fingerprint, ota_url=ota_url, head_sha=head_sha,
+        expected_config = packaged_config(old_config, fingerprint=fingerprint, ota_url=ota_url,
                                            build_number=build_number, platform="android", build_info=metadata)
         expected_build = expected_config["extra"][CONTRACT]
         if build != expected_build or build["mobileFingerprint"] != fingerprint:
-            raise ValueError("Packaged PR configuration does not match requested inputs")
+            raise ValueError("Packaged build config does not match requested inputs")
         if config["android"]["versionCode"] != build_number or version_code(after.read(MANIFEST)) != build_number:
             raise ValueError("Packaged versionCode mismatch")
         names = {name for name in before.namelist() if not signature_entry(name)}
@@ -144,7 +144,7 @@ def main():
     output = Path(sys.argv[4])
     output.parent.mkdir(parents=True, exist_ok=True)
     inputs = dict(fingerprint=fingerprint, ota_url=os.environ["PR_OTA_MANIFEST_URL"],
-                  head_sha=os.environ["PR_HEAD_SHA"], build_number=int(os.environ["MENTRAOS_PINNED_BUILD_NUMBER"]), metadata=build_info())
+                  build_number=int(os.environ["MENTRAOS_PINNED_BUILD_NUMBER"]), metadata=build_info())
     with tempfile.TemporaryDirectory(prefix="mentra-pr-apk-") as tmp:
         unsigned, aligned = Path(tmp) / "unsigned.apk", Path(tmp) / "aligned.apk"
         rewrite_apk(source, unsigned, **inputs)

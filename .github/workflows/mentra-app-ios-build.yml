@@ -747,7 +747,7 @@ jobs:
           security unlock-keychain -p "$PR_IOS_KEYCHAIN_PASSWORD" "$PR_IOS_KEYCHAIN"
           source=mobile/build/pr-ios/export/Mentra.ipa
           if [[ "$PR_IOS_REUSED" == true ]]; then source=pr-mobile-candidate.ipa; fi
-          python3 mobile/ci/pr-ios/repackage.py package "$source" "$MENTRA_PR_MOBILE_FINGERPRINT" mobile/build/pr-ios/Mentra-pr.ipa
+          python3 mobile/ci/pr-ios/repackage.py package "$source" "$MENTRA_MOBILE_FINGERPRINT" mobile/build/pr-ios/Mentra-pr.ipa
           python3 mobile/ci/pr-ios/artifacts.py package --ipa mobile/build/pr-ios/Mentra-pr.ipa \
             --mac-signing mobile/build/pr-ios/mac-signing.json --output pr-ios-output
 

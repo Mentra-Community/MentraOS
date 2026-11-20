@@ -59,9 +59,9 @@ def verify_base(app, fingerprint, signing, profile):
         raise ValueError('Cached app signer differs from the current distribution identity')
 
 
-def rewrite_app(app, *, fingerprint, ota_url, head_sha, build_number, metadata):
+def rewrite_app(app, *, fingerprint, ota_url, build_number, metadata):
     info, config = read_app(app, fingerprint)
-    config = packaged_config(config, fingerprint=fingerprint, ota_url=ota_url, head_sha=head_sha,
+    config = packaged_config(config, fingerprint=fingerprint, ota_url=ota_url,
                               build_number=build_number, platform='ios', build_info=metadata)
     info['CFBundleVersion'] = str(build_number)
     (app / 'Info.plist').write_bytes(plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
@@ -72,12 +72,12 @@ def payload(app):
     return {str(p.relative_to(app)): digest(p) for p in app.rglob('*') if p.is_file()}
 
 
-def verify_payload(before, after, *, fingerprint, ota_url, head_sha, build_number, metadata):
+def verify_payload(before, after, *, fingerprint, ota_url, build_number, metadata):
     old_info, old_config = read_app(before, fingerprint)
     info, config = read_app(after, fingerprint)
     expected = dict(old_info, CFBundleVersion=str(build_number))
     if info != expected or config != packaged_config(old_config, fingerprint=fingerprint, ota_url=ota_url,
-            head_sha=head_sha, build_number=build_number, platform='ios', build_info=metadata):
+            build_number=build_number, platform='ios', build_info=metadata):
         raise ValueError('Packaged iOS configuration does not match requested inputs')
     allowed = {'Info.plist', CONFIG, 'embedded.mobileprovision', old_info['CFBundleExecutable']}
     # Only the outer app seal changes. Frameworks and all other resources must
@@ -114,8 +114,7 @@ def main():
         app.parent.mkdir(parents=True)
         run('ditto', original, app)
         inputs = dict(fingerprint=fingerprint, ota_url=os.environ['PR_OTA_MANIFEST_URL'],
-                      head_sha=os.environ['PR_HEAD_SHA'], build_number=int(os.environ['MENTRAOS_PINNED_BUILD_NUMBER']),
-                      metadata=build_info())
+                      build_number=int(os.environ['MENTRAOS_PINNED_BUILD_NUMBER']), metadata=build_info())
         # Preserve the app's actual signed capabilities, not every capability
         # the profile could grant. This prevents accidental entitlement changes.
         entitlements = run('codesign', '-d', '--entitlements', ':-', original)

@@ -256,7 +256,7 @@ test("iOS selection skips corrupt candidates, verifies signature/provenance and 
         github,
         context: {repo: {owner: "o", repo: "r"}},
         platform: "ios",
-        env: {MENTRA_PR_MOBILE_FINGERPRINT: fp},
+        env: {MENTRA_MOBILE_FINGERPRINT: fp},
         readIndex: async () => {
           if (unavailableIndex) throw Object.assign(new Error("temporary outage"), {code: "ETIMEDOUT"})
           return {assets: []}
@@ -290,7 +290,7 @@ function selectionWithoutCandidates(readIndex) {
       },
       context: {repo: {owner: "o", repo: "r"}},
       platform: "ios",
-      env: {MENTRA_PR_MOBILE_FINGERPRINT: "a".repeat(64)},
+      env: {MENTRA_MOBILE_FINGERPRINT: "a".repeat(64)},
       readIndex,
       core: {
         setOutput: (key, value) => (outputs[key] = value),
@@ -338,4 +338,12 @@ test("reuse index authentication, configuration and malformed-data failures rema
     assert.equal(outputs.reused, undefined)
     assert.deepEqual(warnings, [])
   }
+})
+
+test("every workflow and script names the fingerprint variable pr-mobile-build.mjs exports", () => {
+  const exported = readFileSync(new URL("./pr-mobile-build.mjs", import.meta.url), "utf8").match(/(MENTRA_\w*MOBILE_FINGERPRINT)=/)[1]
+  // The MentraOS tree, and in the monorepo the root workflows that call it too.
+  const trees = ["../..", "../../../../.github"].map((tree) => path.resolve(import.meta.dirname, tree))
+  const names = execFileSync("git", ["grep", "-ohE", "MENTRA_[A-Z_]*MOBILE_FINGERPRINT", "--", ...trees], {encoding: "utf8"})
+  assert.deepEqual([...new Set(names.trim().split("\n"))], [exported])
 })

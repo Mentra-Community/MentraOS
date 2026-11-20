@@ -122,7 +122,7 @@ Android and iOS use the same fingerprint/selection and PR configuration contract
 CI searches published signed apps for matching source, dependency, toolchain and
 compiled-environment inputs. A verified iOS match skips dependency installation,
 Pods, prebuild and Xcode compilation. It then updates Expo's packaged
-`extra.mentraPrBuild` configuration and `CFBundleVersion` and signs with the
+`extra.mentraBuild` configuration and `CFBundleVersion` and signs with the
 current distribution identity/profile. Both fresh and reused apps use this path.
 
 The packaged OTA target and current PR identity are independent of the JavaScript

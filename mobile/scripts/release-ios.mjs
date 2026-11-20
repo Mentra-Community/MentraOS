@@ -64,9 +64,9 @@ function loadASCConfig() {
 console.log('\n━━━ Step 1: Reading version from .env ━━━');
 await setBuildEnv();
 
-const version = process.env.EXPO_PUBLIC_MENTRAOS_VERSION;
+const version = process.env.MENTRA_APP_IDENTITY;
 if (!version) {
-  console.error('EXPO_PUBLIC_MENTRAOS_VERSION not found in .env');
+  console.error('MENTRA_APP_IDENTITY not found in .env');
   process.exit(1);
 }
 
@@ -346,7 +346,7 @@ if (!ascConfig || !ascConfig.ASC_API_KEY_ID || !ascConfig.ASC_API_ISSUER_ID || !
     // Print a clear warning so the user can investigate.
     console.warn('\n⚠️  TestFlight upload failed — continuing because the signed IPA');
     console.warn('   was still published to the GitHub release.');
-    console.warn('   Common cause: EXPO_PUBLIC_MENTRAOS_VERSION matches a previously');
+    console.warn('   Common cause: the release identity matches a previously');
     console.warn('   approved/closed TestFlight train. Bump it to enable TestFlight.');
     console.warn('   Original error:', err?.message || err);
     testflightStatus = 'failure';
@@ -354,7 +354,7 @@ if (!ascConfig || !ascConfig.ASC_API_KEY_ID || !ascConfig.ASC_API_ISSUER_ID || !
     // otherwise show the first line of the error.
     const msg = String(err?.message || err || '');
     if (/closed for new build submissions|must contain a higher version|Invalid Pre-Release Train/i.test(msg)) {
-      testflightDetail = 'version closed (bump EXPO_PUBLIC_MENTRAOS_VERSION)';
+      testflightDetail = 'version closed (bump the release identity)';
     } else {
       testflightDetail = msg.split('\n')[0].slice(0, 200);
     }

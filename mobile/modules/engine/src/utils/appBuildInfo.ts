@@ -2,7 +2,7 @@ import Constants from "expo-constants"
 
 import {packagedBuildInfo, type AppBuildInfo} from "./packagedBuildInfo"
 
-/** PR identity is packaging metadata; official/local builds retain embedded values. */
+/** The app's identity: packaged for CI builds, a local developer build's .env otherwise. */
 export function getAppBuildInfo(): AppBuildInfo {
   return packagedBuildInfo(Constants.expoConfig?.extra, {
     appVersion: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version",

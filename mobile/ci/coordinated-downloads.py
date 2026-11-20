@@ -24,12 +24,11 @@ def validate_app(app, plan, ota_url):
             or Path(info.get('CFBundleExecutable', '')).name != info.get('CFBundleExecutable')):
         raise ValueError('Download does not match the coordinated iOS app identity')
     config = json.loads((app / 'EXConstants.bundle/app.config').read_text())
-    if 'mentraPrBuild' in (config.get('extra') or {}):
-        raise ValueError('Coordinated app must not contain a PR runtime configuration override')
-    bundle = (app / 'main.jsbundle').read_bytes()
-    for value in (plan['releaseIdentity'], plan['sourceCommit'], ota_url):
-        if not value or value.encode() not in bundle:
-            raise ValueError('Download is missing the coordinated release metadata or OTA pin')
+    build = (config.get('extra') or {}).get('mentraBuild') or {}
+    if (build.get('schemaVersion') != 2 or build.get('identity') != plan['releaseIdentity']
+            or (build.get('buildInfo') or {}).get('commit') != plan['sourceCommit']
+            or not ota_url or build.get('otaManifestUrl') != ota_url):
+        raise ValueError('Download does not package the coordinated release metadata or OTA pin')
     run('codesign', '--verify', '--deep', '--strict', app)
     run('codesign', '--verify', '-R', '=anchor apple generic', app)
     return info

@@ -10,6 +10,7 @@ const plan = {
   channel: "beta",
   products: {mentraos: "3.1.0-beta.57"},
   native: {marketingVersion: "3.1.0", buildNumber: 310000057},
+  sourceCommit: "c".repeat(40),
 }
 
 const doppler = {
@@ -22,16 +23,21 @@ const doppler = {
   MAPBOX_DOWNLOADS_TOKEN: "sk.secret",
 }
 
-const input = {plan, doppler, backendEnvironment: "staging", otaManifestUrl: "https://example.com/ota.json"}
+const input = {plan, doppler, backendEnvironment: "staging", otaManifestUrl: "https://example.com/ota.json",
+  now: new Date("2026-11-19T12:00:00Z")}
 
-test("writes Doppler values and the release identity, and nothing else", () => {
+test("writes Doppler values and the release's own packaged values, and nothing else", () => {
   const {env, masked} = prepareMobileReleaseEnvironment(input)
 
-  assert.match(env, /^EXPO_PUBLIC_MENTRAOS_VERSION=3\.1\.0-beta\.57$/m)
+  assert.match(env, /^MENTRA_APP_IDENTITY=3\.1\.0-beta\.57$/m)
+  assert.match(env, /^MENTRA_OTA_MANIFEST_URL=https:\/\/example\.com\/ota\.json$/m)
+  assert.match(env, new RegExp(`^MENTRA_BUILD_COMMIT=${"c".repeat(40)}$`, "m"))
+  assert.match(env, /^MENTRA_BUILD_BRANCH=beta$/m)
+  assert.match(env, /^MENTRA_BUILD_TIME=2026-11-19T12:00:00\.000Z$/m)
+  assert.doesNotMatch(env, /EXPO_PUBLIC_(ASG_OTA_VERSION_URL|MENTRAOS_VERSION|BUILD_COMMIT)/)
   assert.match(env, /^MENTRAOS_NATIVE_MARKETING_VERSION=3\.1\.0$/m)
   assert.match(env, /^MENTRAOS_PINNED_BUILD_NUMBER=310000057$/m)
   assert.match(env, /^EXPO_PUBLIC_BUILD_ENV=staging$/m)
-  assert.match(env, /^EXPO_PUBLIC_ASG_OTA_VERSION_URL=https:\/\/example\.com\/ota\.json$/m)
   assert.match(env, /^EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/core\.staging\.us-west-2\.mentraglass\.com$/m)
   assert.match(env, /^EXPO_PUBLIC_MINIAPPS_URL=https:\/\/miniapps\.staging\.mentraglass\.com\/$/m)
   assert.match(env, /^EXPO_PUBLIC_DIRECTORY_URL=https:\/\/api\.apps\.staging\.mentraglass\.com\/$/m)
@@ -94,7 +100,7 @@ test("rehearses a production release on staging's backend, and nothing else", ()
   }
   const {env} = prepareMobileReleaseEnvironment({...input, plan: production, rehearsal: true})
   assert.match(env, /^EXPO_PUBLIC_BUILD_ENV=staging$/m)
-  assert.match(env, /^EXPO_PUBLIC_MENTRAOS_VERSION=3\.1\.0$/m)
+  assert.match(env, /^MENTRA_APP_IDENTITY=3\.1\.0$/m)
   assert.throws(
     () => prepareMobileReleaseEnvironment({...input, plan: production}),
     /production mobile releases must target the prod backend/,

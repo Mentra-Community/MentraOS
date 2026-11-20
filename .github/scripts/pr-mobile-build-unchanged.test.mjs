@@ -14,7 +14,7 @@ const url = (name) => artifactUrl(repository, "pr-builds", name)
 const ota = (sha) => url(`ota-pr-7-${sha}.json`)
 const now = Date.parse("2026-11-05T12:00:00Z")
 const daysAgo = (days) => new Date(now - days * 86400000).toISOString()
-const env = {GITHUB_REPOSITORY: repository, PR_NUMBER: "7", PR_HEAD_SHA: head, MENTRA_PR_MOBILE_FINGERPRINT: fingerprint,
+const env = {GITHUB_REPOSITORY: repository, PR_NUMBER: "7", PR_HEAD_SHA: head, MENTRA_MOBILE_FINGERPRINT: fingerprint,
   EXPO_PUBLIC_BUILD_ENV: "dev", PR_OTA_MANIFEST_URL: ota(head), GITHUB_RUN_ID: "200", GITHUB_RUN_ATTEMPT: "1"}
 
 const androidName = androidReceiptName(7, earlier, 100, 1)

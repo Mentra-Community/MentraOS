@@ -61,6 +61,28 @@ export function resolveBuildUser({
   }
 }
 
+async function localBuildVars() {
+  const buildTime = new Date()
+    .toLocaleString("en-US", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+    .replace(/(\d+)\/(\d+)\/(\d+),\s+/, "$3-$1-$2_")
+    .replace(/:/g, "-")
+    .replace(/\s+/g, "")
+  return {
+    EXPO_PUBLIC_BUILD_COMMIT: (await $`git rev-parse --short HEAD`).stdout.trim(),
+    EXPO_PUBLIC_BUILD_BRANCH: (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim(),
+    EXPO_PUBLIC_BUILD_USER: resolveBuildUser(),
+    EXPO_PUBLIC_BUILD_TIME: buildTime,
+  }
+}
+
 export async function setBuildEnv({syncAutolinking = true, packMiniapps = true} = {}) {
   // A local build bundles the miniapps of the working tree (CI packs its own). A debug build gets them live instead
   // (local-miniapps.mjs).
@@ -82,30 +104,8 @@ export async function setBuildEnv({syncAutolinking = true, packMiniapps = true} 
     await syncAutolinkingCache()
   }
 
-  const gitCommit = (await $`git rev-parse --short HEAD`).stdout.trim()
-  const gitBranch =
-    process.env.MENTRA_COORDINATED_RELEASE_CHANNEL || (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
-  const gitUsername = resolveBuildUser()
-  const buildTime = new Date()
-    .toLocaleString("en-US", {
-      timeZone: "America/Los_Angeles",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    })
-    .replace(/(\d+)\/(\d+)\/(\d+),\s+/, "$3-$1-$2_")
-    .replace(/:/g, "-")
-    .replace(/\s+/g, "")
-
-  const buildVars = {
-    EXPO_PUBLIC_BUILD_COMMIT: gitCommit,
-    EXPO_PUBLIC_BUILD_BRANCH: gitBranch,
-    EXPO_PUBLIC_BUILD_USER: gitUsername,
-    EXPO_PUBLIC_BUILD_TIME: buildTime,
-  }
+  // A CI build (MENTRA_MOBILE_FINGERPRINT) packages its build info in app.config (mentraBuild), never in its JS.
+  const buildVars = process.env.MENTRA_MOBILE_FINGERPRINT ? {} : await localBuildVars()
 
   // console.log("Build environment set:")
   // Object.entries(buildVars).forEach(([key, value]) => {

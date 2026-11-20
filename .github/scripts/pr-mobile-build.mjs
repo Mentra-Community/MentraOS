@@ -135,7 +135,7 @@ export async function selectMobile({
   download = downloadAsset,
   readIndex = readArtifactIndex,
 }) {
-  const fingerprint = env.MENTRA_PR_MOBILE_FINGERPRINT
+  const fingerprint = env.MENTRA_MOBILE_FINGERPRINT
   const candidate = platform === "ios" ? "pr-mobile-candidate.ipa" : "pr-mobile-candidate.apk"
   const repo = context.repo
   const {data: release} = await github.rest.repos.getReleaseByTag({...repo, tag: "pr-builds"})
@@ -225,6 +225,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       ...(host ? {host} : {}),
     },
   })
-  appendFileSync(process.env.GITHUB_ENV, `MENTRA_PR_MOBILE_FINGERPRINT=${fingerprint}\n`)
+  // The commit of the tree it fingerprinted: an explicit routine PR builds a merge revision, not the workflow's ref.
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {encoding: "utf8"}).trim()
+  appendFileSync(process.env.GITHUB_ENV, `MENTRA_MOBILE_FINGERPRINT=${fingerprint}\nMENTRA_MOBILE_SOURCE_COMMIT=${commit}\n`)
   console.log(`Mobile build fingerprint: ${fingerprint}`)
 }

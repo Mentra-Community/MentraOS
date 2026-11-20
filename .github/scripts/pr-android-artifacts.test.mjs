@@ -153,8 +153,9 @@ const codeFor = name => diagnosticCode.nestedNimo[desc(name)] ?? diagnosticCode[
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), fingerprint = "d".repeat(64)
 const ota = artifactUrl("Mentra-Community/MentraOS", "pr-builds", `ota-pr-42-${head}.json`)
 const config = () => ({version: "3.3.0", android: {package: "com.mentra.mentra", versionCode: 303000123},
-  extra: {unrelated: "must not appear in receipt", mentraPrBuild: {schemaVersion: 1, mobileFingerprint: fingerprint,
-    mobileSourceCommit: "e".repeat(40), prHeadSha: head, buildNumber: 303000123, otaManifestUrl: ota}}})
+  extra: {unrelated: "must not appear in receipt", mentraBuild: {schemaVersion: 2, mobileFingerprint: fingerprint,
+    mobileSourceCommit: "e".repeat(40), buildInfo: {commit: head, branch: "feature", time: "now", user: "tester"},
+    buildNumber: 303000123, otaManifestUrl: ota}}})
 const badging = "package: name='com.mentra.mentra' versionCode='303000123' versionName='3.3.0' platformBuildVersionName='11'"
 const identity = {pr: 42, headSha: head, buildSha: merge, backend: "dev"}
 
@@ -163,7 +164,7 @@ test("the receipt reflects native APK metadata and preserves reused compilation 
   assert.deepEqual(app, {packageId: "com.mentra.mentra", version: "3.3.0", build: "303000123", headSha: head,
     buildSha: merge, backend: "dev", otaManifestUrl: ota, mobileFingerprint: fingerprint, mobileSourceCommit: "e".repeat(40)})
   for (const change of [c => c.android.versionCode++, c => c.version = "3.2.0", c => c.android.package += ".other",
-    c => c.extra.mentraPrBuild.prHeadSha = base, c => c.extra.mentraPrBuild.otaManifestUrl += "other"])
+    c => c.extra.mentraBuild.buildInfo.commit = base, c => c.extra.mentraBuild.otaManifestUrl += "other"])
     { const value = config(); change(value); assert.throws(() => androidAppIdentity({...identity, config: value, badging})) }
   assert.throws(() => androidAppIdentity({...identity, backend: "prod", config: config(), badging}))
 })
@@ -186,7 +187,7 @@ async function publishing(run, failApk = false, diagnostic = false) {
     await writeFile(path.join(dir,'cmdline-tools','latest','lib','analyzer.jar'),'fixed SDK analyzer')
     const apk = path.join(dir, "app-release.apk"); await writeFile(apk, "synthetic APK bytes")
     const calls = [], env = {GITHUB_REPOSITORY: "Mentra-Community/MentraOS", PR_NUMBER: "42", PR_HEAD_SHA: head,
-      GITHUB_SHA: merge, GITHUB_RUN_ID: "100", GITHUB_RUN_ATTEMPT: "2", ANDROID_HOME: dir, EXPO_PUBLIC_BUILD_ENV: "dev", MENTRA_PR_MOBILE_FINGERPRINT: fingerprint}
+      GITHUB_SHA: merge, GITHUB_RUN_ID: "100", GITHUB_RUN_ATTEMPT: "2", ANDROID_HOME: dir, EXPO_PUBLIC_BUILD_ENV: "dev", MENTRA_MOBILE_FINGERPRINT: fingerprint}
     if (diagnostic) Object.assign(env, {MENTRA_NIMO_DIAGNOSTIC: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', MENTRA_PR_BUILD_SHA: merge})
     const exec = (command, args) => {
       if (command === "git") return `tree ${head}\nparent ${base}\nparent ${head}\n\nMerge PR`
@@ -238,7 +239,7 @@ test("the Mentra monorepo publishes under its own prefix and pins its own OTA ma
   await publishing(async ({apk, env, exec, calls}) => {
     const repository = "Mentra-Community/Mentra"
     const monorepoOta = artifactUrl(repository, "pr-builds", `ota-pr-42-${head}.json`)
-    const packaged = config(); packaged.extra.mentraPrBuild.otaManifestUrl = monorepoOta
+    const packaged = config(); packaged.extra.mentraBuild.otaManifestUrl = monorepoOta
     const monorepoExec = (command, args, options) => {
       if (command === "unzip" && args.at(-1) === "assets/app.config") return JSON.stringify(packaged)
       if (command === process.execPath) assert.equal(args[args.indexOf("--repository") + 1], repository)

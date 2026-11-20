@@ -25,13 +25,13 @@ class RepackageTests(unittest.TestCase):
                 'CFBundlePackageType':'APPL', 'CFBundleSupportedPlatforms':['iPhoneOS']}
         (self.before / 'Info.plist').write_bytes(plistlib.dumps(info))
         (self.before / CONFIG).write_text(json.dumps({'ios':{'buildNumber':'7'},'extra':{'keep':'value',
-            'mentraPrBuild':{'schemaVersion':1,'mobileFingerprint':FP,'mobileSourceCommit':'c'*40,'otaManifestUrl':''}}}))
+            'mentraBuild':{'schemaVersion':2,'mobileFingerprint':FP,'mobileSourceCommit':'c'*40,'otaManifestUrl':''}}}))
         (self.before / 'main.jsbundle').write_bytes(b'original compiled JavaScript')
         subprocess.run(['xcrun','clang','-x','c','-','-o',str(self.before/'Mentra')],
                        input=b'int main(void) { return 0; }', check=True, capture_output=True)
         self.sign(self.before)
         shutil.copytree(self.before, self.after)
-        self.inputs = dict(fingerprint=FP,ota_url=URL,head_sha=SHA,build_number=123,
+        self.inputs = dict(fingerprint=FP,ota_url=URL,build_number=123,
                            metadata={'commit':SHA,'branch':'new-pr','time':'2026-09-21','user':'tester'})
 
     def sign(self, app):
@@ -46,7 +46,7 @@ class RepackageTests(unittest.TestCase):
         verify_payload(self.before, self.after, **self.inputs)
         info, config = read_app(self.after, FP)
         self.assertEqual(info['CFBundleVersion'], '123')
-        build = config['extra']['mentraPrBuild']
+        build = config['extra']['mentraBuild']
         self.assertEqual(build['mobileSourceCommit'], 'c'*40)
         self.assertEqual(build['otaManifestUrl'], URL)
         self.assertEqual(build['buildInfo']['commit'], SHA)
@@ -88,7 +88,7 @@ class RepackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'fingerprint mismatch'):
             read_app(self.before, 'd'*64)
         (self.before / CONFIG).write_text('{}')
-        with self.assertRaisesRegex(ValueError, 'does not support PR repackaging'):
+        with self.assertRaisesRegex(ValueError, 'has no packaged build config'):
             read_app(self.before, FP)
 
 

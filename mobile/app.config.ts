@@ -101,20 +101,29 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   return {
     ...config,
     extra: packagedExtra,
-    ...(process.env.MENTRA_PR_MOBILE_FINGERPRINT
+    // A CI build (PR or release) carries its per-build values here, never in the JS bundle, so packaging can rewrite
+    // them without recompiling (.github/scripts/pr_mobile_config.py). The app reads them only from here; a local
+    // developer build has no mentraBuild and keeps its .env values.
+    ...(process.env.MENTRA_MOBILE_FINGERPRINT
       ? {
           extra: {
             ...packagedExtra,
-            mentraPrBuild: {
-              schemaVersion: 1,
-              mobileFingerprint: process.env.MENTRA_PR_MOBILE_FINGERPRINT,
-              // Explicit PR builds check out a merge revision while GITHUB_SHA
-              // still names the trusted workflow ref. Both PR producers supply
-              // the actual compilation revision separately.
-              mobileSourceCommit: process.env.MENTRA_PR_BUILD_SHA,
-              // Expo's config serializer transforms nested nulls; keep the
-              // unconfigured intermediate explicit until CI packages its pin.
-              otaManifestUrl: "",
+            mentraBuild: {
+              schemaVersion: 2,
+              mobileFingerprint: process.env.MENTRA_MOBILE_FINGERPRINT,
+              mobileSourceCommit: process.env.MENTRA_MOBILE_SOURCE_COMMIT,
+              // Expo's config serializer transforms nested nulls: an unset value is "" until packaging writes it.
+              otaManifestUrl: process.env.MENTRA_OTA_MANIFEST_URL || "",
+              identity: process.env.MENTRA_APP_IDENTITY || familyBaseVersion,
+              buildInfo: process.env.MENTRA_BUILD_COMMIT
+                ? {
+                    commit: process.env.MENTRA_BUILD_COMMIT,
+                    branch: process.env.MENTRA_BUILD_BRANCH,
+                    time: process.env.MENTRA_BUILD_TIME,
+                    user: process.env.MENTRA_BUILD_USER,
+                  }
+                : "",
+              buildNumber,
             },
           },
         }
