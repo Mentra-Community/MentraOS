@@ -107,9 +107,11 @@ export async function restoreDownloads(
   plan,
   repository,
   otaUrl,
-  {resolve = resolveRelease, list = listReleaseAssets, download = downloadAsset} = {},
+  {releaseId, resolve = resolveRelease, list = listReleaseAssets, download = downloadAsset} = {},
 ) {
-  const release = resolve(repository, {tag: plan.artifactContainerTag})
+  // By ID when the caller has it: production's container is a draft until the
+  // release completes, and a draft has no tag to look it up by.
+  const release = resolve(repository, releaseId ? {releaseId} : {tag: plan.artifactContainerTag})
   const assets = await list(repository, release)
   const names = downloadNames(plan)
   const matches = assets.filter((asset) => asset.name === names.receipt)
@@ -168,7 +170,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     repository = process.env.GITHUB_REPOSITORY,
     otaUrl = process.env.COORDINATED_OTA_URL
   if (command === "restore") {
-    const restored = await restoreDownloads(directory, plan, repository, otaUrl)
+    const restored = await restoreDownloads(directory, plan, repository, otaUrl, {releaseId: process.env.RELEASE_ID || undefined})
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `restored=${restored}\n`)
   } else if (command === "prepare") prepareDownloads(directory, plan, repository, otaUrl)
   else if (command === "publish") {

@@ -56,10 +56,10 @@ export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt, diagno
 /** Read the packaged configuration and the binary manifest, not source defaults. */
 export function androidAppIdentity({config, badging, pr, headSha, buildSha, backend, baseRef, repository = DEFAULT_REPOSITORY}) {
   const native = /^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'/m.exec(badging)
-  const build = config?.extra?.mentraPrBuild
+  const build = config?.extra?.mentraBuild
   requireThat(native?.[1] === "com.mentra.mentra" && config.android?.package === native[1] &&
     config.version === native[3] && String(config.android?.versionCode) === native[2] &&
-    build?.schemaVersion === 1 && build.prHeadSha === headSha && String(build.buildNumber) === native[2] &&
+    build?.schemaVersion === 2 && build.buildInfo?.commit === headSha && String(build.buildNumber) === native[2] &&
     HASH.test(build.mobileFingerprint ?? "") && SHA.test(build.mobileSourceCommit ?? "") &&
     PR_BUILD_REPOSITORIES.includes(repository) &&
     build.otaManifestUrl === artifactUrl(repository, "pr-builds", `ota-pr-${pr}-${headSha}.json`) &&
@@ -91,7 +91,7 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
   const badging = exec(path.join(env.ANDROID_HOME, "build-tools", versions[0], "aapt"), ["dump", "badging", apk], {encoding: "utf8"})
   const app = androidAppIdentity({config, badging, pr, headSha, buildSha, backend: env.EXPO_PUBLIC_BUILD_ENV,
     baseRef: env.MENTRA_PR_BASE_REF || env.GITHUB_BASE_REF, repository})
-  requireThat(app.mobileFingerprint === env.MENTRA_PR_MOBILE_FINGERPRINT, "APK compilation fingerprint differs from the selected build")
+  requireThat(app.mobileFingerprint === env.MENTRA_MOBILE_FINGERPRINT, "APK compilation fingerprint differs from the selected build")
   // The receiver is registered at runtime; its fixed action must be in compiled DEX,
   // not merely claimed by an asset or AndroidManifest entry.
   const dex = exec("unzip", ["-p", apk, "classes*.dex"], {maxBuffer: 256 * 1024 * 1024})

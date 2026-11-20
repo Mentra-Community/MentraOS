@@ -16,6 +16,10 @@ platform :ios do
       app_version: ENV.fetch("MENTRA_MARKETING_VERSION"),
       build_number: ENV.fetch("MENTRA_BUILD_NUMBER"),
       submit_for_review: true,
+      # A new submission of the same version replaces a build still waiting
+      # for or in review: its review is cancelled first (release.yml's
+      # publish-approval explains when a version is submitted again).
+      reject_if_possible: true,
       # Store approval must never make a production build public. The separate
       # protected store-release workflow performs that decision later.
       automatic_release: false,

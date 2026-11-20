@@ -8,6 +8,12 @@ import org.junit.Test
 
 class MentraLiveOwnerLossPolicyTest {
     @Test
+    fun bondIsKeptWhenTheGlassesKeepFormerOwnersKeys() {
+        assertFalse(MentraLiveOwnerLossPolicy.removesBondWhenGlassesLetGo(true))
+        assertTrue(MentraLiveOwnerLossPolicy.removesBondWhenGlassesLetGo(false))
+    }
+
+    @Test
     fun connectTimeRejectionIsAHintOnlyOutsideExplicitPairingOnSecureFirmware() {
         assertTrue(gattRejection(5))
         assertTrue(gattRejection(15))

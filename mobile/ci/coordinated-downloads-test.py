@@ -43,19 +43,22 @@ class AppIdentity(unittest.TestCase):
             (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': downloads.BUNDLE_ID,
                 'CFBundleExecutable': 'Mentra', 'CFBundleVersion': '42', 'CFBundleShortVersionString': '3.2.1',
                 'CFBundleSupportedPlatforms': ['iPhoneOS']}))
-            (app / 'main.jsbundle').write_text(' '.join([plan['releaseIdentity'], plan['sourceCommit'], ota]))
             (app / 'EXConstants.bundle').mkdir()
             config = app / 'EXConstants.bundle/app.config'
-            config.write_text('{}')
+            build = {'schemaVersion': 2, 'identity': plan['releaseIdentity'], 'otaManifestUrl': ota,
+                     'buildInfo': {'commit': plan['sourceCommit']}}
+            config.write_text(json.dumps({'extra': {'mentraBuild': build}}))
             with patch.object(downloads, 'run') as run:
                 downloads.validate_app(app, plan, ota)
                 self.assertEqual(run.call_count, 2)
-                config.write_text(json.dumps({'extra': {'mentraPrBuild': {'otaManifestUrl': ''}}}))
-                with self.assertRaisesRegex(ValueError, 'PR runtime'):
-                    downloads.validate_app(app, plan, ota)
-                config.write_text('{}')
                 with self.assertRaisesRegex(ValueError, 'OTA pin'):
                     downloads.validate_app(app, plan, 'https://example.com/other-release.json')
+                for change in [{'identity': '3.2.1'}, {'otaManifestUrl': ''}, {'buildInfo': {'commit': 'b' * 40}},
+                               {'schemaVersion': 1}]:
+                    config.write_text(json.dumps({'extra': {'mentraBuild': {**build, **change}}}))
+                    with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'release metadata'):
+                        downloads.validate_app(app, plan, ota)
+                config.write_text(json.dumps({'extra': {'mentraBuild': build}}))
                 with self.assertRaisesRegex(ValueError, 'identity'):
                     downloads.validate_app(app, {**plan, 'native': {**plan['native'], 'buildNumber': 43}}, ota)
 

@@ -109,6 +109,7 @@ export function DeviceSettingsSection() {
         defaultWearable,
         engine.settings.get<string>(SETTINGS.device_name.key) ?? "",
         "home",
+        engine.settings.get<boolean>(SETTINGS.mentra_live_former_owner_keys.key) === true,
       )
       await unpairSavedGlasses()
       useNavigationStore.getState().clearHistoryAndGoHome()

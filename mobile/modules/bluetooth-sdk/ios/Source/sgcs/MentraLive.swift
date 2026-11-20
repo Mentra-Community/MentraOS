@@ -2259,6 +2259,17 @@ class MentraLive: NSObject, SGCManager {
         Bridge.saveSetting("mentra_live_secure_firmware", secure)
     }
 
+    /// The glasses keep a former owner's keys for a reclaim in pairing mode (pairing-spec V9), so
+    /// the app keeps this phone's pairing on Unpair instead of sending the person to Settings.
+    private func rememberFormerOwnerKeys(_ kept: Bool) {
+        guard (DeviceStore.shared.get("bluetooth", "mentra_live_former_owner_keys") as? Bool == true) != kept
+        else { return }
+        Task { @MainActor in
+            DeviceStore.shared.apply("bluetooth", "mentra_live_former_owner_keys", kept)
+        }
+        Bridge.saveSetting("mentra_live_former_owner_keys", kept)
+    }
+
     /// One authentication-type failure. The state machine decides whether it settles a takeover
     /// (the one verification after `OWNER_CHANGED`) or completes the 3-strike streak.
     /// - Returns: true when this phone is now `pairing_rejected`.
@@ -3668,6 +3679,7 @@ class MentraLive: NSObject, SGCManager {
             // Read before any readiness below: the audio wait of a pairing depends on it.
             pairingInfoAutoAudio = json["auto_audio"] as? Bool ?? false
             rememberSecureFirmware(securePairingCapable)
+            rememberFormerOwnerKeys(json["former_owner_keys"] as? Bool ?? false)
             if securePairingCapable {
                 pairingInfoSeenThisSession = true
                 cancelSecureFirmwareRefresh()
@@ -4689,7 +4701,7 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func sendGalleryMode() {
-        let active = DeviceStore.shared.get("bluetooth", "gallery_mode") as! Bool
+        let active = DeviceStore.shared.get("bluetooth", "gallery_mode") as? Bool ?? true
         sendGalleryMode(requestId: nil, active: active)
     }
 
@@ -8040,7 +8052,7 @@ extension MentraLive {
         sendButtonVideoRecordingSettings()
 
         // Send button max recording time
-        let maxTime = DeviceStore.shared.get("bluetooth", "button_max_recording_time") as! Int
+        let maxTime = intValue(DeviceStore.shared.get("bluetooth", "button_max_recording_time")) ?? 10
         sendButtonMaxRecordingTime(maxTime)
 
         // Send button photo settings
@@ -8369,7 +8381,7 @@ extension MentraLive {
     }
 
     func sendButtonMaxRecordingTime() {
-        let maxTime = DeviceStore.shared.get("bluetooth", "button_max_recording_time") as? Int ?? 10
+        let maxTime = intValue(DeviceStore.shared.get("bluetooth", "button_max_recording_time")) ?? 10
         sendButtonMaxRecordingTime(requestId: nil, minutes: maxTime)
     }
 
@@ -8400,10 +8412,10 @@ extension MentraLive {
         let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool ?? legacyZslMfnr
         let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
         let edgeEnhancement = DeviceStore.shared.get("bluetooth", "button_photo_edge_enhancement") as? Bool
-        let ispDigitalGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_digital_gain") as? Int
+        let ispDigitalGain = intValue(DeviceStore.shared.get("bluetooth", "button_photo_isp_digital_gain"))
         let ispAnalogGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_analog_gain") as? String
-        let aeExposureDivisor = DeviceStore.shared.get("bluetooth", "button_photo_ae_exposure_divisor") as? Int
-        let isoCap = DeviceStore.shared.get("bluetooth", "button_photo_iso_cap") as? Int
+        let aeExposureDivisor = intValue(DeviceStore.shared.get("bluetooth", "button_photo_ae_exposure_divisor"))
+        let isoCap = intValue(DeviceStore.shared.get("bluetooth", "button_photo_iso_cap"))
         let compressStr = DeviceStore.shared.get("bluetooth", "button_photo_compress") as? String
         if let compressStr, PhotoCompression(rawValue: compressStr) == nil {
             Bridge.log("LIVE: Invalid stored photo compression: \(compressStr)")

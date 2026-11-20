@@ -147,6 +147,12 @@ test("restore accepts only a complete matching published receipt and its origina
     }),
     /missing or duplicate/,
   )
+  // A production container is a draft, with no tag: given its ID, restore looks it up by ID.
+  const lookups = []
+  const resolve = (repo, query) => (lookups.push(query), {id: 123})
+  await restoreDownloads(restored, plan, repository, ota, {...deps, resolve, releaseId: "123"})
+  await restoreDownloads(restored, plan, repository, ota, {...deps, resolve})
+  assert.deepEqual(lookups, [{releaseId: "123"}, {tag: plan.artifactContainerTag}])
   bytes.set(names.iphone, Buffer.from("different signed bytes"))
   await assert.rejects(restoreDownloads(restored, plan, repository, ota, deps), /bytes disagree/)
 })

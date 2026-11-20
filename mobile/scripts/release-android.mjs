@@ -35,9 +35,9 @@ function apkPrefix(version) {
 console.log('\n━━━ Step 1: Reading version from .env ━━━');
 await setBuildEnv();
 
-const version = process.env.EXPO_PUBLIC_MENTRAOS_VERSION;
+const version = process.env.MENTRA_APP_IDENTITY;
 if (!version) {
-  console.error('EXPO_PUBLIC_MENTRAOS_VERSION not found in .env');
+  console.error('MENTRA_APP_IDENTITY not found in .env');
   process.exit(1);
 }
 

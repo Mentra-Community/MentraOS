@@ -29,7 +29,7 @@ test("configuration-only packaging inputs do not invalidate compiled APK reuse",
 })
 
 test("staging-targeted PR binaries are compiled separately and never reuse a dev binary", async () => {
-  assert.deepEqual(["dev", "staging", "main", "feature", undefined].map(prBackend), ["dev", "staging", "staging", "dev", "dev"])
+  assert.deepEqual(["dev", "staging", "main", "feature", undefined].map(prBackend), ["dev", "staging", "dev", "dev", "dev"])
   const backend = (name) => ({...input.env, EXPO_PUBLIC_BUILD_ENV: name,
     EXPO_PUBLIC_CLOUD_CORE_URL: `https://core.${name}.us-west-2.mentraglass.com`})
   const dev = fingerprintMobile({...input, env: backend("dev")})
@@ -44,7 +44,7 @@ test("staging-targeted PR binaries are compiled separately and never reuse a dev
   // Every workflow step after environment setup, including the fingerprint, sees the pinned backend.
   for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml"]) {
     const workflow = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
-    const selection = workflow.indexOf('case "${MENTRA_PR_BASE_REF:-$GITHUB_BASE_REF}" in\n              staging | main) CLOUD_ENV="staging" ;;\n              *) CLOUD_ENV="dev" ;;')
+    const selection = workflow.indexOf('case "${MENTRA_PR_BASE_REF:-$GITHUB_BASE_REF}" in\n              staging) CLOUD_ENV="staging" ;;\n              *) CLOUD_ENV="dev" ;;')
     assert.ok(selection > 0 && workflow.lastIndexOf('if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then', selection) > workflow.indexOf("- name: Setup environment"))
     assert.match(workflow, /case "\$\{\{ github\.ref_name \}\}" in\n\s+main\) CLOUD_ENV="prod" ;;\n\s+\*\) CLOUD_ENV="dev" ;;/)
     assert.ok(workflow.indexOf('echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"') < workflow.indexOf("node .github/scripts/pr-mobile-build.mjs"))
@@ -256,7 +256,7 @@ test("iOS selection skips corrupt candidates, verifies signature/provenance and 
         github,
         context: {repo: {owner: "o", repo: "r"}},
         platform: "ios",
-        env: {MENTRA_PR_MOBILE_FINGERPRINT: fp},
+        env: {MENTRA_MOBILE_FINGERPRINT: fp},
         readIndex: async () => {
           if (unavailableIndex) throw Object.assign(new Error("temporary outage"), {code: "ETIMEDOUT"})
           return {assets: []}
@@ -290,7 +290,7 @@ function selectionWithoutCandidates(readIndex) {
       },
       context: {repo: {owner: "o", repo: "r"}},
       platform: "ios",
-      env: {MENTRA_PR_MOBILE_FINGERPRINT: "a".repeat(64)},
+      env: {MENTRA_MOBILE_FINGERPRINT: "a".repeat(64)},
       readIndex,
       core: {
         setOutput: (key, value) => (outputs[key] = value),
@@ -338,4 +338,12 @@ test("reuse index authentication, configuration and malformed-data failures rema
     assert.equal(outputs.reused, undefined)
     assert.deepEqual(warnings, [])
   }
+})
+
+test("every workflow and script names the fingerprint variable pr-mobile-build.mjs exports", () => {
+  const exported = readFileSync(new URL("./pr-mobile-build.mjs", import.meta.url), "utf8").match(/(MENTRA_\w*MOBILE_FINGERPRINT)=/)[1]
+  // The MentraOS tree, and in the monorepo the root workflows that call it too.
+  const trees = ["../..", "../../../../.github"].map((tree) => path.resolve(import.meta.dirname, tree))
+  const names = execFileSync("git", ["grep", "-ohE", "MENTRA_[A-Z_]*MOBILE_FINGERPRINT", "--", ...trees], {encoding: "utf8"})
+  assert.deepEqual([...new Set(names.trim().split("\n"))], [exported])
 })

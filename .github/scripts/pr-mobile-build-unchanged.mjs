@@ -127,7 +127,7 @@ async function earlierPublication(options) {
     // A receipt that reuses another is skipped: the original is published too.
     if (
       receipt.reusedFrom !== undefined ||
-      receipt.app?.mobileFingerprint !== env.MENTRA_PR_MOBILE_FINGERPRINT ||
+      receipt.app?.mobileFingerprint !== env.MENTRA_MOBILE_FINGERPRINT ||
       receipt.app?.backend !== env.EXPO_PUBLIC_BUILD_ENV ||
       // Receipts from before the packaging fingerprint are never reused.
       receipt.packagingFingerprint !== packaging ||

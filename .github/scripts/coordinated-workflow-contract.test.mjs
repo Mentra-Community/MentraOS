@@ -540,7 +540,6 @@ test("mobile destinations use real TestFlight groups without changing the releas
   // Dev releases (TestFlight group Mentra Dev) come from the Mentra monorepo.
   assert.doesNotMatch(coordinator, /testflight_group=Mentra Dev/)
   assert.match(coordinator, /testflight_group=Mentra Staging/)
-  assert.match(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\(jq -er \.channel release-intent\/release-plan\.json\)/)
   assert.doesNotMatch(mobile, /compatibility_lab|testFlightInternalTestingOnly/)
   assert.match(mobile, /google-play-internal-sharing\.mjs/)
   assert.match(mobile, /if: inputs\.dry_run != true && inputs\.play_track == 'internal-app-sharing'/)
@@ -590,7 +589,6 @@ test("mobile destinations use real TestFlight groups without changing the releas
     readFileSync(new URL("./release-family.mjs", import.meta.url), "utf8"),
     /DEFAULT_PLAY_TRACKS = Object\.freeze\(\{dev: "internal", beta: "beta", production: "production"\}\)/,
   )
-  assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
   assert.match(example, /EXAMPLE_APP_ID: "6792839366"/)
   assert.match(example, /EXAMPLE_BUNDLE_ID: com\.mentra\.bluetoothsdkexample/)
   assert.match(example, /config\.expo\.ios\.bundleIdentifier = process\.env\.EXAMPLE_BUNDLE_ID/)

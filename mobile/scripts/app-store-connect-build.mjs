@@ -126,10 +126,10 @@ export async function findApp(client, bundleId, appId) {
     }
     return app
   }
-  return exactlyOne(
-    await client.request(query("/v1/apps", {"filter[bundleId]": bundleId, "limit": "2"})),
-    `app ${bundleId}`,
-  )
+  // filter[bundleId] also returns apps whose bundle ID only starts with it
+  // (com.mentra.mentra.<suffix>), so keep the exact match.
+  const apps = await collectPaginatedData(client, query("/v1/apps", {"filter[bundleId]": bundleId, "limit": "200"}))
+  return exactlyOne({data: apps.filter((app) => app.attributes?.bundleId === bundleId)}, `app ${bundleId}`)
 }
 
 export async function findBuild(client, {appId, buildNumber, marketingVersion}) {
@@ -675,6 +675,10 @@ const SUBMITTED_APP_STORE_STATES = new Set([
   "READY_FOR_SALE",
 ])
 
+// Submitted with an earlier build, but still cancellable: a new submission of
+// the same version replaces that build.
+const REPLACEABLE_APP_STORE_STATES = new Set(["WAITING_FOR_REVIEW", "IN_REVIEW"])
+
 export async function productionSubmissionStatus(client, {appId, versionString, buildId}) {
   const version = await findAppStoreVersion(client, {appId, versionString})
   if (!version) return {version: null, state: "ABSENT", attachedBuildId: null, promoted: false}
@@ -683,11 +687,20 @@ export async function productionSubmissionStatus(client, {appId, versionString, 
   const state = version.attributes?.appStoreState || version.attributes?.appVersionState
   if (!state) throw new Error(`App Store version ${versionString} has no state`)
   // A version still editable (prepare, developer rejected, App Review
-  // rejected) may carry an earlier build: the submission replaces it. Only a
-  // version already in the review or release flow must carry this build.
+  // rejected) may carry an earlier build: the submission replaces it. So may
+  // one waiting for or in review: the submission (deliver's
+  // reject_if_possible) cancels that review first. One approved or released
+  // must already carry this build.
   if (SUBMITTED_APP_STORE_STATES.has(state) && attachedBuildId !== buildId) {
+    if (REPLACEABLE_APP_STORE_STATES.has(state)) {
+      return {version, state, attachedBuildId, promoted: false, replacing: true}
+    }
+    const fix =
+      state === "PENDING_DEVELOPER_RELEASE"
+        ? " To submit this build instead, reject that build in App Store Connect (Developer Reject), then rerun this job."
+        : " A new build needs a new version (bun run release:prepare-next-family)."
     throw new Error(
-      `Submitted App Store version ${versionString} is attached to build ${attachedBuildId ?? "none"}, not ${buildId}`,
+      `Submitted App Store version ${versionString} is ${state} with build ${attachedBuildId ?? "none"}, not ${buildId}.${fix}`,
     )
   }
   return {version, state, attachedBuildId, promoted: SUBMITTED_APP_STORE_STATES.has(state)}
@@ -915,7 +928,7 @@ async function main() {
       const {appendFileSync} = await import("node:fs")
       appendFileSync(
         process.env.GITHUB_OUTPUT,
-        `promoted=${status.promoted}\nstate=${status.state}\nversion_id=${status.version?.id || ""}\nbuild_id=${build.id}\n`,
+        `promoted=${status.promoted}\nreplacing=${status.replacing === true}\nstate=${status.state}\nversion_id=${status.version?.id || ""}\nbuild_id=${build.id}\n`,
       )
     }
     console.log(`App Store version ${args["app-version"]} is ${status.state} with build ${args["build-number"]}`)

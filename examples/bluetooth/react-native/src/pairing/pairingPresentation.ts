@@ -43,7 +43,8 @@ const failureMessages: Record<string, string> = {
 function scanRows(glasses: MentraLivePairingGlasses[]): CustomPairingRow[] {
   return glasses.map((item) => ({
     glasses: item,
-    label: `Mentra Live ${item.label}`,
+    // Firmware before 3.4.0 lists without the 3 presses and says no code.
+    label: item.speaksCode ? `Mentra Live ${item.label}` : `Mentra Live ${item.label} (no code)`,
   }));
 }
 
@@ -61,7 +62,7 @@ function scanPresentation(
       };
     case 'choosing':
       return {
-        detail: 'Match the code your glasses say.',
+        detail: state.glasses.some((item) => item.speaksCode) ? 'Match the code your glasses say.' : undefined,
         indeterminate: state.scanning,
         primary: state.scanning ? undefined : {action: 'scanAgain', label: 'Scan again'},
         rows: scanRows(state.glasses),

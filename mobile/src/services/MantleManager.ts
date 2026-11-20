@@ -33,7 +33,7 @@ import {buildSpokenNotification} from "@/services/notifications/spokenNotificati
 import {deploymentCloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
 import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "@/services/phoneWifi"
-import {engine, BgTimer, SETTINGS} from "@mentra/engine"
+import {engine, BgTimer, SETTINGS, getAppBuildInfo} from "@mentra/engine"
 import {
   appRegistry,
   getDevAppRecords,
@@ -560,7 +560,7 @@ class MantleManager {
         ...deploymentCloudConfigValues(deployment),
         isLocalMiniappAllowed: isSuperModeMiniappAllowed,
         bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
-        hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION,
+        hostVersion: Constants.expoConfig?.version ?? getAppBuildInfo().appVersion,
         supportedMiniappSdkRange: SUPPORTED_MINIAPP_SDK_RANGE,
         // Miniapps rated above the Mentra App's own App Store rating need the person's declared age.
         hostAgeRating: mentraAppAgeRating(),

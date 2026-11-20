@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Reuse a signed iOS PR app, replacing packaging metadata without compiling."""
+"""Reuse a signed iOS app, a PR's (ad hoc) or a release's (App Store), replacing packaging metadata without compiling."""
+import datetime as dt
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ import zipfile
 
 from artifacts import BUNDLE_ID, HERE, digest, read_profile, run, signer_certificate, unsigned_executable_bytes, validate_profile
 sys.path.insert(0, str(HERE.parents[2] / '.github/scripts'))
-from pr_mobile_config import read_build, packaged_config, build_info
+from pr_mobile_config import read_build, packaged_config, packaging_inputs
 
 CONFIG = 'EXConstants.bundle/app.config'
 
@@ -59,10 +60,15 @@ def verify_base(app, fingerprint, signing, profile):
         raise ValueError('Cached app signer differs from the current distribution identity')
 
 
-def rewrite_app(app, *, fingerprint, ota_url, head_sha, build_number, metadata):
-    info, config = read_app(app, fingerprint)
-    config = packaged_config(config, fingerprint=fingerprint, ota_url=ota_url, head_sha=head_sha,
-                              build_number=build_number, platform='ios', build_info=metadata)
+def configure(config, *, fingerprint, ota_url, build_number, metadata, identity):
+    return packaged_config(config, fingerprint=fingerprint, ota_url=ota_url, build_number=build_number,
+                           platform='ios', build_info=metadata, identity=identity)
+
+
+def rewrite_app(app, **inputs):
+    info, config = read_app(app, inputs['fingerprint'])
+    config = configure(config, **inputs)
+    build_number = inputs['build_number']
     info['CFBundleVersion'] = str(build_number)
     (app / 'Info.plist').write_bytes(plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
     (app / CONFIG).write_text(json.dumps(config, separators=(',', ':')))
@@ -72,12 +78,11 @@ def payload(app):
     return {str(p.relative_to(app)): digest(p) for p in app.rglob('*') if p.is_file()}
 
 
-def verify_payload(before, after, *, fingerprint, ota_url, head_sha, build_number, metadata):
-    old_info, old_config = read_app(before, fingerprint)
-    info, config = read_app(after, fingerprint)
-    expected = dict(old_info, CFBundleVersion=str(build_number))
-    if info != expected or config != packaged_config(old_config, fingerprint=fingerprint, ota_url=ota_url,
-            head_sha=head_sha, build_number=build_number, platform='ios', build_info=metadata):
+def verify_payload(before, after, **inputs):
+    old_info, old_config = read_app(before, inputs['fingerprint'])
+    info, config = read_app(after, inputs['fingerprint'])
+    expected = dict(old_info, CFBundleVersion=str(inputs['build_number']))
+    if info != expected or config != configure(old_config, **inputs):
         raise ValueError('Packaged iOS configuration does not match requested inputs')
     allowed = {'Info.plist', CONFIG, 'embedded.mobileprovision', old_info['CFBundleExecutable']}
     # Only the outer app seal changes. Frameworks and all other resources must
@@ -95,27 +100,57 @@ def verify_payload(before, after, *, fingerprint, ota_url, head_sha, build_numbe
             raise ValueError('Compiled iOS executable changed')
 
 
-def main():
-    mode, source, fingerprint = sys.argv[1:4]
-    if mode not in ('verify-base', 'package'):
-        raise ValueError('Expected verify-base or package')
-    signing = json.loads((HERE.parents[1] / 'build/pr-ios/signing.json').read_text())
+def store_profile(app, now=None):
+    """An App Store build keeps the profile it was exported with: unexpired, for every device, without debugging."""
+    profile = read_profile(app / 'embedded.mobileprovision')
+    now = now or dt.datetime.now(dt.timezone.utc)
+    entitlements = profile['Entitlements']
+    team = profile['TeamIdentifier'][0]
+    # A week's margin: App Store Connect still has to process the upload.
+    if (profile['ExpirationDate'].replace(tzinfo=dt.timezone.utc) <= now + dt.timedelta(days=7)
+            or profile.get('ProvisionedDevices') or profile.get('ProvisionsAllDevices')
+            or entitlements.get('get-task-allow') is not False
+            or entitlements.get('application-identifier') != f'{team}.{BUNDLE_ID}'):
+        raise ValueError('Expected an unexpired App Store profile for com.mentra.mentra')
+    return profile
+
+
+def signing_for(mode, original):
+    """The profile, identity and keychain a mode signs with: the PR's ad hoc ones, or a release's App Store ones."""
+    if mode in ('verify-store', 'package-store'):
+        keychain = os.environ['MENTRA_CI_KEYCHAIN']
+        certificate = signer_certificate(original)
+        if certificate not in run('security', 'find-identity', '-v', '-p', 'codesigning', keychain).decode():
+            raise ValueError('The job keychain has no identity of the cached app\'s App Store signer')
+        return {'certificate': certificate}, store_profile(original), original / 'embedded.mobileprovision', keychain
     profile_file = HERE.parents[1] / 'build/pr-ios/PR.mobileprovision'
     profile = read_profile(profile_file)
     validate_profile(profile)
-    with tempfile.TemporaryDirectory(prefix='mentra-pr-ipa-') as temporary:
+    signing = json.loads((HERE.parents[1] / 'build/pr-ios/signing.json').read_text())
+    return signing, profile, profile_file, os.environ.get('PR_IOS_KEYCHAIN')
+
+
+def main():
+    mode, source, fingerprint = sys.argv[1:4]
+    if mode not in ('verify-base', 'package', 'verify-store', 'package-store'):
+        raise ValueError('Expected verify-base, package, verify-store or package-store')
+    with tempfile.TemporaryDirectory(prefix='mentra-ipa-') as temporary:
         root = Path(temporary)
         original = unpack(source, root / 'original')
+        signing, profile, profile_file, keychain = signing_for(mode, original)
         verify_base(original, fingerprint, signing, profile)
-        if mode == 'verify-base':
+        if mode.startswith('verify-'):
             print('Verified cached iOS fingerprint, original compilation and signing identity')
             return
+        # Everything beside Payload (an App Store export's Symbols) goes into the new IPA unchanged.
+        shutil.copytree(root / 'original', root / 'output', symlinks=True, ignore=lambda folder, names:
+                        ['Payload'] if Path(folder) == root / 'original' else [])
         app = root / 'output/Payload' / original.name
         app.parent.mkdir(parents=True)
         run('ditto', original, app)
-        inputs = dict(fingerprint=fingerprint, ota_url=os.environ['PR_OTA_MANIFEST_URL'],
-                      head_sha=os.environ['PR_HEAD_SHA'], build_number=int(os.environ['MENTRAOS_PINNED_BUILD_NUMBER']),
-                      metadata=build_info())
+        if not keychain:
+            raise ValueError('No signing keychain for this mode')
+        inputs = dict(fingerprint=fingerprint, **packaging_inputs())
         # Preserve the app's actual signed capabilities, not every capability
         # the profile could grant. This prevents accidental entitlement changes.
         entitlements = run('codesign', '-d', '--entitlements', ':-', original)
@@ -123,8 +158,8 @@ def main():
         entitlement_file.write_bytes(plistlib.dumps(plistlib.loads(entitlements)))
         rewrite_app(app, **inputs)
         shutil.copy2(profile_file, app / 'embedded.mobileprovision')
-        run(sys.executable, HERE / 'keychain-search.py', 'run', os.environ['PR_IOS_KEYCHAIN'],
-            'codesign', '--force', '--sign', signing['certificate'], '--keychain', os.environ['PR_IOS_KEYCHAIN'],
+        run(sys.executable, HERE / 'keychain-search.py', 'run', keychain,
+            'codesign', '--force', '--sign', signing['certificate'], '--keychain', keychain,
             '--entitlements', entitlement_file, '--preserve-metadata=requirements,flags,runtime', '--timestamp=none', app)
         verify_base(app, fingerprint, signing, profile)
         if plistlib.loads(run('codesign', '-d', '--entitlements', ':-', app)) != plistlib.loads(entitlements):
@@ -132,11 +167,11 @@ def main():
         verify_payload(original, app, **inputs)
         output = Path(sys.argv[4]).resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
-        run('ditto', '-c', '-k', '--keepParent', app.parent, output)
+        run('ditto', '-c', '-k', root / 'output', output)
         delivered = unpack(output, root / 'delivered')
         verify_base(delivered, fingerprint, signing, profile)
         verify_payload(original, delivered, **inputs)
-        print('Verified PR configuration, build number, unchanged compiled payload and signing identity')
+        print('Verified the packaged configuration, build number, unchanged compiled payload and signing identity')
 
 
 if __name__ == '__main__':

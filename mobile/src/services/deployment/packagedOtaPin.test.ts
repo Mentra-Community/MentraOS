@@ -9,12 +9,12 @@ it("preserves official and local environment pins", () => {
 })
 
 it("uses packaged config instead of a prior bundle's environment pin", () => {
-  expect(packagedOtaPin({mentraPrBuild: {schemaVersion: 1, otaManifestUrl: pin}}, env)).toBe(pin)
-  expect(packagedOtaPin({mentraPrBuild: {schemaVersion: 1, otaManifestUrl: null}}, env)).toBeNull()
-  expect(packagedOtaPin({mentraPrBuild: {schemaVersion: 1, otaManifestUrl: ""}}, env)).toBeNull()
+  expect(packagedOtaPin({mentraBuild: {schemaVersion: 2, otaManifestUrl: pin}}, env)).toBe(pin)
+  expect(packagedOtaPin({mentraBuild: {schemaVersion: 2, otaManifestUrl: null}}, env)).toBeNull()
+  expect(packagedOtaPin({mentraBuild: {schemaVersion: 2, otaManifestUrl: ""}}, env)).toBeNull()
 })
 
-it.each([null, {}, {schemaVersion: 2}, {schemaVersion: 1}, {schemaVersion: 1, otaManifestUrl: "file:///tmp/a"}])(
+it.each([null, {}, {schemaVersion: 1}, {schemaVersion: 2}, {schemaVersion: 2, otaManifestUrl: "file:///tmp/a"}])(
   "rejects malformed packaged config without falling back to a stale pin: %j",
-  (mentraPrBuild) => expect(() => packagedOtaPin({mentraPrBuild}, env)).toThrow(),
+  (mentraBuild) => expect(() => packagedOtaPin({mentraBuild}, env)).toThrow(),
 )

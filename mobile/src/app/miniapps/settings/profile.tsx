@@ -149,6 +149,7 @@ export default function ProfileSettingsPage() {
         engine.settings.get<string>(SETTINGS.default_wearable.key) ?? "",
         engine.settings.get<string>(SETTINGS.device_name.key) ?? "",
         "sign-in",
+        engine.settings.get<boolean>(SETTINGS.mentra_live_former_owner_keys.key) === true,
       )
 
       // Leave the miniapp surface BEFORE logging out, not after.

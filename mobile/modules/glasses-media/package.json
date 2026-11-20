@@ -1,6 +1,6 @@
 {
   "name": "@mentra/glasses-media",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "description": "Shared native glasses media receivers and local network transport",
   "license": "MIT",
   "author": "Mentra Community",
@@ -16,7 +16,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "3.4.0"
+    "@mentra/bluetooth-sdk": "3.4.1"
   },
   "peerDependencies": {
     "expo-modules-core": "~55.0.25"

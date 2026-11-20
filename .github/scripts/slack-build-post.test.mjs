@@ -78,3 +78,14 @@ test("buttons skip non-HTTPS URLs; nothing to install leaves no actions block", 
   assert.ok(post.blocks.every((block) => block.type !== "actions"))
   assert.equal(slackText("&<>\n".repeat(2), 6), "&amp;&lt;&gt; &amp;…")
 })
+
+test("Android buttons open the APK folder's install page, out of Slack's browser", async () => {
+  const urls = (post) => post.blocks.find((block) => block.type === "actions").elements.map((button) => button.url)
+  const {"PR ready, with the Bluetooth example": [pr], "dev release, complete": [release]} = await posts()
+  assert.deepEqual(urls(pr).filter((url) => url.includes("android")), [`${cdn}/android.html?file=a.apk`, `${cdn}/android.html?file=example.apk`])
+  assert.deepEqual(urls(release).filter((url) => url.includes("android")),
+    [`${rcdn}/android.html?file=mentra.apk`, `${rcdn}/android.html?file=example.apk`])
+  // A store install has no APK to hand over.
+  const play = "https://play.google.com/apps/internaltest/1"
+  assert.equal(installButtons([{name: "Mentra", installs: [{platform: "Android", url: play}]}])[0].url, play)
+})

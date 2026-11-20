@@ -45,7 +45,7 @@ describe("the stock Mentra Live pairing pages", () => {
       page: "scan",
       status: "choosing",
       scanning: true,
-      glasses: [{id: "a", label: "E511", device}],
+      glasses: [{id: "a", label: "E511", speaksCode: true, device}],
     })
     expect(getByText("Choose your glasses")).toBeTruthy()
     expect(getByText("Press the power button 3 times to enter pairing mode.")).toBeTruthy()

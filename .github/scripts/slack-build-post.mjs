@@ -1,3 +1,5 @@
+import {androidInstallUrl} from "./release-artifact-storage.mjs"
+
 // Every Slack build post, in one layout: the PR builds in #pr-builds, the dev
 // and staging releases, and the lab's nightly results and device notices
 // (testing/agent/slack.ts). Buttons, never inline links:
@@ -54,14 +56,15 @@ export function installSlots(apps) {
     ...(apps.some(({installs}) => installs.some(({platform, url}) => platform === "macOS" && installable(url))) ? ["macOS"] : [])]
   return apps.flatMap(({name, installs}, index) => platforms.map((platform) => {
     const install = installs.find((entry) => entry.platform === platform)
-    return {label: `${PLATFORM_EMOJI[platform]} ${name}`, emoji: PLATFORM_EMOJI[platform], name, primary: !index,
+    return {label: `${PLATFORM_EMOJI[platform]} ${name}`, emoji: PLATFORM_EMOJI[platform], name, platform, primary: !index,
       ...(installable(install?.url) ? {url: install.url} : {missing: install?.missing ?? "not built"})}
   }))
 }
 
 export function installButtons(apps) {
   return installSlots(apps).filter(({url}) => url)
-    .map(({emoji, name, primary, url}) => button(`${emoji} Install ${name}`, url, primary ? "primary" : undefined))
+    .map(({emoji, name, platform, primary, url}) => button(`${emoji} Install ${name}`,
+      platform === "Android" ? androidInstallUrl(url) : url, primary ? "primary" : undefined))
 }
 
 /** The glasses versions an OTA manifest of this release or PR build (`releaseVersion`) targets. */
@@ -89,8 +92,8 @@ export const glassesLine = ({asg, bes, mtk}) =>
  *   glasses?: {asg: {versionName: string, versionCode: number}, bes: string, mtk: string}, glassesNote?: string,
  *   problems?: {text: string, url?: string, icon?: string}[]}} post
  */
-export function buildPost({text, title, details, facts = [], apps = [], docs, glasses, glassesNote, problems = []}) {
-  const buttons = [...installButtons(apps), ...(installable(docs) ? [button(":books: Docs", docs)] : [])]
+export function buildPost({text, title, details, facts = [], actions = [], apps = [], docs, glasses, glassesNote, problems = []}) {
+  const buttons = [...actions.map(({label, url}) => button(label, url)), ...installButtons(apps), ...(installable(docs) ? [button(":books: Docs", docs)] : [])]
   const missing = installSlots(apps).filter(({url}) => !url)
   const top = [
     {type: "section", text: {type: "mrkdwn", text: title}, ...(details ? {accessory: button("Details", details)} : {})},

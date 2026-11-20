@@ -33,7 +33,10 @@ function requireHttps(value, label) {
 
 // `rehearsal`: a production dry run outside the production environment, which
 // can't read production's config and builds with staging's. It never publishes.
-export function prepareMobileReleaseEnvironment({plan, doppler, backendEnvironment, otaManifestUrl, rehearsal = false}) {
+// The build's own values (MENTRA_*) are packaged in app.config's mentraBuild (mobile/app.config.ts), not in the JS
+// bundle, so the app reads them from one place and a compile can be reused.
+export function prepareMobileReleaseEnvironment({plan, doppler, backendEnvironment, otaManifestUrl, rehearsal = false,
+  now = new Date()}) {
   if (plan.releaseSetId !== `mentra-${plan.releaseIdentity}` || plan.products?.mentraos !== plan.releaseIdentity) {
     throw new Error("Release plan does not contain the coordinated MentraOS product")
   }
@@ -43,6 +46,7 @@ export function prepareMobileReleaseEnvironment({plan, doppler, backendEnvironme
   if (plan.native.marketingVersion !== plan.familyBaseVersion) {
     throw new Error("Native marketing version must equal the family base")
   }
+  if (!/^[a-f0-9]{40}$/.test(plan.sourceCommit ?? "")) throw new Error("Release plan has no source commit")
   if (rehearsal && plan.channel !== "production") throw new Error("Only a production release is rehearsed on staging's backend")
   const expectedBackend =
     plan.channel === "dev"
@@ -60,10 +64,14 @@ export function prepareMobileReleaseEnvironment({plan, doppler, backendEnvironme
   }
   const values = {
     ...Object.fromEntries(DOPPLER_KEYS.map((key) => [key, doppler[key]])),
-    EXPO_PUBLIC_ASG_OTA_VERSION_URL: requireHttps(otaManifestUrl, "OTA manifest URL"),
     EXPO_PUBLIC_BUILD_ENV: backendEnvironment,
     EXPO_PUBLIC_DIRECTORY_URL: DIRECTORY_URLS[backendEnvironment],
-    EXPO_PUBLIC_MENTRAOS_VERSION: plan.releaseIdentity,
+    MENTRA_OTA_MANIFEST_URL: requireHttps(otaManifestUrl, "OTA manifest URL"),
+    MENTRA_APP_IDENTITY: plan.releaseIdentity,
+    MENTRA_BUILD_COMMIT: plan.sourceCommit,
+    MENTRA_BUILD_BRANCH: plan.channel,
+    MENTRA_BUILD_TIME: now.toISOString(),
+    MENTRA_BUILD_USER: "release",
     MENTRAOS_NATIVE_MARKETING_VERSION: plan.native.marketingVersion,
     MENTRAOS_PINNED_BUILD_NUMBER: String(plan.native.buildNumber),
   }
