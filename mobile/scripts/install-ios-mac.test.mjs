@@ -12,6 +12,7 @@ import {
   commitStagedInstallation,
   InstallationRollbackError,
   installBuild,
+  installedApp,
   installationRoot,
   isPortableMacPackage,
   parseInstallerArgs,
@@ -464,6 +465,21 @@ test("both CI package formats use portable provisioning checks without requiring
   assert.throws(() => isPortableMacPackage({...native, launcherPath: "old-helper"}), /layout/)
   assert.throws(() => isPortableMacPackage({...native, macInstaller: "../other.app"}), /layout/)
   assert.throws(() => isPortableMacPackage({...native, macPackageVersion: 3}), /Unsupported/)
+  // Each PR app's ZIP names its own app and installer (PRApp in ci/pr-ios/mac-installer/InstallerCore.swift).
+  const example = {bundleId: "com.mentra.bluetoothsdkexample", app: "MentraBluetoothExample.app", macPackageVersion: 2,
+    macInstaller: "Install Mentra Example.app"}
+  assert.equal(isPortableMacPackage(example), true)
+  assert.equal(isPortableMacPackage({...native, bundleId: "com.mentra.mentra.dev", macInstaller: "Install Mentra Dev.app"}), true)
+  assert.throws(() => isPortableMacPackage({...example, macInstaller: "Install Mentra.app"}), /layout/)
+  assert.throws(() => isPortableMacPackage({...example, app: "Mentra.app"}), /layout/)
+  assert.throws(() => isPortableMacPackage({...example, bundleId: "com.example.other"}), /layout/)
+})
+
+test("each app installs in its own folder under its product name", () => {
+  assert.equal(installedApp("com.mentra.mentra"), path.join(installationRoot("com.mentra.mentra"), "Mentra.app"))
+  assert.equal(path.basename(installationRoot("com.mentra.mentra.dev")), "Mentra Dev E2E")
+  assert.equal(installedApp("com.mentra.bluetoothsdkexample"),
+    path.join(path.dirname(installationRoot()), "Mentra Example E2E", "MentraBluetoothExample.app"))
 })
 
 test(

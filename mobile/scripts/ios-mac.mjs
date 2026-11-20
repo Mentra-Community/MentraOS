@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import "./configure-zx-shell.mjs"
 import {createHash} from "node:crypto"
-import {archiveBuild, installBuild, installationRoot} from "./install-ios-mac.mjs"
+import {archiveBuild, installBuild, installedApp} from "./install-ios-mac.mjs"
 import {runPodInstallIfNeeded} from "./cocoapods-install.mjs"
 import {setBuildEnv} from "./set-build-env.mjs"
 import {writeMacXcodeEnvironment} from "./ios-mac-environment.mjs"
@@ -135,7 +135,7 @@ if (manifest.otaManifestUrl && configuration === "Release") {
 // Keep evidence in immutable ZIPs, not separately registered .app installations.
 // Replacement happens only after a successful build and normal app termination.
 Object.assign(manifest, await archiveBuild(app, manifest, path.join(derivedData, "Archives")))
-manifest.launchPath = path.join(installationRoot(manifest.bundleId), "Mentra.app")
+manifest.launchPath = installedApp(manifest.bundleId)
 const manifestPath = path.join(derivedData, "build-manifest.json")
 await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n")
 console.log(`Built app: ${app}\nBuild evidence: ${path.join(derivedData, "build-manifest.json")}`)

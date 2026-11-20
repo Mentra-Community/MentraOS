@@ -33,12 +33,24 @@ const hash = async (file) =>
   createHash("sha256")
     .update(await readFile(file))
     .digest("hex")
-// One installation per app, so the dev app (com.mentra.mentra.dev) installs
-// beside the Mentra App, where its PR installer puts it (PRApp in
-// ci/pr-ios/mac-installer/InstallerCore.swift).
-const INSTALLATION_FOLDERS = {"com.mentra.mentra": "Mentra E2E", "com.mentra.mentra.dev": "Mentra Dev E2E"}
-export const installationRoot = (bundleId = "com.mentra.mentra") =>
-  path.join(homedir(), "Applications", INSTALLATION_FOLDERS[bundleId] ?? `Mentra E2E ${bundleId}`)
+// One installation per app, where its PR installer puts it (PRApp in
+// ci/pr-ios/mac-installer/InstallerCore.swift): the dev app
+// (com.mentra.mentra.dev) beside the Mentra App, and the Bluetooth example app
+// under its own product name. Each PR Mac ZIP names its app and installer.
+const MAC_APPS = {
+  "com.mentra.mentra": {folder: "Mentra E2E", product: "Mentra.app", installer: "Install Mentra.app"},
+  "com.mentra.mentra.dev": {folder: "Mentra Dev E2E", product: "Mentra.app", installer: "Install Mentra Dev.app"},
+  "com.mentra.bluetoothsdkexample": {
+    folder: "Mentra Example E2E",
+    product: "MentraBluetoothExample.app",
+    installer: "Install Mentra Example.app",
+  },
+}
+const macApp = (bundleId = "com.mentra.mentra") =>
+  MAC_APPS[bundleId] ?? {folder: `Mentra E2E ${bundleId}`, product: "Mentra.app"}
+export const installationRoot = (bundleId) => path.join(homedir(), "Applications", macApp(bundleId).folder)
+/** The installed app's wrapper, which launches it. */
+export const installedApp = (bundleId) => path.join(installationRoot(bundleId), macApp(bundleId).product)
 
 function validateLauncherOptions(launcherPath, launcherSha256) {
   if (launcherPath === undefined && launcherSha256 === undefined) return
@@ -87,9 +99,11 @@ export function isPortableMacPackage(manifest) {
   const version = manifest.macPackageVersion
   if (version !== undefined && version !== 1 && version !== 2) throw new Error("Unsupported Mac package version")
   if (version === 2) {
+    const {product, installer} = macApp(manifest.bundleId)
     if (
-      manifest.app !== "Mentra.app" ||
-      manifest.macInstaller !== "Install Mentra.app" ||
+      manifest.app !== product ||
+      !installer ||
+      manifest.macInstaller !== installer ||
       "launcherPath" in manifest ||
       "launcherSha256" in manifest
     )
@@ -194,9 +208,9 @@ export class InstallationRollbackError extends AggregateError {}
 export class LaunchedAppHandoffError extends Error {}
 
 /** Commit an already verified wrapper and its staged manifest as one recoverable replacement. */
-export async function commitStagedInstallation({root, staging, lock}, move = rename) {
-  const destination = path.join(root, "Mentra.app")
-  const wrapper = path.join(staging, "Mentra.app")
+export async function commitStagedInstallation({root, staging, lock, product = "Mentra.app"}, move = rename) {
+  const destination = path.join(root, product)
+  const wrapper = path.join(staging, product)
   const previous = path.join(lock, "previous.app")
   let movedPrevious = false
   let movedNew = false
@@ -230,7 +244,7 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
   const portablePackage = isPortableMacPackage(manifest)
   if (manifest.macPackageVersion === 2 && !preinstalledLauncher)
     throw new Error(
-      "For this Mac ZIP, open Install Mentra.app, or provide --launcher and --launcher-sha256 from host provisioning",
+      `For this Mac ZIP, open ${manifest.macInstaller}, or provide --launcher and --launcher-sha256 from host provisioning`,
     )
   const releaseApp = await acquireAppOwnership(undefined, {installer: true})
   let preserveRecovery = false
@@ -278,7 +292,8 @@ async function installOwnedBuild(
   afterLaunch = async () => {},
 ) {
   const root = installationRoot(manifest.bundleId)
-  const destination = path.join(root, "Mentra.app")
+  const {product} = macApp(manifest.bundleId)
+  const destination = installedApp(manifest.bundleId)
   await claimInstallation(root, manifest.bundleId)
   const lock = path.join(root, ".install-lock")
   await mkdir(lock) // A second installer fails rather than racing the replacement.
@@ -302,11 +317,11 @@ async function installOwnedBuild(
     }
     await verifyApp(source, manifest)
     if (portablePackage) verifyMacProvisioning(source)
-    const wrapper = path.join(staging, "Mentra.app")
-    const inner = path.join(wrapper, "Wrapper", "Mentra.app")
+    const wrapper = path.join(staging, product)
+    const inner = path.join(wrapper, "Wrapper", product)
     await mkdir(path.dirname(inner), {recursive: true})
     command("/bin/cp", ["-cR", source, inner])
-    await symlink("Wrapper/Mentra.app", path.join(wrapper, "WrappedBundle"))
+    await symlink(`Wrapper/${product}`, path.join(wrapper, "WrappedBundle"))
     const identity = await verifyApp(inner, manifest)
     const launcher = preinstalledLauncher
       ? preinstalledLauncher.path
@@ -330,11 +345,11 @@ async function installOwnedBuild(
       ])
     if (await exists(destination)) {
       await regularDirectory(destination)
-      if ((await readlink(path.join(destination, "WrappedBundle"))) !== "Wrapper/Mentra.app")
+      if ((await readlink(path.join(destination, "WrappedBundle"))) !== `Wrapper/${product}`)
         throw new Error("Installed wrapper target changed; refusing replacement")
       const previousManifest = JSON.parse(await readFile(path.join(root, "installed-build.json"), "utf8"))
       if (previousManifest.bundleId !== manifest.bundleId) throw new Error("Installed app identity changed")
-      await verifyApp(path.join(destination, "Wrapper", "Mentra.app"), previousManifest)
+      await verifyApp(path.join(destination, "Wrapper", product), previousManifest)
       // A recoverable ZIP replaces live duplicate .app backups.
       const backup = path.join(staging, "previous-installation.zip")
       command("/usr/bin/ditto", ["-c", "-k", "--keepParent", destination, backup])
@@ -356,7 +371,7 @@ async function installOwnedBuild(
     await writeFile(path.join(staging, "installed-build.json"), JSON.stringify(installed, null, 2) + "\n")
     await verifyLauncherOverride(launcherPath, launcherSha256)
     command(launcher, ["--quit", wrapper])
-    await commitStagedInstallation({root, staging, lock})
+    await commitStagedInstallation({root, staging, lock, product})
     installedNew = true
     if (launch) {
       await verifyLauncherOverride(launcherPath, launcherSha256)
