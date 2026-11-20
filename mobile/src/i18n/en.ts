@@ -622,6 +622,8 @@ const en = {
     errorMacLocation:
       "This Mac needs Location access to find your glasses’ Wi-Fi. In System Settings, open Privacy & Security, turn on Location Services and allow Mentra, then try again.",
     errorGlassesHotspotStart: "Your glasses could not start the connection needed for the update. Please try again.",
+    errorGlassesRestartRequired:
+      "Your glasses need to restart before they can update. Restart your glasses, then try again.",
     errorPhoneHotspotJoin: "Your phone could not connect to your glasses for the update. Please try again.",
     errorPhoneOtherGlasses:
       "Your phone reached another pair of glasses instead of yours. Move away from other glasses or turn them off, then try again.",

@@ -61,6 +61,14 @@ const PHONE_ARTIFACT_COPY_KEYS: Readonly<Record<string, string>> = {
 }
 
 /**
+ * The glasses' hotspot error when Android on them is stuck reporting a hotspot as starting and
+ * refuses every new one until they restart (OS-2007). Older glasses send other text.
+ */
+export function hotspotStartErrorCode(message: string): "hotspot_restart_required" | "hotspot_start_failed" {
+  return message.includes("restart_required") ? "hotspot_restart_required" : "hotspot_start_failed"
+}
+
+/**
  * A known failed stage is useful; it is not evidence of an internet outage. `os` picks the iOS
  * join copy: iOS cannot read the Wi-Fi radio, so its join failure is where we point at it.
  */
@@ -85,6 +93,8 @@ export function phoneOtaErrorCopyKey(error: unknown, os?: string): string {
       return "ota:errorMacLocation"
     case "hotspot_start_failed":
       return "ota:errorGlassesHotspotStart"
+    case "hotspot_restart_required":
+      return "ota:errorGlassesRestartRequired"
     case "hotspot_join_failed":
       return os === "ios" ? "ota:errorPhoneHotspotJoinIos" : "ota:errorPhoneHotspotJoin"
     case "hotspot_other_glasses":
@@ -149,6 +159,8 @@ export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
     "This Mac needs Location access to find your glasses’ Wi-Fi. In System Settings, open Privacy & Security, turn on Location Services and allow Mentra, then try again.",
   "ota:errorGlassesHotspotStart":
     "Your glasses could not start the connection needed for the update. Please try again.",
+  "ota:errorGlassesRestartRequired":
+    "Your glasses need to restart before they can update. Restart your glasses, then try again.",
   "ota:errorPhoneHotspotJoin": "Your phone could not connect to your glasses for the update. Please try again.",
   "ota:errorPhoneOtherGlasses":
     "Your phone reached another pair of glasses instead of yours. Move away from other glasses or turn them off, then try again.",

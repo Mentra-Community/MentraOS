@@ -1,7 +1,7 @@
 import {describe, expect, test} from "bun:test"
 
 import {otaArtifactFailure} from "../OtaArtifactFailure"
-import {OTA_ERROR_ENGLISH_COPY, phoneOtaErrorCopyKey} from "../OtaErrorMapping"
+import {hotspotStartErrorCode, OTA_ERROR_ENGLISH_COPY, phoneOtaErrorCopyKey} from "../OtaErrorMapping"
 
 const context = {artifact: "apk", stage: "download", bytesWritten: 40, contentLength: 100} as const
 
@@ -108,6 +108,15 @@ describe("phone download failure diagnosis", () => {
     expect(phoneOtaErrorCopyKey({code: "hotspot_other_glasses"}, "ios")).toBe("ota:errorPhoneOtherGlasses")
     expect(OTA_ERROR_ENGLISH_COPY["ota:errorPhoneWifiOff"]).toContain("Wi-Fi")
     expect(OTA_ERROR_ENGLISH_COPY["ota:errorPhoneHotspotJoinIos"]).toContain("Wi-Fi is on")
+  })
+
+  test("asks for a restart when the glasses say their hotspot cannot start until then", () => {
+    expect(hotspotStartErrorCode("restart_required: Android reports a hotspot starting")).toBe(
+      "hotspot_restart_required",
+    )
+    expect(hotspotStartErrorCode("Previous K900 hotspot did not stop")).toBe("hotspot_start_failed")
+    expect(phoneOtaErrorCopyKey({code: "hotspot_restart_required"})).toBe("ota:errorGlassesRestartRequired")
+    expect(OTA_ERROR_ENGLISH_COPY["ota:errorGlassesRestartRequired"]).toContain("Restart your glasses")
   })
 
   test("names Location, not Wi-Fi, when a Mac cannot identify the glasses hotspot", () => {

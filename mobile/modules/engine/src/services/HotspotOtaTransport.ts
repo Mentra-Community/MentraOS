@@ -24,6 +24,7 @@ import {keepHotspotUpWhileJoining} from "./GlassesHotspotJoin"
 import {joinedGlassesIdentity} from "./HotspotGlassesIdentity"
 import {acquireGlassesHotspot} from "./GlassesHotspotLease"
 import {disableHotspotWithRetry} from "./HotspotShutdown"
+import {hotspotStartErrorCode} from "./OtaErrorMapping"
 import {
   localNetworkErrorDetails,
   localNetworkTransport,
@@ -42,6 +43,7 @@ export type HotspotOtaErrorCode =
   | "hotspot_wifi_disabled"
   | "hotspot_location_denied"
   | "hotspot_start_failed"
+  | "hotspot_restart_required"
   | "hotspot_join_failed"
   | "hotspot_other_glasses"
   | "hotspot_server_failed"
@@ -224,7 +226,7 @@ class HotspotOtaTransport {
       }
       const message = error instanceof Error ? error.message : String(error)
       if (phase === "starting_hotspot") {
-        throw new HotspotOtaTransportError("hotspot_start_failed", message)
+        throw new HotspotOtaTransportError(hotspotStartErrorCode(message), message)
       }
       if (phase === "joining_hotspot" && !joined) {
         // Wi-Fi turned off after the preflight fails the same instant way; name the real cause.
