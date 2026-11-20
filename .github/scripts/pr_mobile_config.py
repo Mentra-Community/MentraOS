@@ -27,7 +27,17 @@ def build_info(env=os.environ):
             'user': env['GITHUB_ACTOR'], 'time': dt.datetime.now(dt.timezone.utc).isoformat()}
 
 
-def packaged_config(config, *, fingerprint, ota_url, build_number, platform, build_info):
+def packaging_inputs(env=os.environ):
+    """The values packaging writes: a release's own (prepare-mobile-release-env.mjs writes MENTRA_APP_IDENTITY and
+    MENTRA_BUILD_*), or a PR head's."""
+    build_number = int(env['MENTRAOS_PINNED_BUILD_NUMBER'])
+    if env.get('MENTRA_APP_IDENTITY'):
+        return dict(ota_url=env['MENTRA_OTA_MANIFEST_URL'], build_number=build_number, identity=env['MENTRA_APP_IDENTITY'],
+                    metadata={key: env[f'MENTRA_BUILD_{key.upper()}'] for key in ('commit', 'branch', 'user', 'time')})
+    return dict(ota_url=env['PR_OTA_MANIFEST_URL'], build_number=build_number, identity=None, metadata=build_info(env))
+
+
+def packaged_config(config, *, fingerprint, ota_url, build_number, platform, build_info, identity=None):
     url = urlsplit(ota_url)
     if (url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password
             or url.fragment or re.search(r'\s', ota_url)):
@@ -41,6 +51,10 @@ def packaged_config(config, *, fingerprint, ota_url, build_number, platform, bui
     if build['mobileFingerprint'] != fingerprint:
         raise ValueError('Mobile fingerprint mismatch')
     build.update(otaManifestUrl=ota_url, buildInfo=build_info, buildNumber=build_number)
+    if identity is not None:
+        if not re.fullmatch(r'\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?', identity):
+            raise ValueError('Invalid release identity')
+        build['identity'] = identity
     if platform == 'android':
         result.setdefault('android', {})['versionCode'] = build_number
     elif platform == 'ios':

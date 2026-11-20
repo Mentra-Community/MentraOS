@@ -137,6 +137,13 @@ cache is published. The existing seven-day retention applies. The build summary
 and receipt state whether compilation was reused. A device-only profile refresh
 can reuse compiled code when its capabilities and signing identity still match.
 
+Dev and staging releases reuse their own App Store compiles the same way
+(`repackage.py package-store`): the release's values go into the same packaged
+configuration, and the outer app is signed again with the identity and profile
+it was exported with, which the job keychain must still hold. A release and a PR
+never share a compile: their fingerprints differ (`pr-mobile-build.mjs ios
+release`).
+
 ## Signing setup (maintainer)
 
 ### iOS app and registered test devices

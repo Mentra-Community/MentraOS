@@ -197,6 +197,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   process.loadEnvFile("mobile/.env")
   const platform = process.argv[2] || "android"
   if (!["android", "ios"].includes(platform)) throw new Error("Expected android or ios")
+  // A release compiles other outputs (every ABI for Google Play) and signs for the stores, so a release
+  // compile and a PR compile never match (.github/ci/release-compile.mjs).
+  const release = process.argv[3] === "release"
+  if (process.argv[3] && !release) throw new Error("Expected release or nothing after the platform")
   const tree = execFileSync("git", ["ls-tree", "-r", "HEAD", "--", ...MOBILE_INPUT_PATHS], {encoding: "utf8"})
   // A repository that builds this tree inside a larger one (the Mentra
   // monorepo) fingerprints the inputs it adds outside it: the miniapps it
@@ -218,8 +222,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         : {
             java: execFileSync("java", ["--version"], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim(),
             androidBuildTools: "36.0.0",
-            abi: "arm64-v8a",
+            abi: release ? "apk arm64-v8a, aab arm64-v8a armeabi-v7a x86 x86_64" : "arm64-v8a",
           }),
+      ...(release ? {build: "release", signing: platform === "ios" ? "app-store" : "upload"} : {}),
       platform: process.platform,
       arch: process.arch,
       ...(host ? {host} : {}),
