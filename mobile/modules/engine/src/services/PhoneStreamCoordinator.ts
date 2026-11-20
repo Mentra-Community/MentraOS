@@ -132,6 +132,11 @@ export interface StartManagedOptions {
   ingest?: "srt" | "whip" | "rtmp"
   /** When false, glasses skip encoding their mic for this WHIP session. */
   captureAudio?: boolean
+  /**
+   * WHIP relay only: forward the glasses' encoded video instead of decoding and re-encoding it.
+   * Fixed for the life of the stream. A second caller joining a running stream cannot change it.
+   */
+  videoPassthrough?: boolean
 }
 
 export interface StreamPublisherStartResult {
@@ -160,6 +165,15 @@ export type StreamStatusUpdate = {
 
 export type StatusSubscriber = (packageName: string, update: StreamStatusUpdate) => void
 
+/** A managed relay whose decoded frames its owner may preview on the phone. */
+export interface RelayPreviewSource {
+  ownerPackage: string
+  /** Stable for the life of the managed stream, across relay retries. A new stream gets a new id. */
+  instanceId: string
+}
+
+const relayPreviewInstanceId = (streamId: string): string => `relay-${streamId}`
+
 interface UnmanagedEntry {
   kind: "unmanaged"
   streamId: string
@@ -184,6 +198,14 @@ interface ManagedEntry {
   relayConnectionRevision?: number
   publisherStart?: StreamPublisherStartResult
   subscribers: Set<string>
+  /**
+   * The package that provisioned this stream, for as long as it stays subscribed. Only it may
+   * preview the relay's decoded frames. Set once at provision and cleared, never reassigned,
+   * when that package unsubscribes: a later joiner does not inherit the picture.
+   */
+  previewOwner: string | null
+  /** The relay forwards the glasses' encoded video, so the phone holds no decoded frame to show. */
+  videoPassthrough: boolean
   hlsReady: boolean
   hlsReadyResolvers: Array<(result: ManagedStartResult) => void>
   hlsReadyRejecters: Array<(err: Error) => void>
@@ -228,6 +250,8 @@ export class PhoneStreamCoordinator {
   private readonly linkSource: GlassesLinkSource
   private readonly pendingCameraChanges: () => Promise<void>
   private unsubscribeLink: (() => void) | null = null
+  /** Read-only observers of a relay preview source ending; see [onRelayPreviewReleased]. */
+  private readonly relayPreviewReleasedListeners = new Set<(instanceId: string) => void>()
   private suspended: SuspendedState | null = null
   /**
    * A stream was torn down while the BLE link was down, so the glasses never
@@ -328,6 +352,48 @@ export class PhoneStreamCoordinator {
     )
   }
 
+  /**
+   * The managed relay its owner may preview from frames the phone already decoded, or null.
+   *
+   * Every condition is about this stream as provisioned, never about who happens to be subscribed
+   * now: it is a WHIP stream, so the phone relays it; the relay decodes rather than forwarding
+   * encoded video; the package that provisioned it is still subscribed; and it is not being torn
+   * down. A relay between retries still qualifies, because the stream id outlives its attempts.
+   */
+  relayPreviewSource(): RelayPreviewSource | null {
+    const entry = this.current
+    if (!entry || entry.kind !== "managed" || entry.stopping) return null
+    if (entry.mode !== "webrtc" || !entry.relay || entry.videoPassthrough) return null
+    const owner = entry.previewOwner
+    if (!owner || !entry.subscribers.has(owner)) return null
+    return {ownerPackage: owner, instanceId: relayPreviewInstanceId(entry.streamId)}
+  }
+
+  /**
+   * Observe relay preview sources ending, by the id [relayPreviewSource] reported: the stream was
+   * torn down, failed to start, or its owner unsubscribed. Observers cannot affect the stream:
+   * their failures are swallowed here.
+   */
+  onRelayPreviewReleased(listener: (instanceId: string) => void): () => void {
+    this.relayPreviewReleasedListeners.add(listener)
+    return () => this.relayPreviewReleasedListeners.delete(listener)
+  }
+
+  /** End this stream as a preview source, once. Safe to call on every path that ends it. */
+  private releaseRelayPreview(entry: ManagedEntry): void {
+    if (entry.previewOwner === null) return
+    entry.previewOwner = null
+    if (entry.mode !== "webrtc" || entry.videoPassthrough) return
+    const instanceId = relayPreviewInstanceId(entry.streamId)
+    for (const listener of [...this.relayPreviewReleasedListeners]) {
+      try {
+        listener(instanceId)
+      } catch (error) {
+        console.warn("[STREAM] relay preview release observer failed", error)
+      }
+    }
+  }
+
   /** Report-safe stream ownership snapshot for incident diagnostics. */
   getDiagnosticSnapshot(): Record<string, unknown> {
     if (!this.current) return {active: false, pendingBleStop: this.pendingBleStop?.streamId ?? null}
@@ -341,6 +407,8 @@ export class PhoneStreamCoordinator {
           kind: this.current.kind,
           streamId: this.current.streamId,
           subscribers: [...this.current.subscribers].sort(),
+          previewOwner: this.current.previewOwner,
+          relayPreview: this.relayPreviewSource() !== null,
           mode: this.current.mode,
           playbackReady: this.current.hlsReady,
           stopping: this.current.stopping === true,
@@ -497,6 +565,8 @@ export class PhoneStreamCoordinator {
         dashUrl: provision.dashUrl,
         webrtcUrl: provision.webrtcUrl,
         subscribers: new Set([packageName]),
+        previewOwner: packageName,
+        videoPassthrough: opts.videoPassthrough === true,
         hlsReady: false,
         hlsReadyResolvers: [],
         hlsReadyRejecters: [],
@@ -569,6 +639,7 @@ export class PhoneStreamCoordinator {
         })
       } catch (err) {
         entry.stopping = true
+        this.releaseRelayPreview(entry)
         // Startup has not reached startLifecycle yet. Retain a link observer if
         // cleanup fails so a reconnect can drain the owned relay/hotspot.
         this.attachLink()
@@ -643,6 +714,8 @@ export class PhoneStreamCoordinator {
       if (this.current.kind === "managed") {
         const entry = this.current
         entry.subscribers.delete(packageName)
+        // The provisioner leaving ends its preview even when the stream lives on for others.
+        if (entry.previewOwner === packageName) this.releaseRelayPreview(entry)
         if (entry.subscribers.size > 0) {
           // Other miniapps still subscribed; keep the stream alive.
           return
@@ -1119,6 +1192,7 @@ export class PhoneStreamCoordinator {
 
     if (entry.kind === "managed") {
       entry.stopping = true
+      this.releaseRelayPreview(entry)
       if (entry.cloudflareTimer) BgTimer.clearTimeout(entry.cloudflareTimer)
       if (entry.hlsTimer) BgTimer.clearInterval(entry.hlsTimer)
       // Reject any still-pending HLS readiness waiters.

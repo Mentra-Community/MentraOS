@@ -1,5 +1,6 @@
 package com.mentra.framepreview
 
+import com.mentra.glassesmedia.source.DecodedFrameProducer
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.Test
@@ -132,6 +133,23 @@ class PreviewDiagnosticsPolicyTest {
     assertThat(config).isEqualTo(PreviewConfig(PreviewSourceKind.SYNTHETIC, PreviewMode.PACK_ONLY, 320, 180, 15, 12, 40))
     assertThatThrownBy { PreviewConfig.fromMap(mapOf("mode" to "turbo")) }.isInstanceOf(IllegalArgumentException::class.java)
     assertThatThrownBy { PreviewConfig.fromMap(mapOf("source" to "glasses")) }.isInstanceOf(IllegalArgumentException::class.java)
+  }
+
+  @Test
+  fun `configure carries the origin the lease was granted for`() {
+    assertThat(PreviewConfig.fromMap(mapOf("mode" to "render", "origin" to "relay")).origin)
+      .isEqualTo(DecodedFrameProducer.RELAY)
+    assertThat(PreviewConfig.fromMap(mapOf("mode" to "render", "origin" to "acs")).origin)
+      .isEqualTo(DecodedFrameProducer.ACS)
+    // A host that predates origins previews the ACS meeting.
+    assertThat(PreviewConfig.fromMap(mapOf("mode" to "render")).origin).isEqualTo(DecodedFrameProducer.ACS)
+    assertThatThrownBy { PreviewConfig.fromMap(mapOf("mode" to "render", "origin" to "cloudflare")) }
+      .isInstanceOf(IllegalArgumentException::class.java)
+    assertThatThrownBy { PreviewConfig.fromMap(mapOf("mode" to "render", "origin" to 7)) }
+      .isInstanceOf(IllegalArgumentException::class.java)
+    // Either origin is the shipping preview, never a diagnostics configuration.
+    val relay = PreviewConfig(mode = PreviewMode.RENDER, origin = DecodedFrameProducer.RELAY)
+    assertThat(PreviewDiagnosticsPolicy.check(relay, false)).isNull()
   }
 
   @Test

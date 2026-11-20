@@ -1,5 +1,7 @@
 package com.mentra.glassesmedia.source
 
+import com.mentra.glassesmedia.passthrough.PassthroughBridge
+import com.mentra.glassesmedia.passthrough.PassthroughDecoderFactory
 import android.content.Context
 import android.media.AudioAttributes
 import com.mentra.glassesmedia.trace.MediaLog as Log
@@ -64,15 +66,31 @@ class LocalWhipIngestSource(
    * hotspot is visible without help.
    */
   private val scopedNetwork: ScopedSoftApNetwork? = null,
+  /**
+   * The managed relay's passthrough route: when set, the glasses' H.264 is forwarded as received
+   * instead of being decoded, and [encodedListener] gets each frame. Null decodes, as ACS needs.
+   */
+  private val passthrough: PassthroughBridge? = null,
+  encodedListener: EncodedFrameListener? = null,
 ) : GlassesMediaSource, WhipIngestServer.Negotiator {
 
-  private val relay = DecodedTrackRelay(videoListener, pcmListener, stats) { notePromotableFrame() }
+  private val relay = DecodedTrackRelay(videoListener, pcmListener, stats, encodedListener) { notePromotableFrame() }
   private val firstFrame = FirstFrameGate()
-  private val frameStall = FrameStallGate(INGEST_STALL_SAMPLES)
+  private val frameStall = FrameStallGate(IngestStallPolicy.STALL_SAMPLES)
   private val videoIds = TrackRegistry()
   private val audioIds = TrackRegistry()
   private val audioTracks = CopyOnWriteArrayList<AudioTrack>()
   private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+  /** DISCONNECTED is usually a blip; only [IceDisconnectGrace.GRACE_MS] of it, or FAILED, is final. */
+  private val disconnectGrace = IceDisconnectGrace(
+    schedule = { task, delay -> mainHandler.postDelayed(task, delay) },
+    cancelScheduled = { task -> mainHandler.removeCallbacks(task) },
+    onExpired = {
+      Log.w(TAG, "SoftAP ingest ICE still disconnected after ${IceDisconnectGrace.GRACE_MS}ms")
+      transition(SourceState.FAILED, "ice_disconnected")
+    },
+  )
 
   private var factory: PeerConnectionFactory? = null
   private var egl: EglBase? = null
@@ -499,7 +517,11 @@ class LocalWhipIngestSource(
       .setOptions(SoftApIcePolicy.factoryOptions())
       .setAudioDeviceModule(adm)
       .setVideoEncoderFactory(DefaultVideoEncoderFactory(shared, true, true))
-      .setVideoDecoderFactory(DefaultVideoDecoderFactory(shared))
+      .setVideoDecoderFactory(
+        DefaultVideoDecoderFactory(shared).let { platform ->
+          if (passthrough != null) PassthroughDecoderFactory(platform, passthrough) else platform
+        },
+      )
       .createPeerConnectionFactory()
     adm.release()
     SoftApTrace.stage(
@@ -515,13 +537,16 @@ class LocalWhipIngestSource(
     override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
       Log.i(TAG, "SoftAP ingest ICE $state")
       if (gen != generation) return
-      if (state == PeerConnection.IceConnectionState.FAILED ||
-        state == PeerConnection.IceConnectionState.DISCONNECTED
-      ) {
-        transition(SourceState.FAILED, "ice_${state.name.lowercase()}")
+      if (state == PeerConnection.IceConnectionState.DISCONNECTED) {
+        // Consent freshness lapsed; libwebrtc often reconnects by itself. Wait like the publisher.
+        disconnectGrace.onDisconnected()
+      } else if (state == PeerConnection.IceConnectionState.FAILED) {
+        disconnectGrace.clear()
+        transition(SourceState.FAILED, "ice_failed")
       } else if (state == PeerConnection.IceConnectionState.CONNECTED ||
         state == PeerConnection.IceConnectionState.COMPLETED
       ) {
+        disconnectGrace.clear()
         // Same bounce WHEP already handles: consent freshness can DISCONNECTED → CONNECTED
         // without a new offer. Stay FAILED and the UI never leaves Reconnecting even after
         // media is flowing again.
@@ -597,6 +622,7 @@ class LocalWhipIngestSource(
   }
 
   private fun disposePeer() {
+    disconnectGrace.clear()
     val peer = pc
     pc = null
     try {
@@ -936,9 +962,6 @@ class LocalWhipIngestSource(
     private const val SELECTED_PAIR_SAMPLE_GAP_MS = 1_200L
 
     /** Matches the ACS-side `acs_bwe_sample` cadence so the two hops can be read side by side. */
-    private const val INGEST_SAMPLE_INTERVAL_MS = 2_000L
-
-    /** Matches [FIRST_FRAME_TIMEOUT_MS] at the sample cadence: 6s of a frozen decoder. */
-    private const val INGEST_STALL_SAMPLES = 3
+    private const val INGEST_SAMPLE_INTERVAL_MS = IngestStallPolicy.SAMPLE_INTERVAL_MS
   }
 }

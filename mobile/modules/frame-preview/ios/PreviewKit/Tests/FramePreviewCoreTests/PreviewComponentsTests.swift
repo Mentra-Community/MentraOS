@@ -195,6 +195,18 @@ final class PreviewDiagnosticsTests: XCTestCase {
     XCTAssertThrowsError(try PreviewConfig.parse(["source": "glasses"]))
   }
 
+  func testConfigureCarriesTheOriginTheLeaseWasGrantedFor() throws {
+    XCTAssertEqual(try PreviewConfig.parse(["mode": "render", "origin": "relay"]).origin, .relay)
+    XCTAssertEqual(try PreviewConfig.parse(["mode": "render", "origin": "acs"]).origin, .acs)
+    // A host that predates origins previews the ACS meeting.
+    XCTAssertEqual(try PreviewConfig.parse(["mode": "render"]).origin, .acs)
+    XCTAssertThrowsError(try PreviewConfig.parse(["mode": "render", "origin": "cloudflare"])) { error in
+      XCTAssertEqual((error as? PreviewRejection)?.code, "invalid_argument")
+    }
+    // Either origin is the shipping preview, never a diagnostics configuration.
+    XCTAssertNil(PreviewDiagnosticsPolicy.check(PreviewConfig(origin: .relay, mode: .render), diagnosticsEnabled: false))
+  }
+
   func testOneShotFaultsDisarmWhenTaken() {
     let faults = PreviewFaults()
     faults.arm(.packThrow)

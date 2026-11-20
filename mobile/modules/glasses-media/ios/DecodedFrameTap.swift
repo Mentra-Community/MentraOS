@@ -1,7 +1,8 @@
 import CoreVideo
 import Foundation
 
-/// A second, optional consumer of decoded glasses video, sitting beside the ACS sender.
+/// A second, optional consumer of decoded glasses video, sitting beside whoever decoded it: the
+/// ACS sender, or the managed relay's publisher.
 ///
 /// The call owns this pipeline; the preview is a guest. `offer` never blocks, never lets a thrown
 /// error reach its caller, and never does real work — a sink may only decide whether it wants the
@@ -19,13 +20,14 @@ public final class DecodedFrameTap {
 
     public init() {}
 
-    /// Install the preview sink and return the generation that owns it.
+    /// Install the preview sink for one producer's frames and return the generation that owns it.
     @discardableResult
     public func attach(
         _ sink: @escaping (CVPixelBuffer) throws -> Void,
+        producer: DecodedFrameProducer,
         onSinkError: ((Error) -> Void)? = nil
     ) -> UInt64 {
-        core.attach(sink, onSinkError: onSinkError)
+        core.attach(sink, producer: producer, onSinkError: onSinkError)
     }
 
     /// Remove the sink only if it is still the one this generation installed.
@@ -57,8 +59,16 @@ public final class DecodedFrameTap {
         core.recordAcsSend()
     }
 
-    /// Called on the decoder's thread, immediately before the frame goes to ACS.
-    public func offer(_ buffer: CVPixelBuffer) {
-        core.offer(buffer)
+    /// The managed relay's per-frame fan-out: hand `buffer` to the publisher, then offer it to a
+    /// preview attached for relay frames. The buffer is only borrowed; a sink that wants it past
+    /// this call retains it.
+    public func relay(_ buffer: CVPixelBuffer, publish: (CVPixelBuffer) -> Void) {
+        core.relay(buffer, publish: publish)
+    }
+
+    /// Called on the decoder's thread by the pipeline that decoded `buffer`. Only frames from the
+    /// producer the sink attached for are delivered; the rest are dropped without being counted.
+    public func offer(_ buffer: CVPixelBuffer, from producer: DecodedFrameProducer) {
+        core.offer(buffer, from: producer)
     }
 }

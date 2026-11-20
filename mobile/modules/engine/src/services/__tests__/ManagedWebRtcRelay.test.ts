@@ -150,6 +150,23 @@ describe("ManagedWebRtcRelay", () => {
     await h.relay.stop()
   })
 
+  test("passes videoPassthrough to the native relay only when the caller asked for it", async () => {
+    const asked = harness({}, {videoPassthrough: true})
+    await asked.relay.start()
+    expect(asked.native.prepare.mock.calls[0][0]).toMatchObject({videoPassthrough: true})
+    await asked.relay.stop()
+
+    const notAsked = harness({})
+    await notAsked.relay.start()
+    expect(notAsked.native.prepare.mock.calls[0][0]).not.toHaveProperty("videoPassthrough")
+    await notAsked.relay.stop()
+
+    const refused = harness({}, {videoPassthrough: false})
+    await refused.relay.start()
+    expect(refused.native.prepare.mock.calls[0][0]).not.toHaveProperty("videoPassthrough")
+    await refused.relay.stop()
+  })
+
   test("failed preparation releases the microphone during coordinator cleanup", async () => {
     const mic = microphone()
     const h = harness({microphone: mic})
@@ -353,6 +370,57 @@ describe("ManagedWebRtcRelay", () => {
     expect(h.native.prepare).toHaveBeenCalledTimes(2)
     expect(h.relay.owns("phone-m-1-relay-1")).toBe(true)
     await h.relay.stop()
+  })
+
+  test("the first retry keeps the glasses hotspot up and skips its startup wait", async () => {
+    const sleeps: number[] = []
+    const h = harness({sleep: async (ms) => void sleeps.push(ms)})
+    await h.relay.start()
+    expect(sleeps).toEqual([3_000])
+    h.emit(1, "failed", "Glasses receiver: frames_stalled")
+    await tick()
+    expect(h.native.prepare).toHaveBeenCalledTimes(2)
+    expect(h.calls).not.toContain("hotspot-off")
+    expect(sleeps).toEqual([3_000, 1_000]) // backoff only, no beacon wait
+    await h.relay.stop()
+    expect(h.calls).toContain("hotspot-off") // a real stop still turns it off
+  })
+
+  test("a second consecutive failure power-cycles the hotspot", async () => {
+    const h = harness()
+    await h.relay.start()
+    h.emit(1)
+    await tick()
+    expect(h.calls).not.toContain("hotspot-off")
+    h.emit(2)
+    await tick()
+    expect(h.calls).toContain("hotspot-off")
+    expect(h.native.prepare).toHaveBeenCalledTimes(3)
+    await h.relay.stop()
+  })
+
+  test("a failure that lands right after a restart returns is still retried", async () => {
+    // The window between startAttempt returning and `restarting` clearing is a few microtasks, so
+    // sweep the delay at which the native layer reports the new attempt dead.
+    for (let depth = 0; depth < 12; depth++) {
+      const h = harness()
+      const original = h.deps.startGlasses
+      h.deps.startGlasses = mock(async (request: StreamStartRequest) => {
+        const result = await original(request)
+        if (request.streamId.endsWith("relay-2")) {
+          let chain: Promise<unknown> = Promise.resolve()
+          for (let i = 0; i < depth; i++) chain = chain.then(() => {})
+          void chain.then(() => h.emit(2))
+        }
+        return result
+      })
+      await h.relay.start()
+      h.emit(1)
+      await tick()
+      await tick()
+      expect(h.native.prepare.mock.calls.length).toBeGreaterThanOrEqual(3)
+      await h.relay.stop()
+    }
   })
 
   test("stop wins over reconnect backoff", async () => {

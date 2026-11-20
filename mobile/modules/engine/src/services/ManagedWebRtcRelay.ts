@@ -11,6 +11,8 @@ export interface RelayOptions {
   audio?: StreamStartRequest["audio"]
   captureAudio?: boolean
   sound?: boolean
+  /** Forward the glasses' encoded video untouched. Android's native relay honors it; iOS ignores it. */
+  videoPassthrough?: boolean
 }
 
 interface NativeRelayEvent {
@@ -26,6 +28,7 @@ interface NativeRelay {
     password: string
     gatewayAddress?: string
     captureAudio: boolean
+    videoPassthrough?: boolean
     audioTransport: "whip" | "ble-lc3" | "none"
     bitrate: number
   }): Promise<string>
@@ -76,6 +79,8 @@ export class ManagedWebRtcRelay implements ManagedRelay {
   private listener: {remove(): void} | null = null
   private operation: Promise<unknown> = Promise.resolve()
   private restarting = false
+  /** The hotspot survived the last cleanup, so the next attempt can skip its beacon/DHCP wait. */
+  private hotspotKept = false
   private retries = 0
   private readyAt: number | null = null
   private stopping: Promise<void> | null = null
@@ -157,7 +162,8 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     this.checkpoint()
     if (hotspot.state !== "enabled" || !hotspot.ssid || !hotspot.password)
       throw new Error("Glasses hotspot did not start")
-    await this.deps.sleep(3_000) // Same beacon/DHCP startup allowance as ACS.
+    if (!this.hotspotKept) await this.deps.sleep(3_000) // Same beacon/DHCP startup allowance as ACS.
+    this.hotspotKept = false
     this.checkpoint()
     this.nativeTouched = true
     this.preparing = true
@@ -172,6 +178,7 @@ export class ManagedWebRtcRelay implements ManagedRelay {
           password: hotspot.password,
           gatewayAddress: hotspot.localIp,
           captureAudio,
+          ...(this.options.videoPassthrough === true ? {videoPassthrough: true} : {}),
           audioTransport: lc3 ? "ble-lc3" : captureAudio ? "whip" : "none",
           bitrate: this.options.video?.bitrate ?? 2_000_000,
         }),
@@ -228,19 +235,28 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     this.readyAt = null
     this.onStatus("reconnecting", error.message)
     if (this.restarting) return
+    this.restart(error)
+  }
+
+  private restart(error: Error): void {
     this.restarting = true
+    let started = false
     // Await startup before cleanup: late native/BLE success still belongs to this attempt.
     this.operation = this.operation
       .catch(() => undefined)
       .then(async () => {
         while (!this.cancelled) {
           try {
-            await this.cleanupAttempt()
+            // The first retry keeps the glasses hotspot up: a stalled stream or a blip on the leg is
+            // not the radio's fault, and power-cycling it costs ~10 s and drops the join for nothing.
+            // A second consecutive failure cycles it in case the hotspot itself is the problem.
+            await this.cleanupAttempt({keepHotspot: this.retries === 0 && this.deps.connected()})
             if (this.cancelled) return
             if (this.retries >= 3) throw error
             await this.deps.sleep(1_000 * 2 ** this.retries++)
             if (this.cancelled) return
             await this.startAttempt()
+            started = true
             return
           } catch (failure) {
             // Cleanup failure retains ownership; never create another stream on uncertain state.
@@ -261,6 +277,9 @@ export class ManagedWebRtcRelay implements ManagedRelay {
       })
       .finally(() => {
         this.restarting = false
+        // failed() returns early while restarting. A failure that landed after startAttempt
+        // returned but before this point would otherwise never be retried.
+        if (started && this.attemptError && !this.cancelled) this.restart(this.attemptError)
       })
   }
 
@@ -283,7 +302,7 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     return this.stopping
   }
 
-  private async cleanupAttempt(): Promise<void> {
+  private async cleanupAttempt(options: {keepHotspot?: boolean} = {}): Promise<void> {
     const failures: unknown[] = []
     const step = async (action: () => Promise<void>) => {
       try {
@@ -312,7 +331,9 @@ export class ManagedWebRtcRelay implements ManagedRelay {
         await (this.prepareStop ?? this.deps.native.stop(id))
         this.nativeTouched = false
       })
-    if (this.hotspotTouched)
+    this.hotspotKept = false
+    if (this.hotspotTouched && options.keepHotspot) this.hotspotKept = failures.length === 0
+    else if (this.hotspotTouched)
       await step(async () => {
         if (this.deps.connected()) {
           const result = await this.deps.hotspot(false)

@@ -6,6 +6,14 @@ public enum PreviewSourceKind: String, Sendable {
   case synthetic
 }
 
+/// Which decoder a `call` preview reads: the one feeding a phone-native ACS meeting, or the one
+/// inside the managed glasses relay. The host grants a lease for one origin and native attaches for
+/// that origin only, so two decoders running at once can never share one preview.
+public enum PreviewOrigin: String, Sendable {
+  case acs
+  case relay
+}
+
 /// How far down the pipeline a frame travels. Everything except `off` and `render` is diagnostics.
 public enum PreviewMode: String, Sendable {
   case off
@@ -32,6 +40,7 @@ public struct PreviewRejection: Error, Equatable {
 /// One `configure` call, already parsed.
 public struct PreviewConfig: Equatable, Sendable {
   public var source: PreviewSourceKind
+  public var origin: PreviewOrigin
   public var mode: PreviewMode
   public var targetWidth: Int
   public var targetHeight: Int
@@ -40,11 +49,12 @@ public struct PreviewConfig: Equatable, Sendable {
   public var consumerDelayMs: Int
 
   public init(
-    source: PreviewSourceKind = .call, mode: PreviewMode = .off,
+    source: PreviewSourceKind = .call, origin: PreviewOrigin = .acs, mode: PreviewMode = .off,
     targetWidth: Int = PreviewLimits.release.maxBox.width, targetHeight: Int = PreviewLimits.release.maxBox.height,
     maxFps: Int = PreviewLimits.release.maxFps, noiseAmplitude: Int = 0, consumerDelayMs: Int = 0
   ) {
     self.source = source
+    self.origin = origin
     self.mode = mode
     self.targetWidth = targetWidth
     self.targetHeight = targetHeight
@@ -59,6 +69,11 @@ public struct PreviewConfig: Equatable, Sendable {
     guard let source = PreviewSourceKind(rawValue: sourceRaw) else {
       throw PreviewRejection(code: "invalid_argument", message: "unknown source \(sourceRaw)")
     }
+    // A host that predates origins previews the ACS meeting, the only origin there was.
+    let originRaw = options["origin"] as? String ?? "acs"
+    guard let origin = PreviewOrigin(rawValue: originRaw) else {
+      throw PreviewRejection(code: "invalid_argument", message: "unknown origin \(originRaw)")
+    }
     let modeRaw = options["mode"] as? String ?? "off"
     guard let mode = PreviewMode(rawValue: modeRaw) else {
       throw PreviewRejection(code: "invalid_argument", message: "unknown mode \(modeRaw)")
@@ -66,6 +81,7 @@ public struct PreviewConfig: Equatable, Sendable {
     let diagnostics = options["diagnostics"] as? [String: Any] ?? [:]
     return PreviewConfig(
       source: source,
+      origin: origin,
       mode: mode,
       targetWidth: int(options["targetWidth"]) ?? 0,
       targetHeight: int(options["targetHeight"]) ?? 0,

@@ -201,6 +201,21 @@ final class PreviewPipelineTests: XCTestCase {
     XCTAssertEqual(pipeline.pacer.outstandingFrames, 1)
   }
 
+  func testAnOriginChangeRestartsProductionSoTheSinkReattachesForTheNewDecoder() throws {
+    try startRendering()
+    let relay = PreviewConfig(origin: .relay, mode: .render, targetWidth: 640, targetHeight: 360, maxFps: 15)
+    XCTAssertEqual(
+      try pipeline.configure(relay),
+      PreviewPipeline.ConfigureOutcome(restartProduction: true, tierChanged: false)
+    )
+    XCTAssertEqual(pipeline.config.origin, .relay)
+    // The same origin again is not a restart.
+    XCTAssertEqual(
+      try pipeline.configure(relay),
+      PreviewPipeline.ConfigureOutcome(restartProduction: false, tierChanged: false)
+    )
+  }
+
   func testATierChangeSwapsTheOutputWithoutRestartingProduction() throws {
     try startRendering()
     let source = TestFrame(width: 1280, height: 720)

@@ -62,9 +62,21 @@ public final class FramePreviewModule: Module {
         promise.reject("invalid_argument", "docGen is required")
         return
       }
-      // Idempotent per document: a page that asks twice must not invalidate its own credit.
+      // Idempotent per document: a page that asks twice keeps its token and its credit. The
+      // listener behind the address is the one thing that may change, because iOS closes it while
+      // the app is suspended and a page only asks again once its connection failed.
       if let cached, cached.docGen == docGen {
-        promise.resolve(Self.documentPayload(docGen: docGen, token: cached.token, url: cached.url))
+        self.session.reviveTransport { result in
+          switch result {
+          case let .success(url):
+            self.stateLock.lock()
+            self.document = (docGen, cached.token, url)
+            self.stateLock.unlock()
+            promise.resolve(Self.documentPayload(docGen: docGen, token: cached.token, url: url))
+          case let .failure(error):
+            promise.reject("transport_failed", "loopback listener failed: \(error.localizedDescription)")
+          }
+        }
         return
       }
       let token = UUID().uuidString

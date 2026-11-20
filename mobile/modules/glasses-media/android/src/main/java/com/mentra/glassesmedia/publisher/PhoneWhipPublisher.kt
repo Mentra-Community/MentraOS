@@ -6,11 +6,16 @@ import android.os.Handler
 import android.os.HandlerThread
 import com.mentra.glassesmedia.network.InternetHold
 import com.mentra.bluetoothsdk.hotspot.SoftApTrace
+import com.mentra.glassesmedia.trace.MediaLog
+import com.mentra.glassesmedia.passthrough.EncodedFrameBuffer
+import com.mentra.glassesmedia.passthrough.PassthroughBridge
+import com.mentra.glassesmedia.passthrough.PassthroughEncoderFactory
 import com.mentra.glassesmedia.source.I420Planes
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -27,17 +32,28 @@ import org.webrtc.audio.JavaAudioDeviceModule
  * ASG WhipStreamingService's full-ICE offer/POST/answer/Location lifecycle, with decoded glasses
  * tracks instead of camera/mic capture. One instance per attempt; the coordinator owns retries.
  */
+private const val TAG = "ManagedRelay"
+private const val MAX_PENDING_ENCODED_FRAMES = 15
+private const val PASSTHROUGH_LOG_INTERVAL_MS = 10_000L
+
 class PhoneWhipPublisher(
   private val context: Context,
   private val endpoint: String,
   private val captureAudio: Boolean,
   private val bitrate: Int,
+  /**
+   * Forward the glasses' encoded H.264 as it arrives instead of encoding decoded pictures. The
+   * receiver feeds [onEncodedFrame] rather than [onVideoFrame] on this route. Null encodes.
+   */
+  private val passthrough: PassthroughBridge? = null,
   private val onState: (String, String) -> Unit,
 ) {
   private val thread = HandlerThread("Mentra WHIP uplink").apply { start() }
   private val queue = Handler(thread.looper)
   private val closed = AtomicBoolean(false)
   private val frameBusy = AtomicBoolean(false)
+  /** Encoded frames waiting on [queue]. See [onEncodedFrame]. */
+  private val pendingEncoded = AtomicInteger(0)
   private val closeDone = CountDownLatch(1)
   @Volatile private var cleanupFailure: Throwable? = null
   private val pcm = RelayPcmBuffer()
@@ -89,7 +105,10 @@ class PhoneWhipPublisher(
             networkIgnoreMask = 2 or 8 or 16 // WIFI, VPN, LOOPBACK
           })
           .setAudioDeviceModule(adm)
-          .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl!!.eglBaseContext, true, true))
+          .setVideoEncoderFactory(
+            if (passthrough != null) PassthroughEncoderFactory(passthrough)
+            else DefaultVideoEncoderFactory(egl!!.eglBaseContext, true, true),
+          )
           .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl!!.eglBaseContext))
           .createPeerConnectionFactory()
         val config = PeerConnection.RTCConfiguration(listOf(
@@ -104,6 +123,12 @@ class PhoneWhipPublisher(
         if (h264.isNotEmpty()) transceiver.setCodecPreferences(h264)
         val parameters = transceiver.sender.parameters
         parameters.encodings.forEach { it.maxBitrateBps = bitrate.coerceIn(250_000, 12_000_000) }
+        // A forwarded stream cannot be resized to match the uplink: the picture is whatever size the
+        // glasses sent. DISABLED stops resolution/framerate adaptation; it does not stop libwebrtc's
+        // bitrate frame dropper, so when the uplink target dips below the glasses rate frames can
+        // still be dropped before the encoder. That is handled downstream: PassthroughH264Encoder
+        // spots the gap and withholds the dependent deltas until the glasses send a fresh key frame.
+        if (passthrough != null) parameters.degradationPreference = RtpParameters.DegradationPreference.DISABLED
         transceiver.sender.parameters = parameters
         if (captureAudio) {
           val constraints = MediaConstraints().apply {
@@ -118,12 +143,55 @@ class PhoneWhipPublisher(
           peer?.setLocalDescription(sdpObserver(onSet = { localSet = true; maybePost() }), offer)
         }), MediaConstraints())
         queue.postDelayed({ if (!connected && !closed.get()) fail("WHIP connection timed out") }, 35_000)
+        passthrough?.let { bridge ->
+          bridge.onKeyFrameWanted = { reason -> MediaLog.i(TAG, "passthrough waiting for a key frame: $reason") }
+          queue.postDelayed(object : Runnable {
+            override fun run() {
+              if (closed.get()) return
+              MediaLog.i(TAG, "passthrough ${bridge.snapshot()}")
+              queue.postDelayed(this, PASSTHROUGH_LOG_INTERVAL_MS)
+            }
+          }, PASSTHROUGH_LOG_INTERVAL_MS)
+        }
       } catch (error: Exception) { fail(error.message ?: "WHIP startup failed") }
     }
   }
 
   fun onPcm(bytes: ByteArray, rate: Int, channels: Int) {
     if (!closed.get() && captureAudio) pcm.push(bytes, rate, channels)
+  }
+
+  /**
+   * One encoded frame from the receiver, on the passthrough route. Unlike a decoded picture it
+   * cannot be dropped to catch up: every delta frame depends on the ones before it. So frames queue
+   * in order, and only when the queue overflows are they dropped, all of them, followed by a request
+   * for a key frame so the stream starts again from one.
+   */
+  fun onEncodedFrame(frame: EncodedFrameBuffer, receivedAtNs: Long) {
+    val bridge = passthrough ?: return
+    if (closed.get()) return
+    if (pendingEncoded.incrementAndGet() > MAX_PENDING_ENCODED_FRAMES) {
+      pendingEncoded.decrementAndGet()
+      bridge.noteDropped()
+      bridge.wantKeyFrame("publisher queue full")
+      return
+    }
+    frame.retain()
+    val queued = queue.post {
+      try {
+        if (!closed.get()) {
+          lastTimestamp = maxOf(System.nanoTime(), lastTimestamp + 1)
+          videoSource?.capturerObserver?.onFrameCaptured(VideoFrame(frame, 0, lastTimestamp))
+        }
+      } finally {
+        frame.release()
+        pendingEncoded.decrementAndGet()
+      }
+    }
+    if (!queued) {
+      frame.release()
+      pendingEncoded.decrementAndGet()
+    }
   }
 
   fun onVideoFrame(planes: I420Planes) {

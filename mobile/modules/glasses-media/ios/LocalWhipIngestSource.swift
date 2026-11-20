@@ -373,7 +373,8 @@ extension LocalWhipIngestSource: RTCPeerConnectionDelegate {
                 self.firstFrameSeen = false
                 self.transition(.connecting, "ice_disconnected")
                 let gen = self.generation
-                self.queue.asyncAfter(deadline: .now() + 6) {
+                // Same 10 s allowance as the phone publisher: DISCONNECTED usually heals on its own.
+                self.queue.asyncAfter(deadline: .now() + 10) {
                     guard gen == self.generation, self.peer === peerConnection, !self.firstFrameSeen else { return }
                     self.fail(LocalMediaError("Local ICE disconnected"))
                 }

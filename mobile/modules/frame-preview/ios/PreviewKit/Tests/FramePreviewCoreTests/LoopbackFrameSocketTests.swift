@@ -125,6 +125,54 @@
       task.cancel()
     }
 
+    private func rebind() throws -> URL {
+      let ready = expectation(description: "listener rebound")
+      var url: String?
+      socket.rebind { result in
+        url = try? result.get()
+        ready.fulfill()
+      }
+      wait(for: [ready], timeout: 5)
+      return try XCTUnwrap(url.flatMap(URL.init(string:)))
+    }
+
+    func testRebindingWithoutAConsumerGivesAnAddressThatAcceptsTheSameToken() throws {
+      _ = try listen(token: "document-token")
+      // The old listener is torn down, so whatever the page held before is gone.
+      let url = try rebind()
+      XCTAssertEqual(url.host, LoopbackFrameSocket.loopbackHost)
+
+      let authenticated = expectation(description: "authenticated on the new address")
+      socket.onAuthenticated = { authenticated.fulfill() }
+      let task = session.webSocketTask(with: url)
+      task.resume()
+      try sendText(task, ["t": "hello", "token": "document-token"])
+      wait(for: [authenticated], timeout: 5)
+      task.cancel()
+    }
+
+    func testRebindingKeepsTheAddressWhileAConsumerIsAuthenticated() throws {
+      let url = try listen(token: "document-token")
+      let authenticated = expectation(description: "authenticated")
+      socket.onAuthenticated = { authenticated.fulfill() }
+      let task = session.webSocketTask(with: url)
+      task.resume()
+      try sendText(task, ["t": "hello", "token": "document-token"])
+      wait(for: [authenticated], timeout: 5)
+
+      XCTAssertEqual(try rebind(), url)
+      XCTAssertTrue(socket.isAuthenticated)
+      task.cancel()
+    }
+
+    func testRebindingBeforeAnyDocumentIsRefused() {
+      let refused = expectation(description: "refused")
+      socket.rebind { result in
+        if case .failure(LoopbackFrameSocket.RebindError.noDocument) = result { refused.fulfill() }
+      }
+      wait(for: [refused], timeout: 5)
+    }
+
     private static func firstNonLoopbackIPv4() -> String? {
       var addresses: UnsafeMutablePointer<ifaddrs>?
       guard getifaddrs(&addresses) == 0, let first = addresses else { return nil }

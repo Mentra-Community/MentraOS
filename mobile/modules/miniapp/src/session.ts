@@ -130,6 +130,11 @@ export interface HostFeatures {
   transcriptionListeners?: boolean
   /** Host honors `startStream({captureAudio})` for the lifetime of a WHIP session. */
   captureAudio?: boolean
+  /**
+   * Host honors `startStream({ingest: "whip", videoPassthrough})`: on a managed WHIP stream the phone
+   * forwards the glasses' encoded video without decoding and re-encoding it. Android only.
+   */
+  videoPassthrough?: boolean
   /** Host keeps the UI closed until a background session that announced it sends READY. */
   initReady?: boolean
   /**

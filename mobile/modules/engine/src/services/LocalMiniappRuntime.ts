@@ -1837,7 +1837,8 @@ class LocalMiniappRuntime {
         // The SDK's HostFeatures. miniappInstall: system-list miniapps may call session.miniapps.install({url});
         // the Mentra Apps before it answer NOT_PERMITTED.
         // telemetry: `session.telemetry.capture` reaches the workspace's Fleet Management (Phase 12).
-        hostFeatures: {captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true, telemetry: true},
+        // videoPassthrough: the relay's native passthrough codecs exist on Android only.
+        hostFeatures: {captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true, telemetry: true, videoPassthrough: Platform.OS === "android"},
       },
       requestId,
     )
@@ -4202,6 +4203,7 @@ class LocalMiniappRuntime {
         sound: payload.sound as boolean | undefined,
         ingest: payload.ingest as "srt" | "whip" | "rtmp" | undefined,
         captureAudio: normalizeCaptureAudio(payload.captureAudio),
+        ...(payload.videoPassthrough === true && Platform.OS === "android" ? {videoPassthrough: true} : {}),
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {

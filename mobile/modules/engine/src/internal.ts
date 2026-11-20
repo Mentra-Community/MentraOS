@@ -97,7 +97,13 @@ export {
   type StreamPreviewStartResult,
   type StreamPreviewStatusEvent,
 } from "./services/streamPreviewPort"
-export {acsMeetingPreviewSource, type StreamPreviewMeetingSource} from "./services/streamPreviewMeetingSource"
+export {
+  createStreamPreviewSource,
+  type PreviewOrigin,
+  type StreamPreviewMeetingSource,
+  type StreamPreviewSourceInstance,
+} from "./services/streamPreviewMeetingSource"
+export {streamPreviewSource} from "./services/streamPreviewSource"
 export {
   MentraJSCrashController,
   type CrashState,

@@ -84,4 +84,15 @@ class FrameStallGateTest {
     gate.live(0.0)
     assertThat(gate.samples).isEqualTo(2)
   }
+
+  @Test
+  fun stallWindowOutlastsAGlassesPublisherReconnect() {
+    // Measured: the glasses reconnected their publisher about 6 s after frames stopped, and the
+    // old 3-sample (6 s) window failed the source as video resumed.
+    val window = IngestStallPolicy.STALL_SAMPLES * IngestStallPolicy.SAMPLE_INTERVAL_MS
+    assertThat(window).isGreaterThanOrEqualTo(14_000L)
+    val gate = FrameStallGate(IngestStallPolicy.STALL_SAMPLES)
+    repeat(IngestStallPolicy.STALL_SAMPLES - 1) { gate.live(0.0) }
+    assertThat(gate.live(5.0)).isEqualTo(FrameStallGate.Verdict.Healthy)
+  }
 }

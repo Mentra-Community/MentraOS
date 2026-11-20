@@ -1434,3 +1434,214 @@ describe("glasses status in WHIP relay mode", () => {
     }
   })
 })
+
+describe("relay preview source", () => {
+  const stubRelay = () => ({
+    start: async () => undefined,
+    stop: async () => {},
+    cancel() {},
+    owns: () => false,
+    handleGlassesStatus: () => false,
+  })
+
+  test("the package that provisioned a WHIP stream owns its relay preview", async () => {
+    const coord = new PhoneStreamCoordinator()
+    try {
+      expect(coord.relayPreviewSource()).toBeNull()
+      await coord.startManaged("com.call", {ingest: "whip"})
+      const streamId = coord.getDiagnosticSnapshot().streamId as string
+      expect(coord.relayPreviewSource()).toEqual({ownerPackage: "com.call", instanceId: `relay-${streamId}`})
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({previewOwner: "com.call", relayPreview: true})
+    } finally {
+      await coord.stop("com.call")
+    }
+  })
+
+  test("a package that joins the stream never becomes the owner", async () => {
+    const coord = new PhoneStreamCoordinator()
+    try {
+      await coord.startManaged("com.call", {ingest: "whip"})
+      const before = coord.relayPreviewSource()
+      await coord.startManaged("com.other", {ingest: "whip"})
+      expect(coord.relayPreviewSource()).toEqual(before)
+      expect(coord.relayPreviewSource()?.ownerPackage).toBe("com.call")
+    } finally {
+      await coord.stop("com.call")
+      await coord.stop("com.other")
+    }
+  })
+
+  test("a stream the phone does not relay has no preview source", async () => {
+    const coord = new PhoneStreamCoordinator({hlsReadinessInitialDelayMs: 1, hlsReadinessPollMs: 5})
+    const released: string[] = []
+    coord.onRelayPreviewReleased((id) => released.push(id))
+    await coord.startManaged("com.call", {ingest: "srt"})
+    expect(coord.relayPreviewSource()).toBeNull()
+    expect(coord.getDiagnosticSnapshot()).toMatchObject({relayPreview: false})
+    await coord.stop("com.call")
+    expect(released).toEqual([])
+  })
+
+  test("encoded passthrough has no preview source: the phone holds no decoded frame", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const released: string[] = []
+    coord.onRelayPreviewReleased((id) => released.push(id))
+    await coord.startManaged("com.call", {ingest: "whip", videoPassthrough: true})
+    expect(coord.relayPreviewSource()).toBeNull()
+    await coord.stop("com.call")
+    expect(released).toEqual([])
+  })
+
+  test("the owner unsubscribing ends the source even while the stream lives on for another package", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const released: string[] = []
+    coord.onRelayPreviewReleased((id) => released.push(id))
+    try {
+      await coord.startManaged("com.call", {ingest: "whip"})
+      const instanceId = coord.relayPreviewSource()!.instanceId
+      await coord.startManaged("com.other", {ingest: "whip"})
+      await coord.stop("com.call")
+      expect(released).toEqual([instanceId])
+      expect(coord.relayPreviewSource()).toBeNull()
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({
+        active: true,
+        subscribers: ["com.other"],
+        previewOwner: null,
+      })
+      // Neither the remaining subscriber nor the returning provisioner inherits the picture.
+      await coord.startManaged("com.call", {ingest: "whip"})
+      expect(coord.relayPreviewSource()).toBeNull()
+    } finally {
+      await coord.stop("com.call")
+      await coord.stop("com.other")
+    }
+    expect(released).toHaveLength(1)
+  })
+
+  test("a joiner leaving does not end the owner's source", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const released: string[] = []
+    coord.onRelayPreviewReleased((id) => released.push(id))
+    try {
+      await coord.startManaged("com.call", {ingest: "whip"})
+      await coord.startManaged("com.other", {ingest: "whip"})
+      await coord.stop("com.other")
+      expect(released).toEqual([])
+      expect(coord.relayPreviewSource()?.ownerPackage).toBe("com.call")
+    } finally {
+      await coord.stop("com.call")
+    }
+  })
+
+  test("teardown ends the source exactly once, and the next stream gets a new id", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const released: string[] = []
+    const unsubscribe = coord.onRelayPreviewReleased((id) => released.push(id))
+    await coord.startManaged("com.call", {ingest: "whip"})
+    const first = coord.relayPreviewSource()!.instanceId
+    await coord.stop("com.call")
+    expect(released).toEqual([first])
+    expect(coord.relayPreviewSource()).toBeNull()
+
+    await coord.startManaged("com.call", {ingest: "whip"})
+    const second = coord.relayPreviewSource()!.instanceId
+    expect(second).not.toBe(first)
+    unsubscribe()
+    await coord.stop("com.call")
+    expect(released).toEqual([first])
+  })
+
+  test("a relay retry keeps the source, because the managed stream id outlives its attempts", async () => {
+    let relayStatus!: (status: string, reason: string) => void
+    const coord = new PhoneStreamCoordinator(
+      {cloudflareStartupPollInitialMs: 5, cloudflareStatusPollMs: 5},
+      {
+        relayFactory: (_options, status) => {
+          relayStatus = status
+          return {
+            ...stubRelay(),
+            start: async () => {
+              status("connected", "Phone publisher connected")
+              return undefined
+            },
+          }
+        },
+      },
+    )
+    const released: string[] = []
+    coord.onRelayPreviewReleased((id) => released.push(id))
+    try {
+      await coord.startManaged("com.call", {ingest: "whip"})
+      const before = coord.relayPreviewSource()
+      relayStatus("reconnecting", "Reconnecting to the glasses")
+      expect(coord.relayPreviewSource()).toEqual(before)
+      relayStatus("reconnected", "Phone publisher connected")
+      expect(coord.relayPreviewSource()).toEqual(before)
+      expect(released).toEqual([])
+    } finally {
+      await coord.stop("com.call")
+    }
+  })
+
+  test("a relay that fails for good ends the source", async () => {
+    let relayFailure!: (error: Error) => void
+    const coord = new PhoneStreamCoordinator(
+      {cloudflareStartupPollInitialMs: 5, cloudflareStatusPollMs: 5},
+      {
+        relayFactory: (_options, status, failure) => {
+          relayFailure = failure
+          return {
+            ...stubRelay(),
+            start: async () => {
+              status("connected", "Phone publisher connected")
+              return undefined
+            },
+          }
+        },
+      },
+    )
+    const released: string[] = []
+    coord.onRelayPreviewReleased((id) => released.push(id))
+    await coord.startManaged("com.call", {ingest: "whip"})
+    const instanceId = coord.relayPreviewSource()!.instanceId
+    relayFailure(new Error("Glasses hotspot connection was lost"))
+    await settle()
+    expect(released).toEqual([instanceId])
+    expect(coord.relayPreviewSource()).toBeNull()
+    expect(coord.getDiagnosticSnapshot().active).toBe(false)
+  })
+
+  test("a stream that fails to start was never a usable source and is released", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const released: string[] = []
+    coord.onRelayPreviewReleased((id) => released.push(id))
+    relayHotspot.mockRejectedValueOnce(new Error("hotspot enable timed out"))
+    await expect(coord.startManaged("com.call", {ingest: "whip"})).rejects.toThrow("hotspot enable timed out")
+    expect(coord.relayPreviewSource()).toBeNull()
+    expect(released).toHaveLength(1)
+    await coord.stop("com.call")
+  })
+
+  test("a stream whose cleanup is still pending is not a source", async () => {
+    const coord = new PhoneStreamCoordinator()
+    relayHotspot.mockRejectedValueOnce(new Error("hotspot enable timed out"))
+    relayHotspot.mockRejectedValueOnce(new Error("hotspot disable timed out"))
+    await expect(coord.startManaged("com.call", {ingest: "whip"})).rejects.toThrow("hotspot enable timed out")
+    expect(coord.getDiagnosticSnapshot()).toMatchObject({active: true, stopping: true, relayPreview: false})
+    expect(coord.relayPreviewSource()).toBeNull()
+    await coord.stop("com.call")
+  })
+
+  test("a throwing release observer cannot break teardown or starve the next observer", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const released: string[] = []
+    coord.onRelayPreviewReleased(() => {
+      throw new Error("observer")
+    })
+    coord.onRelayPreviewReleased((id) => released.push(id))
+    await coord.startManaged("com.call", {ingest: "whip"})
+    await coord.stop("com.call")
+    expect(released).toHaveLength(1)
+    expect(coord.getDiagnosticSnapshot().active).toBe(false)
+  })
+})

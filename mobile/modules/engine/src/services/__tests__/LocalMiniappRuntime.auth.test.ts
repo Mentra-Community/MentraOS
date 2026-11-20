@@ -131,6 +131,7 @@ function fixture() {
     "variantConfiguration",
     "MiniappResponseType",
     "MiniappErrorCode",
+    "Platform",
     "LOG_TAG",
     "Date",
     "console",
@@ -148,6 +149,8 @@ function fixture() {
     variantConfiguration,
     {CONNECT_ACK: "connect_ack", AUTH_UPDATE: "auth_update"},
     {NOT_CONNECTED: "not_connected", INTERNAL: "internal"},
+    // The handshake advertises Android-only host features.
+    {OS: "android"},
     "LOCAL_MINIAPP",
     {now: () => now},
     {log() {}, warn: (message: string) => warnings.push(message)},

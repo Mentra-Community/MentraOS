@@ -121,10 +121,13 @@ public final class PreviewPipeline {
       trace.info("tier_change", ["box": "\(nextBox.width)x\(nextBox.height)", "fps": fps])
     }
     let restart = pacer.isRunning && (
-      previous.source != next.source || previous.mode != next.mode
+      previous.source != next.source || previous.origin != next.origin || previous.mode != next.mode
         || (next.source == .synthetic && (tierChanged || previous.noiseAmplitude != next.noiseAmplitude))
     )
-    trace.info("configure", ["source": next.source.rawValue, "mode": next.mode.rawValue, "box": "\(box.width)x\(box.height)", "fps": fps])
+    trace.info("configure", [
+      "source": next.source.rawValue, "origin": next.origin.rawValue, "mode": next.mode.rawValue,
+      "box": "\(box.width)x\(box.height)", "fps": fps,
+    ])
     return ConfigureOutcome(restartProduction: restart, tierChanged: tierChanged)
   }
 
@@ -422,6 +425,7 @@ public final class PreviewPipeline {
     return [
       "running": pacer.isRunning,
       "source": config.source.rawValue,
+      "origin": config.origin.rawValue,
       "mode": config.mode.rawValue,
       "deliveredFps": round1(window.deliveredFps),
       "outstanding": pacer.outstandingFrames,

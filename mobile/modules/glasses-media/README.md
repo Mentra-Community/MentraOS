@@ -43,7 +43,28 @@ Glasses MCU -- BLE LC3 --> phone PCM decoder ----------------------^
 
 Only `ingest: "whip"` selects this route. Default SRT and explicit RTMP continue publishing directly from the glasses. WHIP never falls back to SRT/RTMP when Cloudflare omits its WHIP URL. The phone needs mobile data; the glasses need no internet Wi-Fi credentials. Livestreamer's Stream Here path skips its glasses Wi-Fi setup gate accordingly.
 
-`MentraGlassesMediaRelay.prepare` joins the persistent hotspot, prepares both native peers, and returns a local WHIP URL for the BLE start command. Cloudflare credentials stay on the phone. Video queues hold at most one frame; decoded PCM is downmixed/resampled into a bounded 200ms, 48kHz mono queue. WebRTC re-encodes both tracks. No phone microphone is captured. Android uses the WebRTC library's external AudioRecord buffer mode; iOS uses a custom `RTCAudioDevice`.
+`MentraGlassesMediaRelay.prepare` joins the persistent hotspot, prepares both native peers, and returns a local WHIP URL for the BLE start command. Cloudflare credentials stay on the phone. Video queues hold at most one frame; decoded PCM is downmixed/resampled into a bounded 200ms, 48kHz mono queue. Unless the caller asks for video passthrough (below), WebRTC re-encodes both tracks. No phone microphone is captured. Android uses the WebRTC library's external AudioRecord buffer mode; iOS uses a custom `RTCAudioDevice`.
+
+### Video passthrough (Android)
+
+`startStream({ingest: "whip", videoPassthrough: true})` has the phone forward the glasses' H.264 as it arrives instead of decoding it and encoding it again. The host advertises support as `hostFeatures.videoPassthrough`; a caller can pass the option without checking, and the iOS relay ignores it.
+
+```text
+Glasses -- H.264 over WHIP --> receiver (decoder that does not decode) --> publisher (encoder that does not encode) --> Cloudflare
+```
+
+libwebrtc only moves decoded pictures between a receiver and a sender, so `passthrough/` smuggles the encoded bytes inside a `VideoFrame.Buffer`. `PassthroughH264Decoder` wraps each access unit in an `EncodedFrameBuffer`, `DecodedTrackRelay` hands it to the publisher without touching pixels, and `PassthroughH264Encoder` returns the same bytes as the encoded result, with the key/delta marking and timestamp kept.
+
+What that changes:
+
+- **The phone does no video work.** No decode, no scale, no encode: less CPU and heat, and one fewer generation of picture quality.
+- **A key frame can only come from the glasses.** The relay cannot make one. After a loss on the hotspot leg (`DecodeInfo.isMissingFrames`), a full publisher queue, or the uplink asking for one, `PassthroughBridge` waits for a key frame: the decoder returns `ERROR` for delta frames, which makes libwebrtc ask the glasses for a key frame and stop feeding deltas. Forwarding a delta after a gap would hand Cloudflare an undecodable stream it could never see the gap in, because the outgoing RTP is rebuilt here.
+- **Frames queue in order and are not thinned.** The publisher holds up to 15 encoded frames. Past that it drops them all and waits for a key frame, instead of dropping single frames as the decoded path does.
+- **The bitrate and picture size are the glasses'.** The encoder records the rate the uplink would allow (`uplinkTargetBps`, logged every 10 s) but cannot follow it, and degradation and scaling are turned off. A cellular uplink below the glasses' bitrate queues and delays instead of adapting. A BLE bitrate command would close that gap and does not exist yet.
+- **No photo from the stream.** `StreamFrameGrab` needs pixels, so a photo taken during a passthrough stream is answered as it is for any stream the phone does not decode (`CAMERA_BUSY`).
+- **Audio is unchanged.** BLE LC3 to PCM to Opus, as above.
+
+The route is chosen when the relay is prepared and fixed for that stream. Teams and ACS calls, which need decoded frames, keep the real decoder. The log shows `video=passthrough` or `video=reencode` on the `ManagedRelay` audio-transport line, and `passthrough in=… out=… dropped=… keyRequests=…` every 10 s.
 
 On Android hosts with microphone pinning and native PCM input, managed streams use the same BLE LC3 capture path as ACS SoftAP calls. An engine-owned `livestream` microphone session requests continuous glasses PCM; it leaves the configured gain in force and disables the call-specific loudness gate. The glasses receive `captureAudio: false`, avoiding SoC microphone capture and audio encoding, while the phone publishes video plus LC3-derived audio to Cloudflare. Attempt-scoped callbacks and native PCM gating reject late audio after stop/retry. Explicit `captureAudio: false` disables audio entirely. iOS and older hosts retain WHIP audio, matching ACS capability gating. ACS's measured 170ms audio delay is specific to its outgoing pipeline and is not applied to the Cloudflare publisher without calibration.
 

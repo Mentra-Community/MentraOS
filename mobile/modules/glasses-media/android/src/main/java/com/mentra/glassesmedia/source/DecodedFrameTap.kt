@@ -3,7 +3,27 @@ package com.mentra.glassesmedia.source
 import com.mentra.glassesmedia.trace.MediaLog as Log
 
 /**
- * A second, optional consumer of decoded glasses video, sitting beside the ACS sender.
+ * Which pipeline decoded a frame offered to [DecodedFrameTap].
+ *
+ * Two decoders can run at once: a Teams call with Direct link off decodes the glasses stream for
+ * ACS while the managed relay decodes the same stream to republish it. A sink names the one it
+ * wants, so the picture on screen is always the one its lease was granted for.
+ */
+enum class DecodedFrameProducer(val wire: String) {
+  /** The decoder feeding the phone-native ACS meeting. */
+  ACS("acs"),
+
+  /** The decoder inside the managed glasses-to-Cloudflare relay. */
+  RELAY("relay");
+
+  companion object {
+    fun fromWire(value: String?): DecodedFrameProducer? = values().firstOrNull { it.wire == value }
+  }
+}
+
+/**
+ * A second, optional consumer of decoded glasses video, sitting beside whoever decoded it: the ACS
+ * sender, or the managed relay's publisher.
  *
  * The call owns this pipeline; the preview is a guest. [offer] therefore never blocks, never lets
  * a `Throwable` reach the decoder thread, and never does real work — a sink may only decide
@@ -15,9 +35,10 @@ import com.mentra.glassesmedia.trace.MediaLog as Log
  *
  * ## Cost with nothing attached
  *
- * With no sink and telemetry off, [offer] is one volatile read and a return. Sink, error handler
- * and the telemetry flag live in one immutable [State] so that read is the only thing the decoder
- * thread pays.
+ * With no sink and telemetry off, [offer] is one volatile read and a return. Sink, error handler,
+ * producer and the telemetry flag live in one immutable [State] so that read is the only thing the
+ * decoder thread pays. A frame from a producer the sink did not ask for costs that read plus one
+ * comparison.
  *
  * ## Why the metrics live here
  *
@@ -58,6 +79,8 @@ object DecodedFrameTap {
     val sink: VideoFrameListener?,
     val onSinkError: ((Throwable) -> Unit)?,
     val generation: Long,
+    /** The only producer whose frames reach the sink and the metrics. */
+    val producer: DecodedFrameProducer,
   )
 
   @Volatile
@@ -66,6 +89,9 @@ object DecodedFrameTap {
   private var generation: Long = 0
   private var currentSink: VideoFrameListener? = null
   private var currentOnSinkError: ((Throwable) -> Unit)? = null
+
+  /** With no sink, telemetry measures the ACS call, as it did before producers existed. */
+  private var currentProducer: DecodedFrameProducer = DecodedFrameProducer.ACS
 
   @Volatile
   var telemetryEnabled: Boolean = false
@@ -84,16 +110,22 @@ object DecodedFrameTap {
   private var lastOfferAtNs = 0L
 
   /**
-   * Install [listener] and return the generation that owns it. [onSinkError] runs on the decoder
-   * thread after a throw has been caught and counted; it must only schedule work elsewhere.
+   * Install [listener] for [producer]'s frames and return the generation that owns it.
+   * [onSinkError] runs on the decoder thread after a throw has been caught and counted; it must
+   * only schedule work elsewhere.
    */
   @Synchronized
-  fun attach(listener: VideoFrameListener, onSinkError: ((Throwable) -> Unit)? = null): Long {
+  fun attach(
+    listener: VideoFrameListener,
+    producer: DecodedFrameProducer,
+    onSinkError: ((Throwable) -> Unit)? = null,
+  ): Long {
     generation += 1
     currentSink = listener
     currentOnSinkError = onSinkError
+    currentProducer = producer
     publish()
-    Log.i(TAG, "tap attached generation=$generation")
+    Log.i(TAG, "tap attached generation=$generation producer=${producer.wire}")
     return generation
   }
 
@@ -103,6 +135,7 @@ object DecodedFrameTap {
     if (generation != this.generation || currentSink == null) return false
     currentSink = null
     currentOnSinkError = null
+    currentProducer = DecodedFrameProducer.ACS
     publish()
     Log.i(TAG, "tap detached generation=$generation")
     return true
@@ -126,7 +159,7 @@ object DecodedFrameTap {
     state = if (currentSink == null && !telemetryEnabled) {
       null
     } else {
-      State(currentSink, currentOnSinkError, generation)
+      State(currentSink, currentOnSinkError, generation, currentProducer)
     }
     if (!wasCollecting && state != null) {
       // The first gap after collection resumes would span the whole idle period.
@@ -169,13 +202,18 @@ object DecodedFrameTap {
   }
 
   /**
-   * Called on libwebrtc's decode thread, immediately before the frame goes to ACS.
+   * Called on libwebrtc's decode thread by the pipeline that decoded [planes]: the ACS source just
+   * before the frame goes to ACS, the relay just after it goes to the publisher.
+   *
+   * A frame from any producer other than the attached one is dropped here, uncounted, so a second
+   * decoder running beside the wanted one can neither reach the sink nor skew its metrics.
    *
    * The catch is not defensive padding: the alternative is a preview bug throwing on the decoder
    * thread and taking the wearer's call video with it.
    */
-  fun offer(planes: I420Planes) {
+  fun offer(planes: I420Planes, producer: DecodedFrameProducer) {
     val current = state ?: return
+    if (current.producer != producer) return
     val started = System.nanoTime()
     val listener = current.sink
 

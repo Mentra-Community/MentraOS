@@ -1,6 +1,7 @@
 package com.mentra.glassesmedia.source
 
 import com.mentra.glassesmedia.grab.StreamFrameGrab
+import com.mentra.glassesmedia.passthrough.EncodedFrameBuffer
 import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.telemetry.PipelineStats
 import com.mentra.glassesmedia.video.FrameGeometry
@@ -27,6 +28,13 @@ class DecodedTrackRelay(
   private val videoListener: VideoFrameListener,
   private val pcmListener: PcmListener,
   private val stats: PipelineStats,
+  /**
+   * Set only on the managed relay's passthrough route, where the receiver's decoder does not decode
+   * and each frame is an [EncodedFrameBuffer]. Such a frame has no pixels, so it skips everything
+   * below that reads them and goes straight here. Before [onPromotableFrame] so that callers keep
+   * passing that one as the trailing lambda.
+   */
+  private val encodedListener: EncodedFrameListener? = null,
   /** Called on the first frame of each generation so the owner can promote itself to LIVE. */
   private val onPromotableFrame: () -> Unit,
 ) {
@@ -60,6 +68,14 @@ class DecodedTrackRelay(
       stats.age.record(sinkStart - frame.timestampNs)
     }
     val buffer = frame.buffer
+    if (buffer is EncodedFrameBuffer) {
+      // No pixels to scale, grab for a photo, or hand to ACS. A photo during a passthrough stream is
+      // answered as it is for any stream the phone does not decode.
+      stats.setSize(buffer.getWidth(), buffer.getHeight())
+      encodedListener?.onEncodedFrame(buffer, frame.timestampNs)
+      stats.sinkCb.record(System.nanoTime() - sinkStart)
+      return@VideoSink
+    }
     stats.onFrameBuffer(classifyBuffer(buffer))
     // Every phone-decoded glasses stream passes here, so this is where a photo taken during a
     // stream gets its frame. One volatile write and one volatile read unless a photo is waiting.
@@ -148,4 +164,9 @@ class DecodedTrackRelay(
       else -> "other"
     }
   }
+}
+
+/** Receives each encoded frame on the passthrough route. Called on libwebrtc's decode thread. */
+fun interface EncodedFrameListener {
+  fun onEncodedFrame(frame: EncodedFrameBuffer, timestampNs: Long)
 }

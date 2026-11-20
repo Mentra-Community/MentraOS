@@ -482,7 +482,17 @@ describe("what every miniapp is told", () => {
   test("each CONNECT_ACK advertises miniappInstall and telemetry, so a miniapp knows install({url}) and capture are there", () => {
     const declared = [...source.matchAll(/^\s*hostFeatures: (\{[^}\n]*\}),$/gm)]
     expect(declared).toHaveLength(1)
-    const features = new Function(`return (${declared[0]![1]})`)() as Record<string, unknown>
-    expect(features).toEqual({captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true, telemetry: true})
+    const evaluate = (os: string) =>
+      new Function("Platform", `return (${declared[0]![1]})`)({OS: os}) as Record<string, unknown>
+    const everywhere = {captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true, telemetry: true}
+    expect(evaluate("android")).toEqual({...everywhere, videoPassthrough: true})
+  })
+
+  test("video passthrough is advertised on Android only, where the native relay has the codecs", () => {
+    const declared = [...source.matchAll(/^\s*hostFeatures: (\{[^}\n]*\}),$/gm)]
+    const evaluate = (os: string) =>
+      new Function("Platform", `return (${declared[0]![1]})`)({OS: os}) as Record<string, unknown>
+    expect(evaluate("ios").videoPassthrough).toBe(false)
+    expect(evaluate("android").videoPassthrough).toBe(true)
   })
 })

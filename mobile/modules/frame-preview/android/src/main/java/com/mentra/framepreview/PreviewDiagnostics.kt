@@ -1,5 +1,7 @@
 package com.mentra.framepreview
 
+import com.mentra.glassesmedia.source.DecodedFrameProducer
+
 /** Where preview frames come from. `SYNTHETIC` is a diagnostics-only test pattern. */
 enum class PreviewSourceKind(val wire: String) { CALL("call"), SYNTHETIC("synthetic") }
 
@@ -38,6 +40,11 @@ data class PreviewConfig(
   val maxFps: Int = PreviewLimits.RELEASE.maxFps,
   val noiseAmplitude: Int = 0,
   val consumerDelayMs: Int = 0,
+  /**
+   * Which decoder a `call` preview reads. The host grants a lease for one origin and native
+   * attaches for that origin only, so two decoders running at once can never share one preview.
+   */
+  val origin: DecodedFrameProducer = DecodedFrameProducer.ACS,
 ) {
   companion object {
     /** Parse the JS options. Unknown values are rejected rather than silently defaulted. */
@@ -47,12 +54,19 @@ data class PreviewConfig(
         "synthetic" -> PreviewSourceKind.SYNTHETIC
         else -> throw IllegalArgumentException("unknown source $raw")
       }
+      // A host that predates origins previews the ACS meeting, the only origin there was.
+      val origin = when (val raw = options["origin"]) {
+        null -> DecodedFrameProducer.ACS
+        else -> DecodedFrameProducer.fromWire(raw as? String)
+          ?: throw IllegalArgumentException("unknown origin $raw")
+      }
       val mode = PreviewMode.fromWire(options["mode"] as? String ?: "off")
         ?: throw IllegalArgumentException("unknown mode ${options["mode"]}")
       @Suppress("UNCHECKED_CAST")
       val diagnostics = options["diagnostics"] as? Map<String, Any?> ?: emptyMap()
       return PreviewConfig(
         source = source,
+        origin = origin,
         mode = mode,
         targetWidth = (options["targetWidth"] as? Number)?.toInt() ?: 0,
         targetHeight = (options["targetHeight"] as? Number)?.toInt() ?: 0,

@@ -1,5 +1,6 @@
 package com.mentra.framepreview
 
+import com.mentra.glassesmedia.source.DecodedFrameProducer
 import com.mentra.glassesmedia.source.DecodedFrameTap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -68,20 +69,86 @@ class FramePreviewSessionTest {
     DecodedFrameTap.drainMetrics()
   }
 
-  private fun startRendering(width: Int = 640, height: Int = 360) {
-    session.configure(PreviewConfig(mode = PreviewMode.RENDER, targetWidth = width, targetHeight = height, maxFps = 15))
+  private fun startRendering(
+    width: Int = 640,
+    height: Int = 360,
+    origin: DecodedFrameProducer = DecodedFrameProducer.ACS,
+  ) {
+    session.configure(
+      PreviewConfig(mode = PreviewMode.RENDER, targetWidth = width, targetHeight = height, maxFps = 15, origin = origin),
+    )
     session.prepareDocument("token", 1)
     transport.authenticate()
     session.start()
   }
 
-  private fun offerUntil(planes: TestPlanes, timeoutMs: Long = 3000, done: () -> Boolean) {
+  private fun offerUntil(
+    planes: TestPlanes,
+    timeoutMs: Long = 3000,
+    producer: DecodedFrameProducer = DecodedFrameProducer.ACS,
+    done: () -> Boolean,
+  ) {
     val deadline = System.currentTimeMillis() + timeoutMs
     while (!done() && System.currentTimeMillis() < deadline) {
-      DecodedFrameTap.offer(planes.planes())
+      DecodedFrameTap.offer(planes.planes(), producer)
       Thread.sleep(10)
     }
     assertThat(done()).describedAs("condition before timeout").isTrue()
+  }
+
+  @Test
+  fun `a relay preview shows the relay's frames and never the ACS decoder's`() {
+    startRendering(origin = DecodedFrameProducer.RELAY)
+    val acs = TestPlanes(320, 180, fillY = 0x10)
+    val relay = TestPlanes(320, 180, fillY = 0x70)
+    // A Teams call with Direct link off runs both decoders. Only the relay's may be shown.
+    repeat(10) {
+      DecodedFrameTap.offer(acs.planes(), DecodedFrameProducer.ACS)
+      Thread.sleep(5)
+    }
+    assertThat(transport.sent).isEmpty()
+    assertThat(acs.retains.get()).isEqualTo(0)
+    offerUntil(relay, producer = DecodedFrameProducer.RELAY) { transport.sent.isNotEmpty() }
+    assertThat(transport.sent.first()[PreviewFrameHeader.BYTE_COUNT].toInt() and 0xFF).isEqualTo(0x70)
+    assertThat(session.emitStatus()["origin"]).isEqualTo("relay")
+    session.stop("host")
+    Thread.sleep(50)
+    assertThat(relay.releases.get()).isEqualTo(relay.retains.get())
+  }
+
+  @Test
+  fun `an ACS preview never shows the relay's frames`() {
+    startRendering()
+    val relay = TestPlanes(320, 180, fillY = 0x70)
+    repeat(10) {
+      DecodedFrameTap.offer(relay.planes(), DecodedFrameProducer.RELAY)
+      Thread.sleep(5)
+    }
+    assertThat(transport.sent).isEmpty()
+    assertThat(relay.retains.get()).isEqualTo(0)
+    assertThat(session.emitStatus()["noSource"]).isEqualTo(true)
+  }
+
+  @Test
+  fun `reconfiguring for the other origin re-attaches and switches which decoder is shown`() {
+    startRendering()
+    val acs = TestPlanes(320, 180, fillY = 0x10)
+    val relay = TestPlanes(320, 180, fillY = 0x70)
+    offerUntil(acs) { transport.sent.size == 1 }
+    transport.ackLast()
+    session.configure(
+      PreviewConfig(
+        mode = PreviewMode.RENDER, targetWidth = 640, targetHeight = 360, maxFps = 15,
+        origin = DecodedFrameProducer.RELAY,
+      ),
+    )
+    repeat(10) {
+      DecodedFrameTap.offer(acs.planes(), DecodedFrameProducer.ACS)
+      Thread.sleep(5)
+    }
+    assertThat(transport.sent).hasSize(1)
+    offerUntil(relay, producer = DecodedFrameProducer.RELAY) { transport.sent.size == 2 }
+    assertThat(transport.sent.last()[PreviewFrameHeader.BYTE_COUNT].toInt() and 0xFF).isEqualTo(0x70)
   }
 
   @Test
@@ -112,7 +179,7 @@ class FramePreviewSessionTest {
     val source = TestPlanes(320, 180)
     offerUntil(source) { transport.sent.size == 1 }
     repeat(20) {
-      DecodedFrameTap.offer(source.planes())
+      DecodedFrameTap.offer(source.planes(), DecodedFrameProducer.ACS)
       Thread.sleep(5)
     }
     assertThat(transport.sent).hasSize(1)
@@ -136,10 +203,10 @@ class FramePreviewSessionTest {
     session.injectFault(PreviewFaultKind.SINK_THROW, 0)
     val source = TestPlanes(320, 180)
     // The ACS call site: must return normally.
-    DecodedFrameTap.offer(source.planes())
+    DecodedFrameTap.offer(source.planes(), DecodedFrameProducer.ACS)
     assertThat(stopped.await(2, TimeUnit.SECONDS)).isTrue()
     assertThat(stops).containsExactly("pack_failed")
-    DecodedFrameTap.offer(source.planes())
+    DecodedFrameTap.offer(source.planes(), DecodedFrameProducer.ACS)
     val status = session.emitStatus()
     assertThat(status["packFailures"]).isEqualTo(mapOf("sink_error" to 1L))
     assertThat(status["tapSinkExceptions"]).isEqualTo(1L)
@@ -162,7 +229,7 @@ class FramePreviewSessionTest {
     val source = TestPlanes(320, 180)
     val deadline = System.currentTimeMillis() + 2000
     while (stops.isEmpty() && System.currentTimeMillis() < deadline) {
-      DecodedFrameTap.offer(source.planes(yBytes = 100))
+      DecodedFrameTap.offer(source.planes(yBytes = 100), DecodedFrameProducer.ACS)
       Thread.sleep(10)
     }
     assertThat(stops).containsExactly("pack_failed")
@@ -250,7 +317,7 @@ class FramePreviewSessionTest {
     session.emitStatus()
     val source = TestPlanes(64, 36)
     repeat(10) {
-      DecodedFrameTap.offer(source.planes())
+      DecodedFrameTap.offer(source.planes(), DecodedFrameProducer.ACS)
       DecodedFrameTap.recordAcsSend()
       Thread.sleep(5)
     }

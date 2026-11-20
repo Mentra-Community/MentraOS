@@ -3,10 +3,15 @@ import Foundation
 import GlassesMedia
 import UIKit
 
-/// The live call's decoded video, offered by acs-meeting just before each ACS send.
+/// The live call's decoded video: offered by acs-meeting just before each ACS send, or by the
+/// managed relay just after each frame goes to its publisher. `producer` picks which.
 final class CallSource {
-  func attach(_ sink: @escaping (CVPixelBuffer) throws -> Void, onSinkError: @escaping (Error) -> Void) -> UInt64 {
-    DecodedFrameTap.shared.attach(sink, onSinkError: onSinkError)
+  func attach(
+    _ sink: @escaping (CVPixelBuffer) throws -> Void,
+    producer: DecodedFrameProducer,
+    onSinkError: @escaping (Error) -> Void
+  ) -> UInt64 {
+    DecodedFrameTap.shared.attach(sink, producer: producer, onSinkError: onSinkError)
   }
 
   @discardableResult
@@ -105,6 +110,21 @@ final class FramePreviewSession {
     }
   }
 
+  /// The address the current document's page should connect to, rebound if the old one is dead.
+  /// Keeps the document and its token; only the listener may change.
+  func reviveTransport(completion: @escaping (Result<String, Error>) -> Void) {
+    queue.async {
+      self.socket.rebind { result in
+        if case let .success(url) = result {
+          self.trace.info("transport_rebind", ["transport": "websocket", "url": url])
+        } else {
+          self.trace.warn("transport_bind_failed", ["transport": "websocket"])
+        }
+        completion(result)
+      }
+    }
+  }
+
   func configure(_ config: PreviewConfig, completion: @escaping (PreviewRejection?) -> Void) {
     queue.async {
       do {
@@ -112,6 +132,7 @@ final class FramePreviewSession {
         if outcome.restartProduction { self.restartProductionLocked() }
         self.logEvent("configure", [
           "sourceTo": config.source.rawValue,
+          "originTo": config.origin.rawValue,
           "modeTo": config.mode.rawValue,
           "targetWidth": self.pipeline.box.width,
           "targetHeight": self.pipeline.box.height,
@@ -248,11 +269,12 @@ final class FramePreviewSession {
     case .call:
       let generation = callSource.attach(
         { [weak self] buffer in try self?.onSourceFrame(buffer) },
+        producer: config.origin == .relay ? .relay : .acs,
         onSinkError: { [weak self] error in self?.queue.async { self?.pipeline.sinkFailed(error) } }
       )
       tapGeneration = generation
       trace.tapGeneration = generation
-      trace.info("source_attach", ["gen": generation])
+      trace.info("source_attach", ["gen": generation, "origin": config.origin.rawValue])
     }
   }
 
@@ -470,6 +492,7 @@ final class FramePreviewSession {
       "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
       "build": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "",
       "source": config.source.rawValue,
+      "origin": config.origin.rawValue,
       "mode": config.mode.rawValue,
       "targetFps": pipeline.fps,
       "targetWidth": pipeline.box.width,

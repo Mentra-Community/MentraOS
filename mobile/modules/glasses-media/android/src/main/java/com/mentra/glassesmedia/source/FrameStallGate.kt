@@ -59,3 +59,17 @@ internal class FrameStallGate(private val stallSamples: Int) {
     return Verdict.Stalled(stalled)
   }
 }
+
+/**
+ * How long a live ingest may go without decoded frames before it is failed.
+ *
+ * Measured on a Samsung phone with Mentra Live: the glasses' own publisher reported
+ * "Publisher disconnected", reconnected and was sending again about 6 s later, but 3 samples (6 s)
+ * failed the source one second before video resumed and tore the whole relay down for a 17 s
+ * rebuild. 8 samples (16 s) rides out one glasses-side reconnect and a keyframe, and is still
+ * shorter than the rebuild it avoids.
+ */
+internal object IngestStallPolicy {
+  const val SAMPLE_INTERVAL_MS = 2_000L
+  const val STALL_SAMPLES = 8
+}

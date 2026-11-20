@@ -1,19 +1,41 @@
 # Frame preview
 
-Native transport behind `<StreamPreview>`: forks decoded call video out of the existing ACS
-pipeline and pushes it into the miniapp's WebView as raw binary YUV, sized to the view and paced
-by the page. There is no second encoder, no extra WebRTC connection and no native overlay, and
-frame bytes never touch React Native JavaScript, JSON or base64.
+Native transport behind `<StreamPreview>`: forks decoded glasses video out of a pipeline that is
+already decoding it and pushes it into the miniapp's WebView as raw binary YUV, sized to the view
+and paced by the page. There is no second decoder, no second encoder, no extra WebRTC connection
+and no native overlay, and frame bytes never touch React Native JavaScript, JSON or base64. The
+preview never downloads video: every frame it shows was decoded on this phone for another reason.
 
 The rule this module is built around: **the preview must cost the call nothing**. A slow page
-lowers the preview's frame rate; a preview bug stops the preview. Neither reaches the ACS sender.
+lowers the preview's frame rate; a preview bug stops the preview. Neither reaches the ACS sender
+or the relay's publisher.
+
+## Origins
+
+Two pipelines decode glasses video on the phone, and each offers its frames to the tap under its
+own name:
+
+| Origin | Decoder | Offered |
+|---|---|---|
+| `acs` | The source feeding a phone-native ACS meeting. | Just before each frame goes to ACS. |
+| `relay` | The managed glasses-to-Cloudflare relay. | Just after each frame goes to the publisher. |
+
+The host grants a lease for one origin and passes it to `configure`. The tap delivers only that
+origin's frames to the sink and counts only those. Both decoders run at once in a Teams call with
+Direct link off, where the ACS meeting pulls the stream the relay publishes; the meeting's origin
+wins, so that call previews exactly what Teams receives.
+
+A relay in Android encoded passthrough forwards the glasses' H.264 without decoding it, so it
+offers nothing and has no preview.
 
 ## Shape
 
 ```text
 existing decoder
-  ├── existing ACS sender → Teams          (unchanged; counted as acsSendFps)
-  └── DecodedFrameTap (optional)
+  ├── existing consumer                    (unchanged)
+  │     acs:   ACS sender → Teams          (counted as acsSendFps)
+  │     relay: publisher → Cloudflare
+  └── DecodedFrameTap (optional, one origin per sink)
         → CallSource (PreviewSourcePort: attach → generation, generation-checked detach)
         → admission: one credit, absolute fps schedule, one queued frame
         → single pack worker: validate geometry → downscale into a preallocated slot → header
@@ -35,7 +57,7 @@ existing decoder
 |---|---|
 | `bind({hostViewTag, packageName, traceId})` | Android installs the listener; the host calls it before the first navigation. Returns `{installReloadRequired, unavailableReason?}`. |
 | `prepareDocument({docGen, traceId})` | New token per document, idempotent per `docGen`. Returns `{protocolVersion: 1, transport, url?, portName?, token, docGen}`. Rejects `not_bound`. |
-| `configure({source, mode, targetWidth, targetHeight, maxFps, diagnostics?})` | Rejects `diagnostics_disabled` when needed. A tier change never restarts production or the transport. |
+| `configure({source, origin?, mode, targetWidth, targetHeight, maxFps, diagnostics?})` | `origin` is `acs` (default) or `relay`. Rejects `diagnostics_disabled` when needed and `invalid_argument` for an unknown origin. A tier change never restarts production or the transport; an origin change re-attaches the sink. |
 | `start()` / `stop(reason)` | `stop` keeps the authenticated transport. |
 | `unbind(reason)` | Destroys the transport. |
 | `setDiagnosticsEnabled`, `setTapTelemetry`, `setRunLogEnabled` | See below. |

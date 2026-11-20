@@ -649,7 +649,7 @@ final class AcsMeetingSession {
             guard let self else { return }
             // A photo card or still owns the tile. Glasses frames stay off it until that hold ends.
             if self.holdingOutgoing { return }
-            DecodedFrameTap.shared.offer(buffer)
+            DecodedFrameTap.shared.offer(buffer, from: .acs)
             if self.frameSender.send(buffer) { DecodedFrameTap.shared.recordAcsSend() }
         }
         source.onPcm = { [weak self] pcm, rate, channels in

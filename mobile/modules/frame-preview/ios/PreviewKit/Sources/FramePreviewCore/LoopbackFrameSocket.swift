@@ -55,49 +55,79 @@
     public func start(token: String, completion: @escaping (Result<String, Error>) -> Void) {
       queue.async {
         self.token = token
-        if let url = self.url, self.listener != nil {
+        self.startLocked(completion: completion)
+      }
+    }
+
+    /// Give the page an address that accepts connections, for the token already in force.
+    ///
+    /// iOS closes a suspended app's listening sockets without telling the `NWListener`, so a
+    /// document prepared before the app was backgrounded keeps a `ready` listener whose port
+    /// refuses every connect. A page only asks again after its transport failed, so this binds a
+    /// fresh listener unless a consumer is authenticated, which proves the current one works.
+    /// The token is kept, so the page's credential stays valid across the rebind.
+    public func rebind(completion: @escaping (Result<String, Error>) -> Void) {
+      queue.async {
+        guard !self.token.isEmpty else {
+          completion(.failure(RebindError.noDocument))
+          return
+        }
+        if self.authenticated, let url = self.url, self.listener != nil {
           completion(.success(url))
           return
         }
-        self.generation += 1
-        let generation = self.generation
-        do {
-          let parameters = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
-          // Loopback only. An all-interfaces bind would put raw camera frames on whatever network
-          // the phone is attached to, which during a call is the glasses hotspot.
-          parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(Self.loopbackHost), port: .any)
-          parameters.allowLocalEndpointReuse = true
-          parameters.includePeerToPeer = false
-          let websocket = NWProtocolWebSocket.Options()
-          websocket.autoReplyPing = true
-          parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
+        self.stopLocked()
+        self.startLocked(completion: completion)
+      }
+    }
 
-          let listener = try NWListener(using: parameters)
-          self.listener = listener
-          listener.stateUpdateHandler = { [weak self] state in
-            guard let self, generation == self.generation else { return }
-            switch state {
-            case .ready:
-              guard let port = listener.port else { return }
-              let url = "ws://\(Self.loopbackHost):\(port.rawValue)/preview"
-              self.url = url
-              completion(.success(url))
-            case let .failed(error):
-              self.onFailure?(.listenerFailed, "\(error)")
-              completion(.failure(error))
-              self.stopLocked()
-            default:
-              break
-            }
+    public enum RebindError: Error {
+      case noDocument
+    }
+
+    private func startLocked(completion: @escaping (Result<String, Error>) -> Void) {
+      if let url = self.url, self.listener != nil {
+        completion(.success(url))
+        return
+      }
+      self.generation += 1
+      let generation = self.generation
+      do {
+        let parameters = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
+        // Loopback only. An all-interfaces bind would put raw camera frames on whatever network
+        // the phone is attached to, which during a call is the glasses hotspot.
+        parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(Self.loopbackHost), port: .any)
+        parameters.allowLocalEndpointReuse = true
+        parameters.includePeerToPeer = false
+        let websocket = NWProtocolWebSocket.Options()
+        websocket.autoReplyPing = true
+        parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
+
+        let listener = try NWListener(using: parameters)
+        self.listener = listener
+        listener.stateUpdateHandler = { [weak self] state in
+          guard let self, generation == self.generation else { return }
+          switch state {
+          case .ready:
+            guard let port = listener.port else { return }
+            let url = "ws://\(Self.loopbackHost):\(port.rawValue)/preview"
+            self.url = url
+            completion(.success(url))
+          case let .failed(error):
+            self.onFailure?(.listenerFailed, "\(error)")
+            completion(.failure(error))
+            self.stopLocked()
+          default:
+            break
           }
-          listener.newConnectionHandler = { [weak self] connection in
-            self?.accept(connection, generation: generation)
-          }
-          listener.start(queue: self.queue)
-        } catch {
-          self.onFailure?(.listenerFailed, "\(error)")
-          completion(.failure(error))
         }
+        listener.newConnectionHandler = { [weak self] connection in
+          self?.accept(connection, generation: generation)
+        }
+        listener.start(queue: self.queue)
+      } catch {
+        self.onFailure?(.listenerFailed, "\(error)")
+        completion(.failure(error))
       }
     }
 

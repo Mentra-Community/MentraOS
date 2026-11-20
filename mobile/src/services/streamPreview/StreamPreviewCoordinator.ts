@@ -1,5 +1,6 @@
 import type {
   MentraUIHostReply,
+  PreviewOrigin,
   StreamPreviewHostPort,
   StreamPreviewMeetingSource,
   StreamPreviewStartRequest,
@@ -14,9 +15,11 @@ import {createPreviewTraceLogger, type PreviewTraceFields, type PreviewTraceLogg
  *
  * Three owners, three lifetimes, and this class keeps them apart:
  *
- *  - The **lease** belongs to one background runtime and one meeting instance. It is created by
+ *  - The **lease** belongs to one background runtime and one source instance: an ACS meeting or a
+ *    managed glasses stream, whichever the package owns, the meeting first. It is created by
  *    `miniapp_stream_preview_start`, survives the UI closing and the WebView being destroyed, and
- *    ends on `stop`, when the meeting ends, or when that runtime stops. Exactly one exists.
+ *    ends on `stop`, when that source ends, or when that runtime stops. Exactly one exists, and it
+ *    keeps the origin it was granted for: native delivers frames from that decoder only.
  *  - The **document** belongs to one page load. Its generation is bumped when the page's shim says
  *    `ready` (never on `onLoadEnd`, which fires several times per load) and when the content
  *    process dies. Each document gets its own token; a new document always handshakes again.
@@ -27,7 +30,7 @@ import {createPreviewTraceLogger, type PreviewTraceFields, type PreviewTraceLogg
  * Every control operation is identity-checked: background ops by `{runtimeId, handleId}`, page ops
  * by `{docGen, token, mountEpoch}`. A mismatch is dropped and counted, not treated as an error.
  *
- * Nothing here calls into the meeting beyond reading who owns it. A native failure, a throwing
+ * Nothing here calls into the meeting or the stream beyond reading who owns it. A native failure, a throwing
  * listener or a bad page request ends in a log line and a typed status for the page — it never
  * reaches the call.
  */
@@ -73,6 +76,8 @@ export interface StreamPreviewNative {
   prepareDocument(options: {docGen: number; traceId: string}): Promise<StreamPreviewDocumentConfig>
   configure(options: {
     source: "call"
+    /** Which decoder's frames the lease was granted for. Native delivers no others. */
+    origin: PreviewOrigin
     mode: "render"
     targetWidth: number
     targetHeight: number
@@ -142,7 +147,10 @@ interface Lease {
   runtimeId: string
   handleId: string
   previewTraceId: string
+  /** The source instance this lease is bound to: one ACS meeting or one managed stream. */
   meetingId: string
+  /** Fixed when the lease is granted. A source of the other origin needs a new lease. */
+  origin: PreviewOrigin
   state: "arming" | "held"
   notify: (event: StreamPreviewStatusEvent) => void
 }
@@ -160,6 +168,8 @@ interface DocumentState {
   docGen: number
   config: StreamPreviewDocumentConfig | null
   preparing: Promise<StreamPreviewDocumentConfig | null> | null
+  /** The page has been handed this document's config at least once. */
+  served: boolean
   mountEpoch: number
   wantRunning: boolean
   tier: Tier | null
@@ -303,10 +313,22 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     this.log.warn("fault_injected", {...fields, faultsInjected: this.counters.faultsInjected})
   }
 
-  getLeaseSnapshot(): {packageName: string; handleId: string; meetingId: string; state: string} | null {
+  getLeaseSnapshot(): {
+    packageName: string
+    handleId: string
+    meetingId: string
+    origin: PreviewOrigin
+    state: string
+  } | null {
     const lease = this.lease
     return lease
-      ? {packageName: lease.packageName, handleId: lease.handleId, meetingId: lease.meetingId, state: lease.state}
+      ? {
+          packageName: lease.packageName,
+          handleId: lease.handleId,
+          meetingId: lease.meetingId,
+          origin: lease.origin,
+          state: lease.state,
+        }
       : null
   }
 
@@ -334,17 +356,17 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     if (!request.hasCamera) {
       throw this.refuse("permission_denied", "Declare the CAMERA permission to preview the call", ids)
     }
-    const meeting = this.deps.meetings.current()
-    if (!meeting || meeting.ownerPackage !== request.packageName) {
-      throw this.refuse("not_meeting_owner", "Only the miniapp that owns the active meeting may preview it", {
-        ...ids,
-        meetingId: meeting?.instanceId,
-      })
+    const meeting = this.deps.meetings.current(request.packageName)
+    if (!meeting) {
+      throw this.refuse(
+        "not_meeting_owner",
+        "Only the miniapp that owns the active meeting or glasses stream may preview it",
+        ids,
+      )
     }
-    if (this.lease && this.lease.meetingId !== meeting.instanceId) {
-      // The meeting it was bound to is gone; the release event just has not arrived yet.
-      this.endLease("source_ended")
-    }
+    // The source the existing lease was bound to is gone or was superseded; the release event
+    // just has not arrived yet. Judged against the holder's own source, never the requester's.
+    this.checkLeaseMeeting()
     if (this.lease) {
       throw this.refuse("preview_busy", "Another preview already holds the source", {
         ...ids,
@@ -359,6 +381,7 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
       handleId: this.newId(),
       previewTraceId: this.newId(),
       meetingId: meeting.instanceId,
+      origin: meeting.origin,
       state: "arming",
       notify,
     }
@@ -367,10 +390,9 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     // Arming waits out whatever the previous lease left in flight natively, and is tied to the
     // meeting instance: if that meeting ends meanwhile, this preview() rejects.
     await this.nativeChain
-    const current = this.deps.meetings.current()
-    if (this.lease !== lease || !current || current.instanceId !== lease.meetingId) {
+    if (this.lease !== lease || !this.leaseSourceCurrent(lease)) {
       if (this.lease === lease) this.lease = null
-      throw this.refuse("source_ended", "The meeting ended before the preview was ready", this.leaseFields(lease))
+      throw this.refuse("source_ended", "The source ended before the preview was ready", this.leaseFields(lease))
     }
     lease.state = "held"
     this.log.info("lease_held", this.leaseFields(lease))
@@ -511,6 +533,7 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
       docGen: this.docGenCounter,
       config: null,
       preparing: null,
+      served: false,
       mountEpoch: 0,
       wantRunning: false,
       tier: null,
@@ -677,6 +700,10 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
       this.log.info("handshake_waiting_for_lease", {packageName, docGen: doc.docGen})
       return {ok: true, result: {t: "waiting_for_lease", docGen: doc.docGen}}
     }
+    // A page handshakes again within a document only after its transport failed or was refused.
+    // The address it was given may be dead (iOS closes loopback listeners while the app is
+    // suspended), so native answers again; it keeps the token and rebinds only if it must.
+    if (doc.served && !doc.preparing) doc.config = null
     const config = await this.prepare(doc, lease)
     if (this.doc !== doc) return this.staleReply("handshake", "docGen", {packageName})
     if (!config) {
@@ -691,6 +718,7 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     if (config.protocolVersion !== STREAM_PREVIEW_PROTOCOL_VERSION) {
       return this.refusePage(packageName, "unsupported", `Unknown preview protocol version ${config.protocolVersion}`)
     }
+    doc.served = true
     this.counters.handshakes += 1
     this.log.info("handshake_ok", {
       ...this.leaseFields(lease),
@@ -828,13 +856,20 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
   private reconcile(reason: string): void {
     const want = this.shouldProduce()
     const tier = this.doc?.tier ?? null
-    if (want && tier && (tier.width !== this.configuredTier?.width || tier.height !== this.configuredTier?.height)) {
+    const origin = this.lease?.origin
+    if (
+      want &&
+      tier &&
+      origin &&
+      (tier.width !== this.configuredTier?.width || tier.height !== this.configuredTier?.height)
+    ) {
       this.configuredTier = tier
       if (tier.width !== this.lastTier?.width || tier.height !== this.lastTier?.height) this.counters.tierChanges += 1
       this.lastTier = tier
       this.enqueueNative("configure", () =>
         this.deps.native.configure({
           source: "call",
+          origin,
           mode: "render",
           targetWidth: tier.width,
           targetHeight: tier.height,
@@ -894,6 +929,8 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
   }
 
   private onNativeStatus(status: Record<string, unknown>): void {
+    // The once-a-second backstop for a source that ended, or was superseded, without an event.
+    this.checkLeaseMeeting()
     const doc = this.doc
     const lease = this.lease
     if (!doc || !lease || doc.packageName !== lease.packageName) return
@@ -943,11 +980,19 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
     if (this.lease?.meetingId === instanceId) this.endLease("source_ended")
   }
 
+  /**
+   * True while the lease's package still resolves to the source the lease was granted for. A
+   * relay lease stops being current when its stream ends and also when its package comes to own
+   * an ACS meeting, which outranks the relay: the holder re-arms and gets the meeting's picture.
+   */
+  private leaseSourceCurrent(lease: Lease): boolean {
+    const source = this.deps.meetings.current(lease.packageName)
+    return !!source && source.instanceId === lease.meetingId && source.origin === lease.origin
+  }
+
   private checkLeaseMeeting(): void {
     const lease = this.lease
-    if (!lease) return
-    const meeting = this.deps.meetings.current()
-    if (!meeting || meeting.instanceId !== lease.meetingId) this.endLease("source_ended")
+    if (lease && !this.leaseSourceCurrent(lease)) this.endLease("source_ended")
   }
 
   private endLease(reason: string): void {
@@ -1030,6 +1075,7 @@ export class StreamPreviewCoordinator implements StreamPreviewHostPort {
       runtimeId: lease.runtimeId,
       handleId: lease.handleId,
       meetingId: lease.meetingId,
+      origin: lease.origin,
       packageName: lease.packageName,
     }
   }

@@ -3,6 +3,7 @@ package com.mentra.framepreview
 import android.content.Context
 import android.os.Build
 import android.os.PowerManager
+import com.mentra.glassesmedia.source.DecodedFrameProducer
 import com.mentra.glassesmedia.source.DecodedFrameTap
 import com.mentra.glassesmedia.source.I420Planes
 import com.mentra.glassesmedia.video.I420Packer
@@ -182,18 +183,25 @@ class FramePreviewSession(
     // A tier or rate change never restarts production or the transport; only what produces
     // frames does. The synthetic source draws at the box size, so it follows the tier.
     val restart = pacer.isRunning && (
-      previous.source != next.source || previous.mode != next.mode ||
+      previous.source != next.source || previous.origin != next.origin || previous.mode != next.mode ||
         (next.source == PreviewSourceKind.SYNTHETIC && (tierChanged || previous.noiseAmplitude != next.noiseAmplitude))
       )
     if (restart) restartProduction()
     trace.info(
       "configure",
-      mapOf("source" to next.source.wire, "mode" to next.mode.wire, "box" to "${box.width}x${box.height}", "fps" to fps),
+      mapOf(
+        "source" to next.source.wire,
+        "origin" to next.origin.wire,
+        "mode" to next.mode.wire,
+        "box" to "${box.width}x${box.height}",
+        "fps" to fps,
+      ),
     )
     logEvent(
       "configure",
       mapOf(
         "sourceTo" to next.source.wire,
+        "originTo" to next.origin.wire,
         "modeTo" to next.mode.wire,
         "targetWidth" to box.width,
         "targetHeight" to box.height,
@@ -335,10 +343,10 @@ class FramePreviewSession(
         synthetic = executor
       }
       PreviewSourceKind.CALL -> {
-        val generation = callSource.attach(::onSourceFrame, ::onSinkError)
+        val generation = callSource.attach(::onSourceFrame, current.origin, ::onSinkError)
         tapGeneration = generation
         trace.tapGeneration = generation
-        trace.info("source_attach", mapOf("gen" to generation))
+        trace.info("source_attach", mapOf("gen" to generation, "origin" to current.origin.wire))
       }
     }
   }
@@ -678,6 +686,7 @@ class FramePreviewSession(
       "runId" to runId,
       "running" to pacer.isRunning,
       "source" to current.source.wire,
+      "origin" to current.origin.wire,
       "mode" to current.mode.wire,
       "docGen" to docGen,
       // Contract counters.
@@ -798,6 +807,7 @@ class FramePreviewSession(
         "osVersion" to Build.VERSION.RELEASE,
         "sdkInt" to Build.VERSION.SDK_INT,
         "source" to config.source.wire,
+        "origin" to config.origin.wire,
         "mode" to config.mode.wire,
         "targetFps" to fps,
         "targetWidth" to box.width,

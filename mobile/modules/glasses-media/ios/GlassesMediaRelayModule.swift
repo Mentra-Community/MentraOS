@@ -180,7 +180,12 @@ private final class ManagedRelaySession {
                             self.publisher = publisher
                             let receiver = LocalWhipIngestSource()
                             self.receiver = receiver
-                            receiver.onFrame = { [weak publisher] in publisher?.onFrame($0) }
+                            // The publisher takes the frame first. The phone's own preview of the
+                            // stream is a guest: it reads the pixels this relay already decoded, so
+                            // showing the wearer their video downloads nothing.
+                            receiver.onFrame = { [weak publisher] buffer in
+                                DecodedFrameTap.shared.relay(buffer) { publisher?.onFrame($0) }
+                            }
                             receiver.onPcm = { [weak publisher] in publisher?.onPcm($0, rate: $1, channels: $2) }
                             receiver.onStateChange = { state, reason in if state == .failed { onState("failed", "Glasses receiver: \(reason)") } }
                             receiver.setPcmDeliveryEnabled(captureAudio)

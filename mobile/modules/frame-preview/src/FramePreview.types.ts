@@ -2,6 +2,13 @@
 export type PreviewSourceKind = "call" | "synthetic"
 
 /**
+ * Which decoder a `call` preview reads: the one feeding a phone-native ACS meeting, or the one
+ * inside the managed glasses relay. The host grants a lease for one origin, and native attaches
+ * for that origin only.
+ */
+export type PreviewOrigin = "acs" | "relay"
+
+/**
  * How far down the pipeline a frame travels. Only `off` and `render` are available without
  * diagnostics; the others isolate one stage each for measurement.
  */
@@ -71,6 +78,8 @@ export interface PreviewDiagnosticsOptions {
 
 export interface PreviewConfigureOptions {
   source: PreviewSourceKind
+  /** Defaults to `acs`. Changing it while running re-attaches the sink for the other decoder. */
+  origin?: PreviewOrigin
   mode: PreviewMode
   /**
    * Target box, already quantized to a tier by the host. Native fits the source inside it
@@ -110,6 +119,7 @@ export interface PreviewStatusPayload {
   runId: string
   running: boolean
   source: PreviewSourceKind
+  origin: PreviewOrigin
   mode: PreviewMode
   docGen: number
 

@@ -74,6 +74,7 @@ import com.mentra.glassesmedia.source.OutgoingRateArm
 import com.mentra.glassesmedia.source.PixelFormatArm
 import com.mentra.glassesmedia.source.GlassesMediaController
 import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
+import com.mentra.glassesmedia.source.DecodedFrameProducer
 import com.mentra.glassesmedia.source.DecodedFrameTap
 import com.mentra.glassesmedia.source.GlassesMediaSourceFactory
 import com.mentra.glassesmedia.source.LocalWhipIngestSource
@@ -141,7 +142,7 @@ class AcsMeetingSession(
   private val outgoingHold = OutgoingVideoHold(
     // The self-preview mirrors what Teams receives, so it shows the card and the still too.
     send = { planes ->
-      DecodedFrameTap.offer(planes)
+      DecodedFrameTap.offer(planes, DecodedFrameProducer.ACS)
       frameSender.sendPlanes(planes)
     },
     // The negotiated size, not the profile ceiling: ACS renegotiates below the ceiling under load,
@@ -938,7 +939,7 @@ class AcsMeetingSession(
 
   private fun forwardGlassesPlanes(planes: I420Planes) {
     if (outgoingHold.isActive()) return
-    DecodedFrameTap.offer(planes)
+    DecodedFrameTap.offer(planes, DecodedFrameProducer.ACS)
     if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
   }
 

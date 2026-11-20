@@ -1,5 +1,6 @@
 package com.mentra.framepreview
 
+import com.mentra.glassesmedia.source.DecodedFrameProducer
 import com.mentra.glassesmedia.source.DecodedFrameTap
 import com.mentra.glassesmedia.source.I420Planes
 import com.mentra.glassesmedia.source.VideoFrameListener
@@ -12,17 +13,20 @@ import com.mentra.glassesmedia.source.VideoFrameListener
  * counted; it must only schedule work elsewhere.
  */
 interface PreviewSourcePort {
-  fun attach(sink: (I420Planes) -> Unit, onSinkError: (Throwable) -> Unit): Long
+  fun attach(sink: (I420Planes) -> Unit, producer: DecodedFrameProducer, onSinkError: (Throwable) -> Unit): Long
 
   fun detach(generation: Long): Boolean
 
   fun isCurrent(generation: Long): Boolean
 }
 
-/** The live call's decoded video, offered by acs-meeting just before each ACS send. */
+/**
+ * The live call's decoded video: offered by acs-meeting just before each ACS send, or by the
+ * managed relay just after each frame goes to its publisher. The producer picks which.
+ */
 object CallSource : PreviewSourcePort {
-  override fun attach(sink: (I420Planes) -> Unit, onSinkError: (Throwable) -> Unit): Long =
-    DecodedFrameTap.attach(VideoFrameListener { planes -> sink(planes) }, onSinkError)
+  override fun attach(sink: (I420Planes) -> Unit, producer: DecodedFrameProducer, onSinkError: (Throwable) -> Unit): Long =
+    DecodedFrameTap.attach(VideoFrameListener { planes -> sink(planes) }, producer, onSinkError)
 
   override fun detach(generation: Long): Boolean = DecodedFrameTap.detach(generation)
 

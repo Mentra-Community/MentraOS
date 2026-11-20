@@ -5,6 +5,8 @@ import com.mentra.bluetoothsdk.hotspot.ScopedNetworkError
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Base64
@@ -12,6 +14,7 @@ import com.mentra.glassesmedia.grab.StreamFrameGrab
 import com.mentra.glassesmedia.trace.MediaLog
 import com.mentra.glassesmedia.trace.MediaLog as Log
 import com.mentra.glassesmedia.network.*
+import com.mentra.glassesmedia.passthrough.PassthroughBridge
 import com.mentra.glassesmedia.publisher.PhoneWhipPublisher
 import com.mentra.glassesmedia.publisher.RelayPcmInput
 import com.mentra.glassesmedia.source.*
@@ -29,6 +32,8 @@ class GlassesMediaRelayModule : Module() {
   private var source: LocalWhipIngestSource? = null
   private var publisher: PhoneWhipPublisher? = null
   private var wakeLock: PowerManager.WakeLock? = null
+  /** Keeps the Wi-Fi radio out of power save while it carries the glasses' video. */
+  private var wifiLock: WifiManager.WifiLock? = null
   private val pcmInput = RelayPcmInput()
 
   override fun definition() = ModuleDefinition {
@@ -65,14 +70,20 @@ class GlassesMediaRelayModule : Module() {
           }
           scoped.join(ssid, password, listener)
           ScopedNetworkChangeDetector.registerRelayNetwork(scoped)
+          // Forward the glasses' encoded video untouched instead of decoding and encoding it again.
+          // Only when the caller asked, so an old caller and every other stream keep the re-encode.
+          val bridge = if (options["videoPassthrough"] == true) PassthroughBridge() else null
           val outgoing = PhoneWhipPublisher(context, endpoint, options["captureAudio"] != false,
-            (options["bitrate"] as? Number)?.toInt() ?: 2_000_000) { state, reason -> emit(id, state, reason) }
+            (options["bitrate"] as? Number)?.toInt() ?: 2_000_000, bridge) { state, reason -> emit(id, state, reason) }
           publisher = outgoing
           val bleAudio = options["captureAudio"] != false && options["audioTransport"] == "ble-lc3"
           if (bleAudio) pcmInput.attach(id, outgoing::onPcm)
-          Log.i("ManagedRelay", "Audio transport=${options["audioTransport"] ?: "whip"} attempt=$id")
-          val incoming = LocalWhipIngestSource(context, VideoFrameListener(outgoing::onVideoFrame),
-            PcmListener(outgoing::onPcm), scopedNetwork = scoped)
+          Log.i("ManagedRelay", "Audio transport=${options["audioTransport"] ?: "whip"} " +
+            "video=${if (bridge != null) "passthrough" else "reencode"} attempt=$id")
+          // Decoded frames go to the publisher, then to the phone's own preview of the stream.
+          val incoming = LocalWhipIngestSource(context, relayFrameFanOut(VideoFrameListener(outgoing::onVideoFrame)),
+            PcmListener(outgoing::onPcm), scopedNetwork = scoped, passthrough = bridge,
+            encodedListener = bridge?.let { EncodedFrameListener(outgoing::onEncodedFrame) })
           source = incoming
           incoming.setStateListener { state, reason ->
             if (state == SourceState.FAILED) emit(id, "failed", "Glasses receiver: $reason")
@@ -85,6 +96,11 @@ class GlassesMediaRelayModule : Module() {
           }
           wakeLock = context.getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Mentra:managed-relay").apply { acquire() }
+          wifiLock = context.getSystemService(WifiManager::class.java)?.createWifiLock(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            else @Suppress("DEPRECATION") WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+            "Mentra:managed-relay",
+          )?.apply { setReferenceCounted(false); acquire() }
           outgoing.start()
           promise.resolve(requireNotNull(incoming.ingestUrl))
         } catch (error: Exception) {
@@ -152,6 +168,7 @@ class GlassesMediaRelayModule : Module() {
     step { network?.let { it.release(); ScopedNetworkChangeDetector.releaseRelayNetwork(it) }; network = null }
     step { internet?.close(); internet = null }
     step { wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null }
+    step { wifiLock?.let { if (it.isHeld) it.release() }; wifiLock = null }
     failure?.let { throw it }
     activeId = null
   }

@@ -1,7 +1,7 @@
 import {AppState} from "react-native"
 
 import {engine, SETTINGS} from "@mentra/engine"
-import {acsMeetingPreviewSource, setStreamPreviewHost, type MentraUIRouter} from "@mentra/engine-host-internal"
+import {setStreamPreviewHost, streamPreviewSource, type MentraUIRouter} from "@mentra/engine-host-internal"
 import {PREVIEW_UI_CHANNEL} from "@mentra/miniapp"
 
 import {
@@ -55,7 +55,7 @@ export function getStreamPreviewCoordinator(): StreamPreviewCoordinator {
   if (!coordinator) {
     coordinator = new StreamPreviewCoordinator({
       native: loadNative(),
-      meetings: acsMeetingPreviewSource,
+      meetings: streamPreviewSource,
       diagnosticsAllowed,
       ui: {
         reply: (packageName, requestId, reply) =>

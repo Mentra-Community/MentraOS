@@ -61,12 +61,17 @@ class FakeNative implements StreamPreviewNative {
     return {
       protocolVersion: this.protocolVersion,
       transport: this.transport,
-      url: URL_WITH_TOKEN,
+      url: this.url,
       token: TOKEN,
       docGen: options.docGen,
     }
   }
-  async configure(options: {targetWidth: number; targetHeight: number; maxFps: number}) {
+  /** What the transport currently listens on; a test moves it to model a rebound listener. */
+  url = URL_WITH_TOKEN
+  /** The origin each `configure` asked native to deliver, in order. */
+  origins: string[] = []
+  async configure(options: {origin: string; targetWidth: number; targetHeight: number; maxFps: number}) {
+    this.origins.push(options.origin)
     this.calls.push(`configure:${options.targetWidth}x${options.targetHeight}@${options.maxFps}`)
   }
   async start() {
@@ -102,16 +107,40 @@ class FakeNative implements StreamPreviewNative {
   }
 }
 
-/** The read-only meeting view. Anything but these two members counts as touching the call. */
+/**
+ * The read-only source view: an ACS meeting and a managed relay, resolved by ownership with the
+ * meeting first. Anything but these two members counts as touching the call.
+ */
 class FakeMeetings {
   meeting: {ownerPackage: string; instanceId: string} | null = null
+  relay: {ownerPackage: string; instanceId: string} | null = null
   touched: string[] = []
   listenerErrors: unknown[] = []
   private seq = 0
+  private relaySeq = 0
   private listeners = new Set<(id: string) => void>()
-  current() {
+  current(packageName: string) {
     this.touched.push("current")
-    return this.meeting
+    if (this.meeting?.ownerPackage === packageName) return {...this.meeting, origin: "acs" as const}
+    if (this.relay?.ownerPackage === packageName) return {...this.relay, origin: "relay" as const}
+    return null
+  }
+  /** A managed stream the package provisioned, with a phone relay decoding it. */
+  startRelay(owner: string) {
+    this.relaySeq += 1
+    this.relay = {ownerPackage: owner, instanceId: `relay-s${this.relaySeq}`}
+  }
+  endRelay() {
+    const relay = this.relay
+    this.relay = null
+    if (!relay) return
+    for (const listener of this.listeners) {
+      try {
+        listener(relay.instanceId)
+      } catch (error) {
+        this.listenerErrors.push(error)
+      }
+    }
   }
   onReleased(listener: (id: string) => void) {
     this.touched.push("onReleased")
@@ -217,8 +246,9 @@ function result(reply: MentraUIHostReply): Record<string, unknown> {
 }
 
 /** A mounted, visible preview: lease held, view bound, document handshaken, production running. */
-async function running(mountEpoch = 1) {
-  meetings.join(PKG)
+async function running(mountEpoch = 1, source: "meeting" | "relay" = "meeting") {
+  if (source === "meeting") meetings.join(PKG)
+  else meetings.startRelay(PKG)
   const lease = await startLease()
   await coordinator.bindView({packageName: PKG, hostViewTag: 42})
   coordinator.documentReady(PKG)
@@ -282,6 +312,127 @@ describe("authorization", () => {
   })
 })
 
+describe("relay source", () => {
+  test("the package that owns the managed relay gets a relay lease", async () => {
+    meetings.startRelay(PKG)
+    const lease = await startLease()
+    expect(lease).toEqual({handleId: "id1", previewTraceId: "id2", source: "call"})
+    expect(coordinator.getLeaseSnapshot()).toMatchObject({
+      packageName: PKG,
+      meetingId: "relay-s1",
+      origin: "relay",
+      state: "held",
+    })
+  })
+
+  test("a package that does not own the relay is refused", async () => {
+    meetings.startRelay(OTHER)
+    const error = await startLease().catch((e: {code: string}) => e)
+    expect((error as {code: string}).code).toBe("not_meeting_owner")
+    expect(coordinator.getLeaseSnapshot()).toBeNull()
+  })
+
+  test("the relay owner still needs CAMERA", async () => {
+    meetings.startRelay(PKG)
+    const error = await startLease(PKG, "rt-1", {hasCamera: false}).catch((e: {code: string}) => e)
+    expect((error as {code: string}).code).toBe("permission_denied")
+  })
+
+  test("native is configured for the origin the lease was granted for", async () => {
+    await running(1, "relay")
+    expect(native.origins).toEqual(["relay"])
+    expect(coordinator.isProducing()).toBe(true)
+  })
+
+  test("an ACS lease configures native for acs", async () => {
+    await running()
+    expect(native.origins).toEqual(["acs"])
+  })
+
+  test("the meeting wins when a package owns both a meeting and a relay", async () => {
+    meetings.startRelay(PKG)
+    meetings.join(PKG)
+    await startLease()
+    expect(coordinator.getLeaseSnapshot()).toMatchObject({meetingId: "m1", origin: "acs"})
+  })
+
+  test("a relay lease ends when its package comes to own a meeting, and the next lease is acs", async () => {
+    await running(1, "relay")
+    meetings.join(PKG)
+    // The once-a-second native status is the backstop: no release event fired for the relay.
+    native.emit("onStatus", {running: true})
+    await flush()
+    expect(notified.at(-1)).toEqual({handleId: "id1", state: "ended", reason: "source_ended"})
+    expect(ui.events()).toContain("lease_ended:source_ended")
+    expect(native.calls.at(-1)).toBe("stop:source_ended")
+    await startLease()
+    expect(coordinator.getLeaseSnapshot()).toMatchObject({meetingId: "m1", origin: "acs"})
+  })
+
+  test("an acs lease survives the relay ending beside it", async () => {
+    meetings.startRelay(PKG)
+    await running()
+    meetings.endRelay()
+    await flush()
+    expect(coordinator.getLeaseSnapshot()).toMatchObject({meetingId: "m1", origin: "acs"})
+    expect(coordinator.isProducing()).toBe(true)
+    expect(notified.some((e) => e.state === "ended")).toBe(false)
+  })
+
+  test("ends when the relay ends: background hears ended, page hears lease_ended, production stops", async () => {
+    await running(1, "relay")
+    meetings.endRelay()
+    await flush()
+    expect(notified.at(-1)).toEqual({handleId: "id1", state: "ended", reason: "source_ended"})
+    expect(ui.events()).toContain("lease_ended:source_ended")
+    expect(native.calls.at(-1)).toBe("stop:source_ended")
+    expect(coordinator.getLeaseSnapshot()).toBeNull()
+  })
+
+  test("a new managed stream never inherits the old stream's lease", async () => {
+    meetings.startRelay(PKG)
+    await startLease()
+    // A new stream without the old one's release reaching us yet.
+    meetings.startRelay(PKG)
+    const second = await startLease()
+    expect(notified.find((e) => e.state === "ended")).toEqual({handleId: "id1", state: "ended", reason: "source_ended"})
+    expect(coordinator.getLeaseSnapshot()).toMatchObject({handleId: second.handleId, meetingId: "relay-s2"})
+  })
+
+  test("a relay lease survives a relay retry, which keeps the stream id", async () => {
+    await running(1, "relay")
+    // A retry replaces the native attempt, not the managed stream: the source reads the same.
+    native.emit("onStatus", {running: true, noSource: true})
+    await flush()
+    expect(coordinator.getLeaseSnapshot()).toMatchObject({meetingId: "relay-s1", origin: "relay", state: "held"})
+    expect(coordinator.isProducing()).toBe(true)
+    expect(ui.pushes.at(-1)?.payload).toMatchObject({t: "status", noSource: true})
+  })
+
+  test("a relay lease is reconfigured for acs after it is replaced", async () => {
+    const {identity} = await running(1, "relay")
+    meetings.endRelay()
+    await flush()
+    meetings.join(PKG)
+    await startLease()
+    const config = result(await page({cmd: "handshake", docGen: identity.docGen, mountEpoch: 2}))
+    const next = {docGen: config.docGen as number, token: config.token as string}
+    result(await page({cmd: "configure", ...next, mountEpoch: 2, boxWidth: 300, boxHeight: 169}))
+    result(await page({cmd: "start", ...next, mountEpoch: 2}))
+    await flush()
+    expect(native.origins).toEqual(["relay", "acs"])
+  })
+
+  test("another package's request cannot end the holder's lease", async () => {
+    await running(1, "relay")
+    meetings.join(OTHER)
+    const error = await startLease(OTHER, "rt-2").catch((e: {code: string}) => e)
+    expect((error as {code: string}).code).toBe("preview_busy")
+    expect(coordinator.getLeaseSnapshot()).toMatchObject({packageName: PKG, origin: "relay"})
+    expect(coordinator.isProducing()).toBe(true)
+  })
+})
+
 describe("single holder", () => {
   test("a second request is rejected with preview_busy and the first keeps delivering", async () => {
     await running()
@@ -339,11 +490,14 @@ describe("document generation", () => {
     const second = result(await page({cmd: "handshake", docGen: 1, mountEpoch: 1}))
     expect(first.docGen).toBe(1)
     expect(second.docGen).toBe(1)
-    expect(native.prepared).toBe(1)
+    expect(second.token).toBe(first.token)
+    // `running()` made the first handshake; each later one means the page lost its transport, so
+    // native is asked again.
+    expect(native.prepared).toBe(3)
     coordinator.documentReady(PKG)
     const next = result(await page({cmd: "handshake", docGen: 0, mountEpoch: 1}))
     expect(next.docGen).toBe(2)
-    expect(native.prepared).toBe(2)
+    expect(native.prepared).toBe(4)
     expect(lines.filter((l) => l.includes("phase=doc_gen")).map((l) => /trigger=(\S+)/.exec(l)![1])).toEqual([
       "ready",
       "ready",
@@ -650,6 +804,27 @@ describe("native stops", () => {
     result(await page({cmd: "start", ...identity, mountEpoch: 1}))
     await flush()
     expect(native.count("start")).toBe(1)
+  })
+})
+
+describe("a page that handshakes again after losing its transport", () => {
+  test("is handed the address native has now, not the one it already failed on", async () => {
+    await running()
+    const first = result(await page({cmd: "handshake", docGen: 1, mountEpoch: 1}))
+    expect(first.url).toBe(URL_WITH_TOKEN)
+
+    // iOS closed the old listener while the app was suspended; native bound a new one.
+    native.url = "ws://127.0.0.1:41999/preview?token=SECRET-TOKEN-7d1f"
+    const again = result(await page({cmd: "handshake", docGen: 1, mountEpoch: 1}))
+
+    expect(again.url).toBe(native.url)
+    expect(again.token).toBe(first.token)
+    expect(again.docGen).toBe(1)
+  })
+
+  test("a document's first handshake asks native once", async () => {
+    await running()
+    expect(native.prepared).toBe(1)
   })
 })
 

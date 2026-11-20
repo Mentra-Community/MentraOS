@@ -16,7 +16,7 @@ class LocalWhipIngestSourceTest {
     assertThat(source.state).isEqualTo(SourceState.LIVE)
 
     repeat(2) {
-      repeat(3) { sample(source) }
+      repeat(IngestStallPolicy.STALL_SAMPLES) { sample(source) }
       assertThat(source.state).isEqualTo(SourceState.FAILED)
       frame(source)
       assertThat(source.state).isEqualTo(SourceState.LIVE)
@@ -33,9 +33,9 @@ class LocalWhipIngestSourceTest {
     val source = source()
     arm(source)
     frame(source)
-    repeat(3) { sample(source, generation = -1) }
+    repeat(IngestStallPolicy.STALL_SAMPLES) { sample(source, generation = -1) }
     assertThat(source.state).isEqualTo(SourceState.LIVE)
-    repeat(2) { sample(source) }
+    repeat(IngestStallPolicy.STALL_SAMPLES - 1) { sample(source) }
     assertThat(source.state).isEqualTo(SourceState.LIVE)
     sample(source)
     assertThat(source.state).isEqualTo(SourceState.FAILED)

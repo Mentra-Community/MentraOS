@@ -93,6 +93,14 @@ export interface StartStreamOptions {
    * lifetime of the stream. Defaults to true. Older Mentra Apps ignore this.
    */
   captureAudio?: boolean
+  /**
+   * Managed WHIP only. The phone relays the glasses' video through its own uplink; with this set it
+   * forwards the encoded H.264 as it arrives instead of decoding and encoding it again. That saves the
+   * phone's CPU and a generation of picture quality. The cost is that the picture size and bitrate are
+   * the glasses', so a weak uplink cannot be adapted to. Ignored unless the host sets
+   * `hostFeatures.videoPassthrough`, so a caller can pass it without checking.
+   */
+  videoPassthrough?: boolean
 }
 
 export interface StreamResult {
@@ -348,6 +356,7 @@ export class StreamModule {
       sound: options.sound ?? true,
       ingest: options.ingest,
       ...(typeof options.captureAudio === "boolean" ? {captureAudio: options.captureAudio} : {}),
+      ...(options.videoPassthrough === true ? {videoPassthrough: true} : {}),
     })
   }
 
