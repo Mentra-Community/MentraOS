@@ -222,7 +222,11 @@ function clientIp(c: C): string {
 
 // --- routes -----------------------------------------------------------------------
 
-/** `GET /api/{admin,portal}/auth/login?return_to`: start the code flow. */
+/**
+ * `GET /api/{admin,portal}/auth/login?return_to[&prompt=select_account]`: start the code flow. `select_account` is
+ * the portal's "Use another account": the sign-in server is asked for `prompt=login`, so it signs the person in again
+ * instead of reusing its session, and asks the identity provider behind it for its account picker.
+ */
 export async function startPortalSignIn(c: C, portal: PortalKind): Promise<Response> {
   const pc = portalClientIfConfigured(portal)
   if (!pc) return notConfigured(c, portal)
@@ -258,6 +262,7 @@ export async function startPortalSignIn(c: C, portal: PortalKind): Promise<Respo
     nonce: tx.nonce,
     code_challenge: s256(tx.pkceVerifier),
     code_challenge_method: "S256",
+    ...(c.req.query("prompt") === "select_account" ? {prompt: "login"} : {}),
   })
   setCookie(c, txCookieName(pc.secureCookies), cookieValue, cookieOptions(pc.secureCookies, Math.floor(LOGIN_TRANSACTION_TTL_MS / 1000)))
   c.header("cache-control", "no-store")

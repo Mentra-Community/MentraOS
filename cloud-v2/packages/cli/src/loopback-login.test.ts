@@ -77,6 +77,24 @@ describe("loopbackLogin", () => {
     for (const name of ["state", "nonce", "code_challenge"]) expect(first!.get(name)).not.toBe(second!.get(name))
   })
 
+  test("a plain login reuses the browser's session; --another-account asks to sign in again", async () => {
+    const prompts: (string | null)[] = []
+    for (const anotherAccount of [false, true]) {
+      let browser: Promise<unknown> | undefined
+      await loopbackLogin(await oidc(), {
+        openBrowser: async url => {
+          prompts.push(new URL(url).searchParams.get("prompt"))
+          browser = idp.approveInBrowser(url, {sub: "mu_1"})
+          return true
+        },
+        print: () => {},
+        anotherAccount,
+      })
+      await browser
+    }
+    expect(prompts).toEqual([null, "login"])
+  })
+
   test("with its first port taken, login uses the next one", async () => {
     releases.push(await occupy(free[0]!))
     let browser: Promise<unknown> | undefined

@@ -76,6 +76,17 @@ not confirmed` when the sign-in server could not confirm it; the login is
 deleted from this computer either way. It ends only this login: your other CLI
 logins and Mentra sign-ins stay signed in.
 
+### As another account
+
+`mentra login` signs in with the account your browser is already signed in to
+Mentra with. To sign in as someone else, run:
+
+```bash
+mentra login --another-account
+```
+
+The browser then asks you to sign in again, so you can choose the account.
+
 ### Without a local browser
 
 On a machine without a browser, for example over SSH, run:

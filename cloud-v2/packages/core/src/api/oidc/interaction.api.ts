@@ -7,7 +7,8 @@
  *   GET  /interaction/:uid
  *        Login, hosted Core: 303 to the sign-in page's `/login?interaction=<uid>`.
  *        Login, Private Cloud: start the code flow at the customer's identity
- *        provider (rate-limited).
+ *        provider (rate-limited). A client's `prompt=login` ("Use another
+ *        account") asks that provider to let the person choose an account.
  *        Consent: a first-party client is granted without a screen; any other
  *        client goes to the sign-in page's `/consent?interaction=<uid>`.
  *   GET  /interaction/:uid/details
@@ -117,7 +118,7 @@ async function showInteraction(provider: Provider, ctx: KoaContext, issuer: stri
     const source = signInSource()
     if (!source) return notConfiguredPage(ctx)
     if (source.kind === "supabase") return redirect(ctx, `${issuer}/login?interaction=${encodeURIComponent(uid)}`)
-    return startUpstream(ctx, issuer, source, uid)
+    return startUpstream(ctx, issuer, source, uid, String(details.params.prompt ?? "").split(" ").includes("login"))
   }
   if (details.prompt.name === "consent") {
     const client = await findClient(clientId)
@@ -206,7 +207,7 @@ async function consentDecision(provider: Provider, ctx: KoaContext, issuer: stri
   return json(ctx, 200, {redirectTo})
 }
 
-async function startUpstream(ctx: KoaContext, issuer: string, source: WebIdentityProvider, uid: string): Promise<void> {
+async function startUpstream(ctx: KoaContext, issuer: string, source: WebIdentityProvider, uid: string, chooseAccount: boolean): Promise<void> {
   if (!(await withinLimit(`oidc-upstream-start:ip:${clientIp(ctx)}`, UPSTREAM_START_LIMIT_PER_MINUTE))) return tooManyPage(ctx)
   let authorizationUrl: URL
   let cookieValue: string
@@ -217,6 +218,7 @@ async function startUpstream(ctx: KoaContext, issuer: string, source: WebIdentit
       state: started.tx.state,
       nonce: started.tx.nonce,
       codeChallenge: s256(started.tx.pkceVerifier),
+      chooseAccount,
     })
   } catch (err) {
     logger.error({errorName: (err as Error)?.name}, "could not start the identity provider sign-in")

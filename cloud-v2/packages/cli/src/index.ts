@@ -47,13 +47,15 @@ program
   .description("Sign in to Mentra in your browser")
   .option("--no-browser", "print the sign-in URL instead of opening a browser (for SSH, forward the port it names)")
   .addOption(new Option("--no-open", "same as --no-browser").hideHelp())
-  .action(async (options: { browser: boolean; open: boolean }) => {
+  .option("--another-account", "sign in as someone else than the account your browser is signed in with")
+  .action(async (options: { browser: boolean; open: boolean; anotherAccount?: boolean }) => {
     try {
       const config = getConfig();
       const oidc = await ensureOidcClient(config);
       const result = await loopbackLogin(oidc, {
         openBrowser: options.browser && options.open ? openBrowser : async () => false,
         print: (line) => console.log(line),
+        anotherAccount: options.anotherAccount === true,
       });
       const credentials: CliCredentials = {
         token: result.accessToken,

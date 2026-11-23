@@ -307,7 +307,7 @@ Core's sign-in server; Core runs their server side.
 
 | Route (on the portal's origin) | What it does |
 | --- | --- |
-| `GET /api/admin/auth/login?return_to=…`, `GET /api/portal/auth/login?return_to=…` | Starts the code flow: scope `openid email profile`, S256 PKCE, `state` and `nonce`. `return_to` must be a relative path; anything else becomes `/`. 20 per minute per IP. |
+| `GET /api/admin/auth/login?return_to=…`, `GET /api/portal/auth/login?return_to=…` | Starts the code flow: scope `openid email profile`, S256 PKCE, `state` and `nonce`. `return_to` must be a relative path; anything else becomes `/`. `prompt=select_account` (the portal's **Use another account**) asks the sign-in server for `prompt=login`. 20 per minute per IP. |
 | `GET /api/admin/auth/callback`, `GET /api/portal/auth/callback` | Redeems the code with `client_secret_post` and verifies the ID token with Core's own key: `kid`, `iss`, `aud` (and `azp`), `nonce`, expiry. Starts a portal session for `sub` and redirects to `return_to`. Any failure shows a fixed page with **Try again** and sets no session cookie. 30 per minute per IP. |
 | `POST /api/admin/auth/logout`, `POST /api/portal/auth/logout` | Same-origin only. Ends the portal session and answers `{signOutUrl}`: the sign-in server's end-session endpoint with the portal's `client_id` and `post_logout_redirect_uri` `<portal origin>/`, from configuration. Null when the portal's sign-in is not configured. |
 
@@ -319,10 +319,18 @@ client; with the sign-in server on, Core refuses to start otherwise.
 sends the tab to `signOutUrl` (replacing the page, so Back does not return to
 a signed-in page). The sign-in server signs the person out of their Mentra
 account without asking and returns them to `<portal origin>/`, the portal's
-sign-in page. The next sign-in goes through the sign-in step again, so this is
-also how a person switches accounts (on a Private Cloud, the customer's identity
-provider keeps its own session); in the workspace portal, an invitation waiting
-in the tab is where signing in again returns. Without a `signOutUrl` (or when the call
+sign-in page, which waits for a click: it never sends the person straight back
+to sign in after a sign-out. In the workspace portal, an invitation waiting in
+the tab is where signing in again returns.
+
+**Switching accounts.** The identity provider behind the sign-in server keeps
+its own session: Google's on hosted Core, Microsoft Entra's on a Private Cloud.
+**Sign in** reuses it, which is single sign-on. **Use another account**, under
+it on each portal's sign-in page, asks the sign-in server for `prompt=login`;
+the sign-in server then asks the provider to let the person choose: on hosted
+Core its sign-in page offers each way in again (Google with its account
+chooser), and on a Private Cloud Entra gets `prompt=select_account`, any other
+provider `prompt=login`. Without a `signOutUrl` (or when the call
 fails) the portal shows its own signed-out page with **Sign in again**. When the
 client registers other post-logout URIs but not `<portal origin>/`, the URL
 names the client alone and the sign-in server asks to confirm. Other sites the

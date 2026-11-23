@@ -122,14 +122,16 @@ afterAll(async () => {
 const browserOnCore = () => new Browser((url, init) => fetch(url, init))
 const coreRequest = (path: string, init?: RequestInit) => fetch(`${CORE_HOST}${path}`, {redirect: "manual", ...init})
 
-async function signIn(person: {sub: string; email: string; claims: Record<string, unknown>}) {
+async function signIn(person: {sub: string; email: string; claims: Record<string, unknown>}, {anotherAccount = false} = {}) {
   const browser = browserOnCore()
-  const login = await browser.request(`${CORE_HOST}/api/admin/auth/login?return_to=%2F%3Freport%3Drep_1`)
+  const login = await browser.request(`${CORE_HOST}/api/admin/auth/login?return_to=%2F%3Freport%3Drep_1${anotherAccount ? "&prompt=select_account" : ""}`)
   expect(login.status).toBe(302)
   const authorize = new URL(login.headers.get("location")!)
   expect(authorize.origin).toBe(CORE_HOST)
   const step = await browser.follow(authorize.href, location => location.origin === new URL(ENTRA_ISSUER).origin)
   if (!("stoppedAt" in step)) throw new Error("no redirect to Entra")
+  // Sign in reuses Entra's session (single sign-on); Use another account asks for Entra's account picker.
+  expect(step.stoppedAt.searchParams.get("prompt")).toBe(anotherAccount ? "select_account" : null)
   const back = await entra.approve(step.stoppedAt, person)
   expect(back.origin).toBe(CORE_HOST)
   const toPortal = await browser.follow(back.href, location => location.pathname === "/api/admin/auth/callback")
@@ -156,6 +158,15 @@ describe("a Private Cloud admin portal on Core's host", () => {
     expect(body.user).toMatchObject({mentraUserId: phoneUser.mentraUserId, email: "it-admin@contoso.com", emailVerified: true, isOrganizationAdmin: true})
     expect(body.organization.capabilities).toContain("organization.workspaces.administer")
     expect((await coreRequest("/api/admin/reports", {headers: {cookie: `${ADMIN_COOKIE}=${session}`}})).status).toBe(200)
+  })
+
+  test("Use another account asks Entra for its account picker and signs in the account chosen there", async () => {
+    const {done, session} = await signIn(
+      {sub: "pairwise-other", email: "it-admin@contoso.com", claims: {oid: "entra-oid-admin", tid: ENTRA_TENANT}},
+      {anotherAccount: true},
+    )
+    expect(done.status).toBe(302)
+    expect(session).not.toBeNull()
   })
 
   test("neither the admin session cookie nor the sign-in server's cookies authenticate another route group (Review Focus 4)", async () => {

@@ -113,6 +113,8 @@ export async function loopbackLogin(
     openBrowser: (url: string) => Promise<boolean>
     print: (line: string) => void
     timeoutMs?: number
+    /** `--another-account`: the sign-in server signs the person in again instead of reusing its browser session. */
+    anotherAccount?: boolean
   },
 ): Promise<LoopbackLoginResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_LOGIN_TIMEOUT_MS
@@ -188,6 +190,7 @@ export async function loopbackLogin(
         code_challenge_method: "S256",
         state,
         nonce,
+        ...(opts.anotherAccount ? {prompt: "login"} : {}),
       })
       .toString()
     opts.print("Sign in to Mentra in your browser:")

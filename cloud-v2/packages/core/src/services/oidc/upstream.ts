@@ -80,11 +80,16 @@ async function upstreamConfiguration(provider: WebIdentityProvider): Promise<cli
   return config
 }
 
-/** The provider's authorization URL for this sign-in. Throws on a discovery outage. */
+/**
+ * The provider's authorization URL for this sign-in. Throws on a discovery outage. Without `chooseAccount` the
+ * provider may sign its current account in without asking (single sign-on). With it, Microsoft Entra gets
+ * `prompt=select_account`, its account picker, and any other provider `prompt=login`, the one value every provider
+ * supports, so the person can sign in as someone else.
+ */
 export async function upstreamAuthorizationUrl(
   provider: WebIdentityProvider,
   redirectUri: string,
-  tx: {state: string; nonce: string; codeChallenge: string},
+  tx: {state: string; nonce: string; codeChallenge: string; chooseAccount?: boolean},
 ): Promise<URL> {
   const config = await upstreamConfiguration(provider)
   return client.buildAuthorizationUrl(config, {
@@ -94,6 +99,7 @@ export async function upstreamAuthorizationUrl(
     nonce: tx.nonce,
     code_challenge: tx.codeChallenge,
     code_challenge_method: "S256",
+    ...(tx.chooseAccount ? {prompt: new URL(provider.issuer).hostname === "login.microsoftonline.com" ? "select_account" : "login"} : {}),
   })
 }
 

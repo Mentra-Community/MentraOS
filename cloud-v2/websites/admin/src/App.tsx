@@ -776,6 +776,15 @@ export function LoginGate({ denied = false, onSignOut, signingOut = false }: { d
                 Sign in
               </a>
             )}
+            {denied ? null : (
+              // The identity provider would otherwise sign in the account it already holds, without asking.
+              <a
+                className="mt-3 block font-display text-[13px] font-semibold text-[#14141a] underline-offset-4 hover:underline"
+                href={`${loginUrl}&prompt=select_account`}
+              >
+                Use another account
+              </a>
+            )}
 
             <div className="h-5" />
             <p className="font-body text-[11.5px] leading-4 text-[#a6a6ac]">

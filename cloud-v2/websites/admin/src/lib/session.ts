@@ -3,7 +3,8 @@
  *
  * Sign-in starts at `/api/admin/auth/login` with a relative `return_to` (the
  * current path and query, so report and test-run deep links survive the round
- * trip).
+ * trip). "Use another account" adds `prompt=select_account`, which asks the
+ * identity provider for its account picker.
  *
  * Sign-out is one step: Core ends the admin portal session and answers the URL
  * that signs the person out of their Mentra account too, at Core's sign-in
