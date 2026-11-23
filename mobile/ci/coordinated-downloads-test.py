@@ -62,6 +62,23 @@ class AppIdentity(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'identity'):
                     downloads.validate_app(app, {**plan, 'native': {**plan['native'], 'buildNumber': 43}}, ota)
 
+    def test_example_carries_the_release_in_its_stamped_sdk_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = Path(temporary)
+            plan = {'native': {'buildNumber': 42, 'marketingVersion': '3.2.1'},
+                    'releaseIdentity': '3.2.1-dev.42', 'sourceCommit': 'a' * 40}
+            ota = 'https://example.com/this-release.json'
+            (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': downloads.BUNDLE_ID,
+                'CFBundleExecutable': 'Example', 'CFBundleVersion': '42', 'CFBundleShortVersionString': '3.2.1',
+                'CFBundleSupportedPlatforms': ['iPhoneOS']}))
+            bundle = app / 'main.jsbundle'
+            bundle.write_text(f'release={plan["releaseIdentity"]} commit={plan["sourceCommit"]} ota={ota}')
+            with patch.dict(downloads.APP, prefix='mentra-example', bundleId=downloads.BUNDLE_ID), \
+                 patch.object(downloads, 'run'):
+                downloads.validate_app(app, plan, ota)
+                with self.assertRaisesRegex(ValueError, 'OTA pin'):
+                    downloads.validate_app(app, plan, 'https://example.com/other-release.json')
+
 
 @unittest.skipUnless(sys.platform == 'darwin', 'Needs native Mach-O signing tools')
 class CompiledCode(unittest.TestCase):

@@ -29,11 +29,19 @@ def validate_app(app, plan, ota_url):
             or 'iPhoneOS' not in info.get('CFBundleSupportedPlatforms', [])
             or Path(info.get('CFBundleExecutable', '')).name != info.get('CFBundleExecutable')):
         raise ValueError('Download does not match the coordinated iOS app identity')
-    config = json.loads((app / 'EXConstants.bundle/app.config').read_text())
-    build = (config.get('extra') or {}).get('mentraBuild') or {}
-    if (build.get('schemaVersion') != 2 or build.get('identity') != plan['releaseIdentity']
-            or (build.get('buildInfo') or {}).get('commit') != plan['sourceCommit']
-            or not ota_url or build.get('otaManifestUrl') != ota_url):
+    if APP['prefix'] == 'mentra':
+        # The Mentra App reads its release and OTA pin from its packaged build config (app.config.ts).
+        config = json.loads((app / 'EXConstants.bundle/app.config').read_text())
+        build = (config.get('extra') or {}).get('mentraBuild') or {}
+        packaged = (build.get('schemaVersion') == 2 and build.get('identity') == plan['releaseIdentity']
+                    and (build.get('buildInfo') or {}).get('commit') == plan['sourceCommit']
+                    and ota_url and build.get('otaManifestUrl') == ota_url)
+    else:
+        # The example reads them from the Bluetooth SDK metadata stamped into its JavaScript (stamp-release.sh).
+        bundle = (app / 'main.jsbundle').read_bytes()
+        packaged = all(value and value.encode() in bundle
+                       for value in (plan['releaseIdentity'], plan['sourceCommit'], ota_url))
+    if not packaged:
         raise ValueError('Download does not package the coordinated release metadata or OTA pin')
     run('codesign', '--verify', '--deep', '--strict', app)
     run('codesign', '--verify', '-R', '=anchor apple generic', app)
