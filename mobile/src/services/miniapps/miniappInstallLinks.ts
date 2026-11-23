@@ -1,6 +1,7 @@
 /**
  * The links people install miniapps from (spec, "Installing"), read the same way wherever they arrive: a Universal
- * Link or App Link, the QR scanner, or the paste box.
+ * Link or App Link, the QR scanner, or the paste box. The engine reads them (`@mentra/engine/miniapp-links`); this is
+ * the Mentra App's reading of them, which adds its own scheme.
  *
  * - **An open link,** `https://apps.mentraglass.com/open?url=<miniapp URL>`, names a miniapp URL.
  * - **A package link,** `https://apps.mentraglass.com/package/<packageName>`, names a listed miniapp; the directory
@@ -11,47 +12,28 @@
  * `apps.mentra.glass` and the Mentra App's own scheme (`com.mentra://open?url=…`, or the dev app's
  * `com.mentra.dev://open?url=…`) are read the same way.
  */
-import {MINIAPP_PACKAGE_NAME_PATTERN, normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
+import {
+  isMiniappLink,
+  MINIAPP_LINK_HOSTS,
+  miniappPackageLink,
+  parseMiniappLink,
+  type MiniappLink,
+} from "@mentra/engine/miniapp-links"
 
 /** The hosts the Mentra App claims app links on: the directory website, and its former name. */
-export const MENTRA_APP_LINK_HOSTS: readonly string[] = ["apps.mentraglass.com", "apps.mentra.glass"]
+export const MENTRA_APP_LINK_HOSTS: readonly string[] = MINIAPP_LINK_HOSTS
 
 /** The Mentra App's own URL scheme. */
 export const MENTRA_APP_SCHEME = "com.mentra"
 
-/** Where a package link opens without a directory to look it up in. */
-const DIRECTORY_WEBSITE = "https://apps.mentraglass.com"
+/** The schemes the Mentra App reads miniapp links on: its own, and the dev app's. */
+const MINIAPP_LINK_SCHEMES: readonly string[] = [MENTRA_APP_SCHEME, `${MENTRA_APP_SCHEME}.dev`]
 
-export type MiniappInstallLink =
-  /** A miniapp URL, normalized (it ends in `/`). `local`: a local-network address. */
-  | {kind: "url"; url: string; local: boolean}
-  /** A package link: the directory names the URL. */
-  | {kind: "package"; packageName: string}
-
-/** The open link's and the package link's paths. */
-const OPEN_PATH = /^\/open\/?$/
-const PACKAGE_PATH = /^\/(?:package|app)\/([^/]+)\/?$/
-/** A scheme, as opposed to a host and port (`localhost:8080`). */
-const SCHEME = /^[a-z][a-z0-9+.-]*:(?!\d)/i
+export type MiniappInstallLink = MiniappLink
 
 /** Read what a person scanned, pasted or opened, or null when it names no miniapp. */
 export function parseMiniappInstallLink(input: string): MiniappInstallLink | null {
-  if (typeof input !== "string") return null
-  const text = withScheme(input.trim())
-  if (!text) return null
-  const link = appLinkPath(text)
-  if (link) {
-    if (OPEN_PATH.test(link.path)) {
-      const named = link.query.get("url")
-      // An open link names a miniapp URL, never another link.
-      if (!named || appLinkPath(named.trim())) return null
-      return miniappUrl(named)
-    }
-    const pkg = PACKAGE_PATH.exec(link.path)?.[1]
-    if (pkg && MINIAPP_PACKAGE_NAME_PATTERN.test(pkg)) return {kind: "package", packageName: pkg}
-    return null
-  }
-  return miniappUrl(text)
+  return parseMiniappLink(input, {schemes: MINIAPP_LINK_SCHEMES})
 }
 
 /**
@@ -59,14 +41,12 @@ export function parseMiniappInstallLink(input: string): MiniappInstallLink | nul
  * reads it (`DeeplinkContext`), and says so when it names no miniapp. Takes a full URL or a path (`/open?url=…`).
  */
 export function isMiniappInstallLinkPath(path: string): boolean {
-  if (typeof path !== "string") return false
-  const link = appLinkPath(path.startsWith("/") ? `${DIRECTORY_WEBSITE}${path}` : path)
-  return link !== null && (OPEN_PATH.test(link.path) || PACKAGE_PATH.test(link.path))
+  return isMiniappLink(path, {schemes: MINIAPP_LINK_SCHEMES})
 }
 
 /** The package's page on the directory website. */
 export function directoryPackageLink(packageName: string): string {
-  return `${DIRECTORY_WEBSITE}/package/${encodeURIComponent(packageName)}`
+  return miniappPackageLink(packageName)
 }
 
 /**
@@ -97,36 +77,4 @@ export function isMentraAppLink(url: string): boolean {
   } catch {
     return false
   }
-}
-
-/** The path and query of an app link (an app-link host, or the app's own scheme), or null for any other URL. */
-function appLinkPath(text: string): {path: string; query: URLSearchParams} | null {
-  let url: URL
-  try {
-    url = new URL(text)
-  } catch {
-    return null
-  }
-  const protocol = url.protocol.toLowerCase()
-  if (protocol === `${MENTRA_APP_SCHEME}:` || protocol === `${MENTRA_APP_SCHEME}.dev:`) {
-    // `com.mentra://open?url=…`: the host is the first part of the path.
-    return {path: `/${url.hostname}${url.pathname === "/" ? "" : url.pathname}`, query: url.searchParams}
-  }
-  if (protocol !== "https:" && protocol !== "http:") return null
-  const host = url.hostname.toLowerCase().replace(/\.$/, "")
-  return MENTRA_APP_LINK_HOSTS.includes(host) ? {path: url.pathname, query: url.searchParams} : null
-}
-
-/** An address a person typed without a scheme (`notes.example.com`, `apps.mentraglass.com/package/…`) is HTTPS. */
-function withScheme(text: string): string {
-  return text && !text.includes("://") && !SCHEME.test(text) ? `https://${text}` : text
-}
-
-/** A miniapp URL as a person gave it: a `.../miniapp.json` is the URL that serves it; no scheme means HTTPS. */
-function miniappUrl(text: string): MiniappInstallLink | null {
-  let value = withScheme(text.trim())
-  // Only the path: anything with a query or a fragment isn't a miniapp URL.
-  if (!/[?#]/.test(value)) value = value.replace(/\/miniapp\.json\/?$/i, "/")
-  const normalized = normalizeMiniappUrl(value)
-  return normalized ? {kind: "url", url: normalized.url, local: normalized.kind === "local"} : null
 }

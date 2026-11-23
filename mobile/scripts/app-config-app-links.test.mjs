@@ -5,6 +5,7 @@ import test from "node:test"
 
 const mobile = fileURLToPath(new URL("..", import.meta.url))
 
+/** The app config with the `@mentra/engine` plugin applied as Expo applies it: it claims the miniapp links. */
 function appConfig(track = "staging") {
   const output = execFileSync(
     process.execPath,
@@ -12,7 +13,7 @@ function appConfig(track = "staging") {
       "--require",
       "tsx/cjs",
       "--eval",
-      'const configure = require("./app.config.ts"); const c = configure({config: {}}); console.log(JSON.stringify({android: c.android.intentFilters, ios: c.ios.associatedDomains, scheme: c.scheme, package: c.android.package, name: c.name, displayName: c.ios.infoPlist.CFBundleDisplayName, plist: c.ios.infoPlist.CFBundleURLTypes}))',
+      'const configure = require("./app.config.ts"); let c = configure({config: {}}); const engine = c.plugins.filter((p) => (Array.isArray(p) ? p[0] : p) === "@mentra/engine"); for (const p of engine) c = require("@mentra/engine/app.plugin")(c, Array.isArray(p) ? p[1] : undefined); console.log(JSON.stringify({android: c.android.intentFilters, ios: c.ios.associatedDomains, scheme: c.scheme, package: c.android.package, name: c.name, displayName: c.ios.infoPlist.CFBundleDisplayName, plist: c.ios.infoPlist.CFBundleURLTypes}))',
     ],
     {
       cwd: mobile,

@@ -19,6 +19,7 @@ import {
   type InstallMiniappOptions,
   type InstallMiniappResult,
 } from "../services/installMiniapp"
+import {installMiniappFromLink, type InstallMiniappFromLinkOptions} from "../services/installMiniappFromLink"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
 import {fetchMiniappBundle, fetchMiniappJson} from "../services/miniappFetch"
 import {registryStatusStore} from "../services/miniappRegistryStatusStore"
@@ -42,6 +43,8 @@ type AppsState = ReturnType<typeof useAppStatusStore.getState>
 // A named function alias lets declaration inference choose the excluded internal
 // barrel. Keep its identity, but describe this public member with public DTOs.
 const install: (url: string, options: InstallMiniappOptions) => Promise<InstallMiniappResult> = installMiniapp
+const installFromLink: (link: string, options: InstallMiniappFromLinkOptions) => Promise<InstallMiniappResult> =
+  installMiniappFromLink
 
 const urlUpdater = new MiniappUrlUpdater({
   installedPackages: async () =>
@@ -188,6 +191,13 @@ export const miniapps = {
    * `InstallMiniappError` with a code.
    */
   install,
+  /**
+   * Install from what a person opened, scanned or pasted: an open link (`apps.mentraglass.com/open?url=…`, or
+   * `<scheme>://open?url=…` on one of the host app's `schemes`), a package link (looked up in `directoryUrl`) or a
+   * miniapp URL. Resolves as `install` does; throws `MiniappLinkError` when the link names nothing to install, and
+   * `InstallMiniappError` when the install stops.
+   */
+  installFromLink,
   /**
    * Read what the miniapp at a miniapp URL is called, its icon and version, from its `miniapp.json`, without
    * installing anything. Throws `InstallMiniappError` with a code.

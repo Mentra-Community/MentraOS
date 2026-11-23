@@ -51,11 +51,23 @@ resolve live TypeScript source):
   mounted: it starts the miniapp's background, loads its screen from the
   package's own origin and wires it to the background. It needs the patched
   `react-native-webview` the Mentra App ships.
+- **`@mentra/engine/miniapp-links`** (`src/miniapp-links/index.ts`) — the
+  miniapp link reader on its own, with no engine runtime behind it:
+  `parseMiniappLink`, `isMiniappLink` and the link hosts. A host reads the open
+  link (`https://apps.mentraglass.com/open?url=<miniapp URL>`) and the package
+  link here before the engine starts, then installs with
+  `engine.miniapps.installFromLink`.
 - **`@mentra/engine/bluetooth-sdk`** (`src/bluetooth-sdk/index.ts`) — the
   complete public Bluetooth SDK surface, re-exported without a wrapper so it
   has the same singleton identity as `@mentra/bluetooth-sdk`. The supported
   SDK `react`, `types`, `photo-receiver`, `ota-transport`, and `debug` subpaths are mirrored
   below this path. The SDK's `internal` entrypoint is deliberately not exposed.
+
+The package is also an Expo config plugin (`app.plugin.js`): `"plugins":
+["@mentra/engine"]` makes the host app claim the miniapp links as Universal Links
+and App Links. The links open an app only once Mentra lists it on the link hosts;
+see "Miniapp links" in the
+[engine docs](../../../mintlify-docs/glasses-oems/engine.mdx).
 
 See `cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md`
 §D for the burn-down plan.

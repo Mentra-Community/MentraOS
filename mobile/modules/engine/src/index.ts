@@ -44,6 +44,14 @@ export {
   type MiniappInstallPreview,
   type MiniappListing,
 } from "./services/installMiniapp"
+// engine.miniapps.installFromLink: its options and the codes of a link that names nothing to install. The link
+// reader itself is `@mentra/engine/miniapp-links`, which needs no engine runtime.
+export {
+  MiniappLinkError,
+  type InstallMiniappFromLinkOptions,
+  type MiniappLinkErrorCode,
+} from "./services/installMiniappFromLink"
+export type {MiniappLink, MiniappLinkOptions} from "./miniapp-links"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
 export type {
   AgeRestrictionNotice,

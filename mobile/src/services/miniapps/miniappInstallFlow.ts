@@ -15,6 +15,7 @@ import {
   type InstallMiniappSource,
   type MiniappInstallPreview,
 } from "@mentra/engine"
+import {fetchListedMiniappUrl} from "@mentra/engine/miniapp-links"
 import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
 import * as WebBrowser from "expo-web-browser"
 import Toast from "react-native-toast-message"
@@ -46,9 +47,6 @@ export interface MiniappInstallFlowOptions {
 
 /** Why an install failed, as the person is told: an engine code, or a failure before the engine ran. */
 type FailureKind = InstallMiniappErrorCode | "not_a_link" | "unlisted" | "directory_unreachable" | "unknown"
-
-/** How long a package link waits for the directory. */
-const DIRECTORY_TIMEOUT_MS = 15_000
 
 /** Installs under way, by miniapp URL: a second scan or tap of the same link joins nothing and shows nothing. */
 const inFlight = new Set<string>()
@@ -93,7 +91,7 @@ export async function startListedMiniappInstall(
   }
   let url: string | null
   try {
-    url = await listedMiniappUrl(directoryUrl, packageName)
+    url = await fetchListedMiniappUrl(directoryUrl, packageName)
   } catch (error) {
     console.warn(`MiniappInstall: the directory couldn't look up ${packageName}`, error)
     options.onPresent?.()
@@ -261,25 +259,6 @@ async function openInstalledMiniapp(packageName: string): Promise<boolean> {
   } catch (error) {
     console.warn(`MiniappInstall: couldn't open ${packageName}`, error)
     return false
-  }
-}
-
-/** The miniapp URL the directory lists for a package, or null when it lists none. Throws when it can't answer. */
-async function listedMiniappUrl(directoryUrl: string, packageName: string): Promise<string | null> {
-  const lookup = `${directoryUrl.replace(/\/+$/, "")}/api/directory/miniapps/${encodeURIComponent(packageName)}`
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), DIRECTORY_TIMEOUT_MS)
-  try {
-    // The directory is public: the request carries no account, token or cookie.
-    const response = await fetch(lookup, {credentials: "omit", signal: controller.signal})
-    if (response.status === 404) return null
-    if (!response.ok) throw new Error(`The directory answered ${response.status}`)
-    const listed = (await response.json()) as {packageName?: unknown; url?: unknown} | null
-    if (listed?.packageName !== packageName || typeof listed.url !== "string") return null
-    const target = normalizeMiniappUrl(listed.url)
-    return target?.kind === "public" ? target.url : null
-  } finally {
-    clearTimeout(timer)
   }
 }
 

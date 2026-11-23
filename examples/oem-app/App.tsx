@@ -4,6 +4,7 @@ import {useCallback, useEffect, useState} from "react"
 import {SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View} from "react-native"
 
 import {startEngineRuntime} from "./src/engineRuntime"
+import {listenForMiniappLinks} from "./src/miniappLinks"
 import {ActionButton, Section, StatusRow} from "./src/ui"
 import {useLog} from "./src/useLog"
 
@@ -33,7 +34,10 @@ export default function App() {
   useEffect(() => {
     let cleanup: (() => void) | undefined
     let unmounted = false
-    startEngineRuntime(log)
+    const started = startEngineRuntime(log)
+    // Miniapp links install through the engine: each waits for it to start.
+    const stopLinks = listenForMiniappLinks(log, started)
+    started
       .then((unsubscribe) => {
         if (unmounted) unsubscribe()
         else cleanup = unsubscribe
@@ -41,6 +45,7 @@ export default function App() {
       .catch((error) => logger.logError(`engine start failed: ${String(error)}`))
     return () => {
       unmounted = true
+      stopLinks()
       cleanup?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot bootstrap

@@ -207,23 +207,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // while-in-use permission only. Blocking it avoids the Play Store
       // background-location declaration/video review.
       blockedPermissions: ["android.permission.ACCESS_BACKGROUND_LOCATION"],
-      // App Links for the miniapp install links (the open link and the package link): Android verifies them
-      // against the directory website's assetlinks.json. The rest of the website stays in the browser.
-      intentFilters: variant.appLinks
-        ? [
-            {
-              action: "VIEW",
-              autoVerify: true,
-              data: [
-                {scheme: "https", host: "apps.mentra.glass", path: "/open"},
-                {scheme: "https", host: "apps.mentra.glass", pathPrefix: "/package/"},
-                {scheme: "https", host: "apps.mentraglass.com", path: "/open"},
-                {scheme: "https", host: "apps.mentraglass.com", pathPrefix: "/package/"},
-              ],
-              category: ["DEFAULT", "BROWSABLE"],
-            },
-          ]
-        : [],
+      // App Links for the miniapp links come from the @mentra/engine plugin below.
+      intentFilters: [],
     },
     ios: {
       icon: variant.icon,
@@ -233,7 +218,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       bundleIdentifier: iosBundleId,
       appleTeamId: "T5XXXL6N36",
       ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
-      associatedDomains: variant.appLinks ? ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"] : [],
+      // Universal Links for the miniapp links come from the @mentra/engine plugin below.
+      associatedDomains: [],
       infoPlist: {
         CFBundleDisplayName: appName,
         // Native collection must remain off until the deployment profile has
@@ -325,6 +311,9 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // Crust owns the Android dependencies and iOS Mapbox SPM/build-order setup.
       "@mentra/crust",
       "@mentra/acs-meeting",
+      // The engine claims the miniapp links (the open link and the package link) as Universal Links and App Links
+      // on the directory website's hosts; the rest of that website stays in the browser.
+      ...(variant.appLinks ? ["@mentra/engine"] : []),
       "./plugins/android.ts",
       // Xcode 26 rejects pod resource-bundle targets still pinned to iOS 11.
       "./plugins/ios-pod-min-deployment-target.ts",

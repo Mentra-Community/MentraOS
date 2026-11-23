@@ -45,6 +45,7 @@ describe("parseMiniappInstallLink", () => {
     "https://APPS.mentraglass.com/open/?url=https%3A%2F%2Fnotes.example.com%2Fminiapp.json",
     "com.mentra://open?url=https%3A%2F%2Fnotes.example.com%2F",
     "apps.mentraglass.com/open?url=notes.example.com",
+    "apps.mentraglass.com/open?url=https://notes.example.com/",
   ])("reads the miniapp URL an open link names: %s", (input) => {
     expect(parseMiniappInstallLink(input)).toEqual({kind: "url", url: "https://notes.example.com/", local: false})
   })

@@ -348,6 +348,7 @@ await engine.miniapps.setForeground(packageName)
 engine.miniapps.clearForeground()
 await engine.miniapps.stopAll()
 const {status} = await engine.miniapps.install(miniappUrl, {source: "link", confirm}) // "installed" | "opened" | "deferred"
+await engine.miniapps.installFromLink(link, {source: "link", confirm, schemes, directoryUrl}) // an open link, a package link or a miniapp URL
 await engine.miniapps.uninstall(packageName, version?)
 await engine.miniapps.invokeAction(packageName, actionId, params?, timeoutMs?) // host-only actions included
 const offPrompt = engine.miniapps.onUpdatePrompt((prompt) => {
@@ -386,6 +387,150 @@ update checks also ask Core which installed URLs are archived, and never update 
 installed copies keep running. Off, the engine installs any miniapp URL without
 registering it and asks Core nothing; the domain rule still applies. A host app that
 turns it off answers to the app stores' rules itself.
+
+### Miniapp links
+
+A miniapp link is an ordinary `https` link that opens your app on the miniapp it
+names. People tap it in a message, an email or a web page, or scan it as a QR code:
+
+```
+https://apps.mentraglass.com/open?url=<miniapp URL>        the open link
+https://apps.mentraglass.com/package/<packageName>         the package link
+```
+
+The open link names a miniapp URL directly. The package link names a miniapp listed
+in Mentra's directory, which says which URL serves it. Without an app that claims
+the link, it opens that miniapp's page on the directory website.
+
+Three things make a link open your app.
+
+**1. Claim the links in your build.** Add the engine's config plugin to your Expo
+config:
+
+```json
+{
+  "expo": {
+    "plugins": ["@mentra/engine"]
+  }
+}
+```
+
+It adds the link hosts to your iOS Associated Domains and a verified Android intent
+filter for the two paths, so the rest of the directory website stays in the browser.
+Pass `["@mentra/engine", {"miniappLinks": false}]` to claim nothing, for example in
+a development variant installed beside your released app. On iOS the Associated
+Domains capability must also be on for your App ID; EAS Build turns it on from the
+entitlement.
+
+A host with a hand-written native project declares the same two things itself:
+
+```xml
+<!-- iOS: the app's entitlements -->
+<key>com.apple.developer.associated-domains</key>
+<array>
+  <string>applinks:apps.mentraglass.com</string>
+  <string>applinks:apps.mentra.glass</string>
+</array>
+```
+
+```xml
+<!-- Android: inside the main activity in AndroidManifest.xml -->
+<intent-filter android:autoVerify="true">
+  <action android:name="android.intent.action.VIEW" />
+  <category android:name="android.intent.category.DEFAULT" />
+  <category android:name="android.intent.category.BROWSABLE" />
+  <data android:scheme="https" android:host="apps.mentraglass.com" android:path="/open" />
+  <data android:scheme="https" android:host="apps.mentraglass.com" android:pathPrefix="/package/" />
+  <data android:scheme="https" android:host="apps.mentra.glass" android:path="/open" />
+  <data android:scheme="https" android:host="apps.mentra.glass" android:pathPrefix="/package/" />
+</intent-filter>
+```
+
+`apps.mentra.glass` is the directory's former name; older links use it.
+
+**2. Ask Mentra to list your app.** iOS and Android open an `https` link in an app
+only when the link's website names that app, so Mentra has to add yours to
+`apps.mentraglass.com`. Email [help@mentra.glass](mailto:help@mentra.glass) with:
+
+- iOS: your Apple Team ID and the app's bundle identifier;
+- Android: the app's package name and the SHA-256 fingerprint of each certificate
+  that signs it (your upload key and, with Play App Signing, Google's app signing
+  key).
+
+Do this before you ship the build that claims the links. A phone checks the listing
+when your app is installed or updated, and Apple serves it from its own cache, which
+can take a day to pick up a change. Until your app is listed the links keep opening
+the directory website, and nothing in your app breaks.
+
+**3. Hand the link to the engine.** When the system gives your app a URL, pass it to
+`engine.miniapps.installFromLink` with your own install sheet as `confirm`:
+
+```ts
+import {engine, InstallMiniappError, MiniappLinkError} from "@mentra/engine"
+import {isMiniappLink} from "@mentra/engine/miniapp-links"
+import {Linking} from "react-native"
+
+const SCHEMES = ["myapp"] // your app's own URL schemes, if any
+
+async function openLink(url: string) {
+  if (!isMiniappLink(url, {schemes: SCHEMES})) return // one of your app's other links
+  try {
+    const {status, packageName} = await engine.miniapps.installFromLink(url, {
+      source: "link",
+      schemes: SCHEMES,
+      directoryUrl: "https://apps.mentraglass.com", // resolves package links
+      confirm: (preview) => showInstallSheet(preview), // resolve true to install
+    })
+    // "installed": show it on your home screen. "opened": it was installed already; open it.
+  } catch (error) {
+    if (error instanceof MiniappLinkError || error instanceof InstallMiniappError) showError(error.code)
+  }
+}
+
+Linking.addEventListener("url", ({url}) => openLink(url))
+Linking.getInitialURL().then((url) => url && openLink(url))
+```
+
+Call it once the engine has started. `installFromLink` takes the same options as
+`install`, plus:
+
+| Option | Purpose |
+|---|---|
+| `schemes` | Your app's own URL schemes, without `://`. `myapp://open?url=…` and `myapp://package/…` then read like the `https` links. A link on your own scheme opens your app without Mentra listing it, which is how to try the flow before you are listed. |
+| `directoryUrl` | The directory that resolves a package link. Mentra's is `https://apps.mentraglass.com`. Without one, a package link fails with `no_directory`. |
+
+It also accepts a miniapp URL on its own, so the same call serves a QR scanner or a
+paste box. A link that names nothing to install throws `MiniappLinkError`, whose
+`code` is `not_a_link`, `no_directory`, `unlisted` (the directory lists no such
+package) or `directory_unreachable`. Everything after that is `install`: the same
+`confirm`, the same results and the same `InstallMiniappError` codes.
+
+`@mentra/engine/miniapp-links` is the link reader on its own, with no engine runtime
+behind it, for code that runs before the engine starts (routing a cold-start link,
+for example):
+
+```ts
+import {isMiniappLink, parseMiniappLink} from "@mentra/engine/miniapp-links"
+
+isMiniappLink(url, {schemes})    // an open link or a package link, valid or not
+parseMiniappLink(text, {schemes})
+// {kind: "url", url, local} | {kind: "package", packageName} | null
+```
+
+Name the link hosts and your own schemes in `config.isHostLink` (below) once you
+claim them, so that no miniapp can open your install sheet:
+
+```ts
+import {isOnMiniappLinkHost} from "@mentra/engine/miniapp-links"
+
+engine.configure({
+  // …
+  config: {isHostLink: (url) => isOnMiniappLinkHost(url, {schemes: SCHEMES})},
+})
+```
+
+More than one app on a phone can claim the links. Android then asks the person which
+app to open; iOS opens one of them without asking.
 
 Pass `config.isHostLink(url)` to name your own app's links: its URL schemes and the
 addresses it claims as app links. A miniapp's `session.system.openUrl` never opens

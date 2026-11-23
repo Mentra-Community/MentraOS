@@ -10,6 +10,8 @@
  */
 import {engine, type IslandConfigureOptions} from "@mentra/engine"
 
+import {isHostLink} from "./miniappLinks"
+
 export type EngineLogger = (line: string) => void
 
 /** Configure + start the engine runtime; returns an unsubscribe for the demo listeners. */
@@ -22,7 +24,8 @@ export async function startEngineRuntime(log: EngineLogger): Promise<() => void>
         void callback // a real host forwards its auth-session events
       },
     },
-    config: {audioFrameSizeBytes: 20},
+    // isHostLink: no miniapp opens this app's own links, so none can raise its install confirmation.
+    config: {audioFrameSizeBytes: 20, isHostLink},
     analytics: (event, props) => log(`analytics: ${event}${props ? ` ${JSON.stringify(props)}` : ""}`),
     ui: {
       // Engine dispatches miniapp wifi-setup requests here; the OEM owns the screen.

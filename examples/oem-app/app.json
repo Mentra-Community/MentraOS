@@ -49,6 +49,7 @@
     "plugins": [
       "@mentra/crust",
       "@mentra/acs-meeting",
+      "@mentra/engine",
       [
         "@mentra/bluetooth-sdk",
         {

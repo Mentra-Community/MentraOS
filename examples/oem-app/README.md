@@ -19,13 +19,14 @@ can see each call's result or error without a Metro terminal attached.
 
 ## Layout
 
-| File              | Purpose                                                             |
-| ----------------- | ------------------------------------------------------------------- |
-| `App.tsx`         | Single screen: state, miniapp buttons, console                      |
-| `src/ui.tsx`      | `Section` / `ActionButton` / `StatusRow` presentational helpers     |
-| `src/useLog.ts`   | Tiny in-memory console hook (`run` wraps an engine call)            |
-| `app.json`        | Expo config: bluetooth-sdk plugin (native module), build properties |
-| `metro.config.js` | Watches `mobile/modules` so the SDKs resolve from the monorepo      |
+| File                  | Purpose                                                                 |
+| --------------------- | ----------------------------------------------------------------------- |
+| `App.tsx`             | Single screen: state, miniapp buttons, console                          |
+| `src/ui.tsx`          | `Section` / `ActionButton` / `StatusRow` presentational helpers         |
+| `src/useLog.ts`       | Tiny in-memory console hook (`run` wraps an engine call)                |
+| `src/miniappLinks.ts` | Miniapp links: hands a tapped link to `engine.miniapps.installFromLink` |
+| `app.json`            | Expo config: bluetooth-sdk and engine plugins, build properties         |
+| `metro.config.js`     | Watches `mobile/modules` so the SDKs resolve from the monorepo          |
 
 ## Running
 
@@ -56,6 +57,15 @@ cd ../../mobile/modules/engine && bun run build
 ```
 
 ## Notes
+
+- **Miniapp links.** The `@mentra/engine` plugin in `app.json` claims
+  `https://apps.mentraglass.com/open?url=<miniapp URL>`, and `src/miniappLinks.ts`
+  hands a tapped link to `engine.miniapps.installFromLink`. The `https` link opens
+  an app only once Mentra lists it on that host, which it doesn't for this example;
+  the app's own scheme works without that:
+  `adb shell am start -a android.intent.action.VIEW -d "exampleoemapp://open?url=https://notes.example.com/"`.
+  See "Miniapp links" in the
+  [engine docs](../../mintlify-docs/glasses-oems/engine.mdx).
 
 - The **Start** button launches the first registered app. In a real OEM
   integration you configure the engine with `engine.configure()` and install
