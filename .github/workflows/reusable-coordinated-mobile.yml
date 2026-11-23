@@ -408,8 +408,9 @@ jobs:
           )
           node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
           node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
-          grep -E '^(EXPO_PUBLIC_[A-Za-z0-9_]+|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
-          echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
+          grep -E '^(EXPO_PUBLIC_[A-Za-z0-9_]+|MENTRA_[A-Z_]+|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
+          # The compile's fingerprint, as PR builds compute it: app.config packages the release's own values with it.
+          node .github/scripts/pr-mobile-build.mjs android
 
       - name: Inject Android signing and Play credentials
         uses: ./.github/actions/inject-signing
@@ -776,8 +777,9 @@ jobs:
           )
           node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
           node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
-          grep -E '^(EXPO_PUBLIC_[A-Za-z0-9_]+|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
-          echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
+          grep -E '^(EXPO_PUBLIC_[A-Za-z0-9_]+|MENTRA_[A-Z_]+|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
+          # The compile's fingerprint, as PR builds compute it: app.config packages the release's own values with it.
+          node .github/scripts/pr-mobile-build.mjs ios
 
       - name: Check frozen source cache support
         id: cache-support

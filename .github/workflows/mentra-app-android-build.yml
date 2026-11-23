@@ -528,7 +528,7 @@ jobs:
           else
             cp mobile/android/app/build/outputs/apk/release/app-release.apk pr-mobile-base.apk
           fi
-          python3 .github/scripts/repackage-pr-apk.py package pr-mobile-base.apk "$MENTRA_PR_MOBILE_FINGERPRINT" \
+          python3 .github/scripts/repackage-pr-apk.py package pr-mobile-base.apk "$MENTRA_MOBILE_FINGERPRINT" \
             mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - name: Verify embedded OTA manifest pin
@@ -582,7 +582,7 @@ jobs:
           node .github/scripts/publish-immutable-release-asset.mjs \
             --file mobile/android/app/build/outputs/apk/release/app-release.apk --name "$name" --release-id "$release_id" \
             --repository "$GITHUB_REPOSITORY" --replace true \
-            --fingerprint "$MENTRA_PR_MOBILE_FINGERPRINT"
+            --fingerprint "$MENTRA_MOBILE_FINGERPRINT"
 
       - name: Cleanup old release assets
         if: (github.event_name == 'pull_request' || inputs.routine_pr != '')

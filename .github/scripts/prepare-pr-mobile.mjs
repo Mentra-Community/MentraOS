@@ -1,4 +1,4 @@
-import {appendFileSync, readFileSync} from "node:fs"
+import {appendFileSync} from "node:fs"
 import path from "node:path"
 import {setTimeout as sleep} from "node:timers/promises"
 import {fileURLToPath} from "node:url"
@@ -74,13 +74,15 @@ async function main() {
   } else {
     console.log(`Build number ${pinned.buildNumber}: one above the family's latest release`)
   }
-  // The same stable compilation environment and per-run packaging inputs on both
-  // platforms. No branch/head/time is inlined into reusable JavaScript.
+  // The same stable compilation environment on both platforms. The build's own
+  // values (identity, commit, OTA manifest) are packaged in app.config after the
+  // compile (pr_mobile_config.py); the local-build fallbacks the JS would inline
+  // are blanked so a compile is reusable.
   const env = {
     // An earlier push's build is reused only at this number
     // (pr-mobile-build-unchanged.mjs).
     MENTRAOS_PINNED_BUILD_NUMBER: String(pinned.buildNumber),
-    EXPO_PUBLIC_MENTRAOS_VERSION: JSON.parse(readFileSync("package.json", "utf8")).version,
+    EXPO_PUBLIC_MENTRAOS_VERSION: "",
     EXPO_PUBLIC_BUILD_BRANCH: "",
     EXPO_PUBLIC_BUILD_COMMIT: "",
     EXPO_PUBLIC_BUILD_USER: "",

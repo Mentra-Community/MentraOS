@@ -221,7 +221,7 @@ export async function selectMobile({
   download = downloadAsset,
   readIndex = readArtifactIndex,
 }) {
-  const fingerprint = env.MENTRA_PR_MOBILE_FINGERPRINT
+  const fingerprint = env.MENTRA_MOBILE_FINGERPRINT
   const candidate = platform === "ios" ? "pr-mobile-candidate.ipa" : "pr-mobile-candidate.apk"
   const repo = context.repo
   const {data: release} = await github.rest.repos.getReleaseByTag({...repo, tag: "pr-builds"})
@@ -285,6 +285,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const app = prApp(process.env.MENTRA_PR_APP || "mentra")
   // The Mentra App's backend configuration; the example app has none.
   if (app.root === "mobile") process.loadEnvFile("mobile/.env")
+  // A release compiles other outputs (every ABI for Google Play) and signs for the stores, so a release
+  // compile and a PR compile never match (.github/ci/release-compile.mjs).
+  const release = process.argv[3] === "release"
+  if (process.argv[3] && !release) throw new Error("Expected release or nothing after the platform")
   const tree = execFileSync("git", ["ls-tree", "-r", "HEAD", "--", ...app.inputs], {encoding: "utf8"})
   // A repository that builds this tree inside a larger one (the Mentra
   // monorepo) fingerprints the inputs it adds outside it: the miniapps it
@@ -306,13 +310,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         : {
             java: execFileSync("java", ["--version"], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim(),
             androidBuildTools: "36.0.0",
-            abi: "arm64-v8a",
+            abi: release ? "apk arm64-v8a, aab arm64-v8a armeabi-v7a x86 x86_64" : "arm64-v8a",
           }),
+      ...(release ? {build: "release", signing: platform === "ios" ? "app-store" : "upload"} : {}),
       platform: process.platform,
       arch: process.arch,
       ...(host ? {host} : {}),
     },
   })
-  appendFileSync(process.env.GITHUB_ENV, `MENTRA_PR_MOBILE_FINGERPRINT=${fingerprint}\n`)
+  // The commit of the tree it fingerprinted: an explicit routine PR builds a merge revision, not the workflow's ref.
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {encoding: "utf8"}).trim()
+  appendFileSync(process.env.GITHUB_ENV, `MENTRA_MOBILE_FINGERPRINT=${fingerprint}\nMENTRA_MOBILE_SOURCE_COMMIT=${commit}\n`)
   console.log(`Mobile build fingerprint: ${fingerprint}`)
 }

@@ -475,14 +475,10 @@ func preparePackage(_ request: InstallRequest) async throws -> VerifiedBuild {
         let verified = try verifyPackage(package, expected: manifest)
         let app = package.appendingPathComponent(PRApp.product)
         let config = try InstallerFiles.dictionary(InstallerFiles.read(app.appendingPathComponent("EXConstants.bundle/app.config")))
-        let extra = config["extra"] as? [String: Any]
-        if let pin = extra?["mentraPrBuild"] {
-            guard let pin = pin as? [String: Any], distributionInteger(pin["schemaVersion"]) == 1,
-                  pin["otaManifestUrl"] as? String == request.otaURL else { throw InstallerError.invalid("The app contains a different OTA manifest selection.") }
-        } else {
-            let javascript = try Data(contentsOf: app.appendingPathComponent("main.jsbundle"), options: .mappedIfSafe)
-            guard javascript.range(of: Data(request.otaURL.utf8)) != nil else { throw InstallerError.invalid("The app is missing its PR OTA manifest selection.") }
-        }
+        // The app reads its OTA manifest only from its packaged build config.
+        guard let pin = (config["extra"] as? [String: Any])?["mentraBuild"] as? [String: Any],
+              distributionInteger(pin["schemaVersion"]) == 2,
+              pin["otaManifestUrl"] as? String == request.otaURL else { throw InstallerError.invalid("The app contains a different OTA manifest selection.") }
         return verified
     } catch {
         // An unexpectedly live extraction tool must retain its working files.

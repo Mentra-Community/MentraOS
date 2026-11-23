@@ -79,15 +79,9 @@ def verify_pr_ota(app, repository, pr, head_sha):
         raise ValueError("Invalid PR OTA coordinates")
     expected = f"https://artifactscdn.mentraglass.com/{repository}/releases/pr-builds/ota-pr-{pr}-{head_sha}.json"
     config = json.loads((app / "EXConstants.bundle/app.config").read_text())
-    extra = config.get("extra") or {}
-    # Match packagedOtaPin: a packaged PR contract overrides the JS env pin,
-    # including an empty intermediate that disables OTA. Never accept that
-    # intermediate just because the correct URL also appears in the bundle.
-    if "mentraPrBuild" in extra:
-        pin = extra["mentraPrBuild"]
-        valid = isinstance(pin, dict) and pin.get("schemaVersion") == 1 and pin.get("otaManifestUrl") == expected
-    else:
-        valid = expected.encode() in (app / "main.jsbundle").read_bytes()
+    # The app reads its pin only from the packaged build config (packagedOtaPin).
+    pin = (config.get("extra") or {}).get("mentraBuild")
+    valid = isinstance(pin, dict) and pin.get("schemaVersion") == 2 and pin.get("otaManifestUrl") == expected
     if not valid:
         raise ValueError("Exported PR app is missing its exact-head glasses OTA pin (OTA disabled or stale)")
     return expected
@@ -96,7 +90,7 @@ def verify_pr_ota(app, repository, pr, head_sha):
 def packaged_backend(compilation, env):
     """The fingerprint binds EXPO_PUBLIC_BUILD_ENV, so a reused binary keeps its compiled backend."""
     backend = env.get("EXPO_PUBLIC_BUILD_ENV")
-    if compilation["mobileFingerprint"] != env.get("MENTRA_PR_MOBILE_FINGERPRINT"):
+    if compilation["mobileFingerprint"] != env.get("MENTRA_MOBILE_FINGERPRINT"):
         raise ValueError("Packaged compilation differs from this job's backend fingerprint")
     if backend != pr_backend(env.get("MENTRA_PR_BASE_REF") or env.get("GITHUB_BASE_REF", "")):
         raise ValueError("Packaged backend differs from the PR base")

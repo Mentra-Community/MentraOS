@@ -32,7 +32,7 @@ import {buildSpokenNotification} from "@/services/notifications/spokenNotificati
 import {deploymentCloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
 import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "@/services/phoneWifi"
-import {engine, BgTimer, SETTINGS} from "@mentra/engine"
+import {engine, BgTimer, SETTINGS, getAppBuildInfo} from "@mentra/engine"
 import {
   appRegistry,
   audioPlaybackService,
@@ -535,7 +535,7 @@ class MantleManager {
         ...deploymentCloudConfigValues(deployment),
         isLocalMiniappAllowed: isSuperModeMiniappAllowed,
         systemMiniappPackages: SYSTEM_MINIAPP_PACKAGES,
-        hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION,
+        hostVersion: Constants.expoConfig?.version ?? getAppBuildInfo().appVersion,
         // Miniapps rated above the Mentra App's own App Store rating need the person's declared age.
         hostAgeRating: mentraAppAgeRating(),
         // A miniapp's openUrl never opens the Mentra App's own links (its install sheet, sign-in, test commands).

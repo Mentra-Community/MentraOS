@@ -83,7 +83,7 @@ for (const withAcs of [false, true]) {
 }
 
 test('CI pins the version and build number, and a PR build carries its packaging contract', (t) => {
-  const names = ['MENTRAOS_PINNED_BUILD_NUMBER', 'MENTRAOS_NATIVE_MARKETING_VERSION', 'MENTRA_PR_MOBILE_FINGERPRINT', 'MENTRA_PR_BUILD_SHA']
+  const names = ['MENTRAOS_PINNED_BUILD_NUMBER', 'MENTRAOS_NATIVE_MARKETING_VERSION', 'MENTRA_MOBILE_FINGERPRINT', 'MENTRA_MOBILE_SOURCE_COMMIT']
   const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]))
   t.after(() => {
     for (const name of names) {
@@ -98,8 +98,8 @@ test('CI pins the version and build number, and a PR build carries its packaging
   Object.assign(process.env, {
     MENTRAOS_PINNED_BUILD_NUMBER: '302010042',
     MENTRAOS_NATIVE_MARKETING_VERSION: '3.5.0',
-    MENTRA_PR_MOBILE_FINGERPRINT: 'f'.repeat(64),
-    MENTRA_PR_BUILD_SHA: 'a'.repeat(40),
+    MENTRA_MOBILE_FINGERPRINT: 'f'.repeat(64),
+    MENTRA_MOBILE_SOURCE_COMMIT: 'a'.repeat(40),
   })
   assert.deepEqual(configure({config}), {
     version: '3.5.0',
@@ -107,7 +107,15 @@ test('CI pins the version and build number, and a PR build carries its packaging
     ios: {bundleIdentifier: 'com.mentra.example', buildNumber: '302010042'},
     extra: {
       a: 1,
-      mentraPrBuild: {schemaVersion: 1, mobileFingerprint: 'f'.repeat(64), mobileSourceCommit: 'a'.repeat(40), otaManifestUrl: ''},
+      mentraBuild: {
+        schemaVersion: 2,
+        mobileFingerprint: 'f'.repeat(64),
+        mobileSourceCommit: 'a'.repeat(40),
+        otaManifestUrl: '',
+        identity: '3.5.0',
+        buildInfo: '',
+        buildNumber: 302010042,
+      },
     },
   })
 })

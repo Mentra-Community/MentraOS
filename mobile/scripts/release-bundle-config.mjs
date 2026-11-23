@@ -3,25 +3,33 @@ import {appendFile} from "node:fs/promises"
 
 const MAX_BUNDLE_BYTES = 512 * 1024 * 1024
 
+// The packaged build config's inputs (app.config.ts's mentraBuild), which Xcode's
+// build phases read when they generate app.config.
+const BUILD_CONFIG_KEYS = [
+  "MENTRA_MOBILE_FINGERPRINT",
+  "MENTRA_MOBILE_SOURCE_COMMIT",
+  "MENTRA_OTA_MANIFEST_URL",
+  "MENTRA_APP_IDENTITY",
+  "MENTRA_BUILD_COMMIT",
+  "MENTRA_BUILD_BRANCH",
+  "MENTRA_BUILD_TIME",
+  "MENTRA_BUILD_USER",
+]
+
 // These values are read by shipped JavaScript. Values used only by native
-// app.config or unused compatibility entries do not belong in this check.
+// app.config or unused compatibility entries do not belong in this check. A
+// build's own values (OTA manifest, identity, build info) are not in the bundle:
+// they are packaged in app.config (BUILD_CONFIG_KEYS).
 export const RELEASE_BUNDLE_ENV_KEYS = [
   "EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY",
   "EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID",
-  "EXPO_PUBLIC_ASG_OTA_VERSION_URL",
   "EXPO_PUBLIC_AUTHING_APP_HOST",
   "EXPO_PUBLIC_AUTHING_APP_ID",
-  "EXPO_PUBLIC_BUILD_BRANCH",
-  "EXPO_PUBLIC_BUILD_COMMIT",
-  // BUILD_TIME is excluded from Metro's cacheVersion (see metro-cache-version.cjs)
-  // so a reused transform may carry a prior timestamp. COMMIT is the identity.
-  "EXPO_PUBLIC_BUILD_USER",
   "EXPO_PUBLIC_CLOUD_CORE_URL",
   "EXPO_PUBLIC_CLOUD_RUNTIME_URL",
   "EXPO_PUBLIC_DEPLOYMENT_REGION",
   "EXPO_PUBLIC_DIRECTORY_URL",
   "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN",
-  "EXPO_PUBLIC_MENTRAOS_VERSION",
   "EXPO_PUBLIC_MINIAPPS_URL",
   "EXPO_PUBLIC_SENTRY_DSN",
 ]
@@ -36,10 +44,7 @@ function xcodeEnvironmentEntries(env, nodeBinary) {
     .map(([key, value]) => [key, String(value)])
     .sort(([left], [right]) => left.localeCompare(right))
 
-  if (env.MENTRA_PR_MOBILE_FINGERPRINT) {
-    entries.push(["MENTRA_PR_MOBILE_FINGERPRINT", String(env.MENTRA_PR_MOBILE_FINGERPRINT)])
-    entries.push(["MENTRA_PR_BUILD_SHA", String(env.MENTRA_PR_BUILD_SHA)])
-  }
+  for (const key of BUILD_CONFIG_KEYS) if (env[key]) entries.push([key, String(env[key])])
   if (env.MENTRAOS_NATIVE_MARKETING_VERSION) {
     entries.push(["MENTRAOS_NATIVE_MARKETING_VERSION", String(env.MENTRAOS_NATIVE_MARKETING_VERSION)])
   }
@@ -98,22 +103,41 @@ export function assertNoAppAnalyticsToken(bundle, platform) {
   }
 }
 
-export function validateReleaseArchive(archivePath, platform, env = process.env) {
-  const entry = platform === "iOS" ? "Payload/*.app/main.jsbundle" : "assets/index.android.bundle"
-  let bundle
+/** The release's OTA manifest and identity are the ones packaged in the archive's app.config. */
+export function assertPackagedBuild(config, env, platform) {
+  const build = config?.extra?.mentraBuild
+  if (
+    build?.schemaVersion !== 2 ||
+    build.otaManifestUrl !== env.MENTRA_OTA_MANIFEST_URL ||
+    build.identity !== env.MENTRA_APP_IDENTITY
+  ) {
+    throw new Error(`${platform} release app.config does not package the release's OTA manifest and identity`)
+  }
+}
+
+function readArchiveEntry(archivePath, entry, platform) {
   try {
-    bundle = execFileSync("unzip", ["-p", archivePath, entry], {
+    return execFileSync("unzip", ["-p", archivePath, entry], {
       encoding: null,
       maxBuffer: MAX_BUNDLE_BYTES,
       stdio: ["ignore", "pipe", "pipe"],
     })
   } catch (error) {
-    throw new Error(`Could not read ${platform} release JS bundle from ${archivePath}`, {cause: error})
+    throw new Error(`Could not read ${entry} from ${platform} release ${archivePath}`, {cause: error})
   }
+}
+
+export function validateReleaseArchive(archivePath, platform, env = process.env) {
+  const [bundleEntry, configEntry] =
+    platform === "iOS"
+      ? ["Payload/*.app/main.jsbundle", "Payload/*.app/EXConstants.bundle/app.config"]
+      : ["assets/index.android.bundle", "assets/app.config"]
+  const bundle = readArchiveEntry(archivePath, bundleEntry, platform)
 
   if (bundle.length === 0) {
     throw new Error(`${platform} release JS bundle is empty in ${archivePath}`)
   }
   assertBundleEnvironment(bundle, env, platform)
   assertNoAppAnalyticsToken(bundle, platform)
+  assertPackagedBuild(JSON.parse(readArchiveEntry(archivePath, configEntry, platform).toString("utf8")), env, platform)
 }

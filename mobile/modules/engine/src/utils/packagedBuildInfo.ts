@@ -6,29 +6,23 @@ export type AppBuildInfo = {
   buildUser: string
 }
 
-export function packagedBuildInfo(extra: Record<string, unknown> | undefined, embedded: AppBuildInfo): AppBuildInfo {
-  const contract = extra?.mentraPrBuild
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object"
+
+/** A CI build carries its identity in app.config's `mentraBuild`, which packaging rewrites without recompiling. A local
+ * developer build has none and keeps the values its .env inlined. */
+export function packagedBuildInfo(extra: Record<string, unknown> | undefined, local: AppBuildInfo): AppBuildInfo {
+  const build = extra?.mentraBuild
+  if (!isRecord(build) || build.schemaVersion !== 2) return local
+  const appVersion = typeof build.identity === "string" && build.identity ? build.identity : local.appVersion
+  const info = build.buildInfo
   if (
-    !contract ||
-    typeof contract !== "object" ||
-    !("schemaVersion" in contract) ||
-    contract.schemaVersion !== 1 ||
-    !("buildInfo" in contract)
-  )
-    return embedded
-  const info = contract.buildInfo
-  if (!info || typeof info !== "object") return embedded
-  if (
-    !("commit" in info) ||
+    !isRecord(info) ||
     typeof info.commit !== "string" ||
     !/^[a-f0-9]{40}$/.test(info.commit) ||
-    !("branch" in info) ||
     typeof info.branch !== "string" ||
-    !("time" in info) ||
     typeof info.time !== "string" ||
-    !("user" in info) ||
     typeof info.user !== "string"
   )
-    return embedded
-  return {...embedded, buildCommit: info.commit, buildBranch: info.branch, buildTime: info.time, buildUser: info.user}
+    return {...local, appVersion}
+  return {appVersion, buildCommit: info.commit, buildBranch: info.branch, buildTime: info.time, buildUser: info.user}
 }

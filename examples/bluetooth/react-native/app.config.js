@@ -22,14 +22,18 @@ module.exports = ({config}) => {
       ios: {...config.ios, buildNumber: String(buildNumber)},
     }
   }
-  if (process.env.MENTRA_PR_MOBILE_FINGERPRINT) {
-    const mentraPrBuild = {
-      schemaVersion: 1,
-      mobileFingerprint: process.env.MENTRA_PR_MOBILE_FINGERPRINT,
-      mobileSourceCommit: process.env.MENTRA_PR_BUILD_SHA,
+  // A CI build's own values, written after the compile by the shared packaging (pr_mobile_config.py).
+  if (process.env.MENTRA_MOBILE_FINGERPRINT) {
+    const mentraBuild = {
+      schemaVersion: 2,
+      mobileFingerprint: process.env.MENTRA_MOBILE_FINGERPRINT,
+      mobileSourceCommit: process.env.MENTRA_MOBILE_SOURCE_COMMIT,
       otaManifestUrl: '',
+      identity: config.version,
+      buildInfo: '',
+      buildNumber,
     }
-    config = {...config, extra: {...config.extra, mentraPrBuild}}
+    config = {...config, extra: {...config.extra, mentraBuild}}
   }
 
   const engineManifest = require.resolve('@mentra/engine/package.json')

@@ -11,7 +11,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
-import {SETTINGS, engine, useSetting, BgTimer} from "@mentra/engine"
+import {SETTINGS, engine, useSetting, BgTimer, getAppBuildInfo} from "@mentra/engine"
 import {SplashVideo} from "@/components/splash/SplashVideo"
 import {resolvedEndpoints} from "@/services/cloudClient"
 import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
@@ -88,14 +88,7 @@ export default function InitScreen() {
       : activeDeployment.manifest.appUpdates.storeUrls.android
 
   // Helper Functions
-  const getLocalVersion = (): string | null => {
-    try {
-      return process.env.EXPO_PUBLIC_MENTRAOS_VERSION || null
-    } catch (error) {
-      console.error("Error getting local version:", error)
-      return null
-    }
-  }
+  const getLocalVersion = (): string | null => semver.valid(getAppBuildInfo().appVersion)
 
   const checkCustomUrl = async (): Promise<boolean> => {
     const overrides = deploymentDebugOverrides(activeDeployment)

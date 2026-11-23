@@ -11,7 +11,7 @@
  * attach runs once per island engine instance.
  */
 
-import {engine} from "@mentra/engine"
+import {engine, getAppBuildInfo} from "@mentra/engine"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
@@ -21,7 +21,6 @@ import {installStreamPreviewCoordinator} from "@/services/streamPreview"
 import showAlert from "@/utils/AlertUtils"
 
 const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
-const MENTRA_OS_VERSION = process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "unknown"
 
 let attachedEngine: MiniappEngine | null = null
 
@@ -46,7 +45,7 @@ export function bootstrapMentraJS() {
     "miniapp.packageName": packageName,
     "miniapp.engine": MENTRA_JS_ENGINE,
     "miniapp.sdk_version": "0.3.0",
-    "miniapp.host_version": MENTRA_OS_VERSION,
+    "miniapp.host_version": getAppBuildInfo().appVersion,
     "device.platform": Platform.OS,
   })
   router.onCrashloop = (packageName: string, reason: string) => {

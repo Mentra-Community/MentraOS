@@ -122,7 +122,7 @@ Android and iOS use the same fingerprint/selection and PR configuration contract
 CI searches published signed apps for matching source, dependency, toolchain and
 compiled-environment inputs. A verified iOS match skips dependency installation,
 Pods, prebuild and Xcode compilation. It then updates Expo's packaged
-`extra.mentraPrBuild` configuration and `CFBundleVersion` and signs with the
+`extra.mentraBuild` configuration and `CFBundleVersion` and signs with the
 current distribution identity/profile. Both fresh and reused apps use this path.
 
 The packaged OTA target and current PR identity are independent of the JavaScript
@@ -136,6 +136,13 @@ The delivered IPA is the reusable artifact; no separate permanent iOS binary
 cache is published. The existing seven-day retention applies. The build summary
 and receipt state whether compilation was reused. A device-only profile refresh
 can reuse compiled code when its capabilities and signing identity still match.
+
+Dev and staging releases reuse their own App Store compiles the same way
+(`repackage.py package-store`): the release's values go into the same packaged
+configuration, and the outer app is signed again with the identity and profile
+it was exported with, which the job keychain must still hold. A release and a PR
+never share a compile: their fingerprints differ (`pr-mobile-build.mjs ios
+release`).
 
 ## Signing setup (maintainer)
 

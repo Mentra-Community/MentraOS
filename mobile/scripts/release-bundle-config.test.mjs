@@ -6,6 +6,7 @@ import {
   RELEASE_BUNDLE_ENV_KEYS,
   assertBundleEnvironment,
   assertNoAppAnalyticsToken,
+  assertPackagedBuild,
   xcodeBuildSettings,
   xcodeEnvironmentExports,
 } from "./release-bundle-config.mjs"
@@ -13,7 +14,7 @@ import {
 test("xcodeEnvironmentExports exports public and pinned build values safely", () => {
   const lines = xcodeEnvironmentExports(
     {
-      EXPO_PUBLIC_ASG_OTA_VERSION_URL: "https://example.test/it's-pinned.json",
+      EXPO_PUBLIC_CLOUD_CORE_URL: "https://example.test/it's-core",
       EXPO_PUBLIC_EMPTY: "",
       MENTRAOS_NATIVE_MARKETING_VERSION: "3.1.0",
       MENTRAOS_PINNED_BUILD_NUMBER: "123",
@@ -24,7 +25,7 @@ test("xcodeEnvironmentExports exports public and pinned build values safely", ()
   )
 
   assert.deepEqual(lines, [
-    `export EXPO_PUBLIC_ASG_OTA_VERSION_URL='https://example.test/it'"'"'s-pinned.json'`,
+    `export EXPO_PUBLIC_CLOUD_CORE_URL='https://example.test/it'"'"'s-core'`,
     "export MENTRAOS_NATIVE_MARKETING_VERSION='3.1.0'",
     "export MENTRAOS_PINNED_BUILD_NUMBER='123'",
     "export NODE_ENV='production'",
@@ -33,18 +34,18 @@ test("xcodeEnvironmentExports exports public and pinned build values safely", ()
 
   const output = execFileSync(
     "sh",
-    ["-c", `${lines.join("\n")}\nprintf '%s\\n' \"$EXPO_PUBLIC_ASG_OTA_VERSION_URL\"`],
+    ["-c", `${lines.join("\n")}\nprintf '%s\\n' \"$EXPO_PUBLIC_CLOUD_CORE_URL\"`],
     {
       encoding: "utf8",
     },
   )
-  assert.equal(output.trim(), "https://example.test/it's-pinned.json")
+  assert.equal(output.trim(), "https://example.test/it's-core")
 })
 
 test("xcodeBuildSettings exposes the same public values to every build phase", () => {
   const settings = xcodeBuildSettings(
     {
-      EXPO_PUBLIC_ASG_OTA_VERSION_URL: "https://example.test/pin.json?channel=staging build",
+      EXPO_PUBLIC_CLOUD_CORE_URL: "https://example.test/core?channel=staging build",
       EXPO_PUBLIC_EMPTY: "",
       MENTRAOS_NATIVE_MARKETING_VERSION: "3.1.0",
       MENTRAOS_PINNED_BUILD_NUMBER: 123,
@@ -55,7 +56,7 @@ test("xcodeBuildSettings exposes the same public values to every build phase", (
   )
 
   assert.deepEqual(settings, [
-    "EXPO_PUBLIC_ASG_OTA_VERSION_URL=https://example.test/pin.json?channel=staging build",
+    "EXPO_PUBLIC_CLOUD_CORE_URL=https://example.test/core?channel=staging build",
     "MENTRAOS_NATIVE_MARKETING_VERSION=3.1.0",
     "MENTRAOS_PINNED_BUILD_NUMBER=123",
     "NODE_ENV=production",
@@ -63,23 +64,35 @@ test("xcodeBuildSettings exposes the same public values to every build phase", (
   ])
 })
 
-test("Xcode config regeneration receives the PR compilation revision instead of the workflow ref", () => {
-  const compilationSha = "b".repeat(40), fingerprint = "f".repeat(64)
-  const env = {MENTRA_PR_BUILD_SHA: compilationSha, MENTRA_PR_MOBILE_FINGERPRINT: fingerprint, GITHUB_SHA: "a".repeat(40)}
+test("Xcode's config regeneration receives the packaged build config's inputs", () => {
+  const commit = "b".repeat(40), fingerprint = "f".repeat(64)
+  const env = {MENTRA_MOBILE_FINGERPRINT: fingerprint, MENTRA_MOBILE_SOURCE_COMMIT: commit,
+    MENTRA_OTA_MANIFEST_URL: "https://example.test/ota.json", MENTRA_APP_IDENTITY: "3.5.0-beta.1", MENTRA_BUILD_COMMIT: "",
+    GITHUB_SHA: "a".repeat(40)}
   assert.deepEqual(xcodeBuildSettings(env, "/usr/bin/node"), [
-    `MENTRA_PR_MOBILE_FINGERPRINT=${fingerprint}`,
-    `MENTRA_PR_BUILD_SHA=${compilationSha}`,
+    `MENTRA_MOBILE_FINGERPRINT=${fingerprint}`,
+    `MENTRA_MOBILE_SOURCE_COMMIT=${commit}`,
+    "MENTRA_OTA_MANIFEST_URL=https://example.test/ota.json",
+    "MENTRA_APP_IDENTITY=3.5.0-beta.1",
     "NODE_BINARY=/usr/bin/node",
   ])
   const output = execFileSync("sh", ["-c",
-    `${xcodeEnvironmentExports(env, "/usr/bin/node").join("\n")}\nprintf '%s' "$MENTRA_PR_BUILD_SHA"`,
+    `${xcodeEnvironmentExports(env, "/usr/bin/node").join("\n")}\nprintf '%s' "$MENTRA_MOBILE_SOURCE_COMMIT"`,
   ], {encoding: "utf8"})
-  assert.equal(output, compilationSha)
+  assert.equal(output, commit)
+})
+
+test("a release archive packages its own OTA manifest and identity", () => {
+  const env = {MENTRA_OTA_MANIFEST_URL: "https://example.test/ota.json", MENTRA_APP_IDENTITY: "3.5.0-beta.1"}
+  const config = {extra: {mentraBuild: {schemaVersion: 2, otaManifestUrl: env.MENTRA_OTA_MANIFEST_URL, identity: "3.5.0-beta.1"}}}
+  assert.doesNotThrow(() => assertPackagedBuild(config, env, "iOS"))
+  for (const build of [undefined, {...config.extra.mentraBuild, otaManifestUrl: ""},
+    {...config.extra.mentraBuild, identity: "3.5.0"}, {...config.extra.mentraBuild, schemaVersion: 1}])
+    assert.throws(() => assertPackagedBuild({extra: {mentraBuild: build}}, env, "Android"), /OTA manifest and identity/)
 })
 
 test("release bundle gate does not require BUILD_TIME so Metro cache reuse cannot fail CI", () => {
   assert.equal(RELEASE_BUNDLE_ENV_KEYS.includes("EXPO_PUBLIC_BUILD_TIME"), false)
-  assert.equal(RELEASE_BUNDLE_ENV_KEYS.includes("EXPO_PUBLIC_BUILD_COMMIT"), true)
 
   assert.doesNotThrow(() =>
     assertBundleEnvironment(
@@ -95,11 +108,11 @@ test("release bundle gate does not require BUILD_TIME so Metro cache reuse canno
 
 test("assertBundleEnvironment accepts expected nonempty runtime values", () => {
   const env = {
-    EXPO_PUBLIC_ASG_OTA_VERSION_URL: "https://example.test/pin.json",
-    EXPO_PUBLIC_BUILD_COMMIT: "abc1234",
+    EXPO_PUBLIC_CLOUD_CORE_URL: "https://core.example.test",
+    EXPO_PUBLIC_MINIAPPS_URL: "https://miniapps.example.test/",
     EXPO_PUBLIC_SENTRY_DSN: "",
   }
-  const bundle = Buffer.from("prefix https://example.test/pin.json abc1234 suffix")
+  const bundle = Buffer.from("prefix https://core.example.test https://miniapps.example.test/ suffix")
 
   assert.doesNotThrow(() => assertBundleEnvironment(bundle, env, "iOS"))
 })

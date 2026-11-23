@@ -38,9 +38,12 @@ derives `X.Y.Z-dev.N` or `X.Y.Z-beta.N` identities without source edits.
 - Beta store builds target staging services and are not production-promotable
   binaries. Production candidates are rebuilt from the selected source with
   production configuration and new store build numbers after Cloud promotion.
-- Automatic glasses OTA uses `EXPO_PUBLIC_ASG_OTA_VERSION_URL` for releases, or
-  the packaged `extra.mentraPrBuild.otaManifestUrl` in Expo's `app.config` asset
-  for Android and iOS PR builds (including Mac). Local and compile-only builds
+- A CI build (PR or release, Android and iOS, Mac included) carries its own
+  values in Expo's `app.config` asset, `extra.mentraBuild`: OTA manifest URL,
+  identity, build info and build number. The app reads them only from there
+  (`packagedOtaPin`, `getAppBuildInfo`), and packaging rewrites them without
+  recompiling. A local build has no `mentraBuild` and uses its `.env`
+  (`EXPO_PUBLIC_ASG_OTA_VERSION_URL`, `EXPO_PUBLIC_MENTRAOS_VERSION`). Builds
   without a pin fail closed; a Super Mode manifest override remains available
   for deliberate local OTA testing.
 - Pull request Android APKs and signed iPhone/Mac apps are pinned to

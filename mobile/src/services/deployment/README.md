@@ -92,10 +92,11 @@ the selected deployment's authentication.
 
 ## OTA compatibility
 
-The official manifest reads `EXPO_PUBLIC_ASG_OTA_VERSION_URL`. Android and iOS PR apps instead
-read `extra.mentraPrBuild.otaManifestUrl` from Expo's packaged `app.config` asset,
-which CI can replace before re-signing a matching existing APK or IPA. Malformed PR
-configuration is rejected; it never falls back to a previous bundled pin.
+The official manifest reads `extra.mentraBuild.otaManifestUrl` from Expo's packaged
+`app.config` asset, which every CI build (PR or release) carries and CI can replace
+before re-signing a matching existing APK or IPA. Malformed packaged configuration
+is rejected; it never falls back to a bundled pin. A local build has no
+`mentraBuild` and uses `EXPO_PUBLIC_ASG_OTA_VERSION_URL`.
 The selected pin still goes through the existing host/engine adapter.
 Its engine adapter
 preserves the existing embedded-engine release fallback and pre-39 glasses
