@@ -363,6 +363,7 @@ class BluetoothSdkModule : Module() {
             "saved_wifi_networks",
             "hotspot_status_change",
             "hotspot_error",
+            "fast_link_status",
             "photo_response",
             "photo_status",
             "camera_status",
@@ -667,6 +668,12 @@ class BluetoothSdkModule : Module() {
         SdkCoroutineFunction("forgetWifiNetwork") { ssid: String ->
             requireSdk().forgetWifiNetwork(ssid).toMap()
         }
+
+        Function("openFastLink") { requireSdk().openFastLink() }
+
+        Function("closeFastLink") { requireSdk().closeFastLink() }
+
+        Function("getFastLinkStatus") { requireSdk().getFastLinkStatus() }
 
         SdkCoroutineFunction("setHotspotState") { enabled: Boolean ->
             requireSdk().setHotspotState(enabled).values

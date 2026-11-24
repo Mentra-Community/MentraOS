@@ -881,6 +881,10 @@ class MentraLive : SGCManager() {
         var phoneStartTime: Long = System.currentTimeMillis() // When phone received the request
         var bleTransferStartTime: Long = 0 // When BLE transfer actually started
         var glassesCompressionDurationMs: Long = 0 // How long glasses took to compress
+        /** How the photo reached the phone: "ble", "wifi_direct" or "hotspot". */
+        var transport: String = "ble"
+        /** How long its last hop took (fetch over a fast link, or Bluetooth packets). */
+        var transferMs: Long = 0
     }
 
     private enum class BleIncidentLogKind {
@@ -1158,6 +1162,25 @@ class MentraLive : SGCManager() {
     private val lc3TimestampFormat = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US)
     private val lc3PacketTimestampFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
+    /** The Wi-Fi Direct photo link; Bluetooth stays its control channel. */
+    val wifiDirectLink: WifiDirectLink by lazy {
+        WifiDirectLink(
+            Bridge.getContext(),
+            sendToGlasses = { json ->
+                if (connectionState == ConnTypes.CONNECTED) {
+                    sendJson(json, true)
+                    true
+                } else {
+                    false
+                }
+            },
+            onStatus = { status -> Bridge.sendTypedMessage("fast_link_status", status) },
+        )
+    }
+
+    /** Fetches photos announced on a fast link, one at a time, off the BLE threads. */
+    private val fastPhotoExecutor = Executors.newSingleThreadExecutor()
+
     init {
         this.type = DeviceTypes.LIVE
         this.hasMic = true
@@ -1320,6 +1343,8 @@ class MentraLive : SGCManager() {
         if (state == ConnTypes.DISCONNECTED) {
             wifiAdbPeerIdentity = null
             DeviceStore.apply("glasses", "hotspotOtaVersion", 0)
+            wifiDirectLink.glassesVersion = 0
+            wifiDirectLink.onGlassesDisconnected()
         }
         val isEqual = state == connectionState
         if (isEqual) {
@@ -4732,6 +4757,8 @@ class MentraLive : SGCManager() {
 
                 updateHotspotStatus(hotspotEnabled, hotspotSsid, hotspotPassword, hotspotGatewayIp)
             }
+            "wifi_direct_status" -> wifiDirectLink.onGlassesStatus(json)
+            "fast_photo_ready" -> handleFastPhotoReady(json)
             "hotspot_error" -> {
                 // Process hotspot error
                 val errorMessage = json.optString("error_message", "Unknown hotspot error")
@@ -5658,6 +5685,11 @@ class MentraLive : SGCManager() {
                         val v = fields["system_time_ms"]
                         if (v is Number) {
                             DeviceStore.apply("glasses", "systemTimeMs", v.toLong())
+                        }
+                    }
+                    if (fields.containsKey("wifi_direct_version")) {
+                        (fields["wifi_direct_version"] as? Number)?.let {
+                            wifiDirectLink.glassesVersion = it.toInt()
                         }
                     }
                     if (fields.containsKey("hotspot_ota_version")) {
@@ -7583,6 +7615,12 @@ class MentraLive : SGCManager() {
             // phone-relayed BLE path. Auto remains the default.
             json.put("transferMethod", transferMethod)
 
+            // Photos ride any open fast link: the Wi-Fi Direct group, or a glasses hotspot the
+            // phone joined for something else. The glasses fall back to Bluetooth by themselves,
+            // and glasses without fast transfer ignore the flag.
+            val fastLink = fastPhotoLink()
+            if (fastLink != null) json.put("fastTransfer", true)
+
             // Always prepare for potential BLE transfer
             if (localFile) {
                 val transfer = BlePhotoTransfer(bleImgId, requestId, null)
@@ -7595,7 +7633,10 @@ class MentraLive : SGCManager() {
                 blePhotoTransfers[bleImgId] = transfer
             }
 
-            Bridge.log("LIVE: Using " + transferMethod + " transfer mode with BLE fallback ID: " + bleImgId)
+            Bridge.log(
+                    "LIVE: Using " + transferMethod + " transfer mode with BLE fallback ID: " + bleImgId +
+                            (if (fastLink != null) ", fast link: $fastLink" else "")
+            )
             Bridge.log(
                     "LIVE: PHOTO PIPELINE [5b/6] JSON ready mode=" +
                             mode +
@@ -11388,6 +11429,7 @@ class MentraLive : SGCManager() {
                                     photoTransfer.glassesCompressionDurationMs +
                                     "ms"
                     )
+                    photoTransfer.transferMs = bleTransferDuration
                     if (bleTransferDuration > 0) {
                         Bridge.log("LIVE: ⏱️ BLE transfer duration: " + bleTransferDuration + "ms")
                         Bridge.log(
@@ -11987,6 +12029,65 @@ class MentraLive : SGCManager() {
     }
 
     /** Process and upload a BLE photo transfer */
+    /** The fast link a photo requested now would use, or null for Bluetooth. */
+    private fun fastPhotoLink(): String? =
+            when {
+                wifiDirectLink.isOpen() -> "wifi_direct"
+                DeviceStore.get("glasses", "hotspotEnabled") == true &&
+                        wifiDirectLink.hotspotNetwork(DeviceStore.get("glasses", "hotspotGatewayIp") as? String) != null ->
+                        "hotspot"
+                else -> null
+            }
+
+    /**
+     * The glasses hold a finished photo on a fast link instead of sending it over Bluetooth. Fetch
+     * it and finish the request exactly as a Bluetooth photo would; if the fetch fails, ask the
+     * glasses for Bluetooth, which the request's transfer entry still expects.
+     */
+    private fun handleFastPhotoReady(json: JSONObject) {
+        val bleImgId = json.optString("bleImgId", "")
+        val url = json.optString("url", "")
+        val ackUrl = json.optString("ackUrl", "")
+        val link = json.optString("link", "wifi_direct")
+        val transfer = blePhotoTransfers[bleImgId]
+        if (transfer == null || url.isEmpty()) {
+            Log.w(TAG, "fast_photo_ready for an unknown photo: $bleImgId")
+            return
+        }
+        transfer.bleTransferStartTime = System.currentTimeMillis()
+        fastPhotoExecutor.execute {
+            try {
+                val photo = wifiDirectLink.fetchPhoto(url, ackUrl, link)
+                if (blePhotoTransfers.remove(bleImgId) == null) return@execute
+                val total = System.currentTimeMillis() - transfer.phoneStartTime
+                Bridge.log(
+                        "LIVE: ⏱️ Fast photo over $link: ${photo.bytes.size} bytes in ${photo.fetchMs} ms" +
+                                " (${if (photo.fetchMs > 0) photo.bytes.size / photo.fetchMs else 0} KB/s)," +
+                                " request→received $total ms, requestId=${transfer.requestId}"
+                )
+                transfer.transport = link
+                transfer.transferMs = photo.fetchMs
+                processAndUploadBlePhoto(transfer, photo.bytes)
+            } catch (e: Exception) {
+                // A host app that bound its process to another network (an old hotspot join) sends
+                // even Wi-Fi Direct traffic there; say so, since it's the host's to undo.
+                val bound = context?.getSystemService(android.net.ConnectivityManager::class.java)?.boundNetworkForProcess
+                Log.w(
+                        TAG,
+                        "Fast photo fetch over $link failed, asking for Bluetooth: ${e.message}" +
+                                (if (bound != null) " (this process is bound to network $bound)" else "")
+                )
+                sendJson(
+                        JSONObject()
+                                .put("type", "fast_photo_failed")
+                                .put("bleImgId", bleImgId)
+                                .put("reason", e.javaClass.simpleName),
+                        true
+                )
+            }
+        }
+    }
+
     private fun processAndUploadBlePhoto(transfer: BlePhotoTransfer, imageData: ByteArray) {
         if (transfer.isThumbnail) {
             Bridge.sendPhotoStatus(mapOf(
@@ -12098,6 +12199,9 @@ class MentraLive : SGCManager() {
                         event["contentType"] = "image/jpeg"
                         event["fileSizeBytes"] = file.length()
                         event["timestamp"] = System.currentTimeMillis()
+                        event["transport"] = transfer.transport
+                        event["transferMs"] = transfer.transferMs
+                        event["totalMs"] = System.currentTimeMillis() - transfer.phoneStartTime
                         Bridge.sendPhotoResponse(event)
                     }
 

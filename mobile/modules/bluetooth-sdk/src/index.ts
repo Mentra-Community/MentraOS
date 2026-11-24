@@ -4,6 +4,7 @@ import type {
   BluetoothSdkEventListener,
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
+  FastLinkStatus,
   PhotoCaptureDefaults,
   PublicBluetoothStatus,
   PublicGlassesStatus,
@@ -34,6 +35,7 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "saved_wifi_networks",
   "hotspot_status_change",
   "hotspot_error",
+  "fast_link_status",
   "photo_response",
   "photo_status",
   "camera_status",
@@ -85,6 +87,20 @@ const queryOtaStatus: BluetoothSdkPublicModule["queryOtaStatus"] = () => {
   return PrivateBluetoothSdkModule.sendOtaQueryStatus()
 }
 
+const UNSUPPORTED_FAST_LINK: FastLinkStatus = {
+  state: "unavailable",
+  link: "wifi_direct",
+  glassesSupported: false,
+  reason: "unsupported_platform",
+}
+
+/** Wi-Fi Direct exists only in the Android native module; elsewhere the link is unavailable. */
+const fastLinkNative = PrivateBluetoothSdkModule as unknown as {
+  openFastLink?: () => FastLinkStatus
+  closeFastLink?: () => void
+  getFastLinkStatus?: () => FastLinkStatus
+}
+
 const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): BluetoothSdkPublicModule[K] => {
   const method = (PrivateBluetoothSdkModule as unknown as Record<string, unknown>)[name]
   if (typeof method === "function") {
@@ -131,6 +147,9 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   sendWifiCredentials: bindPublicMethod("sendWifiCredentials"),
   forgetWifiNetwork: bindPublicMethod("forgetWifiNetwork"),
   setHotspotState: bindPublicMethod("setHotspotState"),
+  openFastLink: () => fastLinkNative.openFastLink?.() ?? UNSUPPORTED_FAST_LINK,
+  closeFastLink: () => fastLinkNative.closeFastLink?.(),
+  getFastLinkStatus: () => fastLinkNative.getFastLinkStatus?.() ?? UNSUPPORTED_FAST_LINK,
   setSystemTime: bindPublicMethod("setSystemTime"),
   setWifiAdbState: bindPublicMethod("setWifiAdbState"),
   setGalleryServerEnabled: bindPublicMethod("setGalleryServerEnabled"),
@@ -258,6 +277,10 @@ export type {
   GlassesNotReadyEvent,
   HeadUpEvent,
   HotspotErrorEvent,
+  FastLinkState,
+  FastLinkStatus,
+  FastLinkStatusEvent,
+  PhotoTransport,
   HotspotStatus,
   HotspotStatusChangeEvent,
   GlassesSessionChangedEvent,

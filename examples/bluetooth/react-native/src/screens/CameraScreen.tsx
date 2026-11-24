@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipbo
 import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg';
+import { FastTransferCard } from '../components/FastTransferCard';
 import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
@@ -653,6 +654,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           status={sdk.cameraSettingsStatus}
         />
       </LinearGradient>
+      {captureMode === 'photo' ? <FastTransferCard connected={connected} /> : null}
     </ScrollView>
   );
 }

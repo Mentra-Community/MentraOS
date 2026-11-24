@@ -1099,6 +1099,19 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    /**
+     * Opens the fast photo link (Wi-Fi Direct with Mentra Live on Android). Returns the state now;
+     * changes arrive as `fast_link_status` events. While it is open, photos travel over it, and
+     * over Bluetooth when it is not.
+     */
+    fun openFastLink(): Map<String, Any> = deviceManager.openFastLink()
+
+    /** Closes the fast photo link. Photos go over Bluetooth again. */
+    fun closeFastLink() = deviceManager.closeFastLink()
+
+    /** `closed`, `opening`, `open` or `unavailable`, with a `reason` for the last two. */
+    fun getFastLinkStatus(): Map<String, Any> = deviceManager.fastLinkStatus()
+
     suspend fun setHotspotState(enabled: Boolean): HotspotStatusEvent {
         // SoftAP teardown disables from the transport and again from the host
         // barrier. Throwing request_in_flight on the second disable recorded a

@@ -426,6 +426,12 @@ sealed interface PhotoResponse {
         val contentType: String?,
         val fileSizeBytes: Long?,
         override val timestamp: Long,
+        /** How a local photo reached the phone: "ble", "wifi_direct" or "hotspot". */
+        val transport: String? = null,
+        /** Its last hop: the fetch over a fast link, or the Bluetooth packets. */
+        val transferMs: Long? = null,
+        /** From the phone's request to the saved file. */
+        val totalMs: Long? = null,
     ) : PhotoResponse {
         override val state: String = "success"
     }
@@ -458,6 +464,9 @@ sealed interface PhotoResponse {
                             ?: longValue(values, "bytes")
                             ?: longValue(values, "size"),
                     timestamp = timestamp,
+                    transport = stringValue(values, "transport"),
+                    transferMs = longValue(values, "transferMs"),
+                    totalMs = longValue(values, "totalMs"),
                 )
             } else {
                 Error(
@@ -480,6 +489,9 @@ private fun Map<String, Any>.withOptionalPhotoMetadata(
         success.statusUrl?.takeIf { it.isNotBlank() }?.let { this["statusUrl"] = it }
         success.contentType?.takeIf { it.isNotBlank() }?.let { this["contentType"] = it }
         success.fileSizeBytes?.let { this["fileSizeBytes"] = it }
+        success.transport?.takeIf { it.isNotBlank() }?.let { this["transport"] = it }
+        success.transferMs?.let { this["transferMs"] = it }
+        success.totalMs?.let { this["totalMs"] = it }
     }
 
 data class PhotoResponseEvent(

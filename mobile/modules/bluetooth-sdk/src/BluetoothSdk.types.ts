@@ -237,6 +237,34 @@ export type HotspotStatusChangeEvent = HotspotStatus & {
   type: "hotspot_status_change"
 }
 
+/**
+ * The fast photo link: Wi-Fi Direct between an Android phone and Mentra Live. While it is
+ * `open`, photos travel over it; otherwise over Bluetooth. `unavailable` carries a `reason`,
+ * such as `glasses_unsupported`, `permission` (NEARBY_WIFI_DEVICES, or location before Android 13), `wifi_off`,
+ * `glasses_not_connected`, `join_timeout` or a `glasses_...` error.
+ */
+export type FastLinkState = "closed" | "opening" | "open" | "unavailable"
+
+export type FastLinkStatus = {
+  state: FastLinkState
+  link: "wifi_direct"
+  /**
+   * Whether the connected glasses can hold a Wi-Fi Direct group (they advertise
+   * `wifi_direct_version`). Without it, use the glasses hotspot.
+   */
+  glassesSupported: boolean
+  reason?: string
+  /** How long the link took to open, from the request. */
+  openedAfterMs?: number
+}
+
+export type FastLinkStatusEvent = FastLinkStatus & {
+  type: "fast_link_status"
+}
+
+/** How a photo reached the phone. */
+export type PhotoTransport = "ble" | "wifi_direct" | "hotspot"
+
 export type HotspotErrorEvent = {
   type: "hotspot_error"
   errorMessage: string
@@ -297,6 +325,12 @@ export type PhotoResponseEvent =
       contentType?: string
       fileSizeBytes?: number
       timestamp: number
+      /** How the photo reached the phone (Android `localFile` requests). */
+      transport?: PhotoTransport
+      /** Its last hop: the fetch over a fast link, or the Bluetooth packets. */
+      transferMs?: number
+      /** From the phone's request to the saved file. */
+      totalMs?: number
     }
   | {
       type: "photo_response"
@@ -1324,6 +1358,7 @@ export type BluetoothSdkModuleEvents = {
   saved_wifi_networks: (event: SavedWifiNetworksEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
+  fast_link_status: (event: FastLinkStatusEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
   photo_status: (event: PhotoStatusEvent) => void
   camera_status: (event: CameraStatusEvent) => void
@@ -1497,6 +1532,7 @@ export type BluetoothSdkEventMap = {
   saved_wifi_networks: SavedWifiNetworksEvent
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
+  fast_link_status: FastLinkStatusEvent
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
   camera_status: CameraStatusEvent
@@ -1605,6 +1641,15 @@ export interface BluetoothSdkPublicModule {
   /** Forget a saved network and return its correlated semantic outcome. */
   forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
+  /**
+   * Open the fast photo link (Wi-Fi Direct to Mentra Live, Android only). Returns the state now;
+   * `fast_link_status` reports each change. Photos use the link while it is open, and Bluetooth
+   * otherwise, with no change to `requestPhoto`. Needs NEARBY_WIFI_DEVICES on Android 13+.
+   */
+  openFastLink(): FastLinkStatus
+  /** Close the fast photo link; photos go over Bluetooth again. */
+  closeFastLink(): void
+  getFastLinkStatus(): FastLinkStatus
   /** Set the glasses clock from the phone after an OTA clock-skew failure. */
   setSystemTime(timestampMs: number): Promise<void>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
