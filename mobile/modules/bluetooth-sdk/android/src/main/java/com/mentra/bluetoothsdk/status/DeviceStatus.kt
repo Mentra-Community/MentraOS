@@ -63,8 +63,6 @@ internal data class GlassesStatus(
      */
     val packageName: String,
     val hotspotOtaVersion: Int,
-    /** Held photos (take_photo deliver "thumbnail"): the glasses' version, 0 without. */
-    val heldPhotosVersion: Int = 0,
     val bluetoothName: String,
     val serialNumber: String,
     val style: String,
@@ -119,7 +117,6 @@ internal data class GlassesStatus(
             "appVersion" to appVersion,
             "packageName" to packageName,
             "hotspotOtaVersion" to hotspotOtaVersion,
-            "heldPhotosVersion" to heldPhotosVersion,
             "bluetoothName" to bluetoothName,
             "serialNumber" to serialNumber,
             "style" to style,
@@ -178,7 +175,6 @@ internal data class GlassesStatus(
                 appVersion = stringValue(values, "appVersion") ?: "",
                 packageName = stringValue(values, "packageName") ?: "",
                 hotspotOtaVersion = numberValue(values, "hotspotOtaVersion") ?: 0,
-                heldPhotosVersion = numberValue(values, "heldPhotosVersion") ?: 0,
                 bluetoothName = stringValue(values, "bluetoothName") ?: "",
                 serialNumber = stringValue(values, "serialNumber") ?: "",
                 style = stringValue(values, "style") ?: "",
@@ -464,7 +460,6 @@ internal data class GlassesStatusUpdate(
     val appVersion: String? = null,
     val packageName: String? = null,
     val hotspotOtaVersion: Int? = null,
-    val heldPhotosVersion: Int? = null,
     val bluetoothName: String? = null,
     val serialNumber: String? = null,
     val style: String? = null,
@@ -522,7 +517,6 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("appVersion", appVersion)
             putIfNotNull("packageName", packageName)
             putIfNotNull("hotspotOtaVersion", hotspotOtaVersion)
-            putIfNotNull("heldPhotosVersion", heldPhotosVersion)
             putIfNotNull("bluetoothName", bluetoothName)
             putIfNotNull("serialNumber", serialNumber)
             putIfNotNull("style", style)
@@ -580,7 +574,6 @@ internal data class GlassesStatusUpdate(
                 appVersion = optionalStringValue(values, "appVersion"),
                 packageName = optionalStringValue(values, "packageName"),
                 hotspotOtaVersion = optionalNumberValue(values, "hotspotOtaVersion"),
-                heldPhotosVersion = optionalNumberValue(values, "heldPhotosVersion"),
                 bluetoothName = optionalStringValue(values, "bluetoothName"),
                 serialNumber = optionalStringValue(values, "serialNumber"),
                 style = optionalStringValue(values, "style"),

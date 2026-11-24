@@ -231,19 +231,8 @@ data class PhotoRequest @JvmOverloads constructor(
      * `webhookUrl` and `transferMethod` are ignored.
      */
     val localFile: Boolean = false,
-    /**
-     * `"thumbnail"`: the glasses hold the full photo and send only its preview; the response
-     * comes once the preview arrived, with `held` and `thumbnailUrl`. Fetch the full photo later
-     * with `fetchHeldPhoto`, and release the rest with `releaseHeldPhotos`. Needs glasses whose
-     * status has `heldPhotosVersion` > 0. `webhookUrl` and `transferMethod` are ignored.
-     */
-    val deliver: String? = null,
 ) {
-    val holdsPhoto: Boolean get() = deliver == DELIVER_THUMBNAIL
-
     companion object {
-        const val DELIVER_THUMBNAIL = "thumbnail"
-
         private fun transferMethodFromValue(value: Any?): String {
             if (value == null) return "auto"
             val raw = value as? String
@@ -295,7 +284,6 @@ data class PhotoRequest @JvmOverloads constructor(
                 transferMethod = transferMethodFromValue(values["transferMethod"]),
                 presendThumbnail = boolValue(values, "presend_thumbnail") ?: false,
                 localFile = boolValue(values, "localFile") ?: false,
-                deliver = stringValue(values, "deliver")?.takeIf { it == DELIVER_THUMBNAIL },
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
                 aeExposureDivisor = aeDivisor,
@@ -438,18 +426,6 @@ sealed interface PhotoResponse {
         val contentType: String?,
         val fileSizeBytes: Long?,
         override val timestamp: Long,
-        /** How a local photo reached the phone: "ble", "wifi_direct" or "hotspot". */
-        val transport: String? = null,
-        /** Its last hop: the fetch over a fast link, or the Bluetooth packets. */
-        val transferMs: Long? = null,
-        /** From the phone's request to the saved file. */
-        val totalMs: Long? = null,
-        /** The glasses hold the full photo (a `deliver = "thumbnail"` request). */
-        val held: Boolean = false,
-        /** The held photo's preview, as a `data:image/jpeg;base64,` URI. */
-        val thumbnailUrl: String? = null,
-        /** When the glasses captured the held photo (ms since the epoch). */
-        val capturedAt: Long? = null,
     ) : PhotoResponse {
         override val state: String = "success"
     }
@@ -482,12 +458,6 @@ sealed interface PhotoResponse {
                             ?: longValue(values, "bytes")
                             ?: longValue(values, "size"),
                     timestamp = timestamp,
-                    transport = stringValue(values, "transport"),
-                    transferMs = longValue(values, "transferMs"),
-                    totalMs = longValue(values, "totalMs"),
-                    held = boolValue(values, "held") == true,
-                    thumbnailUrl = stringValue(values, "thumbnailUrl"),
-                    capturedAt = longValue(values, "capturedAt"),
                 )
             } else {
                 Error(
@@ -510,12 +480,6 @@ private fun Map<String, Any>.withOptionalPhotoMetadata(
         success.statusUrl?.takeIf { it.isNotBlank() }?.let { this["statusUrl"] = it }
         success.contentType?.takeIf { it.isNotBlank() }?.let { this["contentType"] = it }
         success.fileSizeBytes?.let { this["fileSizeBytes"] = it }
-        success.transport?.takeIf { it.isNotBlank() }?.let { this["transport"] = it }
-        success.transferMs?.let { this["transferMs"] = it }
-        success.totalMs?.let { this["totalMs"] = it }
-        if (success.held) this["held"] = true
-        success.thumbnailUrl?.takeIf { it.isNotBlank() }?.let { this["thumbnailUrl"] = it }
-        success.capturedAt?.let { this["capturedAt"] = it }
     }
 
 data class PhotoResponseEvent(

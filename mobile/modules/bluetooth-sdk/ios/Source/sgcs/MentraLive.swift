@@ -711,8 +711,6 @@ enum K900ProtocolUtils {
 
 private struct BlePhotoTransfer {
     var isThumbnail = false
-    /// A held-photo request (deliver "thumbnail"): no full photo follows its preview.
-    var held = false
     /// The photo stays on the phone as a file instead of being uploaded.
     var localFile = false
     let bleImgId: String
@@ -1537,8 +1535,6 @@ class MentraLive: NSObject, SGCManager {
             DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
             DeviceStore.shared.apply("glasses", "wifiMacAddress", "")
             DeviceStore.shared.apply("glasses", "hotspotOtaVersion", 0)
-            DeviceStore.shared.apply("glasses", "heldPhotosVersion", 0)
-            heldPreviews.removeAll()
         }
         connectionState = state
         pairFlow(
@@ -1694,19 +1690,6 @@ class MentraLive: NSObject, SGCManager {
     private var fileWriteCharacteristic: CBCharacteristic?
     private var activeFileTransfers = [String: MentraLiveFileTransferSession]()
     private var blePhotoTransfers = [String: BlePhotoTransfer]()
-    /// Held photos' previews (data URIs) by requestId, until the request's terminal response.
-    private var heldPreviews = [String: String]()
-    private var lastBleImgNumber = 0
-    private let bleImgIdLock = NSLock()
-
-    /// A Bluetooth image ID no other transfer of this process has: the clock's milliseconds, or one
-    /// past the last ID when two requests fall in the same millisecond (a burst, concurrent fetches).
-    private func nextBleImgId() -> String {
-        bleImgIdLock.lock()
-        defer { bleImgIdLock.unlock() }
-        lastBleImgNumber = max(Int(Date().timeIntervalSince1970 * 1000), lastBleImgNumber + 1)
-        return "I" + String(format: "%09d", lastBleImgNumber % 100_000_000)
-    }
     private(set) var bleIncidentLogRelays = [String: BleIncidentLogRelayEntry]()
     /// BES bytes kept on the phone until the MTK log for the same report has been uploaded.
     private var heldBesLogs = [String: HeldBesLog]()
@@ -2636,25 +2619,13 @@ class MentraLive: NSObject, SGCManager {
         ]
 
         // Always generate BLE ID for potential fallback
-        let bleImgId = nextBleImgId()
+        let bleImgId =
+            "I" + String(format: "%09d", Int(Date().timeIntervalSince1970 * 1000) % 100_000_000)
         json["bleImgId"] = bleImgId
         json["transferMethod"] = request.localFile ? "ble" : request.transferMethod
         if request.presendThumbnail { json["presend_thumbnail"] = true }
-        if request.holdsPhoto {
-            json["deliver"] = PhotoRequest.deliverThumbnail
-        }
 
-        if request.holdsPhoto {
-            // Only the preview crosses now; it finds this request by its "T" ID.
-            var transfer = BlePhotoTransfer(
-                bleImgId: bleImgId, requestId: request.requestId, webhookUrl: ""
-            )
-            transfer.held = true
-            blePhotoTransfers[bleImgId] = transfer
-            if let webhookUrl = request.webhookUrl, !webhookUrl.isEmpty {
-                json["webhookUrl"] = webhookUrl
-            }
-        } else if request.localFile {
+        if request.localFile {
             var transfer = BlePhotoTransfer(
                 bleImgId: bleImgId, requestId: request.requestId, webhookUrl: ""
             )
@@ -2709,35 +2680,6 @@ class MentraLive: NSObject, SGCManager {
         )
         Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
 
-        sendJson(json, wakeUp: true)
-    }
-
-    /// Send a held photo's full size over Bluetooth, through the ordinary BLE photo transfer for
-    /// its request: saved on the phone (`localFile`) or uploaded to `webhookUrl`, then the usual
-    /// terminal `photo_response` for `requestId`.
-    func fetchHeldPhoto(requestId: String, localFile: Bool, webhookUrl: String?, authToken: String?) {
-        let bleImgId = nextBleImgId()
-        var transfer = BlePhotoTransfer(
-            bleImgId: bleImgId, requestId: requestId, webhookUrl: localFile ? "" : webhookUrl ?? ""
-        )
-        transfer.localFile = localFile
-        transfer.authToken = authToken
-        blePhotoTransfers[bleImgId] = transfer
-        Bridge.log("LIVE: Fetching held photo \(requestId) as \(bleImgId)")
-        sendJson(
-            ["type": "fetch_photo", "requestId": requestId, "bleImgId": bleImgId],
-            wakeUp: true
-        )
-    }
-
-    /// Delete held photos on the glasses: these, or all of them when `requestIds` is nil.
-    func releaseHeldPhotos(requestIds: [String]?) {
-        var json: [String: Any] = ["type": "release_photos"]
-        if let requestIds {
-            json["requestIds"] = requestIds
-        } else {
-            json["all"] = true
-        }
         sendJson(json, wakeUp: true)
     }
 
@@ -3688,15 +3630,6 @@ class MentraLive: NSObject, SGCManager {
             emitCameraStatus(json)
 
         case "photo_response":
-            var json = json
-            if json["fetch"] as? Bool != true {
-                // A held photo's request ended (or failed): no full photo follows its preview.
-                let requestId = json["requestId"] as? String ?? ""
-                blePhotoTransfers = blePhotoTransfers.filter { !($0.value.held && $0.value.requestId == requestId) }
-                let preview = heldPreviews.removeValue(forKey: requestId)
-                let photoSuccess = json["state"] as? String == "success" || json["success"] as? Bool == true
-                if photoSuccess, let preview { json["thumbnailUrl"] = preview }
-            }
             emitPhotoResponse(json)
 
         case "gallery_status":
@@ -4063,9 +3996,6 @@ class MentraLive: NSObject, SGCManager {
                 }
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
-                }
-                if let heldPhotosVersion = fields["held_photos"] as? NSNumber {
-                    DeviceStore.shared.apply("glasses", "heldPhotosVersion", heldPhotosVersion.intValue)
                 }
                 if let hotspotOtaVersion = fields["hotspot_ota_version"] as? NSNumber {
                     DeviceStore.shared.apply(
@@ -5253,12 +5183,9 @@ class MentraLive: NSObject, SGCManager {
         let requestId = json["requestId"] as? String ?? ""
         let compressionDurationMs = json["compressionDurationMs"] as? Int64 ?? 0
         if json["thumbnail"] as? Bool == true, !bleImgId.isEmpty, !requestId.isEmpty {
-            let parent = blePhotoTransfers.values.first(where: {
+            guard blePhotoTransfers.values.contains(where: {
                 !$0.isThumbnail && $0.requestId == requestId && bleImgId == "T" + $0.bleImgId.dropFirst()
-            })
-            // A held preview names itself: after a reconnect this connection has no parent.
-            let held = json["held"] as? Bool == true || parent?.held == true
-            if parent == nil && !held {
+            }) else {
                 Bridge.log("LIVE: Ignoring thumbnail for an unknown photo request")
                 return
             }
@@ -5266,7 +5193,6 @@ class MentraLive: NSObject, SGCManager {
             if blePhotoTransfers[bleImgId] == nil {
                 var transfer = BlePhotoTransfer(bleImgId: bleImgId, requestId: requestId, webhookUrl: "")
                 transfer.isThumbnail = true
-                transfer.held = held
                 blePhotoTransfers[bleImgId] = transfer
             }
         }
@@ -6005,15 +5931,12 @@ class MentraLive: NSObject, SGCManager {
 
     private func processAndUploadBlePhoto(_ transfer: BlePhotoTransfer, imageData: Data) {
         if transfer.isThumbnail {
-            let thumbnailUrl = "data:image/jpeg;base64," + imageData.base64EncodedString()
-            // The held request's terminal response follows this preview's acknowledgement.
-            if transfer.held { heldPreviews[transfer.requestId] = thumbnailUrl }
             Bridge.sendPhotoStatus([
                 "type": "photo_status",
                 "requestId": transfer.requestId,
                 "status": "thumbnail_received",
                 "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
-                "thumbnailUrl": thumbnailUrl,
+                "thumbnailUrl": "data:image/jpeg;base64," + imageData.base64EncodedString(),
                 "fileSizeBytes": imageData.count,
             ])
             return

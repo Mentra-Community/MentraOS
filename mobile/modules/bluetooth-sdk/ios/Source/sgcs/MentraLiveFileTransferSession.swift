@@ -81,11 +81,6 @@ struct MentraLiveFileTransferSession {
         if receivedPackets.isEmpty && actualPackSize == 0 && !data.isEmpty {
             recalculateTotalPackets(actualPackSize: data.count)
         }
-        // The first packet seen can be the file's short last one (the ones before it lost on a
-        // link still settling after a reconnect): a larger packet gives the real pack size.
-        if actualPackSize > 0 && data.count > actualPackSize {
-            recalculateTotalPackets(actualPackSize: data.count)
-        }
 
         guard index < totalPackets else { return false }
         if dynamicPayload {

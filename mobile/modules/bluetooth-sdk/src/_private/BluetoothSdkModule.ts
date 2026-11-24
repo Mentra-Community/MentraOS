@@ -37,7 +37,6 @@ import {
   ObservableStoreCategory,
   OtaQueryResult,
   OtaStartAckEvent,
-  FetchHeldPhotoParams,
   PhotoRequestParams,
   PhotoSuccessResponseEvent,
   PublicBluetoothStatus,
@@ -212,8 +211,6 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
-  fetchHeldPhoto(params: FetchHeldPhotoParams): Promise<PhotoSuccessResponseEvent>
-  releaseHeldPhotos(requestIds?: string[] | null): Promise<void>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   stopCameraWarmUp(requestId: string): Promise<void>
 
@@ -764,25 +761,6 @@ NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | Sc
 const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
   return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
-}
-
-const nativeFetchHeldPhoto = bindNativeMethod<(params: Record<string, string | boolean>) => Promise<PhotoSuccessResponseEvent>>(
-  NativeBluetoothSdkModule as unknown as Record<string, unknown>,
-  "fetchHeldPhoto",
-)
-NativeBluetoothSdkModule.fetchHeldPhoto = function (params: FetchHeldPhotoParams) {
-  // Expo's Android bridge rejects nulls in a map: send only what is set.
-  const payload: Record<string, string | boolean> = {requestId: params.requestId, localFile: params.localFile ?? true}
-  if (params.webhookUrl) payload.webhookUrl = params.webhookUrl
-  if (params.authToken) payload.authToken = params.authToken
-  return nativeFetchHeldPhoto(payload)
-}
-const nativeReleaseHeldPhotos = bindNativeMethod<(requestIds: string[] | null) => Promise<void>>(
-  NativeBluetoothSdkModule as unknown as Record<string, unknown>,
-  "releaseHeldPhotos",
-)
-NativeBluetoothSdkModule.releaseHeldPhotos = function (requestIds?: string[] | null) {
-  return nativeReleaseHeldPhotos(requestIds ?? null)
 }
 
 const nativeWarmUpCamera = NativeBluetoothSdkModule.warmUpCamera.bind(NativeBluetoothSdkModule)

@@ -363,7 +363,6 @@ class BluetoothSdkModule : Module() {
             "saved_wifi_networks",
             "hotspot_status_change",
             "hotspot_error",
-            "fast_link_status",
             "photo_response",
             "photo_status",
             "camera_status",
@@ -669,12 +668,6 @@ class BluetoothSdkModule : Module() {
             requireSdk().forgetWifiNetwork(ssid).toMap()
         }
 
-        Function("openFastLink") { requireSdk().openFastLink() }
-
-        Function("closeFastLink") { requireSdk().closeFastLink() }
-
-        Function("getFastLinkStatus") { requireSdk().getFastLinkStatus() }
-
         SdkCoroutineFunction("setHotspotState") { enabled: Boolean ->
             requireSdk().setHotspotState(enabled).values
         }
@@ -794,20 +787,6 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("stopCameraWarmUp") { requestId: String ->
             requireSdk().stopCameraWarmUp(requestId)
-        }
-
-        SdkCoroutineFunction("fetchHeldPhoto") { params: Map<String, Any?> ->
-            requireSdk()
-                .fetchHeldPhoto(
-                    requestId = params["requestId"] as? String ?: "",
-                    localFile = params["localFile"] as? Boolean ?: true,
-                    webhookUrl = params["webhookUrl"] as? String,
-                    authToken = params["authToken"] as? String,
-                ).values
-        }
-
-        SdkAsyncFunction("releaseHeldPhotos") { requestIds: List<String>? ->
-            requireSdk().releaseHeldPhotos(requestIds)
         }
 
         // MARK: - OTA Commands

@@ -237,34 +237,6 @@ export type HotspotStatusChangeEvent = HotspotStatus & {
   type: "hotspot_status_change"
 }
 
-/**
- * The fast photo link: Wi-Fi Direct between an Android phone and Mentra Live. While it is
- * `open`, photos travel over it; otherwise over Bluetooth. `unavailable` carries a `reason`,
- * such as `glasses_unsupported`, `permission` (NEARBY_WIFI_DEVICES, or location before Android 13), `wifi_off`,
- * `glasses_not_connected`, `join_timeout` or a `glasses_...` error.
- */
-export type FastLinkState = "closed" | "opening" | "open" | "unavailable"
-
-export type FastLinkStatus = {
-  state: FastLinkState
-  link: "wifi_direct"
-  /**
-   * Whether the connected glasses can hold a Wi-Fi Direct group (they advertise
-   * `wifi_direct_version`). Without it, use the glasses hotspot.
-   */
-  glassesSupported: boolean
-  reason?: string
-  /** How long the link took to open, from the request. */
-  openedAfterMs?: number
-}
-
-export type FastLinkStatusEvent = FastLinkStatus & {
-  type: "fast_link_status"
-}
-
-/** How a photo reached the phone. */
-export type PhotoTransport = "ble" | "wifi_direct" | "hotspot"
-
 export type HotspotErrorEvent = {
   type: "hotspot_error"
   errorMessage: string
@@ -325,18 +297,6 @@ export type PhotoResponseEvent =
       contentType?: string
       fileSizeBytes?: number
       timestamp: number
-      /** How the photo reached the phone (Android `localFile` requests). */
-      transport?: PhotoTransport
-      /** Its last hop: the fetch over a fast link, or the Bluetooth packets. */
-      transferMs?: number
-      /** From the phone's request to the saved file. */
-      totalMs?: number
-      /** The glasses hold the full photo: a `deliver: "thumbnail"` request. */
-      held?: boolean
-      /** A held photo's preview (≤500 px JPEG), as a `data:image/jpeg;base64,` URI. */
-      thumbnailUrl?: string
-      /** When the glasses captured the held photo, in ms since the epoch. */
-      capturedAt?: number
     }
   | {
       type: "photo_response"
@@ -837,26 +797,7 @@ type NativeCameraFovSetting = {
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
-/** Fetch a held photo's full size: see {@link BluetoothSdkPublicModule.fetchHeldPhoto}. */
-export type FetchHeldPhotoParams = {
-  /** The `requestId` of the `deliver: "thumbnail"` request that took it. */
-  requestId: string
-  /** Save it as a file on the phone (default true); otherwise upload it to `webhookUrl`. */
-  localFile?: boolean
-  webhookUrl?: string
-  authToken?: string
-}
-
 export type PhotoRequestParams = {
-  /**
-   * `"thumbnail"`: the glasses hold the full photo and send only its preview, and the request
-   * resolves once the preview arrived, with `held: true` and `thumbnailUrl`. The camera is free
-   * for the next request as soon as the capture is written. Fetch the full photo with
-   * `fetchHeldPhoto` and delete the rest with `releaseHeldPhotos`; the glasses delete held photos
-   * 30 minutes after capture. Needs `heldPhotosVersion > 0` in the glasses status. A preview that
-   * fails rejects with `PREVIEW_FAILED`, and the photo is still held.
-   */
-  deliver?: "thumbnail"
   /**
    * Send an oriented <=500px, quality-50 JPEG preview before the full photo. Default false.
    * Enables a 110-second end-to-end native deadline (ordinary requests: 30 seconds).
@@ -1383,7 +1324,6 @@ export type BluetoothSdkModuleEvents = {
   saved_wifi_networks: (event: SavedWifiNetworksEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
-  fast_link_status: (event: FastLinkStatusEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
   photo_status: (event: PhotoStatusEvent) => void
   camera_status: (event: CameraStatusEvent) => void
@@ -1557,7 +1497,6 @@ export type BluetoothSdkEventMap = {
   saved_wifi_networks: SavedWifiNetworksEvent
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
-  fast_link_status: FastLinkStatusEvent
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
   camera_status: CameraStatusEvent
@@ -1666,15 +1605,6 @@ export interface BluetoothSdkPublicModule {
   /** Forget a saved network and return its correlated semantic outcome. */
   forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
-  /**
-   * Open the fast photo link (Wi-Fi Direct to Mentra Live, Android only). Returns the state now;
-   * `fast_link_status` reports each change. Photos use the link while it is open, and Bluetooth
-   * otherwise, with no change to `requestPhoto`. Needs NEARBY_WIFI_DEVICES on Android 13+.
-   */
-  openFastLink(): FastLinkStatus
-  /** Close the fast photo link; photos go over Bluetooth again. */
-  closeFastLink(): void
-  getFastLinkStatus(): FastLinkStatus
   /** Set the glasses clock from the phone after an OTA clock-skew failure. */
   setSystemTime(timestampMs: number): Promise<void>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
@@ -1723,14 +1653,6 @@ export interface BluetoothSdkPublicModule {
   setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
-  /**
-   * Fetch the full size of a photo the glasses hold (`deliver: "thumbnail"`), over Bluetooth.
-   * Resolves like `requestPhoto`: with the file's `file://` URI as `photoUrl`, or once uploaded.
-   * The glasses keep the photo, so a failed fetch can be retried.
-   */
-  fetchHeldPhoto(params: FetchHeldPhotoParams): Promise<PhotoSuccessResponseEvent>
-  /** Delete held photos on the glasses: these request IDs, or all of them when omitted. */
-  releaseHeldPhotos(requestIds?: string[] | null): Promise<void>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
   stopCameraWarmUp(requestId: string): Promise<void>
@@ -1953,8 +1875,6 @@ export interface GlassesStatus {
   packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
-  /** Held photos (`requestPhoto` with `deliver: "thumbnail"`); 0 means the glasses can't hold photos. */
-  heldPhotosVersion?: number
   bluetoothName: string
   serialNumber: string
   style: string

@@ -2022,27 +2022,6 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.sendHotspotState(enabled)
     }
 
-    /** Opens the Wi-Fi Direct photo link to Mentra Live; the result comes as `fast_link_status`. */
-    fun openFastLink(): Map<String, Any> {
-        val live = sgc as? MentraLive
-            ?: return mapOf(
-                "state" to "unavailable",
-                "link" to "wifi_direct",
-                "glassesSupported" to false,
-                "reason" to "glasses_not_connected",
-            )
-        live.wifiDirectLink.open()
-        return live.wifiDirectLink.status()
-    }
-
-    fun closeFastLink() {
-        (sgc as? MentraLive)?.wifiDirectLink?.close()
-    }
-
-    fun fastLinkStatus(): Map<String, Any> =
-        (sgc as? MentraLive)?.wifiDirectLink?.status()
-            ?: mapOf("state" to "closed", "link" to "wifi_direct", "glassesSupported" to false)
-
     fun setWifiAdbState(enabled: Boolean, expectedBluetoothMac: String? = null) {
         if (expectedBluetoothMac != null) {
             val current = sgc as? MentraLive ?: throw BluetoothSdkException(
@@ -2205,20 +2184,6 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     fun stopCameraWarmUp(requestId: String) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.stopCameraWarmUp(requestId)
-    }
-
-    fun fetchHeldPhoto(requestId: String, localFile: Boolean, webhookUrl: String?, authToken: String?) {
-        val live =
-            sgc as? MentraLive
-                ?: throw BluetoothSdkException("unsupported_device", "This command requires Mentra Live glasses.")
-        live.fetchHeldPhoto(requestId, localFile, webhookUrl, authToken)
-    }
-
-    fun releaseHeldPhotos(requestIds: List<String>?) {
-        val live =
-            sgc as? MentraLive
-                ?: throw BluetoothSdkException("unsupported_device", "This command requires Mentra Live glasses.")
-        live.releaseHeldPhotos(requestIds)
     }
 
     /**
