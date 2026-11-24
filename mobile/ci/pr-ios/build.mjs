@@ -7,7 +7,7 @@ import {
   xcodeBuildSettings,
 } from "../../scripts/release-bundle-config.mjs"
 import {prApp} from "../../../.github/scripts/pr-mobile-build.mjs"
-import {runXcode} from "./xcode-attempt.mjs"
+import {compilationCacheSettings, runXcode} from "./xcode-attempt.mjs"
 
 // The app is MENTRA_PR_APP's (PR_APPS in pr-mobile-build.mjs), compiled from its
 // root; the signing setup and the archive stay in mobile/build/pr-ios.
@@ -27,6 +27,7 @@ args.push("-derivedDataPath", "build-device")
 // Keep timing rows for both signed archives and unsigned compile checks.
 args.push("-showBuildTimingSummary")
 if (process.argv.includes("--serial")) args.push("-jobs", "1")
+args.push(...compilationCacheSettings)
 // A signed build archives unsigned, outside the Mac signing lock
 // (keychain-search.py), so two signed jobs on one Mac compile at once; the
 // workflow's export step signs it as Xcode would have (artifacts.py

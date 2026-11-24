@@ -1,5 +1,15 @@
 import {spawn} from "node:child_process"
 import {fileURLToPath} from "node:url"
+import os from "node:os"
+import path from "node:path"
+
+// Xcode's compilation cache, on this Mac outside any one build's derived data,
+// so a build reuses what an earlier build (any runner, PR or release) compiled
+// from the same inputs. Xcode bounds its size (a share of the disk).
+export const compilationCacheSettings = [
+  "COMPILATION_CACHE_ENABLE_CACHING=YES",
+  `COMPILATION_CACHE_CAS_PATH=${path.join(os.homedir(), "Library/Caches/mentra-compilation-cache")}`,
+]
 
 // Xcode lists every failed build command at the end. Retry only when signing
 // is the sole failure; mixed compiler/signing failures need normal diagnosis.
