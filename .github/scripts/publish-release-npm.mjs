@@ -412,6 +412,7 @@ export function publishReleaseNpm({
   const orderedNames = npmMembersInOrder(family, memberNames)
   const tag = npmReleaseTag(plan.channel)
   const publications = {}
+  const tarballSizes = {}
   let selectedSdkTarball = sdkTarball
   mkdirSync(outputDir, {recursive: true})
 
@@ -450,6 +451,7 @@ export function publishReleaseNpm({
     const integrity = sha512Integrity(bytes)
     const sha256 = createHash("sha256").update(bytes).digest("hex")
     const coordinate = `${name}@${plan.releaseIdentity}`
+    tarballSizes[coordinate] = bytes.length
     const registryIntegrity = parseViewValue(npmView(coordinate, "dist.integrity"))
     let status = "built"
 
@@ -490,31 +492,36 @@ export function publishReleaseNpm({
       })
     }
 
-    let url = `https://registry.npmjs.org/${encodeURIComponent(name)}`
-    if (!dryRun) {
-      const registryUrl = npmViewPublishedTarball(coordinate, {tarballBytes: bytes.length})
-      if (!isHttpsRegistryUrl(registryUrl)) {
-        throw new Error(
-          `${coordinate} was published but has no HTTPS registry tarball URL after ${npmReadbackWaitSeconds(bytes.length)}s`,
-        )
-      }
-      // The read-back is the only proof for a publish npm accepted as an
-      // already-staged version, so confirm the exposed bytes are ours.
-      const exposedIntegrity = parseViewValue(npmView(coordinate, "dist.integrity"))
-      if (exposedIntegrity !== integrity) {
-        throw new Error(`${coordinate} is exposed on npm with different bytes (${exposedIntegrity})`)
-      }
-      url = registryUrl
-    }
     publications[name] = {
       npm: {
         status,
         coordinate,
-        url,
+        url: `https://registry.npmjs.org/${encodeURIComponent(name)}`,
         sha256,
         integrity,
         provenanceUrl: `https://github.com/${process.env.GITHUB_REPOSITORY || "Mentra-Community/MentraOS"}/actions/runs/${process.env.GITHUB_RUN_ID || "0"}`,
       },
+    }
+  }
+
+  // npm takes minutes to expose each publish. The builds above use the
+  // workspace, not the registry, so read every package back only once all are
+  // published: the job waits about as long as the slowest one, not their sum.
+  if (!dryRun) {
+    for (const {npm} of Object.values(publications)) {
+      const registryUrl = npmViewPublishedTarball(npm.coordinate, {tarballBytes: tarballSizes[npm.coordinate]})
+      if (!isHttpsRegistryUrl(registryUrl)) {
+        throw new Error(
+          `${npm.coordinate} was published but has no HTTPS registry tarball URL after ${npmReadbackWaitSeconds(tarballSizes[npm.coordinate])}s`,
+        )
+      }
+      // The read-back is the only proof for a publish npm accepted as an
+      // already-staged version, so confirm the exposed bytes are ours.
+      const exposedIntegrity = parseViewValue(npmView(npm.coordinate, "dist.integrity"))
+      if (exposedIntegrity !== npm.integrity) {
+        throw new Error(`${npm.coordinate} is exposed on npm with different bytes (${exposedIntegrity})`)
+      }
+      npm.url = registryUrl
     }
   }
 
