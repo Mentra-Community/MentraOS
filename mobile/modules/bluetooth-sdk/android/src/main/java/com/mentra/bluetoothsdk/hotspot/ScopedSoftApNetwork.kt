@@ -17,9 +17,9 @@ import java.util.concurrent.CountDownLatch
  * Joins the glasses' SoftAP as a scoped, internet-less network and keeps the [Network] handle
  * in-process.
  *
- * Gallery sync and hotspot OTA (through `MentraLocalNetworkModule`), Mentra Call and the managed
- * relay all join through this class, so the hotspot has one join on Android. Callers that use
- * libwebrtc bind their sockets to the [Network] it produces.
+ * The glasses Wi-Fi service joins [shared] once, through `MentraLocalNetworkModule`, for gallery
+ * sync, hotspot OTA, Mentra Call and the managed relay. Callers that use libwebrtc bind their
+ * sockets to the [Network] it produces.
  *
  * ## Dual-homing
  *
@@ -540,6 +540,18 @@ class ScopedSoftApNetwork(private val context: Context) {
     }
 
     companion object {
+        @Volatile private var sharedInstance: ScopedSoftApNetwork? = null
+
+        /**
+         * The process's one glasses network. The glasses Wi-Fi service joins it, through
+         * `MentraLocalNetworkModule`, for every consumer; Mentra Call and the managed relay read its
+         * [network] and address instead of joining themselves.
+         */
+        fun shared(context: Context): ScopedSoftApNetwork =
+            sharedInstance ?: synchronized(this) {
+                sharedInstance ?: ScopedSoftApNetwork(context.applicationContext).also { sharedInstance = it }
+            }
+
         /** Android 17. `ACCESS_LOCAL_NETWORK` is enforced for apps targeting SDK 37+. */
         const val LOCAL_NETWORK_ENFORCED_SDK = 37
 

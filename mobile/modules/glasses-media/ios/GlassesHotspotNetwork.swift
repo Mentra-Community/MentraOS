@@ -44,6 +44,10 @@ public final class GlassesHotspotNetwork {
     public var onPermissionRequired: ((String) -> Void)?
     public init() { _ = Self.startupCleanup }
 
+    /// The process's one glasses network: the glasses Wi-Fi service joins it, and Mentra Call
+    /// and the managed relay read its verified address instead of joining themselves.
+    public static let shared = GlassesHotspotNetwork()
+
     /// iOS keeps every applied configuration and joins it again by itself whenever that hotspot is up.
     /// A configuration left by a crash or a kill mid-session would let a phone near many pairs wander onto
     /// one it is not using. This app's configurations are all glasses hotspots, so each join removes the

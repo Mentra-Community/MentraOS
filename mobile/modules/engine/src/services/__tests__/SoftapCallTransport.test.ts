@@ -30,18 +30,12 @@ function recordingDeps(overrides: Partial<SoftapCallDeps> | ((calls: string[]) =
       calls.push("startHotspot")
       return {ssid: "MentraLive-1234", passphrase: "hunter2!"}
     },
-    waitUntilHotspotJoinable: async () => {
-      calls.push("waitUntilHotspotJoinable")
-    },
     stopHotspot: async () => {
       calls.push("stopHotspot")
     },
     joinScopedNetwork: async (ssid, passphrase) => {
       calls.push(`joinScopedNetwork:${ssid}:${passphrase}`)
       return "192.168.43.20"
-    },
-    leaveScopedNetwork: async () => {
-      calls.push("leaveScopedNetwork")
     },
     joinMeeting: async (args) => {
       calls.push(`joinMeeting:${args.bindAddress}`)
@@ -70,14 +64,13 @@ function recordingDeps(overrides: Partial<SoftapCallDeps> | ((calls: string[]) =
 
 const START_ORDER = [
   "startHotspot",
-  "waitUntilHotspotJoinable",
   "joinScopedNetwork:MentraLive-1234:hunter2!",
   "joinMeeting:192.168.43.20",
   "startPublishing:http://192.168.43.20:8790/whip",
   "awaitFirstFrame",
 ]
 
-const TEARDOWN_ORDER = ["stopPublishing", "leaveMeeting", "leaveScopedNetwork", "stopHotspot"]
+const TEARDOWN_ORDER = ["stopPublishing", "leaveMeeting", "stopHotspot"]
 
 describe("SoftapCallTransport ordering", () => {
   test("runs the sequence in order and reaches live", async () => {
@@ -229,7 +222,6 @@ describe("SoftapCallTransport teardown", () => {
     const {transport} = recordingDeps({
       stopPublishing: failing,
       leaveMeeting: failing,
-      leaveScopedNetwork: failing,
       stopHotspot: failing,
     })
     await transport.start()
@@ -269,13 +261,13 @@ describe("SoftapCallTransport teardown", () => {
     }
     const {transport} = recordingDeps({
       stopPublishing: failing,
-      leaveScopedNetwork: failing,
+      leaveMeeting: failing,
     })
     await transport.start()
 
     await transport.stop()
 
-    expect(transport.lastTeardownFailures()).toEqual(["publish", "scopedJoin"])
+    expect(transport.lastTeardownFailures()).toEqual(["publish", "acsJoin"])
   })
 
   test("the host's second stop preserves cleanup failures from a rejected join", async () => {
@@ -321,7 +313,7 @@ describe("SoftapCallTransport teardown", () => {
 })
 
 describe("SoftapCallTransport end for everyone", () => {
-  const END_ORDER = ["stopPublishing", "endMeeting", "leaveScopedNetwork", "stopHotspot"]
+  const END_ORDER = ["stopPublishing", "endMeeting", "stopHotspot"]
 
   function endableDeps(overrides: Partial<SoftapCallDeps> = {}) {
     const harness = recordingDeps((calls) => ({
@@ -370,7 +362,7 @@ describe("SoftapCallTransport end for everyone", () => {
 
     await expect(transport.stop({mode: "end"})).rejects.toThrow("role_restricted")
 
-    expect(calls).toEqual(["stopPublishing", "leaveMeeting", "leaveScopedNetwork", "stopHotspot"])
+    expect(calls).toEqual(["stopPublishing", "leaveMeeting", "stopHotspot"])
     expect(transport.currentPhase()).toBe("idle")
   })
 
@@ -451,19 +443,19 @@ describe("SoftapCallTransport failure mapping", () => {
       step: "acsJoin",
       code: "ACS_JOIN_FAILED",
       override: "joinMeeting",
-      undone: ["leaveScopedNetwork", "stopHotspot"],
+      undone: ["stopHotspot"],
     },
     {
       step: "publish",
       code: "PUBLISH_FAILED",
       override: "startPublishing",
-      undone: ["leaveMeeting", "leaveScopedNetwork", "stopHotspot"],
+      undone: ["leaveMeeting", "stopHotspot"],
     },
     {
       step: "live",
       code: "NO_FIRST_FRAME",
       override: "awaitFirstFrame",
-      undone: ["stopPublishing", "leaveMeeting", "leaveScopedNetwork", "stopHotspot"],
+      undone: ["stopPublishing", "leaveMeeting", "stopHotspot"],
     },
   ]
 
@@ -565,21 +557,21 @@ describe("SoftapCallTransport leave during every phase", () => {
    */
   const blockable: Array<{step: SoftapStep; override: keyof SoftapCallDeps; released: string[]}> = [
     {step: "hotspot", override: "startHotspot", released: ["stopHotspot"]},
-    {step: "scopedJoin", override: "joinScopedNetwork", released: ["leaveScopedNetwork", "stopHotspot"]},
+    {step: "scopedJoin", override: "joinScopedNetwork", released: ["stopHotspot"]},
     {
       step: "acsJoin",
       override: "joinMeeting",
-      released: ["leaveMeeting", "leaveScopedNetwork", "stopHotspot"],
+      released: ["leaveMeeting", "stopHotspot"],
     },
     {
       step: "publish",
       override: "startPublishing",
-      released: ["stopPublishing", "leaveMeeting", "leaveScopedNetwork", "stopHotspot"],
+      released: ["stopPublishing", "leaveMeeting", "stopHotspot"],
     },
     {
       step: "live",
       override: "awaitFirstFrame",
-      released: ["stopPublishing", "leaveMeeting", "leaveScopedNetwork", "stopHotspot"],
+      released: ["stopPublishing", "leaveMeeting", "stopHotspot"],
     },
   ]
 
@@ -621,10 +613,10 @@ describe("SoftapCallTransport leave during every phase", () => {
       }
     })
 
-    if (step === "live") continue // Observing a frame does not acquire a resource.
-    for (const failEarlierHotspot of step === "scopedJoin" ? [false, true] : [false]) {
-      const detail = failEarlierHotspot ? " alongside failed hotspot cleanup" : ""
-      test(`reports failed late ${step} cleanup${detail}`, async () => {
+    // Observing a frame acquires nothing, and the join is released with the hotspot hold.
+    if (step === "live" || step === "scopedJoin") continue
+    {
+      test(`reports failed late ${step} cleanup`, async () => {
         let entered!: () => void
         const running = new Promise<void>((resolve) => {
           entered = resolve
@@ -647,20 +639,13 @@ describe("SoftapCallTransport leave during every phase", () => {
             throw new Error(`${step} cleanup failed`)
           },
         })
-        if (failEarlierHotspot) {
-          deps.stopHotspot = async () => {
-            calls.push("stopHotspot")
-            throw new Error("hotspot cleanup failed")
-          }
-        }
-
         const started = transport.start().catch((error: unknown) => error)
         await running
         const stopped = transport.stop()
         release()
         const [error] = await Promise.all([started, stopped])
 
-        const failures = failEarlierHotspot ? [step, "hotspot"] : [step]
+        const failures = [step]
         expect(error).toMatchObject({code: "CANCELLED"})
         expect(calls.filter((call) => released.includes(call))).toEqual(released)
         expect(transport.lastTeardownFailures()).toEqual(failures)
@@ -689,9 +674,6 @@ describe("SoftapCallTransport leave during every phase", () => {
       joinScopedNetwork: async () => {
         calls.push("joinScopedNetwork")
         return "192.168.43.20"
-      },
-      leaveScopedNetwork: async () => {
-        calls.push("leaveScopedNetwork")
       },
       joinMeeting: async () => {
         calls.push("joinMeeting")
@@ -834,7 +816,6 @@ describe("SoftapCallTransport stop waits for the step in flight", () => {
     resolveJoin("192.168.43.20")
     await stopping
     await started
-    expect(calls).toContain("leaveScopedNetwork")
     expect(calls).toContain("stopHotspot")
     expect(transport.lastTeardownFailures()).toEqual(["scopedJoin"])
   })
@@ -1178,16 +1159,16 @@ describe("createSoftapCallDeps", () => {
     return {
       calls,
       subsystems: {
-        setHotspotState: async (enabled: boolean) => {
-          calls.push(["setHotspotState", enabled])
-          return enabled ? {state: "enabled", ssid: "MentraLive-1234", password: "hunter2!"} : {state: "disabled"}
-        },
-        joinScopedNetwork: async (ssid: string, passphrase: string) => {
-          calls.push(["joinScopedNetwork", {ssid, passphrase}])
-          return "192.168.43.20"
-        },
-        leaveScopedNetwork: async () => {
-          calls.push(["leaveScopedNetwork", null])
+        holdWifi: async () => {
+          calls.push(["holdWifi", null])
+          return {
+            binding: {ssid: "MentraLive-1234", password: "hunter2!", gateway: "192.168.43.1", phoneIpv4: "192.168.43.20"},
+            onChange: () => () => {},
+            ready: async () => ({ssid: "MentraLive-1234", password: "hunter2!", gateway: "192.168.43.1"}),
+            release: async () => {
+              calls.push(["release", null])
+            },
+          }
         },
         joinMeeting: async (pkg: string, options: unknown) => {
           calls.push(["joinMeeting", {pkg, options}])
@@ -1209,7 +1190,6 @@ describe("createSoftapCallDeps", () => {
   function deps(
     overrides: Partial<ReturnType<typeof subsystems>["subsystems"]> = {},
     options: {
-      hotspotBroadcastWaitMs?: number
       video?: {width: number; height: number; fps: number; maxBitrateBps: number}
     } = {},
   ) {
@@ -1224,7 +1204,6 @@ describe("createSoftapCallDeps", () => {
         video: options.video,
         awaitFirstFrame: async () => {},
         subsystems: {...harness.subsystems, ...overrides},
-        hotspotBroadcastWaitMs: options.hotspotBroadcastWaitMs,
       }),
     }
   }
@@ -1320,90 +1299,8 @@ describe("createSoftapCallDeps", () => {
     ])
   })
 
-  test("the reported gateway follows hotspot enable and a retry that changes subnets", async () => {
-    const base = subsystems()
-    const gateways: Array<string | undefined> = []
-    let enables = 0
-    const real = createSoftapCallDeps({
-      packageName: "com.mentra.call",
-      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
-      token: "tok",
-      awaitFirstFrame: async () => {},
-      hotspotBroadcastWaitMs: 0,
-      subsystems: {
-        ...base.subsystems,
-        setHotspotState: async (enabled) =>
-          enabled
-            ? {
-                state: "enabled",
-                ssid: "MentraLive-1234",
-                password: "pw",
-                localIp: ++enables === 1 ? "192.168.43.1" : "10.5.6.1",
-              }
-            : {state: "disabled"},
-        joinScopedNetwork: async (_ssid, _password, gateway) => {
-          gateways.push(gateway)
-          if (gateways.length === 1) throw new Error("ScopedNetworkError$Unavailable: Could not join")
-          return "10.5.6.8"
-        },
-      },
-    })
-    await real.startHotspot()
-    await expect(real.joinScopedNetwork("MentraLive-1234", "pw")).resolves.toBe("10.5.6.8")
-    expect(gateways).toEqual(["192.168.43.1", "10.5.6.1"])
-  })
 
-  test("an unanswered enable is asked again instead of turning the hotspot off", async () => {
-    // BLE can deliver the enable after the phone gave up on it. Disabling here turned an AP that
-    // had just come up back off, and the rebuild then ran out of budget.
-    const base = subsystems()
-    const calls: boolean[] = []
-    let enables = 0
-    const real = createSoftapCallDeps({
-      packageName: "com.mentra.call",
-      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
-      token: "tok",
-      awaitFirstFrame: async () => {},
-      hotspotBroadcastWaitMs: 0,
-      subsystems: {
-        ...base.subsystems,
-        setHotspotState: async (enabled) => {
-          calls.push(enabled)
-          if (enabled && ++enables === 1) {
-            throw new Error("hotspot enable request timed out waiting for glasses response")
-          }
-          return enabled ? {state: "enabled", ssid: "MentraLive-1234", password: "pw"} : {state: "disabled"}
-        },
-      },
-    })
 
-    await expect(real.startHotspot()).resolves.toEqual({ssid: "MentraLive-1234", passphrase: "pw"})
-    expect(calls).toEqual([true, true])
-  })
-
-  test("a hotspot that answers 'disabled' is still cycled off before the retry", async () => {
-    const base = subsystems()
-    const calls: boolean[] = []
-    let enables = 0
-    const real = createSoftapCallDeps({
-      packageName: "com.mentra.call",
-      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
-      token: "tok",
-      awaitFirstFrame: async () => {},
-      hotspotBroadcastWaitMs: 0,
-      subsystems: {
-        ...base.subsystems,
-        setHotspotState: async (enabled) => {
-          calls.push(enabled)
-          if (enabled && ++enables === 1) return {state: "disabled"}
-          return enabled ? {state: "enabled", ssid: "MentraLive-1234", password: "pw"} : {state: "disabled"}
-        },
-      },
-    })
-
-    await real.startHotspot()
-    expect(calls).toEqual([true, false, true])
-  })
 
   test.each(["cellular", "ethernet"])("the join waits for %s internet before asking ACS for anything", async (transport) => {
     // Joining the hotspot takes this phone off Wi-Fi, and signing in to ACS is the very next thing
@@ -1522,6 +1419,7 @@ describe("createSoftapCallDeps", () => {
 
   test("the gateway probe verdict is narrated into the scoped join, and a failing probe does not throw", async () => {
     const ok = deps({probeGateway: async () => ({reachable: true, detail: "tcp 192.168.43.1:53 in 12ms"})})
+    await ok.deps.startHotspot()
     const okDetails: string[] = []
     await expect(ok.deps.joinScopedNetwork("MentraLive-1234", "hunter2!", (d) => okDetails.push(d))).resolves.toBe(
       "192.168.43.20",
@@ -1529,6 +1427,7 @@ describe("createSoftapCallDeps", () => {
     expect(okDetails.at(-1)).toContain("glasses OK")
 
     const bad = deps({probeGateway: async () => ({reachable: false, detail: "timeout"})})
+    await bad.deps.startHotspot()
     const badDetails: string[] = []
     await expect(bad.deps.joinScopedNetwork("MentraLive-1234", "hunter2!", (d) => badDetails.push(d))).resolves.toBe(
       "192.168.43.20",
@@ -1540,49 +1439,11 @@ describe("createSoftapCallDeps", () => {
         throw new Error("probe crashed")
       },
     })
+    await thrown.deps.startHotspot()
     await expect(thrown.deps.joinScopedNetwork("MentraLive-1234", "hunter2!")).resolves.toBe("192.168.43.20")
   })
 
-  test("an Unavailable scoped join cycles the glasses hotspot and joins again from idle", async () => {
-    // The first specifier steals wlan0 from office/personal Wi-Fi and Samsung assoc-rejects the
-    // glasses AP. After that request dies the STA is idle — cycling the AP and joining again is
-    // the recovery that worked at 17:43:20 after a failed switch.
-    let attempts = 0
-    const {calls, deps: real} = deps(
-      {
-        joinScopedNetwork: async () => {
-          attempts += 1
-          if (attempts === 1) {
-            throw new Error(
-              "Call to function 'MentraAcsMeeting.joinScopedNetwork' has been rejected.\n→ Caused by: com.mentra.acsmeeting.network.ScopedNetworkError$Unavailable: Could not join MentraLive_15f63c (SSID not in scan, Wi-Fi off, or the system join prompt was dismissed)",
-            )
-          }
-          return "192.168.43.20"
-        },
-      },
-      {hotspotBroadcastWaitMs: 0},
-    )
-    const details: string[] = []
-    await expect(real.joinScopedNetwork("MentraLive-1234", "hunter2!", (d) => details.push(d))).resolves.toBe(
-      "192.168.43.20",
-    )
-    expect(attempts).toBe(2)
-    expect(calls).toContainEqual(["setHotspotState", false])
-    expect(calls).toContainEqual(["setHotspotState", true])
-    expect(details.some((d) => d.includes("cycling"))).toBe(true)
-  })
 
-  test("a non-Unavailable scoped join failure is not retried", async () => {
-    let attempts = 0
-    const {deps: real} = deps({
-      joinScopedNetwork: async () => {
-        attempts += 1
-        throw new Error("SOFTAP_WIFI_DISABLED")
-      },
-    })
-    await expect(real.joinScopedNetwork("MentraLive-1234", "hunter2!")).rejects.toThrow("SOFTAP_WIFI_DISABLED")
-    expect(attempts).toBe(1)
-  })
 
   test("the glasses are told to publish in host-only ICE mode", async () => {
     // An empty stun server is what puts the glasses in host-only mode; a configured one would add
@@ -1689,95 +1550,22 @@ describe("createSoftapCallDeps", () => {
     ])
   })
 
-  test("waitUntilHotspotJoinable is a no-op when the wait is disabled", async () => {
+
+
+
+
+
+  test("the hotspot step holds the glasses Wi-Fi link and the stop releases it", async () => {
     const harness = deps()
-    const timed = createSoftapCallDeps({
-      packageName: "com.mentra.call",
-      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
-      token: "tok",
-      awaitFirstFrame: async () => {},
-      subsystems: {
-        setHotspotState: async () => ({state: "enabled", ssid: "MentraLive-1234", password: "hunter2!"}),
-        joinScopedNetwork: async () => "192.168.43.20",
-        leaveScopedNetwork: async () => {},
-        joinMeeting: async () => {},
-        leaveMeeting: async () => {},
-        ingestUrl: () => null,
-        startPublishing: async () => {},
-        stopPublishing: async () => {},
-      },
-      hotspotBroadcastWaitMs: 0,
-    })
-
-    const started = Date.now()
-    await timed.waitUntilHotspotJoinable()
-    expect(Date.now() - started).toBeLessThan(50)
-    expect(harness.calls).toEqual([])
-  })
-
-  test("a hotspot that reports enabled with no password is a failure", async () => {
-    const harness = deps({
-      setHotspotState: async () => ({state: "enabled", ssid: "MentraLive-1234"}),
-    })
-
-    await expect(harness.deps.startHotspot()).rejects.toThrow("no password")
-  })
-
-  test("a hotspot that reports enabled with no SSID is a failure", async () => {
-    const harness = deps(
-      {
-        setHotspotState: async () => ({state: "enabled"}),
-      },
-      {hotspotBroadcastWaitMs: 0},
-    )
-
-    await expect(harness.deps.startHotspot()).rejects.toThrow()
-  })
-
-  test("a hotspot that stays disabled is a failure naming the state", async () => {
-    const harness = deps(
-      {
-        setHotspotState: async () => ({state: "disabled"}),
-      },
-      {hotspotBroadcastWaitMs: 0},
-    )
-
-    await expect(harness.deps.startHotspot()).rejects.toThrow("state=disabled")
-  })
-
-  test("a first enable that fails is cycled off and tried again", async () => {
-    let enables = 0
-    const toggles: boolean[] = []
-    const {deps: real} = deps(
-      {
-        setHotspotState: async (enabled: boolean) => {
-          toggles.push(enabled)
-          if (enabled) {
-            enables += 1
-            if (enables === 1) return {state: "disabled"}
-            return {state: "enabled", ssid: "MentraLive-1234", password: "hunter2!"}
-          }
-          return {state: "disabled"}
-        },
-      },
-      {hotspotBroadcastWaitMs: 0},
-    )
-    const details: string[] = []
-    await expect(real.startHotspot((d) => details.push(d))).resolves.toEqual({
-      ssid: "MentraLive-1234",
-      passphrase: "hunter2!",
-    })
-    expect(enables).toBe(2)
-    expect(toggles).toEqual([true, false, true])
-    expect(details.some((d) => d.includes("trying again"))).toBe(true)
-  })
-
-  test("stopHotspot asks for disabled rather than toggling blindly", async () => {
-    const harness = deps()
-
+    await expect(harness.deps.startHotspot()).resolves.toEqual({ssid: "MentraLive-1234", passphrase: "hunter2!"})
+    await expect(harness.deps.joinScopedNetwork("MentraLive-1234", "hunter2!")).resolves.toBe("192.168.43.20")
     await harness.deps.stopHotspot()
+    await harness.deps.stopHotspot()
+    expect(harness.calls.map(([name]) => name)).toEqual(["holdWifi", "release"])
+  })
 
-    expect(harness.calls).toContainEqual(["setHotspotState", false])
+  test("the join step without a hold is a failure", async () => {
+    await expect(deps().deps.joinScopedNetwork("MentraLive-1234", "hunter2!")).rejects.toThrow("not held")
   })
 
   test("a join that binds no listener surfaces an empty ingest URL for the sequence to reject", async () => {
@@ -1901,10 +1689,9 @@ describe("SoftapCallTransport mid-call republish", () => {
 })
 
 describe("SoftapCallTransport media generation recovery", () => {
-  const PRESERVE_TEARDOWN = ["stopPublishing", "leaveScopedNetwork", "stopHotspot"]
+  const PRESERVE_TEARDOWN = ["stopPublishing", "stopHotspot"]
   const MEDIA_ONLY_ORDER = [
     "startHotspot",
-    "waitUntilHotspotJoinable",
     "joinScopedNetwork:MentraLive-1234:hunter2!",
     "rebindIngest",
     "startPublishing:http://192.168.43.20:8791/whip",

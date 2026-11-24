@@ -292,6 +292,16 @@ export const localNetworkTransport = {
     return {jobId, promise} as DownloadHandle
   },
 
+  /** The phone left the glasses network without being asked to. */
+  onLost(listener: () => void): () => void {
+    const android = otaLocalNetwork.onNetworkLost(listener)
+    const ios = Platform.OS === "ios" ? glassesHotspot.onLost(listener) : undefined
+    return () => {
+      android.remove()
+      ios?.remove()
+    }
+  },
+
   stopDownload(jobId: number): void {
     const nativeId = nativeJobs.get(jobId)
     if (nativeId && otaLocalNetwork.isAvailable()) {

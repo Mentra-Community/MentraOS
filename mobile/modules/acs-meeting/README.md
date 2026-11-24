@@ -215,11 +215,9 @@ to the native side rather than to the bridge.
 |---|---|---|
 | `onState` | full state snapshot | Any phase, roster, media-source, capability or audio-safety change |
 | `onIncomingPcm` | `{base64, sampleRate, channels}` | 16 kHz mono batch of Teams audio for the host to play |
-| `onScopedNetworkLost` | `{code, message}` | The hotspot went away **while we still wanted it** |
 
-`onScopedNetworkLost` never fires for a hotspot we released ourselves; the scoped state
-machine drops the framework's `onLost` in that case, so a normal Leave or End cannot
-manufacture a mid-call network error.
+A lost glasses network reaches the call from the engine's glasses Wi-Fi service
+(`GlassesWifi.ts`), which owns the hotspot and the phone's join; this module does not join.
 
 ### Functions
 
@@ -250,8 +248,6 @@ SoftAP and networking:
 | Function | Notes |
 |---|---|
 | `isWifiEnabled()` | Read-only preflight. We never open the Wi-Fi panel |
-| `joinScopedNetwork(ssid, passphrase)` | Validates cellular first, then joins. Returns the phone's IPv4 |
-| `leaveScopedNetwork()` | Drops **only** the hotspot bind, never the cellular pin |
 | `awaitValidatedDefaultNetwork()` | `{transport, validated, present, usable, detail}` |
 | `scopedNetworkInfo()` | `{available, localIpv4, prefix}` |
 | `probeScopedGateway()` | Blocking TCP probe, `{reachable, detail}` |
@@ -273,8 +269,8 @@ exists in the process**. libwebrtc's network monitor only reads the detector fac
 starts, and without it libwebrtc never sees the internet-less hotspot, so the phone's WHIP
 answer has no host candidate.
 
-`OnDestroy` (a reloaded JS bundle, or a killed module) leaves the session, releases the
-scoped network, and permanently closes the cellular hold. It is traced, because nothing on
+`OnDestroy` (a reloaded JS bundle, or a killed module) leaves the session and permanently
+closes the cellular hold. It is traced, because nothing on
 the host side will ever report it.
 
 ## Operations
@@ -286,16 +282,16 @@ before the raw outgoing streams exist, and the first frames are dropped by whate
 to be null at the time.
 
 ```
-1 hotspot      glasses raise the AP                     (host + BLE)
-2 scopedJoin   phone joins it, cellular validated first (joinScopedNetwork)
+1 hotspot      hold the glasses Wi-Fi: AP up, phone joined (GlassesWifi)
+2 scopedJoin   read the phone's address, probe the glasses
 3 acsJoin      bind WHIP listener, then join Teams      (join → ingestUrl)
 4 publish      tell the glasses where to POST           (phoneStreamCoordinator)
 5 live         wait for a decoded frame                 (mediaSource: live)
 ```
 
 `SoftapCallTransport.ts` owns that sequence and nothing else: the session owns the listener
-and the peer, `PhoneStreamCoordinator` owns the publisher, and the scoped network is owned
-by native. Every step has exactly one owner that can tear it down, which is what makes
+and the peer, `PhoneStreamCoordinator` owns the publisher, and the glasses network is owned
+by the glasses Wi-Fi service, shared with gallery sync, OTA and the relay. Every step has exactly one owner that can tear it down, which is what makes
 leaving mid-join safe.
 
 `join` sets `phase = "connecting"` synchronously, so the resolved snapshot cannot be an
@@ -695,10 +691,8 @@ and the phone's WHIP answer has no host candidate.
 
 **`InternetHold`** is three distinct things that are easy to conflate:
 
-- `awaitValidatedCellular()` — ask Android to bring cellular up and confirm it validated.
-  `joinScopedNetwork` refuses with `SOFTAP_NO_CELLULAR_INTERNET` if it does not, because a
-  phone whose mobile data cannot carry TLS strands the ACS join for its whole timeout with
-  device-wide DNS failures, which reads as a hotspot problem and is not one.
+- `awaitValidatedCellular()` — ask Android to bring cellular up and confirm it validated,
+  in `prepareAgent`, before the glasses network takes the phone's Wi-Fi.
 - `bindProcessToCellular()` / `unbindProcess()` — the process-wide route pin.
 - `awaitValidatedDefault()` — when this app's *default route* actually switched. Holding a
   cellular request does not answer that, and only this is a valid precondition for a join
@@ -710,21 +704,15 @@ still work, TCP to the listener times out. So `withIngestUnpinned` lifts the pin
 exactly the WHIP bind and restores it in a `finally`. Both `join` and `rebindSoftApIngest`
 go through it.
 
-**Ownership of the pin is not the scoped join's.** `leaveScopedNetwork` drops only the
-hotspot bind. Releasing the pin there is what turned Cancel-during-hotspot into
-`Request failed (503)`: the AP was still up, Android made it the default Wi-Fi, and the next
-Teams create had no internet. The pin is dropped by `leave` / `leaveAndAwait` via
+**The pin is not the glasses network's.** Releasing the call's Wi-Fi hold never drops it.
+Releasing the pin there is what turned Cancel-during-hotspot into `Request failed (503)`: the
+AP was still up, Android made it the default Wi-Fi, and the next Teams create had no
+internet. The pin is dropped by `leave` / `leaveAndAwait` via
 `releaseWhenDefaultInternetReady()`, and only once a validated default route exists.
 
-Two device-specific behaviours are handled explicitly in `joinScopedNetwork`:
-
-- `WifiDisabled` — the radio went off inside the join. `setWifiEnabled` has been a no-op for
-  non-privileged apps since Android 10, so the only honest move is to fail by name. The panel
-  this replaced held the call up to 90 s behind a system sheet, and the network the user then
-  picked often became a default route with no internet.
-- `Unavailable` — the first specifier steals `wlan0` from the phone's current Wi-Fi, Samsung
-  assoc-rejects the glasses SoftAP (status 1025), and the request dies. After a settle delay
-  the same join from an idle STA succeeds, so it is retried once.
+The join's device-specific behaviours (a radio that goes off inside the join, and Samsung's
+assoc-reject of the first specifier after leaving another network) are handled once, in
+`ScopedSoftApNetwork` and the glasses Wi-Fi service, for every consumer.
 
 **`SoftApSdpGuard`** inspects the glasses' offer against the scoped prefix and rejects one
 whose candidates would leave the hotspot. `WhipIngestServer` binds to the phone's hotspot

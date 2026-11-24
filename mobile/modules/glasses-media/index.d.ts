@@ -16,4 +16,6 @@ export const glassesHotspot: {
   /** A join with this id has waited a few seconds for Local Network access, which the person may have denied.
    * `systemAnswer` is the connection state and path reason that left it waiting, for logs. */
   onPermissionRequired(listener: (id: string, systemAnswer: string) => void): {remove(): void}
+  /** The phone left the joined glasses network without being asked to. */
+  onLost(listener: (id: string, reason: string) => void): {remove(): void}
 }

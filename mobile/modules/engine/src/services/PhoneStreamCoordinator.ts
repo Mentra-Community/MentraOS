@@ -34,7 +34,6 @@
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {StreamResolvedConfig, StreamStartRequest, StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
-import {hotspotAcquisitions} from "./GlassesHotspotLease"
 import {createManagedWebRtcRelay, type ManagedRelay} from "./ManagedWebRtcRelay"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
@@ -260,11 +259,8 @@ export class PhoneStreamCoordinator {
    * until its own watchdog fires. `generation` belongs to the publisher that
    * queued it; a later SoftAP media hop must not inherit this stop.
    */
-  /** `hotspotAcquisitions` dates a deferred hotspot-off; a later owner's AP is never turned off. */
   private pendingBleStop: {
     streamId: string
-    hotspot?: boolean
-    hotspotAcquisitions?: number
     generation: number
     discarded?: boolean
   } | null = null
@@ -608,12 +604,7 @@ export class PhoneStreamCoordinator {
             },
             () => this.linkSource.isConnected(),
             () => {
-              this.pendingBleStop = {
-                streamId,
-                hotspot: true,
-                hotspotAcquisitions: hotspotAcquisitions(),
-                generation: this.publisherGeneration,
-              }
+              this.pendingBleStop = {streamId, generation: this.publisherGeneration}
               this.attachLink()
             },
           )
@@ -641,7 +632,7 @@ export class PhoneStreamCoordinator {
         entry.stopping = true
         this.releaseRelayPreview(entry)
         // Startup has not reached startLifecycle yet. Retain a link observer if
-        // cleanup fails so a reconnect can drain the owned relay/hotspot.
+        // cleanup fails so a reconnect can drain the owned relay.
         this.attachLink()
         try {
           await entry.relay?.stop()
@@ -912,13 +903,6 @@ export class PhoneStreamCoordinator {
     if (!pending || pending.discarded || this.current || !this.linkSource.isConnected()) return
     console.info("[STREAM] BLE link back; sending deferred stopStream", pending)
     await BluetoothSdk.stopStream()
-    if (pending.discarded || this.pendingBleStop !== pending || this.current) return
-    if (pending.hotspot && pending.hotspotAcquisitions !== hotspotAcquisitions()) {
-      console.info("[STREAM] The hotspot has a newer owner; dropping the deferred hotspot shutdown", pending)
-    } else if (pending.hotspot) {
-      const result = await BluetoothSdk.setHotspotState(false)
-      if (result.state !== "disabled") throw new Error("Deferred hotspot shutdown was not confirmed")
-    }
     if (this.pendingBleStop === pending) this.pendingBleStop = null
     this.detachLinkIfIdle()
   }
@@ -1178,12 +1162,7 @@ export class PhoneStreamCoordinator {
     // lock for the native timeout). Defer it to the next reconnect instead.
     const linkUp = this.linkSource.isConnected()
     if (sendBleStop && !linkUp) {
-      this.pendingBleStop = {
-        streamId: entry.streamId,
-        hotspot: entry.kind === "managed" && !!entry.relay,
-        hotspotAcquisitions: hotspotAcquisitions(),
-        generation: this.publisherGeneration,
-      }
+      this.pendingBleStop = {streamId: entry.streamId, generation: this.publisherGeneration}
       console.warn("[STREAM] BLE link down during teardown; stopStream deferred", {
         streamId: entry.streamId,
         reason,
@@ -1202,7 +1181,7 @@ export class PhoneStreamCoordinator {
       entry.hlsReadyRejecters = []
     }
 
-    // Relay stop owns the BLE publisher, native peers and hotspot. Keep the entry on failure
+    // Relay stop owns the BLE publisher, native peers and its Wi-Fi hold. Keep the entry on failure
     // so another start cannot acquire resources whose teardown has not been confirmed.
     if (entry.kind === "managed" && entry.relay) await entry.relay.stop()
     try {

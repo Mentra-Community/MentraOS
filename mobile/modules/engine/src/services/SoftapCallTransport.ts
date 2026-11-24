@@ -21,6 +21,7 @@
  */
 
 import {softapTrace, softapTraceFailure, beginSoftapTrace, resetSoftapTrace} from "../utils/softapTrace"
+import type {GlassesWifiHold} from "./GlassesWifi"
 import {PhotoPauseController} from "./PhotoPauseController"
 
 /** Steps in order. Also the teardown order, reversed. */
@@ -59,9 +60,6 @@ export class SoftapCallError extends Error {
     this.name = "SoftapCallError"
   }
 }
-
-/** Gallery sync already learned this: glasses report enabled before the SSID is in the phone scan. */
-export const HOTSPOT_BROADCAST_WAIT_MS = 3_000
 
 /**
  * What the glasses→phone hop is worth at 540p over a hotspot with one client and no contention.
@@ -130,29 +128,6 @@ export function softapVideoPolicy(video: {
   }
 }
 
-/**
- * Android's WifiNetworkSpecifier called onUnavailable. The native message lists three causes
- * because the callback does not say which one happened; on the 18:02 Samsung path the SSID was
- * in scan and the join sheet was bypassed — assoc rejected after leaving another AP.
- */
-function isScopedJoinUnavailable(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return /SOFTAP_UNAVAILABLE|ScopedNetworkError\$Unavailable|SSID not in scan, Wi-Fi off, or the system join prompt/i.test(
-    message,
-  )
-}
-
-/**
- * The glasses never answered, as opposed to answering "disabled".
- *
- * A timeout is not evidence the command was lost: BLE can redeliver it after the phone has given
- * up, so the AP may be coming up at the very moment the retry would ask for it to go down.
- */
-function isHotspotAnswerTimeout(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return /timed out waiting for glasses response|glasses did not answer/i.test(message)
-}
-
 export type SoftapStepStatus = "pending" | "running" | "done" | "failed"
 
 /**
@@ -195,20 +170,16 @@ export interface SoftapCallDeps {
    * a host that cannot answer skips the preflight and relies on the native throw at `scopedJoin`.
    */
   isWifiEnabled?(): Promise<boolean>
-  /** Enable the glasses hotspot and return its credentials. */
-  startHotspot(report?: SoftapStepReporter): Promise<{ssid: string; passphrase: string}>
   /**
-   * Wait until the phone can actually see the AP. `setHotspotState` resolves when the glasses
-   * accept the command, not when `ap0` is beaconing. A WifiNetworkSpecifier issued too early
-   * comes back `Unavailable` in well under a second — it does not keep scanning for the timeout.
+   * Hold the glasses Wi-Fi link: the glasses Wi-Fi service turns the hotspot on and joins it, or
+   * shares the link another consumer already holds. Returns the network's credentials.
    */
-  waitUntilHotspotJoinable?(report?: SoftapStepReporter): Promise<void>
-  /** Disable it. Must tolerate being called when it was never enabled. */
+  startHotspot(report?: SoftapStepReporter): Promise<{ssid: string; passphrase: string}>
+  /** Release the hold. Must tolerate being called when nothing was held. */
   stopHotspot(): Promise<void>
-  /** Join the hotspot without taking the phone's default route. Resolves to the phone's own IPv4. */
+  /** The phone's own IPv4 on the held link, after checking it reaches the glasses. */
   joinScopedNetwork(ssid: string, passphrase: string, report?: SoftapStepReporter): Promise<string | undefined>
-  leaveScopedNetwork(): Promise<void>
-  /** Interrupt a pending native join while retaining its cleanup barrier. Unsupported hosts wait. */
+  /** Interrupt a hold still waiting for the link, e.g. on the phone's join prompt. */
   cancelScopedNetworkJoin?(): Promise<void>
   /**
    * Join the meeting. This is what binds the local WHIP listener and arms the ACS raw outputs, so
@@ -827,9 +798,6 @@ export class SoftapCallTransport {
         // The passphrase never reaches the log; softapTrace redacts it by key, and only the SSID
         // is useful for matching against the phone's Wi-Fi state anyway.
         softapTrace("hotspot_enabled", {ssid: hotspot.ssid})
-        report(`Hotspot ${hotspot.ssid} is on; waiting for it to broadcast`)
-        await this.deps.waitUntilHotspotJoinable?.(report)
-        softapTrace("hotspot_broadcast_wait_done", {ssid: hotspot.ssid})
         report(`Hotspot ${hotspot.ssid}`)
       })
 
@@ -979,7 +947,7 @@ export class SoftapCallTransport {
       // hold the next call back, never let it race this one's cleanup.
       if (running) {
         const cancellation =
-          running.step === "scopedJoin" && this.deps.cancelScopedNetworkJoin
+          (running.step === "hotspot" || running.step === "scopedJoin") && this.deps.cancelScopedNetworkJoin
             ? Promise.resolve()
                 .then(() => this.deps.cancelScopedNetworkJoin!())
                 .catch((error) => {
@@ -1059,8 +1027,9 @@ export class SoftapCallTransport {
       case "acsJoin":
         if (this.meetingPreserved) return
         return this.leaveOrEndMeeting()
+      // The join is the glasses Wi-Fi service's, released with the hold in the hotspot step.
       case "scopedJoin":
-        return this.deps.leaveScopedNetwork()
+        return
       case "hotspot":
         return this.deps.stopHotspot()
     }
@@ -1213,12 +1182,10 @@ export function createSoftapCallDeps(args: {
    */
   waitUntilLive?: (timeoutMs: number) => Promise<boolean>
   subsystems: {
-    setHotspotState: (enabled: boolean) => Promise<{state: string; ssid?: string; password?: string; localIp?: string}>
+    /** Hold the glasses Wi-Fi link: the service turns the hotspot on and joins it if nobody has. */
+    holdWifi: (report?: SoftapStepReporter, signal?: AbortSignal) => Promise<GlassesWifiHold>
     /** Whether this phone's Wi-Fi radio is on. Optional: only Android hosts can answer it. */
     isWifiEnabled?: () => Promise<boolean>
-    joinScopedNetwork: (ssid: string, passphrase: string, gateway?: string, report?: SoftapStepReporter) => Promise<string | undefined>
-    leaveScopedNetwork: () => Promise<void>
-    cancelScopedNetworkJoin?: () => Promise<void>
     joinMeeting: (
       packageName: string,
       options: {
@@ -1284,85 +1251,26 @@ export function createSoftapCallDeps(args: {
       listener: (event: {status: string; streamId?: string; reason?: string; error?: string}) => void,
     ) => () => void
   }
-  /** Override only in tests. Production waits the gallery-proven broadcast window. */
-  hotspotBroadcastWaitMs?: number
 }): SoftapCallDeps {
   const {packageName, subsystems} = args
-  const hotspotBroadcastWaitMs = args.hotspotBroadcastWaitMs ?? HOTSPOT_BROADCAST_WAIT_MS
-  let gatewayAddress: string | undefined
+  // The call's hold on the link; the hotspot and join steps are the service's, the rest is ours.
+  let hold: GlassesWifiHold | null = null
+  let holding: AbortController | null = null
   return {
     isWifiEnabled: subsystems.isWifiEnabled ? () => subsystems.isWifiEnabled!() : undefined,
     startHotspot: async (report) => {
-      const enable = async () => {
-        const status = await subsystems.setHotspotState(true)
-        if (status.state !== "enabled" || !status.ssid) {
-          throw new Error(`the glasses hotspot did not start (state=${status.state})`)
-        }
-        if (!status.password) {
-          throw new Error("the glasses hotspot reported no password")
-        }
-        report?.(`Glasses report hotspot ${status.ssid} enabled`)
-        gatewayAddress = status.localIp
-        return {ssid: status.ssid, passphrase: status.password}
-      }
-      try {
-        return await enable()
-      } catch (error) {
-        if (error instanceof Error && /no password/.test(error.message)) throw error
-        const unanswered = isHotspotAnswerTimeout(error)
-        // Cancel-then-start races the previous disable: the glasses report disabled (or no SSID)
-        // and the UI said "Couldn't start glasses hotspot" before step 2 ran on a leftover AP.
-        softapTraceFailure("hotspot_enable_retry", {
-          reason: error instanceof Error ? error.message : String(error),
-          unanswered,
-        })
-        if (unanswered) {
-          // Enable is idempotent; disabling here is what turned a late-delivered enable back off
-          // and cost the whole rebuild budget after a walk-away.
-          report?.("Glasses did not answer; asking again without turning the hotspot off")
-          return await enable()
-        }
-        report?.("Glasses hotspot did not start; turning it off and trying again")
-        await subsystems.setHotspotState(false)
-        if (hotspotBroadcastWaitMs > 0) {
-          await new Promise<void>((resolve) => setTimeout(resolve, Math.min(1_000, hotspotBroadcastWaitMs)))
-        }
-        return await enable()
-      }
-    },
-    waitUntilHotspotJoinable: async (report) => {
-      if (hotspotBroadcastWaitMs <= 0) return
-      softapTrace("hotspot_broadcast_wait", {ms: hotspotBroadcastWaitMs})
-      report?.(`Giving the hotspot ${Math.round(hotspotBroadcastWaitMs / 1000)}s to start broadcasting`)
-      await new Promise<void>((resolve) => setTimeout(resolve, hotspotBroadcastWaitMs))
+      holding = new AbortController()
+      hold = await subsystems.holdWifi(report, holding.signal)
+      return {ssid: hold.binding.ssid, passphrase: hold.binding.password}
     },
     stopHotspot: async () => {
-      await subsystems.setHotspotState(false)
+      const held = hold
+      hold = null
+      await held?.release()
     },
-    joinScopedNetwork: async (ssid, passphrase, report) => {
-      const joinOnce = (nextSsid: string, nextPassphrase: string) =>
-        gatewayAddress
-          ? subsystems.joinScopedNetwork(nextSsid, nextPassphrase, gatewayAddress, report)
-          : subsystems.joinScopedNetwork(nextSsid, nextPassphrase, undefined, report)
-      let address: string | undefined
-      try {
-        address = await joinOnce(ssid, passphrase)
-      } catch (error) {
-        if (!isScopedJoinUnavailable(error)) throw error
-        // First specifier left the phone's previous Wi-Fi and assoc-rejected the glasses AP.
-        // Cycle the AP and join again from an idle STA — the radio is free now.
-        softapTraceFailure("scoped_join_unavailable_cycle_hotspot", {ssid})
-        report?.("Phone couldn't join; cycling the glasses hotspot and trying again")
-        await subsystems.setHotspotState(false)
-        const status = await subsystems.setHotspotState(true)
-        if (status.state !== "enabled" || !status.ssid || !status.password) throw error
-        gatewayAddress = status.localIp
-        if (hotspotBroadcastWaitMs > 0) {
-          report?.(`Giving the hotspot ${Math.round(hotspotBroadcastWaitMs / 1000)}s to start broadcasting`)
-          await new Promise<void>((resolve) => setTimeout(resolve, hotspotBroadcastWaitMs))
-        }
-        address = await joinOnce(status.ssid, status.password)
-      }
+    joinScopedNetwork: async (_ssid, _passphrase, report) => {
+      if (!hold) throw new Error("the glasses Wi-Fi link is not held")
+      const address = hold.binding.phoneIpv4
       if (subsystems.probeGateway) {
         report?.(`Phone is ${address ?? "on the hotspot"}; checking it can reach the glasses`)
         try {
@@ -1381,8 +1289,7 @@ export function createSoftapCallDeps(args: {
       }
       return address
     },
-    leaveScopedNetwork: () => subsystems.leaveScopedNetwork(),
-    cancelScopedNetworkJoin: subsystems.cancelScopedNetworkJoin,
+    cancelScopedNetworkJoin: async () => holding?.abort(),
     joinMeeting: async ({ssid, passphrase, bindAddress}, report) => {
       // The hotspot join just took this phone off Wi-Fi, so the route Teams needs is whatever
       // Android promoted in its place. Waiting for it to validate is what stopped the ACS join

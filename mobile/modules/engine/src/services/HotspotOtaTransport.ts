@@ -1,4 +1,3 @@
-import BluetoothSdk, {isEnabledHotspotStatus} from "@mentra/bluetooth-sdk"
 import NetInfo from "@react-native-community/netinfo"
 import {otaServer} from "@mentra/bluetooth-sdk/ota-transport"
 // One coordinator selects the native Android or iOS staging implementation at runtime.
@@ -20,14 +19,11 @@ import {
 } from "./OtaArtifactDownloader"
 import {useGlassesStore} from "../stores/glasses"
 import {usableSerial} from "./fleet/glassesIdentity"
-import {keepHotspotUpWhileJoining} from "./GlassesHotspotJoin"
+import {GlassesWifiError, holdGlassesWifi, type GlassesWifiHold} from "./GlassesWifi"
 import {joinedGlassesIdentity} from "./HotspotGlassesIdentity"
-import {acquireGlassesHotspot} from "./GlassesHotspotLease"
-import {disableHotspotWithRetry} from "./HotspotShutdown"
 import {hotspotStartErrorCode} from "./OtaErrorMapping"
 import {
   localNetworkErrorDetails,
-  localNetworkTransport,
   type LocalNetworkErrorDetails,
 } from "./asg/localNetworkTransport"
 
@@ -66,20 +62,17 @@ export class HotspotOtaTransportError extends Error {
   }
 }
 
-/** Owns the single phone-side endpoint and network lease for one hotspot OTA attempt. */
+/** Owns the single phone-side endpoint and the Wi-Fi hold for one hotspot OTA attempt. */
 class HotspotOtaTransport {
-  private readonly networkOwner = Symbol("hotspot-ota")
-  private releaseHotspot: (() => void) | null = null
+  private wifi: GlassesWifiHold | null = null
+  /** Aborts a hold still waiting for the link when the attempt is torn down. */
+  private holding: AbortController | null = null
   private active = false
   private prepared: PreparedOtaArtifact[] = []
-  private hotspotRequested = false
-  private localNetworkConnected = false
-  private localNetworkRequested = false
   private serverStarted = false
   private teardownPromise: Promise<void> | null = null
   private preparing: Promise<string> | null = null
   private generation = 0
-  private ownerRevision = 0
 
   async prepare(
     checkResult: OtaCheckCurrentGlassesResult,
@@ -90,7 +83,7 @@ class HotspotOtaTransport {
     if (ownerRevision !== otaDeviceSessionRevision()) throw new Error("The OTA glasses have changed")
     // A teardown whose hotspot shutdown went unconfirmed (glasses whose replies are queued behind
     // a file transfer) leaves its cleanup here. Retry it rather than refuse every later attempt.
-    if (this.releaseHotspot && !this.active && !this.preparing) {
+    if (this.wifi && !this.active && !this.preparing) {
       try {
         await this.teardown()
       } catch (cleanupError) {
@@ -98,21 +91,10 @@ class HotspotOtaTransport {
       }
       if (ownerRevision !== otaDeviceSessionRevision()) throw new Error("The OTA glasses have changed")
     }
-    if (
-      this.releaseHotspot ||
-      this.active ||
-      this.preparing ||
-      this.localNetworkRequested ||
-      this.serverStarted ||
-      this.hotspotRequested ||
-      this.prepared.length
-    ) {
+    if (this.wifi || this.active || this.preparing || this.serverStarted || this.prepared.length) {
       throw new Error("A hotspot OTA transport is active or still needs cleanup")
     }
     if (!checkResult.manifestBody) throw new Error("The selected OTA check has no manifest body")
-    // Refusal happens before downloading or changing the glasses AP.
-    this.releaseHotspot = acquireGlassesHotspot()
-    this.ownerRevision = ownerRevision
     const generation = ++this.generation
     const assertCurrent = () => {
       if (generation !== this.generation || ownerRevision !== otaDeviceSessionRevision()) {
@@ -127,7 +109,7 @@ class HotspotOtaTransport {
       // Remove our promise before waiting on teardown, which joins preparation.
       if (this.preparing === preparation) this.preparing = null
       try {
-        await this.teardown(ownerRevision === otaDeviceSessionRevision())
+        await this.teardown()
       } catch (cleanupError) {
         console.warn("[OTA_PROGRESS] cleanup failed", localNetworkErrorDetails(cleanupError))
       }
@@ -144,7 +126,6 @@ class HotspotOtaTransport {
   ): Promise<string> {
     const manifestBody = checkResult.manifestBody
     if (!manifestBody) throw new Error("The selected OTA check has no manifest body")
-    let phase: HotspotOtaPhase = "downloading"
     try {
       await this.ensureAndroidWifiPermission()
       assertCurrent()
@@ -158,44 +139,28 @@ class HotspotOtaTransport {
       )
 
       assertCurrent()
-      phase = "starting_hotspot"
       onProgress?.({phase: "starting_hotspot"})
-      assertCurrent()
-      this.hotspotRequested = true
-      const hotspot = await BluetoothSdk.setHotspotState(true)
-      assertCurrent()
-      if (!isEnabledHotspotStatus(hotspot)) {
-        throw new HotspotOtaTransportError("hotspot_start_failed", "Mentra Live did not return hotspot credentials")
-      }
-      phase = "joining_hotspot"
-      onProgress?.({phase: "joining_hotspot"})
-      assertCurrent()
       const bluetoothSerial = usableSerial(useGlassesStore.getState())
       let localAddress: string | undefined
       for (let join = 1; ; join++) {
-        this.localNetworkRequested = true
-        localAddress = await keepHotspotUpWhileJoining(
-          localNetworkTransport.connect(this.networkOwner, hotspot.ssid, hotspot.password, {
-            assertCurrent,
-            gateway: hotspot.localIp,
-            frequency: hotspot.frequency,
-            // The glasses download from our listener; OTA asks their server only who they are.
-            purpose: "incoming-server",
-          }),
-          {
-            enable: () => BluetoothSdk.setHotspotState(true),
-            cancel: () => void localNetworkTransport.disconnect(this.networkOwner).catch(() => undefined),
-          },
-        )
-        this.localNetworkConnected = true
+        // The glasses Wi-Fi service turns the hotspot on and joins it, or shares the link held.
+        this.holding = new AbortController()
+        this.wifi = await holdGlassesWifi({
+          consumer: "hotspot-ota",
+          // The glasses download from our listener; OTA asks their server only who they are.
+          purpose: "incoming-server",
+          signal: this.holding.signal,
+        })
+        onProgress?.({phase: "joining_hotspot"})
         assertCurrent()
+        localAddress = this.wifi.binding.phoneIpv4
         // Near many pairs, the network joined may belong to other glasses; the update must reach these.
-        if ((await joinedGlassesIdentity(hotspot.localIp, bluetoothSerial)) !== "other_glasses") break
+        if ((await joinedGlassesIdentity(this.wifi.binding.gateway, bluetoothSerial)) !== "other_glasses") break
         assertCurrent()
         console.warn(`[OTA_PROGRESS] the hotspot joined belongs to other glasses (join ${join}) - leaving it`)
-        this.localNetworkConnected = false
-        await localNetworkTransport.disconnect(this.networkOwner)
-        this.localNetworkRequested = false
+        const wrong = this.wifi
+        this.wifi = null
+        await wrong.release()
         assertCurrent()
         if (join > WRONG_GLASSES_REJOINS) {
           throw new HotspotOtaTransportError(
@@ -220,20 +185,19 @@ class HotspotOtaTransport {
       onProgress?.({phase: "serving"})
       return published.manifestUrl
     } catch (error) {
-      const joined = this.localNetworkConnected
       if (error instanceof OtaArtifactError || error instanceof HotspotOtaTransportError) {
         throw error
       }
       const message = error instanceof Error ? error.message : String(error)
-      if (phase === "starting_hotspot") {
+      if (error instanceof GlassesWifiError && error.stage === "hotspot") {
         throw new HotspotOtaTransportError(hotspotStartErrorCode(message), message)
       }
-      if (phase === "joining_hotspot" && !joined) {
+      if (error instanceof GlassesWifiError) {
         // Wi-Fi turned off after the preflight fails the same instant way; name the real cause.
         if (Platform.OS === "android" && (await WifiManager.isEnabled().catch(() => true)) === false) {
           throw new HotspotOtaTransportError("hotspot_wifi_disabled", "Phone Wi-Fi is off")
         }
-        const nativeError = localNetworkErrorDetails(error)
+        const nativeError = localNetworkErrorDetails(error.cause)
         if (MAC_LOCATION_CAUSE.test(nativeError.message ?? "")) {
           throw new HotspotOtaTransportError("hotspot_location_denied", message, nativeError)
         }
@@ -306,50 +270,18 @@ class HotspotOtaTransport {
     }
   }
 
-  async teardown(disableGlassesHotspot = true): Promise<void> {
+  async teardown(): Promise<void> {
     this.generation += 1
     if (this.teardownPromise) return this.teardownPromise
     this.teardownPromise = (async () => {
-      if (!this.releaseHotspot) return
-      // The join has no time limit: cancel a pending one so preparation can settle. The
-      // reservation stays held until the cleanup below has finished.
-      if (this.preparing && this.localNetworkRequested && !this.localNetworkConnected) {
-        void localNetworkTransport.disconnect(this.networkOwner).catch(() => undefined)
-      }
+      // The join has no time limit: give back a hold still waiting so preparation can settle.
+      this.holding?.abort()
       await this.preparing?.catch(() => {})
       const errors: unknown[] = []
-      if (disableGlassesHotspot && this.ownerRevision === otaDeviceSessionRevision() && this.hotspotRequested) {
-        try {
-          const hotspotStopped = await disableHotspotWithRetry(
-            () =>
-              this.ownerRevision === otaDeviceSessionRevision()
-                ? BluetoothSdk.setHotspotState(false)
-                : Promise.resolve({state: "enabled" as const}),
-            {
-              // A completed APK step has just replaced ASG. Let the new command path
-              // settle before asking it to tear down the SystemUI-owned access point.
-              initialDelayMs: this.serverStarted ? 750 : 0,
-            },
-          )
-          if (hotspotStopped) this.hotspotRequested = false
-          else errors.push(new Error("The glasses hotspot shutdown was not confirmed"))
-        } catch (error) {
-          errors.push(error)
-        }
-      } else this.hotspotRequested = false
       if (this.serverStarted) {
         try {
           await otaServer.stop()
           this.serverStarted = false
-        } catch (error) {
-          errors.push(error)
-        }
-      }
-      if (this.localNetworkRequested) {
-        try {
-          await localNetworkTransport.disconnect(this.networkOwner, true)
-          this.localNetworkRequested = false
-          this.localNetworkConnected = false
         } catch (error) {
           errors.push(error)
         }
@@ -365,8 +297,9 @@ class HotspotOtaTransport {
       }
       this.active = false
       if (errors.length) throw errors[0]
-      this.releaseHotspot()
-      this.releaseHotspot = null
+      const wifi = this.wifi
+      this.wifi = null
+      await wifi?.release()
     })()
     try {
       await this.teardownPromise

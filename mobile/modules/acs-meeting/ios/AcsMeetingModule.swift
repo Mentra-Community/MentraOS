@@ -10,7 +10,8 @@ import ImageIO
 
 public class AcsMeetingModule: Module {
     private var session: AcsMeetingSession?
-    private let hotspot = GlassesHotspotNetwork()
+    /// The glasses network the glasses Wi-Fi service joined; calls only read its verified address.
+    private let hotspot = GlassesHotspotNetwork.shared
 
     private func meetingSession() -> AcsMeetingSession {
         if let session { return session }
@@ -24,25 +25,10 @@ public class AcsMeetingModule: Module {
         return session
     }
 
-    private func joinHotspot(ssid: String, passphrase: String, gateway: String?, promise: Promise) {
-        hotspot.onPermissionRequired = { [weak self] _ in
-            self?.sendEvent("onScopedNetworkProgress", ["permissionRequired": true])
-        }
-        hotspot.onLost = { [weak self] reason in
-            self?.sendEvent("onScopedNetworkLost", ["code": "SOFTAP_LOST", "message": reason])
-        }
-        hotspot.join(ssid: ssid, passphrase: passphrase, gateway: gateway) { result in
-            switch result {
-            case let .success(address): promise.resolve(address)
-            case let .failure(error): promise.reject(error)
-            }
-        }
-    }
-
     public func definition() -> ModuleDefinition {
         Name("MentraAcsMeeting")
         Function("supportsTeamsIdentity") { true }
-        Events("onState", "onIncomingPcm", "onScopedNetworkLost", "onScopedNetworkProgress")
+        Events("onState", "onIncomingPcm")
 
         AsyncFunction("prepareAgent") { (options: [String: Any], promise: Promise) in
             let token = try requireString(options, "token")
@@ -81,32 +67,6 @@ public class AcsMeetingModule: Module {
                     return
                 }
                 join()
-            }
-        }
-
-        AsyncFunction("joinScopedNetwork") { (ssid: String, passphrase: String, promise: Promise) in
-            self.joinHotspot(ssid: ssid, passphrase: passphrase, gateway: nil, promise: promise)
-        }
-
-        AsyncFunction("joinScopedNetworkWithGateway") { (ssid: String, passphrase: String, gateway: String, promise: Promise) in
-            self.joinHotspot(ssid: ssid, passphrase: passphrase, gateway: gateway, promise: promise)
-        }
-
-        AsyncFunction("leaveScopedNetwork") { (promise: Promise) in
-            self.hotspot.leave { result in
-                switch result {
-                case .success: promise.resolve(nil)
-                case let .failure(error): promise.reject(error)
-                }
-            }
-        }
-
-        AsyncFunction("cancelScopedNetworkJoin") { (promise: Promise) in
-            self.hotspot.leave { result in
-                switch result {
-                case .success: promise.resolve(nil)
-                case let .failure(error): promise.reject(error)
-                }
             }
         }
 
@@ -250,8 +210,6 @@ public class AcsMeetingModule: Module {
         OnDestroy {
             self.session?.leave()
             self.session = nil
-            self.hotspot.onLost = nil
-            self.hotspot.leave { _ in }
         }
     }
 }

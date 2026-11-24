@@ -1,12 +1,9 @@
 import {describe, expect, mock, test} from "bun:test"
 import "./bluetoothSdkTestMock"
-// The join keep-alive's background timer needs the native app; its period never elapses here.
-mock.module("../../utils/timers", () => ({BgTimer: {setInterval: () => 0, clearInterval: () => {}}}))
-mock.module("@mentra/bluetooth-sdk", () => ({default: {subscribeGlassesStatus: () => () => {}}}))
 import type {RelayDependencies, RelayOptions} from "../ManagedWebRtcRelay"
 import type {StreamStartRequest} from "@mentra/bluetooth-sdk/internal"
 const {ManagedWebRtcRelay} = await import("../ManagedWebRtcRelay")
-const {acquireGlassesHotspot} = await import("../GlassesHotspotLease")
+import type {GlassesWifiBinding, GlassesWifiEvent, GlassesWifiHold} from "../GlassesWifi"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -19,8 +16,43 @@ function deferred<T>() {
 }
 const tick = () => new Promise((resolve) => setTimeout(resolve, 2))
 
+const BINDING: GlassesWifiBinding = {ssid: "glasses", password: "password", gateway: "192.168.43.1", phoneIpv4: "192.168.43.2"}
+
+/** A hold on the glasses Wi-Fi service whose link the test can drop and bring back. */
+function fakeWifi(calls: string[]) {
+  const listeners = new Set<(event: GlassesWifiEvent) => void>()
+  let up = true
+  const waiting: Array<(binding: GlassesWifiBinding) => void> = []
+  const hold: GlassesWifiHold = {
+    get binding() {
+      return BINDING
+    },
+    onChange: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    ready: () => (up ? Promise.resolve(BINDING) : new Promise((resolve) => waiting.push(resolve))),
+    release: async () => {
+      calls.push("release")
+    },
+  }
+  return {
+    hold,
+    lose: () => {
+      up = false
+      listeners.forEach((listener) => listener({type: "lost", reason: "the glasses left Bluetooth"}))
+    },
+    restore: () => {
+      up = true
+      listeners.forEach((listener) => listener({type: "restored", binding: BINDING}))
+      waiting.splice(0).forEach((resolve) => resolve(BINDING))
+    },
+  }
+}
+
 function harness(overrides: Partial<RelayDependencies> = {}, options: Partial<RelayOptions> = {}) {
   const calls: string[] = []
+  const wifi = fakeWifi(calls)
   let listener: Parameters<RelayDependencies["native"]["addListener"]>[1] = () => {}
   const native = {
     prepare: mock(async (options: {attemptId: string}) => {
@@ -45,9 +77,9 @@ function harness(overrides: Partial<RelayDependencies> = {}, options: Partial<Re
   const deps: RelayDependencies = {
     native,
     startGlasses,
-    hotspot: mock(async (on) => {
-      calls.push(on ? "hotspot-on" : "hotspot-off")
-      return {state: on ? "enabled" : "disabled", ssid: "glasses", password: "password", localIp: "192.168.43.1"}
+    holdWifi: mock(async () => {
+      calls.push("hold")
+      return wifi.hold
     }),
     stopGlasses: mock(async () => {
       calls.push("glasses-stop")
@@ -56,7 +88,6 @@ function harness(overrides: Partial<RelayDependencies> = {}, options: Partial<Re
     deferredStop: () => calls.push("deferred-stop"),
     sleep: async () => {},
     now: Date.now,
-    acquire: () => () => calls.push("release"),
     ...overrides,
   }
   const relay = new ManagedWebRtcRelay(
@@ -67,7 +98,7 @@ function harness(overrides: Partial<RelayDependencies> = {}, options: Partial<Re
   )
   const emit = (attempt = 1, state = "failed", reason = "lost network") =>
     listener({attemptId: `phone-m-1-relay-${attempt}`, state, reason})
-  return {relay, deps, native, calls, emit, failure, status, startGlasses}
+  return {relay, deps, native, calls, emit, failure, status, startGlasses, wifi}
 }
 
 function microphone() {
@@ -212,7 +243,7 @@ describe("ManagedWebRtcRelay", () => {
     expect(h.startGlasses).not.toHaveBeenCalled()
   })
 
-  test("a microphone source conflict fails before starting the hotspot or disabling WHIP audio", async () => {
+  test("a microphone source conflict fails before holding the glasses Wi-Fi or disabling WHIP audio", async () => {
     const mic = microphone()
     mic.acquire.mockImplementation(() => {
       throw new Error("MIC_SOURCE_CONFLICT")
@@ -220,7 +251,7 @@ describe("ManagedWebRtcRelay", () => {
     const h = harness({microphone: mic})
     await expect(h.relay.start()).rejects.toThrow("MIC_SOURCE_CONFLICT")
     await h.relay.stop()
-    expect(h.deps.hotspot).not.toHaveBeenCalled()
+    expect(h.deps.holdWifi).not.toHaveBeenCalled()
     expect(h.startGlasses).not.toHaveBeenCalled()
     expect(mic.release).not.toHaveBeenCalled()
   })
@@ -240,7 +271,7 @@ describe("ManagedWebRtcRelay", () => {
     await h.relay.start()
     expect(h.native.prepare.mock.calls[0][0]).toMatchObject({
       ingestUrl: "https://cloudflare.test/whip",
-      gatewayAddress: "192.168.43.1",
+      bindAddress: "192.168.43.2",
       captureAudio: true,
     })
     expect(h.startGlasses.mock.calls[0][0]).toMatchObject({
@@ -249,31 +280,26 @@ describe("ManagedWebRtcRelay", () => {
       captureAudio: true,
     })
     await h.relay.stop()
-    expect(h.calls.slice(-5)).toEqual([
-      "unsubscribe",
-      "glasses-stop",
-      "native-stop:phone-m-1-relay-1",
-      "hotspot-off",
-      "release",
-    ])
+    expect(h.calls.slice(-4)).toEqual(["unsubscribe", "glasses-stop", "native-stop:phone-m-1-relay-1", "release"])
   })
 
-  test("stop during hotspot setup waits for its late success and turns it back off", async () => {
-    const gate = deferred<{state: string; ssid: string; password: string}>()
-    const h = harness({hotspot: async (on) => (on ? gate.promise : {state: "disabled"})})
+  test("stop during the Wi-Fi hold waits for it to land and gives it back", async () => {
+    const gate = deferred<GlassesWifiHold>()
+    const h = harness({holdWifi: () => gate.promise})
     const start = h.relay.start().catch((error) => error)
     const stop = h.relay.stop()
-    gate.resolve({state: "enabled", ssid: "glasses", password: "password"})
+    gate.resolve(h.wifi.hold)
     expect(await start).toBeInstanceOf(Error)
     await stop
     expect(h.native.prepare).not.toHaveBeenCalled()
     expect(h.calls).toContain("release")
   })
 
+
   test("cancel interrupts a denied permission wait and retains the lease until native cleanup completes", async () => {
     const gate = deferred<string>()
     const cleanup = deferred<void>()
-    const h = harness({acquire: acquireGlassesHotspot})
+    const h = harness()
     h.native.prepare.mockImplementationOnce(() => gate.promise)
     h.native.stop.mockImplementationOnce(async (id) => {
       h.calls.push(`native-stop:${id}`)
@@ -291,8 +317,6 @@ describe("ManagedWebRtcRelay", () => {
       expect(h.relay.stop()).toBe(stop)
       expect(h.native.stop).toHaveBeenCalledTimes(1)
       expect(await start).toBeInstanceOf(Error)
-      expect(() => acquireGlassesHotspot()).toThrow("already in use")
-      expect(h.calls).not.toContain("hotspot-off")
       expect(h.calls).not.toContain("release")
       // Ignore permission notifications from the cancelled native attempt.
       h.emit(1, "permission_required")
@@ -301,9 +325,7 @@ describe("ManagedWebRtcRelay", () => {
       await stop
       expect(h.native.stop).toHaveBeenCalledTimes(1)
       expect(h.startGlasses).not.toHaveBeenCalled()
-      expect(h.calls).toContain("hotspot-off")
-      const release = acquireGlassesHotspot()
-      release()
+      expect(h.calls).toContain("release")
     } finally {
       gate.reject(new Error("test cleanup"))
       cleanup.resolve()
@@ -329,7 +351,6 @@ describe("ManagedWebRtcRelay", () => {
       cleanup.resolve()
       await stop
       expect(h.native.stop).toHaveBeenCalledTimes(1)
-      expect(h.calls).toContain("hotspot-off")
       expect(h.calls).toContain("release")
     } finally {
       gate.reject(new Error("test cleanup"))
@@ -351,7 +372,6 @@ describe("ManagedWebRtcRelay", () => {
     await expect(h.relay.stop()).rejects.toThrow("native cleanup failed")
     expect(await start).toBeInstanceOf(Error)
     expect(h.calls).not.toContain("release")
-    expect(h.calls).not.toContain("hotspot-off")
     await h.relay.stop()
     expect(h.native.stop).toHaveBeenCalledTimes(2)
     expect(h.calls).toContain("release")
@@ -372,32 +392,36 @@ describe("ManagedWebRtcRelay", () => {
     await h.relay.stop()
   })
 
-  test("the first retry keeps the glasses hotspot up and skips its startup wait", async () => {
+  test("retries keep the one Wi-Fi hold for the whole stream", async () => {
     const sleeps: number[] = []
     const h = harness({sleep: async (ms) => void sleeps.push(ms)})
     await h.relay.start()
-    expect(sleeps).toEqual([3_000])
     h.emit(1, "failed", "Glasses receiver: frames_stalled")
     await tick()
-    expect(h.native.prepare).toHaveBeenCalledTimes(2)
-    expect(h.calls).not.toContain("hotspot-off")
-    expect(sleeps).toEqual([3_000, 1_000]) // backoff only, no beacon wait
-    await h.relay.stop()
-    expect(h.calls).toContain("hotspot-off") // a real stop still turns it off
-  })
-
-  test("a second consecutive failure power-cycles the hotspot", async () => {
-    const h = harness()
-    await h.relay.start()
-    h.emit(1)
-    await tick()
-    expect(h.calls).not.toContain("hotspot-off")
     h.emit(2)
     await tick()
-    expect(h.calls).toContain("hotspot-off")
     expect(h.native.prepare).toHaveBeenCalledTimes(3)
+    expect(h.deps.holdWifi).toHaveBeenCalledTimes(1)
+    expect(h.calls).not.toContain("release")
+    expect(sleeps).toEqual([1_000, 2_000]) // backoff only
+    await h.relay.stop()
+    expect(h.calls).toContain("release")
+  })
+
+
+  test("a lost link fails the attempt, and the retry waits for the service to bring it back", async () => {
+    const h = harness()
+    await h.relay.start()
+    h.wifi.lose()
+    expect(h.status).toHaveBeenLastCalledWith("reconnecting", "Glasses Wi-Fi link lost: the glasses left Bluetooth")
+    await tick()
+    expect(h.native.prepare).toHaveBeenCalledTimes(1)
+    h.wifi.restore()
+    await tick()
+    expect(h.native.prepare).toHaveBeenCalledTimes(2)
     await h.relay.stop()
   })
+
 
   test("a failure that lands right after a restart returns is still retried", async () => {
     // The window between startAttempt returning and `restarting` clearing is a few microtasks, so
@@ -446,22 +470,6 @@ describe("ManagedWebRtcRelay", () => {
     expect(h.calls).toContain("release")
   })
 
-  test("failed hotspot shutdown is not erased by a second stop", async () => {
-    let shutdownWorks = false
-    const h = harness({
-      hotspot: async (on) => ({
-        state: on ? "enabled" : shutdownWorks ? "disabled" : "error",
-        ssid: "glasses",
-        password: "password",
-      }),
-    })
-    await h.relay.start()
-    await expect(h.relay.stop()).rejects.toThrow("shutdown")
-    await expect(h.relay.stop()).rejects.toThrow("shutdown")
-    expect(h.calls).not.toContain("release")
-    shutdownWorks = true
-    await h.relay.stop()
-  })
 
   test("retry budget is finite and surfaces failure to the stream owner", async () => {
     const h = harness()
@@ -490,16 +498,4 @@ describe("ManagedWebRtcRelay", () => {
     await h.relay.stop()
   })
 
-  test("ACS and managed streaming cannot both acquire the hotspot", async () => {
-    const releaseCall = acquireGlassesHotspot()
-    const h = harness({acquire: acquireGlassesHotspot})
-    expect(() => h.relay.start()).toThrow("already in use")
-    expect(h.calls).toEqual([])
-    releaseCall()
-    const fresh = harness({acquire: acquireGlassesHotspot})
-    await fresh.relay.start()
-    await fresh.relay.stop()
-    const releaseAgain = acquireGlassesHotspot()
-    releaseAgain()
-  })
 })

@@ -19,9 +19,7 @@ const methods = [
   "runSoftapAttempt",
   "retireSoftapAttempt",
   "teardownSoftapAttempt",
-  "setGlassesHotspotState",
   "settleSoftapTeardown",
-  "forceSoftapCleanup",
   "emitSoftapProgress",
   "softapRecoveryFields",
 ]
@@ -36,20 +34,6 @@ const methods = [
   .join("\n")
 const compiled = new Bun.Transpiler({loader: "ts"}).transformSync(`class Host { ${methods} }`)
 
-/**
- * The real retry codes, read from the source rather than retyped here.
- *
- * Retyping them would let a rename on the production side leave this suite green while the
- * retry it is supposed to cover never fires.
- */
-const REFRESH_CODES: Set<string> = (() => {
-  const match = source.match(/const HOTSPOT_SESSION_REFRESH_CODES = new Set\(\[([^\]]*)]\)/)
-  if (!match) throw new Error("Missing HOTSPOT_SESSION_REFRESH_CODES")
-  const codes = [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1])
-  if (codes.length === 0) throw new Error("HOTSPOT_SESSION_REFRESH_CODES is empty")
-  return new Set(codes)
-})()
-
 function deferred() {
   let resolve!: () => void
   let reject!: (error: Error) => void
@@ -61,34 +45,12 @@ function deferred() {
 }
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
-/** The module-private helper the extracted methods call; same shape, kept trivial on purpose. */
-function withTimeout<T>(work: Promise<T>, ms: number, reason: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(reason)), ms)
-    work.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (error) => {
-        clearTimeout(timer)
-        reject(error)
-      },
-    )
-  })
-}
-
 /**
- * Same extraction as the lifecycle methods: the settle/force gates are pulled from the source so
- * the teardown these tests drive is the one that ships, including the two waits (ingest close and
- * hotspot ack) that a fake host would otherwise silently skip.
+ * Same extraction as the lifecycle methods: the settle gate is pulled from the source so the
+ * teardown these tests drive is the one that ships, including the ingest-close wait that a fake
+ * host would otherwise silently skip.
  */
-type HotspotGate = "disabled" | "enabled" | "throw"
-
-/** One scripted outcome per native hotspot command, for the session-refresh retry tests. */
-type HotspotScript = Array<HotspotGate | {code: string}>
-
-type Gates = {ingestClosed?: boolean; hotspot?: HotspotGate; hotspotScript?: HotspotScript}
+type Gates = {ingestClosed?: boolean}
 
 function fixture(gates: Gates = {}): ReturnType<typeof buildFixture> {
   return buildFixture(gates)
@@ -96,21 +58,15 @@ function fixture(gates: Gates = {}): ReturnType<typeof buildFixture> {
 
 function buildFixture(gates: Gates) {
   const cleanup = deferred()
-  let nativeReleases = 0
+  let acsLeaves = 0
   let preflights = 0
   const nativeLeaves: string[] = []
   let stateHandler: ((owner: string, state: {state: string}) => void) | undefined
   let forcedIngestCloses = 0
-  const hotspotCommands: boolean[] = []
   const native = {
     setPhotoPauseExpiredHandler() {},
     setStateHandler(handler: typeof stateHandler) {
       stateHandler = handler
-    },
-    beginScopedTeardown() {},
-    async leaveScopedNetwork() {
-      nativeReleases++
-      if (nativeReleases === 1) await cleanup.promise
     },
     async awaitDefaultNetworkAfterHotspot() {
       return {usable: true, detail: "cellular"}
@@ -119,6 +75,8 @@ function buildFixture(gates: Gates) {
       nativeLeaves.push(packageName)
     },
     async leaveAndAwait() {
+      acsLeaves++
+      if (acsLeaves === 1) await cleanup.promise
       return {completed: true}
     },
     async awaitIngestClosed() {
@@ -130,21 +88,6 @@ function buildFixture(gates: Gates) {
       forcedIngestCloses++
     },
   }
-  const bluetooth = {
-    async setHotspotState(enabled: boolean) {
-      hotspotCommands.push(enabled)
-      // `hotspotScript` steps once per native command, so a test can say "the first send is
-      // cancelled by a session refresh, the second succeeds" and count the sends.
-      const step = gates.hotspotScript?.[hotspotCommands.length - 1]
-      const outcome = step ?? gates.hotspot
-      if (outcome && typeof outcome === "object") {
-        // Shaped like an Expo CodedException reaching JS: the code is what we branch on.
-        throw Object.assign(new Error("The glasses WiFi protocol session changed."), {code: outcome.code})
-      }
-      if (outcome === "throw") throw new Error("glasses did not answer")
-      return {state: outcome === "enabled" ? "enabled" : "disabled"}
-    },
-  }
   const permissions = {
     async check() {
       preflights++
@@ -153,7 +96,7 @@ function buildFixture(gates: Gates) {
     },
   }
   const Host = new Function(
-    "acquireGlassesHotspot",
+    "holdGlassesWifi",
     "softapTrace",
     "softapTraceFailure",
     "SOFTAP_CLEANUP_STALL_LOG_MS",
@@ -166,16 +109,13 @@ function buildFixture(gates: Gates) {
     "PermissionFeatures",
     "MiniappResponseType",
     "console",
-    "BluetoothSdk",
-    "withTimeout",
     "SOFTAP_INGEST_CLOSE_WAIT_MS",
-    "SOFTAP_HOTSPOT_OFF_ACK_MS",
     "SOFTAP_FORCED_VERIFY_MS",
-    "HOTSPOT_SESSION_REFRESH_CODES",
-    "HOTSPOT_SESSION_RETRY_DELAY_MS",
     `${compiled}; return Host`,
   )(
-    () => () => {},
+    async () => {
+      throw new Error("the glasses Wi-Fi is not held in these tests")
+    },
     () => {},
     () => {},
     10_000,
@@ -188,13 +128,8 @@ function buildFixture(gates: Gates) {
     {LOCAL_WIFI: "wifi"},
     {MEETING_STATE: "meeting_state"},
     {log() {}, warn() {}},
-    bluetooth,
-    withTimeout,
     50,
     50,
-    50,
-    REFRESH_CODES,
-    5,
   )
   const host = new Host()
   host.meetingCredentialRequests = new Map()
@@ -202,7 +137,6 @@ function buildFixture(gates: Gates) {
   host.sendToMiniapp = (owner: string, state: unknown) => events.push({owner, state})
   host.softapAttemptSeq = 0
   host.softapCleanupError = null
-  host.glassesHotspotCommand = Promise.resolve()
   host.narrateSoftapPreflight = () => {}
   const old = host.createSoftapAttempt("com.mentra.call")
   old.ownsResources = true
@@ -222,9 +156,8 @@ function buildFixture(gates: Gates) {
     events,
     emitNative: (state: string) => stateHandler?.("com.mentra.call", {state}),
     preflights: () => preflights,
-    nativeReleases: () => nativeReleases,
+    acsLeaves: () => acsLeaves,
     forcedIngestCloses: () => forcedIngestCloses,
-    hotspotCommands: () => hotspotCommands,
   }
 }
 
@@ -259,7 +192,7 @@ describe("SoftAP host attempt lifecycle", () => {
     const f = fixture()
     await f.host.leaveMeetingForApp("com.mentra.other")
     expect(f.old.cancelled).toBe(false)
-    expect(f.nativeReleases()).toBe(0)
+    expect(f.acsLeaves()).toBe(0)
     expect(f.nativeLeaves).toEqual(["com.mentra.other"])
   })
 
@@ -269,7 +202,7 @@ describe("SoftAP host attempt lifecycle", () => {
     const join = f.join()
     await tick()
     expect(f.preflights()).toBe(0)
-    expect(f.nativeReleases()).toBe(1)
+    expect(f.acsLeaves()).toBe(1)
     f.cleanup.resolve()
     await leave
     expect(await join).toBe("test preflight ended")
@@ -298,14 +231,14 @@ describe("SoftAP host attempt lifecycle", () => {
     await f.host.retireSoftapAttempt()
     await tick()
     expect(f.preflights()).toBe(0)
-    expect(f.nativeReleases()).toBe(1)
+    expect(f.acsLeaves()).toBe(1)
     f.cleanup.resolve()
     await leave
     expect(await second).toContain("cancelled")
     expect(await third).toContain("cancelled")
     await tick()
     expect(f.preflights()).toBe(0)
-    expect(f.nativeReleases()).toBe(1)
+    expect(f.acsLeaves()).toBe(1)
     expect(f.host.softapAttempt).toBeNull()
   })
 
@@ -316,13 +249,13 @@ describe("SoftAP host attempt lifecycle", () => {
     const third = f.join()
     await tick()
     expect(f.preflights()).toBe(0)
-    expect(f.nativeReleases()).toBe(1)
+    expect(f.acsLeaves()).toBe(1)
     f.cleanup.resolve()
     await leave
     expect(await second).toContain("cancelled")
     expect(await third).toBe("test preflight ended")
     expect(f.preflights()).toBe(1)
-    expect(f.nativeReleases()).toBe(2)
+    expect(f.acsLeaves()).toBe(2)
   })
 
   test("a cleanup failure blocks the waiting join before it acquires resources", async () => {
@@ -333,7 +266,7 @@ describe("SoftAP host attempt lifecycle", () => {
     await leave
     expect(await join).toContain("cleanup has not finished yet")
     expect(f.preflights()).toBe(0)
-    expect(f.nativeReleases()).toBe(1)
+    expect(f.acsLeaves()).toBe(1)
   })
 
   test("the refusal tells the wearer to retry rather than to power-cycle anything", async () => {
@@ -355,9 +288,9 @@ describe("SoftAP host attempt lifecycle", () => {
 })
 
 /**
- * The two gates that stop-then-start actually fails on: the WHIP listener still inside its
- * tombstone, and a glasses hotspot that is still up. Both are bounded waits, and the point of
- * these tests is that an expired bound is never read as "released".
+ * The gate that stop-then-start actually fails on: the WHIP listener still inside its tombstone.
+ * It is a bounded wait, and the point of these tests is that an expired bound is never read as
+ * "released".
  */
 describe("SoftAP teardown barrier", () => {
   test("an ingest port still held is taken by force and re-verified, not assumed free", async () => {
@@ -372,37 +305,8 @@ describe("SoftAP teardown barrier", () => {
     expect(await f.join()).toBe("test preflight ended")
   })
 
-  test("glasses that never acknowledge hotspot off do not refuse the next call", async () => {
-    const f = fixture({hotspot: "throw"})
-    f.cleanup.resolve()
 
-    await f.host.retireSoftapAttempt()
 
-    // Once in the settle gate, once more in forced cleanup — leftover ON is the next
-    // join's starting state, not a power-cycle dead end.
-    expect(f.hotspotCommands()).toEqual([false, false])
-    expect(f.host.softapCleanupError).toBeNull()
-    expect(await f.join()).toBe("test preflight ended")
-  })
-
-  test("overlapping hotspot disables wait their turn instead of failing cleanup", async () => {
-    const f = fixture()
-
-    await Promise.all([f.host.setGlassesHotspotState(false), f.host.setGlassesHotspotState(false)])
-
-    expect(f.hotspotCommands()).toEqual([false, false])
-    expect(f.host.softapCleanupError).toBeNull()
-  })
-
-  test("a hotspot that answers 'enabled' after disable does not refuse the next call", async () => {
-    const f = fixture({hotspot: "enabled"})
-    f.cleanup.resolve()
-
-    await f.host.retireSoftapAttempt()
-
-    expect(f.host.softapCleanupError).toBeNull()
-    expect(await f.join()).toBe("test preflight ended")
-  })
 
   test("a transport hotspot undo timeout does not refuse the next call", async () => {
     const f = fixture()
@@ -432,82 +336,6 @@ describe("SoftAP teardown barrier", () => {
 
     expect(f.host.softapCleanupError).toContain("could not release publish")
     expect(await f.join()).toContain("cleanup has not finished yet")
-  })
-})
-
-/**
- * The glasses re-announce their Wi-Fi session on every `glasses_ready`, which cancels whatever
- * hotspot command was in flight. That is what refused a join outright at 13:58:32 with a
- * power-cycle instruction, so these cover both that the retry happens and that it cannot be
- * used as a wedge for a later command to change the hotspot underneath it.
- */
-describe("hotspot command across a Wi-Fi protocol session refresh", () => {
-  for (const code of REFRESH_CODES) {
-    test(`a command cancelled by ${code} is re-sent and succeeds`, async () => {
-      const f = fixture({hotspotScript: [{code}, "disabled"]})
-
-      const status = await f.host.setGlassesHotspotState(false)
-
-      expect(status).toEqual({state: "disabled"})
-      expect(f.hotspotCommands()).toEqual([false, false])
-    })
-  }
-
-  test("glasses that went away are not re-sent to", async () => {
-    const f = fixture({hotspotScript: [{code: "wifi_session_disconnected"}]})
-
-    await expect(f.host.setGlassesHotspotState(false)).rejects.toThrow(/session changed/)
-    expect(f.hotspotCommands()).toEqual([false])
-  })
-
-  test("a generic failure is not re-sent", async () => {
-    const f = fixture({hotspot: "throw"})
-
-    await expect(f.host.setGlassesHotspotState(false)).rejects.toThrow("glasses did not answer")
-    expect(f.hotspotCommands()).toEqual([false])
-  })
-
-  test("a second attempt that also fails propagates, without a third", async () => {
-    const f = fixture({hotspotScript: [{code: "wifi_session_restarted"}, "throw"]})
-
-    await expect(f.host.setGlassesHotspotState(false)).rejects.toThrow("glasses did not answer")
-    expect(f.hotspotCommands()).toEqual([false, false])
-  })
-
-  test("a refresh on the retry itself is not retried again", async () => {
-    const f = fixture({
-      hotspotScript: [{code: "wifi_session_restarted"}, {code: "wifi_session_restarted"}],
-    })
-
-    await expect(f.host.setGlassesHotspotState(false)).rejects.toThrow(/session changed/)
-    expect(f.hotspotCommands()).toEqual([false, false])
-  })
-
-  /**
-   * The invariant: one logical hotspot operation issues at most two native commands, and no
-   * later operation runs between them. A retry outside the queue would let this `on` land
-   * between the two halves of the `off` and leave the glasses in the opposite state.
-   */
-  test("a later command cannot execute between the two halves of a retried one", async () => {
-    const f = fixture({hotspotScript: [{code: "wifi_session_restarted"}, "disabled", "enabled"]})
-
-    const off = f.host.setGlassesHotspotState(false)
-    const on = f.host.setGlassesHotspotState(true)
-    await Promise.all([off, on])
-
-    expect(f.hotspotCommands()).toEqual([false, false, true])
-    expect(f.hotspotCommands()).not.toEqual([false, true, false])
-  })
-
-  test("a queued command still runs after the one before it exhausts its retry", async () => {
-    const f = fixture({hotspotScript: [{code: "wifi_session_changed"}, "throw", "enabled"]})
-
-    const off = f.host.setGlassesHotspotState(false)
-    const on = f.host.setGlassesHotspotState(true)
-
-    await expect(off).rejects.toThrow("glasses did not answer")
-    expect(await on).toEqual({state: "enabled"})
-    expect(f.hotspotCommands()).toEqual([false, false, true])
   })
 })
 

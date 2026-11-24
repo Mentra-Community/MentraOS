@@ -18,9 +18,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /**
- * MentraOS-internal transport for glasses-local traffic without process network binding. Gallery
- * sync and hotspot OTA join through [ScopedSoftApNetwork], the same join Mentra Call and the
- * managed relay use, and send their HTTP over the `Network` it returns.
+ * MentraOS-internal transport for glasses-local traffic without process network binding. The
+ * glasses Wi-Fi service joins [ScopedSoftApNetwork.shared] here, once for every consumer; gallery
+ * sync and hotspot OTA send their HTTP over the `Network` it returns, and Mentra Call and the
+ * managed relay borrow it.
  */
 class MentraLocalNetworkModule : Module() {
     private companion object {
@@ -34,6 +35,8 @@ class MentraLocalNetworkModule : Module() {
     private val joins = Executors.newSingleThreadExecutor()
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
     private var scoped: ScopedSoftApNetwork? = null
+    /** Bumped by every connect and disconnect, so a join that was superseded knows it. */
+    private var generation = 0
 
     override fun definition() = ModuleDefinition {
         Name("MentraLocalNetwork")
@@ -121,22 +124,26 @@ class MentraLocalNetworkModule : Module() {
                 promise.reject("ERR_LOCAL_WIFI_REQUEST", "No React context", null)
                 return@execute
             }
-            val network = ScopedSoftApNetwork(context)
-            synchronized(lock) { scoped = network }
+            // The process's one glasses network: Mentra Call and the relay borrow what this joins.
+            val network = ScopedSoftApNetwork.shared(context)
+            val mine = synchronized(lock) {
+                scoped = network
+                ++generation
+            }
+            val current = { synchronized(lock) { generation == mine } }
             val listener =
                 object : ScopedSoftApNetwork.Listener {
                     override fun onAvailable(network: Network, localIpv4: String) = Unit
 
                     override fun onLost(error: ScopedNetworkError) {
-                        if (synchronized(lock) { scoped !== network }) return
+                        if (!current()) return
                         cancelAll()
                         sendEvent("networkLost", mapOf("ssid" to ssid))
                     }
                 }
             try {
                 network.join(ssid, password, listener, incoming)
-                if (synchronized(lock) { scoped !== network }) {
-                    network.release()
+                if (!current()) {
                     promise.reject("ERR_LOCAL_WIFI_CANCELLED", "Local WiFi connection cancelled", null)
                     return@execute
                 }
@@ -149,11 +156,10 @@ class MentraLocalNetworkModule : Module() {
                     },
                 )
             } catch (error: Exception) {
-                val cancelled = synchronized(lock) { (scoped !== network).also { if (!it) scoped = null } }
-                if (cancelled) {
+                if (!current()) {
                     promise.reject("ERR_LOCAL_WIFI_CANCELLED", "Local WiFi connection cancelled", error)
                 } else {
-                    network.release()
+                    disconnect()
                     val code = (error as? ScopedNetworkError)?.code ?: "ERR_LOCAL_WIFI_REQUEST"
                     promise.reject(code, error.message ?: "Could not connect to $ssid", error)
                 }
@@ -293,7 +299,10 @@ class MentraLocalNetworkModule : Module() {
 
     private fun disconnect() {
         cancelAll()
-        val network = synchronized(lock) { scoped.also { scoped = null } }
+        val network = synchronized(lock) {
+            generation++
+            scoped.also { scoped = null }
+        }
         network?.release()
     }
 }

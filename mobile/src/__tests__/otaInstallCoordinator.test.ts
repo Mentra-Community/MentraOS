@@ -2849,7 +2849,7 @@ describe("OtaInstallCoordinator paired-device ownership", () => {
     resolve("http://old-pair/version.json")
     await flushNativeStartPromise()
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
-    expect(mockHotspotTeardown).toHaveBeenCalledWith(false)
+    expect(mockHotspotTeardown).toHaveBeenCalled()
     expect(otaInstallCoordinator.snapshot().hotspotPhase).toBe("idle")
   })
 

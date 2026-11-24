@@ -436,17 +436,9 @@ type NativeModule = {
    * the new URL. Absent on natives that predate rebind; disabled natives reject.
    */
   rebindSoftApIngest?(): Promise<string>
-  /**
-   * Join the glasses hotspot as a scoped, internet-less network; resolves with this phone's
-   * address on it. Absent on natives that predate SoftAP.
-   */
-  joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
-  joinScopedNetworkWithGateway?(ssid: string, passphrase: string, gateway: string): Promise<string>
   /** Is this phone's Wi-Fi radio on? Absent on natives that predate the preflight. */
   isWifiEnabled?(): Promise<boolean>
   beginTrace?(traceId: string): Promise<void>
-  leaveScopedNetwork?(): Promise<void>
-  cancelScopedNetworkJoin?(): Promise<void>
   awaitDefaultNetworkAfterHotspot?(): Promise<DefaultNetworkStatus>
   /**
    * TCP-probe the hotspot gateway over the scoped network. Absent on natives that predate it.
@@ -665,14 +657,6 @@ class AcsMeetingService {
   })
   /** Mid-call republish waiters: live resolves true, leave/timeout resolves false. Failed is ignored. */
   private readonly mediaLiveWaiters = new Set<(live: boolean) => void>()
-  private scopedLostSub: {remove: () => void} | null = null
-  private readonly scopedLostListeners = new Set<(error: {code: string; message: string}) => void>()
-  /**
-   * Set before the scoped network is released, so the loss we are about to cause is not reported as
-   * one that happened to us. Android emits `onLost` for a deliberate release, and a naive wiring
-   * turns every successful Leave and End into a mid-call network error.
-   */
-  private scopedTerminating = false
   /**
    * Bumped by every join and every release, and captured by everything that can outlive a call:
    * the `mic_pcm` listener and the in-flight `native.join`.
@@ -821,92 +805,9 @@ class AcsMeetingService {
     return await native.isWifiEnabled()
   }
 
-  /**
-   * Join the glasses hotspot as a scoped, internet-less network, returning this phone's address on
-   * it. Called before the ACS join, because the local WHIP listener has to bind to that address.
-   *
-   * A host without the native function is not a host that silently skips the join — the SoftAP call
-   * has no network to run on, so this reports the reason instead.
-   */
-  async joinScopedNetwork(
-    ssid: string,
-    passphrase: string,
-    gateway?: string,
-    report?: (detail: string) => void,
-  ): Promise<string | undefined> {
-    const native = getNative()
-    if (!native?.joinScopedNetwork) {
-      throw new Error("This host cannot join the glasses hotspot; SoftAP calling is unavailable")
-    }
-    this.scopedTerminating = false
-    this.bindScopedNetworkLost(native)
-    await native.beginTrace?.(softapTraceId())
-    if (this.scopedTerminating) throw new Error("Hotspot join cancelled")
-    const progress =
-      Platform.OS === "ios" && report
-        ? native.addListener("onScopedNetworkProgress", (event) => {
-            if (!this.scopedTerminating && event.permissionRequired === true) {
-              report(
-                "Allow Local Network access to connect to your glasses. If you previously denied access, enable it in Settings, or cancel to return home.",
-              )
-            }
-          })
-        : undefined
-    try {
-      if (native.joinScopedNetworkWithGateway) {
-        if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
-        return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
-      }
-      return await native.joinScopedNetwork(ssid, passphrase)
-    } finally {
-      progress?.remove()
-    }
-  }
-
-  /**
-   * Subscribe to "the glasses hotspot went away while we still wanted it".
-   *
-   * Only unexpected losses arrive here. Native drops the framework callback for a network it
-   * released itself, and [leaveScopedNetwork] raises the terminal intent before releasing, so a
-   * normal Leave or End cannot manufacture a mid-call failure.
-   */
-  onScopedNetworkLost(listener: (error: {code: string; message: string}) => void): () => void {
-    this.scopedLostListeners.add(listener)
-    return () => this.scopedLostListeners.delete(listener)
-  }
-
-  private bindScopedNetworkLost(native: NativeModule): void {
-    if (this.scopedLostSub) return
-    try {
-      this.scopedLostSub = native.addListener("onScopedNetworkLost", (event) => {
-        if (this.scopedTerminating) {
-          console.log("[AcsMeeting] phase=scoped-lost-expected", {code: event.code})
-          return
-        }
-        const error = {
-          code: typeof event.code === "string" ? event.code : "SOFTAP_NETWORK_LOST",
-          message: typeof event.message === "string" ? event.message : "The glasses hotspot went away",
-        }
-        console.warn("[AcsMeeting] phase=scoped-lost", error)
-        for (const listener of [...this.scopedLostListeners]) {
-          try {
-            listener(error)
-          } catch (listenerError) {
-            console.warn("[AcsMeeting] scoped-lost listener threw", listenerError)
-          }
-        }
-      })
-    } catch (error) {
-      // A native that predates the event simply never reports mid-call loss; that is a smaller
-      // problem than failing the join over a missing listener.
-      console.warn("[AcsMeeting] scoped network loss events unavailable", error)
-      this.scopedLostSub = null
-    }
-  }
-
-  /** Raise the terminal intent so the release we are about to do is not read as a failure. */
-  beginScopedTeardown(): void {
-    this.scopedTerminating = true
+  /** Tag this call's native SoftAP trace lines with the engine's trace id. */
+  async beginTrace(): Promise<void> {
+    await getNative()?.beginTrace?.(softapTraceId())
   }
 
   /**
@@ -930,11 +831,6 @@ class AcsMeetingService {
       : await this.awaitValidatedDefaultNetwork()
   }
 
-  async cancelScopedNetworkJoin(): Promise<void> {
-    this.scopedTerminating = true
-    await getNative()?.cancelScopedNetworkJoin?.()
-  }
-
   /**
    * Can this phone reach the glasses over the hotspot it just joined? Null when the host cannot
    * tell (no native support), so the orchestrator narrates nothing rather than a guess.
@@ -943,19 +839,6 @@ class AcsMeetingService {
     const native = getNative()
     if (!native?.probeScopedGateway) return null
     return await native.probeScopedGateway()
-  }
-
-  /** Safe to call when nothing was joined: teardown runs after failed starts too. */
-  async leaveScopedNetwork(): Promise<void> {
-    // Intent first, release second. The other order is the false-positive bug: Android reports the
-    // loss we asked for, and the call reports a network failure as it is successfully ending.
-    this.scopedTerminating = true
-    try {
-      await getNative()?.leaveScopedNetwork?.()
-    } finally {
-      this.scopedLostSub?.remove()
-      this.scopedLostSub = null
-    }
   }
 
   /**
@@ -1521,8 +1404,6 @@ class AcsMeetingService {
     this.unwatchPhoneNetwork()
     await this.stopPcm()
     this.unbindNative()
-    this.scopedLostSub?.remove()
-    this.scopedLostSub = null
     this.owner = null
     this.whepUrl = null
     this.videoSource = null
@@ -2047,7 +1928,7 @@ class AcsMeetingService {
     // hotspot is what *causes* NetInfo to flap `none:offline → cellular:online` — the default
     // route looks gone for a beat, then cellular comes back. Rebuilding the WHIP listener on
     // that flap changes the ingest port after the glasses already have the old URL, and their
-    // POST hits a tombstone (HTTP 410). A real hotspot loss is `onScopedNetworkLost`, not this
+    // POST hits a tombstone (HTTP 410). A real hotspot loss comes from the glasses Wi-Fi service, not this
     // default-network watch. WHEP still needs the rebuild: that path rides the default route.
     if (softap) return
     if (!this.owner || !MEDIA_ACTIVE_PHASES.has(this.lastState.state)) return

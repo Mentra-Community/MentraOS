@@ -74,8 +74,6 @@ mock.module("../utils/timers", () => ({
     clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
   },
 }))
-// The relay's hotspot join watches the glasses link through the public SDK.
-mock.module("@mentra/bluetooth-sdk", () => ({default: {subscribeGlassesStatus: () => () => {}}}))
 mock.module("../../utils/timers", () => ({
   BgTimer: {
     setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
@@ -129,10 +127,13 @@ const {PhoneCameraFovCoordinator} = await import("../PhoneCameraFovCoordinator")
 const {ManagedWebRtcRelay} = await import("../ManagedWebRtcRelay")
 const relayPrepare = mock(async (_options: unknown) => "http://192.168.43.2:8080/whip")
 const relayStop = mock(async (_id: string) => {})
-const relayHotspot = mock(async (enabled: boolean) => ({
-  state: enabled ? "enabled" : "disabled",
-  ssid: "glasses",
-  password: "password",
+const relayRelease = mock(async () => {})
+const relayBinding = {ssid: "glasses", password: "password", gateway: "192.168.43.1", phoneIpv4: "192.168.43.2"}
+const relayHoldWifi = mock(async (_signal: AbortSignal) => ({
+  binding: relayBinding,
+  onChange: () => () => {},
+  ready: async () => relayBinding,
+  release: relayRelease,
 }))
 class PhoneStreamCoordinator extends BaseCoordinator {
   constructor(...[timings, deps]: ConstructorParameters<typeof BaseCoordinator>) {
@@ -140,7 +141,7 @@ class PhoneStreamCoordinator extends BaseCoordinator {
       relayFactory: (options, status, failure, connected, deferredStop) =>
         new ManagedWebRtcRelay(options, status, failure, {
           native: {prepare: relayPrepare, stop: relayStop, addListener: () => ({remove() {}})},
-          hotspot: relayHotspot,
+          holdWifi: relayHoldWifi,
           startGlasses: (request) => {
             status("connected", "Phone publisher connected")
             return startStream(request) as never
@@ -150,7 +151,6 @@ class PhoneStreamCoordinator extends BaseCoordinator {
           deferredStop,
           sleep: async () => {},
           now: Date.now,
-          acquire: () => () => {},
         }),
       ...deps,
     })
@@ -1114,43 +1114,6 @@ describe("PhoneStreamCoordinator", () => {
 })
 
 describe("managed relay ownership", () => {
-  test("failed hotspot startup retains its error and recovers cleanup across a BLE reconnect", async () => {
-    const link = fakeLink()
-    const coord = new PhoneStreamCoordinator({}, {linkSource: link.source})
-    const startupError = new Error("hotspot enable timed out")
-    relayHotspot.mockRejectedValueOnce(startupError)
-    relayHotspot.mockRejectedValueOnce(new Error("hotspot disable timed out"))
-    const setHotspotState = mock(async () => ({state: "disabled"}))
-    bluetoothSdk.setHotspotState = setHotspotState
-    const preparesBefore = relayPrepare.mock.calls.length
-    try {
-      await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toBe(startupError)
-      expect(relayPrepare.mock.calls.length).toBe(preparesBefore)
-      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: true, stopping: true, playbackReady: false})
-      expect(link.listenerCount()).toBe(1)
-      await expect(coord.startManaged("com.b", {ingest: "whip"})).rejects.toThrow("cleanup has not completed")
-      relayHotspot.mockRejectedValueOnce(new Error("hotspot disable still timed out"))
-      await expect(coord.stop("com.a")).rejects.toThrow("hotspot disable still timed out")
-      expect(coord.getDiagnosticSnapshot().subscribers).toEqual([])
-
-      link.set(false)
-      await settle()
-      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: false, pendingBleStop: expect.any(String)})
-      expect(stopStream).not.toHaveBeenCalled()
-      link.set(true)
-      await settle()
-      expect(stopStream).toHaveBeenCalledTimes(1)
-      expect(setHotspotState).toHaveBeenCalledWith(false)
-      expect(coord.getDiagnosticSnapshot()).toEqual({active: false, pendingBleStop: null})
-      expect(link.listenerCount()).toBe(0)
-
-      await coord.startManaged("com.b", {ingest: "whip"})
-      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: true, stopping: false, playbackReady: true})
-    } finally {
-      await coord.stop("com.a")
-      await coord.stop("com.b")
-    }
-  })
 
   test("a failed start returns without waiting for remote cleanup and releases the transition lock", async () => {
     const coord = new PhoneStreamCoordinator()
@@ -1162,7 +1125,7 @@ describe("managed relay ownership", () => {
         }),
     )
     const startupError = new Error("hotspot enable timed out")
-    relayHotspot.mockRejectedValueOnce(startupError)
+    relayHoldWifi.mockRejectedValueOnce(startupError)
     try {
       await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toBe(startupError)
       expect(coord.getDiagnosticSnapshot().active).toBe(false)
@@ -1281,40 +1244,23 @@ describe("managed relay ownership", () => {
     expect(teardownManagedStream).toHaveBeenCalledWith("no-whip")
   })
 
-  test("stop without BLE releases phone resources and disables the hotspot when BLE returns", async () => {
+  test("stop without BLE releases phone resources and stops the glasses stream when BLE returns", async () => {
     const link = fakeLink()
-    const setHotspotState = mock(async () => ({state: "disabled"}))
-    bluetoothSdk.setHotspotState = setHotspotState
     const coord = new PhoneStreamCoordinator({}, {linkSource: link.source})
+    const releasesBefore = relayRelease.mock.calls.length
     await coord.startManaged("com.a", {ingest: "whip"})
     link.set(false)
     await coord.stop("com.a")
     expect(stopStream).not.toHaveBeenCalled()
+    // The Wi-Fi hold goes back to the service at once; it turns the AP off when nobody holds it.
+    expect(relayRelease.mock.calls.length).toBe(releasesBefore + 1)
     link.set(true)
     await settle()
     expect(stopStream).toHaveBeenCalledTimes(1)
-    expect(setHotspotState).toHaveBeenCalledWith(false)
     expect(link.listenerCount()).toBe(0)
   })
 
-  test("a deferred hotspot shutdown is dropped once another owner holds the hotspot", async () => {
-    const {acquireGlassesHotspot} = await import("../GlassesHotspotLease")
-    const link = fakeLink()
-    const setHotspotState = mock(async () => ({state: "disabled"}))
-    bluetoothSdk.setHotspotState = setHotspotState
-    const coord = new PhoneStreamCoordinator({}, {linkSource: link.source})
-    await coord.startManaged("com.a", {ingest: "whip"})
-    link.set(false)
-    await coord.stop("com.a")
-    // Gallery takes the hotspot and enables its own AP before BLE returns.
-    const releaseGallery = acquireGlassesHotspot()
-    link.set(true)
-    await settle()
-    expect(stopStream).toHaveBeenCalledTimes(1)
-    expect(setHotspotState).not.toHaveBeenCalled()
-    expect(link.listenerCount()).toBe(0)
-    releaseGallery()
-  })
+
 })
 
 describe("relay stop while playback is warming up", () => {
@@ -1615,7 +1561,7 @@ describe("relay preview source", () => {
     const coord = new PhoneStreamCoordinator()
     const released: string[] = []
     coord.onRelayPreviewReleased((id) => released.push(id))
-    relayHotspot.mockRejectedValueOnce(new Error("hotspot enable timed out"))
+    relayHoldWifi.mockRejectedValueOnce(new Error("hotspot enable timed out"))
     await expect(coord.startManaged("com.call", {ingest: "whip"})).rejects.toThrow("hotspot enable timed out")
     expect(coord.relayPreviewSource()).toBeNull()
     expect(released).toHaveLength(1)
@@ -1624,9 +1570,9 @@ describe("relay preview source", () => {
 
   test("a stream whose cleanup is still pending is not a source", async () => {
     const coord = new PhoneStreamCoordinator()
-    relayHotspot.mockRejectedValueOnce(new Error("hotspot enable timed out"))
-    relayHotspot.mockRejectedValueOnce(new Error("hotspot disable timed out"))
-    await expect(coord.startManaged("com.call", {ingest: "whip"})).rejects.toThrow("hotspot enable timed out")
+    relayPrepare.mockRejectedValueOnce(new Error("prepare failed"))
+    relayStop.mockRejectedValueOnce(new Error("native still draining"))
+    await expect(coord.startManaged("com.call", {ingest: "whip"})).rejects.toThrow("prepare failed")
     expect(coord.getDiagnosticSnapshot()).toMatchObject({active: true, stopping: true, relayPreview: false})
     expect(coord.relayPreviewSource()).toBeNull()
     await coord.stop("com.call")

@@ -22,8 +22,25 @@ jest.mock("../../modules/engine/src/services/OtaArtifactDownloader", () => ({
 }))
 jest.mock("../../modules/engine/src/services/asg/localNetworkTransport", () => ({
   localNetworkErrorDetails: jest.fn(() => ({})),
-  localNetworkTransport: {connect: jest.fn(async () => "192.168.43.2"), disconnect: jest.fn(async () => {})},
 }))
+jest.mock("../../modules/engine/src/services/HotspotGlassesIdentity", () => ({
+  joinedGlassesIdentity: jest.fn(async () => "same_glasses"),
+}))
+const binding = {ssid: "A", password: "password", gateway: "192.168.43.1", phoneIpv4: "192.168.43.2"}
+jest.mock("../../modules/engine/src/services/GlassesWifi", () => {
+  class GlassesWifiError extends Error {
+    stage: "hotspot" | "join"
+    cause: Error & {code?: string}
+    code?: string
+    constructor(stage: "hotspot" | "join", cause: Error & {code?: string}) {
+      super(cause.message)
+      this.stage = stage
+      this.cause = cause
+      this.code = cause.code
+    }
+  }
+  return {GlassesWifiError, holdGlassesWifi: jest.fn()}
+})
 jest.mock("@mentra/bluetooth-sdk/ota-transport", () => ({
   otaServer: {
     start: jest.fn(async () => ({
@@ -39,17 +56,8 @@ const wifi = jest.requireMock("react-native-wifi-reborn").default as {isEnabled:
 const netInfo = jest.requireMock("@react-native-community/netinfo").default as {fetch: jest.Mock}
 const wifiInternet = {type: "wifi", isConnected: true, isInternetReachable: true}
 const downloader = jest.requireMock("../../modules/engine/src/services/OtaArtifactDownloader")
-const localNetwork = jest.requireMock(
-  "../../modules/engine/src/services/asg/localNetworkTransport",
-).localNetworkTransport
+const service = jest.requireMock("../../modules/engine/src/services/GlassesWifi")
 const check = {manifestBody: "{}"} as OtaCheckCurrentGlassesResult
-const enabledHotspot = {
-  type: "hotspot_status",
-  state: "enabled",
-  ssid: "A",
-  password: "password",
-  localIp: "192.168.43.1",
-}
 let platform = "android"
 
 beforeAll(() => {
@@ -71,10 +79,15 @@ beforeEach(async () => {
   netInfo.fetch.mockReset().mockResolvedValue(wifiInternet)
   delete mockSeams.requestPhoneWifiEnable
   downloader.prepareArtifacts.mockClear()
-  localNetwork.connect.mockClear()
+  service.holdGlassesWifi.mockReset().mockImplementation(async () => ({
+    binding,
+    onChange: () => () => {},
+    ready: async () => binding,
+    release: async () => {},
+  }))
 })
 afterEach(async () => {
-  await hotspotOtaTransport.teardown(false)
+  await hotspotOtaTransport.teardown()
   stopOtaDeviceSession()
 })
 
@@ -90,12 +103,11 @@ it("asks for Wi-Fi before downloading and continues once Wi-Fi carries the inter
     expect(downloader.prepareArtifacts).not.toHaveBeenCalled()
     return wifiInternet
   })
-  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce(enabledHotspot)
   expect(await hotspotOtaTransport.prepare(check)).toBe("http://192.168.43.2/version.json")
   expect(mockSeams.requestPhoneWifiEnable).toHaveBeenCalledTimes(1)
   expect(netInfo.fetch).toHaveBeenCalledTimes(2)
   expect(downloader.prepareArtifacts).toHaveBeenCalledTimes(1)
-  expect(localNetwork.connect).toHaveBeenCalledTimes(1)
+  expect(service.holdGlassesWifi).toHaveBeenCalledTimes(1)
 })
 
 it("fails as Wi-Fi off, before the download or glasses hotspot, when the prompt is declined", async () => {
@@ -103,7 +115,7 @@ it("fails as Wi-Fi off, before the download or glasses hotspot, when the prompt 
   mockSeams.requestPhoneWifiEnable = jest.fn(async () => ({enabled: false, cancelled: true}))
   await expect(hotspotOtaTransport.prepare(check)).rejects.toMatchObject({code: "hotspot_wifi_disabled"})
   expect(downloader.prepareArtifacts).not.toHaveBeenCalled()
-  expect(bluetoothSdkMock.setHotspotState).not.toHaveBeenCalled()
+  expect(service.holdGlassesWifi).not.toHaveBeenCalled()
 })
 
 it("fails as Wi-Fi off when the host has no Wi-Fi prompt or cannot show it", async () => {
@@ -113,31 +125,24 @@ it("fails as Wi-Fi off when the host has no Wi-Fi prompt or cannot show it", asy
     throw Object.assign(new Error("background"), {code: "REQUEST_ABORTED"})
   })
   await expect(hotspotOtaTransport.prepare(check)).rejects.toMatchObject({code: "hotspot_wifi_disabled"})
-  expect(bluetoothSdkMock.setHotspotState).not.toHaveBeenCalled()
+  expect(service.holdGlassesWifi).not.toHaveBeenCalled()
 })
 
 it("reports Wi-Fi off when the radio goes off before the hotspot join", async () => {
-  bluetoothSdkMock.setHotspotState
-    .mockResolvedValueOnce(enabledHotspot)
-    .mockResolvedValueOnce({type: "hotspot_status", state: "disabled"})
-  localNetwork.connect.mockImplementationOnce(async () => {
+  service.holdGlassesWifi.mockImplementationOnce(async () => {
     wifi.isEnabled.mockResolvedValue(false)
-    throw Object.assign(new Error("Could not connect to A"), {code: "ERR_LOCAL_WIFI_UNAVAILABLE"})
+    throw new service.GlassesWifiError("join", new Error("Could not connect to A"))
   })
   await expect(hotspotOtaTransport.prepare(check)).rejects.toMatchObject({code: "hotspot_wifi_disabled"})
 })
 
 it("keeps a join failure with Wi-Fi on as a join failure", async () => {
-  bluetoothSdkMock.setHotspotState
-    .mockResolvedValueOnce(enabledHotspot)
-    .mockResolvedValueOnce({type: "hotspot_status", state: "disabled"})
-  localNetwork.connect.mockRejectedValueOnce(new Error("Could not connect to A"))
+  service.holdGlassesWifi.mockRejectedValueOnce(new service.GlassesWifiError("join", new Error("Could not connect to A")))
   await expect(hotspotOtaTransport.prepare(check)).rejects.toMatchObject({code: "hotspot_join_failed"})
 })
 
 it("does not probe the radio on iOS, which cannot read it", async () => {
   platform = "ios"
-  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce(enabledHotspot)
   await hotspotOtaTransport.prepare(check)
   expect(wifi.isEnabled).not.toHaveBeenCalled()
 })

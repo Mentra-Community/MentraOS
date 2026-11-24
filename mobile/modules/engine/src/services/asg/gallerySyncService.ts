@@ -24,8 +24,7 @@ import {SETTINGS, useSettingsStore} from "../../stores/settings"
 import {PhotoInfo, CaptureGroup} from "../../types/asg"
 import GlobalEventEmitter from "../../utils/GlobalEventEmitter"
 import {BgTimer} from "../../utils/timers"
-import {keepHotspotUpWhileJoining} from "../GlassesHotspotJoin"
-import {acquireGlassesHotspot} from "../GlassesHotspotLease"
+import {holdGlassesWifi, type GlassesWifiHold} from "../GlassesWifi"
 import {fixGlassesClockIfSkewed} from "../glassesClockSync"
 import {detectClockSkew, isSyncManifestEmpty} from "../gallerySyncClock"
 import {MediaLibraryPermissions} from "../../utils/permissions/MediaLibraryPermissions"
@@ -42,40 +41,11 @@ import {emitGalleryNotice} from "./galleryNotices"
 import {galleryTransferLedger} from "./galleryTransferLedger"
 import {cameraRollExportCoordinator} from "./cameraRollExportCoordinator"
 
-/**
- * react-native-wifi-reborn rejects SSID reads with a stable `code` from its CONNECT_ERRORS
- * enum. Three DIFFERENT prose messages map to the same "this install will never be allowed
- * to read the SSID" wall — "Cannot detect SSID because LocationPermission is Denied",
- * "...is Restricted", and the bare "Permission not granted" from the not-determined path —
- * so match the code, never the text.
- */
-const SSID_PERMISSION_ERROR_CODES = new Set([
-  "locationPermissionDenied",
-  "locationPermissionRestricted",
-  "locationPermissionMissing",
-])
-
-export function isSsidPermissionError(error: unknown): boolean {
-  const code = (error as {code?: unknown} | null | undefined)?.code
-  // A bridged `code` is authoritative: `couldNotDetectSSID` is a transient read failure,
-  // NOT a permission wall, and must keep polling.
-  if (typeof code === "string") return SSID_PERMISSION_ERROR_CODES.has(code)
-
-  // Fallback for errors that reach us with only a message (older bridges, test doubles).
-  const message = error instanceof Error ? error.message : String(error)
-  return /location\s*permission/i.test(message) || /permission not granted/i.test(message)
-}
-
 // Timing constants
 const TIMING = {
-  HOTSPOT_CONNECT_DELAY_MS: 3000, // Increased from 1000ms - hotspot needs time to broadcast and become discoverable
-  HOTSPOT_REQUEST_TIMEOUT_MS: 30000, // Timeout waiting for hotspot to enable
   WIFI_CONNECTION_TIMEOUT_MS: 30000,
   RETRY_DELAY_MS: 2000,
   MAX_QUEUE_AGE_MS: 2 * 60 * 1000, // 2 min - glasses hotspot auto-disables after 40s inactivity
-  // iOS WiFi connection timing - the system shows a dialog that user must accept
-  IOS_WIFI_RETRY_DELAY_MS: 3000, // Wait for user to interact with iOS dialog
-  IOS_WIFI_MAX_RETRIES: 5, // Retry multiple times to give user time to accept
   // WiFi initialization cooldown - prevents repeated "enable WiFi" alerts while WiFi is initializing
   WIFI_COOLDOWN_MS: 3000, // Wait 3 seconds after user visits WiFi settings before showing alert again
   // Cap the native location-services (GPS) check so a hung CrustModule call can't freeze
@@ -117,17 +87,11 @@ type SyncManifestData = {
 }
 
 class GallerySyncService {
-  private readonly networkOwner = Symbol("gallery-sync")
-  private releaseHotspot: (() => void) | null = null
-  private hotspotEnablePromise: Promise<unknown> | null = null
+  /** The glasses Wi-Fi link, held from the start of a sync to its end. */
+  private wifi: GlassesWifiHold | null = null
   private static instance: GallerySyncService
   private hotspotListenerRegistered = false
-  private hotspotConnectionTimeout: number | null = null
-  private hotspotRequestTimeout: number | null = null
-  /** A join is under way; the keep-alive's enables echo "hotspot ready" back while it waits. */
-  private joiningHotspot = false
   private abortController: AbortController | null = null
-  private hotspotOwner: string | null = null
   private isInitialized = false
   private glassesStoreUnsubscribe: (() => void) | null = null
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null
@@ -142,11 +106,6 @@ class GallerySyncService {
   private cancellationPromise: Promise<void> | null = null
   private hotspotClosePromise: Promise<Error | null> | null = null
   private startAborted = false
-  // Authoritative answer to "can this run read the phone's WiFi SSID?", captured from the
-  // Location permission gate in pre-flight. Every SSID comparison below is advisory only:
-  // when this is false we skip the read entirely and lean on the glasses connectivity
-  // probe instead of failing the sync. Assume readable until pre-flight says otherwise.
-  private ssidReadable = true
   // Recovery from a transfer that dies mid-download (the glasses hotspot turned off, or iOS
   // suspended the app long enough for it to time out) instead of showing "Syncing" forever.
   private lastTransferProgressAt = 0
@@ -176,9 +135,6 @@ class GallerySyncService {
   initialize(): void {
     if (this.isInitialized) return
 
-    // Listen for hotspot status changes
-    GlobalEventEmitter.addListener("hotspot_status_change", this.handleHotspotStatusChange)
-    GlobalEventEmitter.addListener("hotspot_error", this.handleHotspotError)
     GlobalEventEmitter.addListener("gallery_status", this.handleGalleryStatus)
 
     // Subscribe to glasses store to detect disconnection during sync
@@ -238,8 +194,6 @@ class GallerySyncService {
     // while letting a later engine session admit a fresh sync.
     if (this.isSyncing()) useGallerySyncStore.getState().setSyncState("cancelled")
     if (this.hotspotListenerRegistered) {
-      GlobalEventEmitter.removeListener("hotspot_status_change", this.handleHotspotStatusChange)
-      GlobalEventEmitter.removeListener("hotspot_error", this.handleHotspotError)
       GlobalEventEmitter.removeListener("gallery_status", this.handleGalleryStatus)
       this.hotspotListenerRegistered = false
     }
@@ -264,23 +218,12 @@ class GallerySyncService {
     this.drainingProcessing = false
     cameraRollExportCoordinator.cleanup()
 
-    if (this.hotspotConnectionTimeout) {
-      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
-      this.hotspotConnectionTimeout = null
-    }
 
-    if (this.hotspotRequestTimeout) {
-      BgTimer.clearTimeout(this.hotspotRequestTimeout!)
-      this.hotspotRequestTimeout = null
-    }
 
     useGallerySyncStore.getState().setSyncStarting(false)
     useGallerySyncStore.getState().clearGlassesGalleryStatus()
     this.waitingForWifiRetry = false
     this.wifiSettingsOpenedAt = null
-    // Keep the existing pre-flight guard armed until the admitted start resumes.
-    // A permission prompt must not block teardown or later enable the AP.
-    this.ssidReadable = true
     this.isInitialized = false
     const failure = await this.closeHotspot()
     if (failure) throw failure
@@ -313,16 +256,6 @@ class GallerySyncService {
 
     // Abort ongoing downloads
     this.invalidateAttempt()
-
-    // Clear timeouts
-    if (this.hotspotConnectionTimeout) {
-      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
-      this.hotspotConnectionTimeout = null
-    }
-    if (this.hotspotRequestTimeout) {
-      BgTimer.clearTimeout(this.hotspotRequestTimeout!)
-      this.hotspotRequestTimeout = null
-    }
 
     gallerySyncNotifications.showSyncError("Glasses disconnected")
     const cleanup = this.closeHotspot().then((failure) => {
@@ -427,106 +360,6 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     store.setGlassesGalleryStatus(data.photos || 0, data.videos || 0, data.total || 0, data.has_content || false)
-  }
-
-  /**
-   * Handle hotspot status change event
-   */
-  private handleHotspotStatusChange = async (eventData: any): Promise<void> => {
-    console.log("[GallerySyncService] Hotspot status changed:", eventData)
-    const signal = this.abortController?.signal
-    if (signal?.aborted) return
-
-    const store = useGallerySyncStore.getState()
-
-    // The hotspot going down while files are transferring kills the download; without this the
-    // sync waits on it and shows "Syncing" until the app is restarted.
-    if (eventData?.enabled === false && this.isTransferring()) {
-      this.interruptTransfer("the glasses turned their hotspot off")
-      return
-    }
-
-    // Only process if we're in a connecting state
-    if (store.syncState !== "requesting_hotspot" && store.syncState !== "connecting_wifi") {
-      console.log("[GallerySyncService] Ignoring hotspot event - not in connecting state")
-      return
-    }
-
-    if (!eventData.enabled || !eventData.ssid || !eventData.password) {
-      console.log("[GallerySyncService] Hotspot not ready yet")
-      return
-    }
-
-    if (this.joiningHotspot) {
-      console.log("[GallerySyncService] Hotspot still ready while the join waits")
-      return
-    }
-
-    // Clear the hotspot request timeout since we got a response
-    if (this.hotspotRequestTimeout) {
-      BgTimer.clearTimeout(this.hotspotRequestTimeout!)
-      this.hotspotRequestTimeout = null
-    }
-
-    // Pre-flight: do not start the wait if already disconnected (e.g. BT dropped right after hotspot enabled)
-    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
-      console.log("[GallerySyncService] ❌ Glasses disconnected on hotspot_status_change - aborting (no wait)")
-      store.setSyncError("Glasses disconnected")
-      gallerySyncNotifications.showSyncError("Glasses disconnected")
-      return
-    }
-
-    const hotspotInfo: HotspotInfo = {
-      ssid: eventData.ssid,
-      password: eventData.password,
-      ip: eventData.local_ip,
-    }
-
-    store.setHotspotInfo(hotspotInfo)
-
-    // Wait for hotspot to become discoverable
-    console.log(
-      `[GallerySyncService] Hotspot enabled, waiting ${TIMING.HOTSPOT_CONNECT_DELAY_MS}ms for broadcast initialization...`,
-    )
-    console.log("[GallerySyncService] 📡 Glasses need time to start WiFi AP and broadcast SSID")
-
-    if (this.hotspotConnectionTimeout) {
-      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
-    }
-
-    this.hotspotConnectionTimeout = BgTimer.setTimeout(() => {
-      if (signal?.aborted) return
-      this.hotspotConnectionTimeout = null
-      // Pre-flight: abort if Bluetooth disconnected during the wait
-      const stillConnected = isGlassesConnected(useGlassesStore.getState().connection)
-      if (!stillConnected) {
-        console.log("[GallerySyncService] ❌ Glasses disconnected during hotspot wait - skipping WiFi connection")
-        const currentStore = useGallerySyncStore.getState()
-        currentStore.setSyncError("Glasses disconnected")
-        gallerySyncNotifications.showSyncError("Glasses disconnected")
-        return
-      }
-      console.log("[GallerySyncService] ✅ Hotspot broadcast window complete - attempting connection")
-      this.connectToHotspotWifi(hotspotInfo, signal)
-    }, TIMING.HOTSPOT_CONNECT_DELAY_MS)
-  }
-
-  /**
-   * Handle hotspot error event
-   */
-  private handleHotspotError = (eventData: any): void => {
-    console.error("[GallerySyncService] Hotspot error:", eventData)
-
-    const store = useGallerySyncStore.getState()
-
-    if (this.hotspotConnectionTimeout) {
-      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
-      this.hotspotConnectionTimeout = null
-    }
-
-    store.setSyncError(eventData.error_message || "Failed to start hotspot")
-    if (store.syncServiceOpenedHotspot) void this.closeHotspot()
-    gallerySyncNotifications.showSyncError("Failed to start hotspot")
   }
 
   /**
@@ -653,27 +486,7 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
-    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-      const ownership = this.hotspotOwnership()
-      if (ownership === "different") {
-        this.hotspotOwner = null
-        store.setSyncServiceOpenedHotspot(false)
-      } else if (ownership === "unknown") {
-        store.setSyncError("Gallery hotspot owner identity is unavailable")
-        return
-      }
-    }
     const glassesConnected = isGlassesConnected(glassesStore.connection)
-    const glassesHotspot =
-      glassesStore.hotspot.state === "enabled"
-        ? {
-            ssid: glassesStore.hotspot.ssid,
-            password: glassesStore.hotspot.password,
-            ip: glassesStore.hotspot.localIp,
-            frequency: glassesStore.hotspot.frequency,
-          }
-        : null
-
     // R1: Check if already syncing (including requesting_hotspot to prevent double-tap)
     if (this.isSyncing()) {
       console.log(`[GallerySyncService] ⚠️ Already syncing (state: ${store.syncState}), ignoring start request`)
@@ -702,7 +515,7 @@ class GallerySyncService {
     console.log("[GallerySyncService] ✅ Pre-flight check passed - BT enabled, Glasses connected")
     console.log("[GallerySyncService] 📊 Glasses info:", {
       connected: glassesConnected,
-      hotspotEnabled: glassesHotspot !== null,
+      hotspotEnabled: glassesStore.hotspot.state === "enabled",
     })
 
     // Request all permissions upfront so user isn't interrupted during WiFi/download
@@ -717,27 +530,14 @@ class GallerySyncService {
     }
     console.log("[GallerySyncService]   ✅ Notification permission handled")
 
-    // 2. Location permission (required to read WiFi SSID for hotspot verification).
-    // Sync does NOT block on this: record the answer once, here, and let every downstream
-    // SSID check consult `this.ssidReadable` instead of re-deriving it from a native error.
+    // 2. Location permission. Sync does not block on it.
     console.log("[GallerySyncService]   📍 Checking location permission...")
-    const hasLocationPermission = await permissions.check(PermissionFeatures.LOCATION)
-    if (signal.aborted) return
-    if (!hasLocationPermission) {
-      console.log("[GallerySyncService]   ⚠️ Location permission not granted - requesting...")
-      const granted = await permissions.request(PermissionFeatures.LOCATION)
+    if (!(await permissions.check(PermissionFeatures.LOCATION))) {
       if (signal.aborted) return
-      this.ssidReadable = granted
-      if (!granted) {
-        console.warn("[GallerySyncService]   ❌ Location permission denied - skipping all SSID verification")
-        console.warn("[GallerySyncService]   ➡️ Falling back to the glasses connectivity probe")
-      } else {
-        console.log("[GallerySyncService]   ✅ Location permission granted")
-      }
-    } else {
-      this.ssidReadable = true
-      console.log("[GallerySyncService]   ✅ Location permission already granted")
+      const granted = await permissions.request(PermissionFeatures.LOCATION)
+      console.log(`[GallerySyncService]   📍 Location permission granted=${granted}`)
     }
+    if (signal.aborted) return
     if (this.shouldAbortPreFlight(signal)) {
       console.log("[GallerySyncService] Pre-flight aborted after location permission")
       return
@@ -927,171 +727,50 @@ class GallerySyncService {
       }
     }
 
-    // Check if already connected to hotspot
-    // IMPORTANT: We must verify the phone's WiFi is actually connected to the hotspot SSID,
-    // not just that the glasses reported hotspot is enabled (which persists across app restarts)
-    console.log("[GallerySyncService] 🔌 Step 3/6: Checking hotspot connection status...")
-
-    // Re-read current glasses state from the store — the snapshot from the top of the function
-    // may be stale if glasses disconnected during one of the above awaits.
-    const currentGlassesConnected = isGlassesConnected(useGlassesStore.getState().connection)
-    if (!currentGlassesConnected) {
-      console.log("[GallerySyncService] Pre-flight aborted — glasses no longer connected at hotspot check")
-      return
-    }
-    const currentGlassesStore = useGlassesStore.getState()
-    const currentGlassesHotspot =
-      currentGlassesStore.hotspot.state === "enabled"
-        ? {
-            ssid: currentGlassesStore.hotspot.ssid,
-            password: currentGlassesStore.hotspot.password,
-            ip: currentGlassesStore.hotspot.localIp,
-            frequency: currentGlassesStore.hotspot.frequency,
-          }
-        : null
-
-    let isAlreadyConnected = false
-    // Distinct from `!isAlreadyConnected`: we could not READ the SSID, so we know nothing
-    // about which network the phone is on. Re-requesting the hotspot in that state costs a
-    // pointless BLE round-trip on every sync, so route straight to the connect path instead.
-    let hotspotMembershipUnknown = false
-    if (currentGlassesHotspot) {
-      console.log("[GallerySyncService]   📊 Glasses hotspot status:")
-      console.log("[GallerySyncService]      - Enabled: true")
-      console.log(`[GallerySyncService]      - SSID: ${currentGlassesHotspot.ssid}`)
-      console.log(`[GallerySyncService]      - IP: ${currentGlassesHotspot.ip}`)
-
-      if (!this.ssidReadable) {
-        console.log("[GallerySyncService]   ⚠️ SSID unreadable (Location denied) - cannot tell if already joined")
-        console.log("[GallerySyncService]   ➡️ Will attempt the glasses WiFi connection directly")
-        hotspotMembershipUnknown = true
-      } else {
-        try {
-          const currentSSID = await WifiManager.getCurrentWifiSSID()
-          if (this.shouldAbortPreFlight(signal)) {
-            console.log("[GallerySyncService] Pre-flight aborted after SSID check")
-            return
-          }
-          console.log(`[GallerySyncService]   📱 Phone current WiFi SSID: "${currentSSID}"`)
-          console.log(`[GallerySyncService]   🔍 Comparing with glasses hotspot SSID: "${currentGlassesHotspot.ssid}"`)
-
-          isAlreadyConnected = currentSSID === currentGlassesHotspot.ssid
-          if (isAlreadyConnected) {
-            console.log("[GallerySyncService]   ✅ Phone is already connected to glasses hotspot!")
-          } else if (currentSSID) {
-            console.log(`[GallerySyncService]   ⚠️ Phone is on different network (${currentSSID})`)
-            console.log("[GallerySyncService]   ➡️ Will request hotspot connection")
-          } else {
-            console.log("[GallerySyncService]   ⚠️ Phone not connected to any WiFi network")
-          }
-        } catch (error) {
-          if (this.shouldAbortPreFlight(signal)) return
-          console.warn("[GallerySyncService]   ⚠️ Could not verify current WiFi SSID:", error)
-          isAlreadyConnected = false
-          // Permission was granted at pre-flight but the read still hit a wall (revoked
-          // between the two, or a platform we mis-predicted). Latch it so the rest of this
-          // sync stops paying for reads that cannot succeed, and treat membership as
-          // unknown rather than "definitely not joined".
-          if (isSsidPermissionError(error)) {
-            this.ssidReadable = false
-            hotspotMembershipUnknown = true
-          }
-        }
-      }
-    } else {
-      console.log("[GallerySyncService]   ℹ️ Glasses hotspot not currently enabled")
-      console.log("[GallerySyncService]   ➡️ Will request hotspot activation")
-    }
-
-    if (this.shouldAbortPreFlight(signal)) return
-
-    // The same reservation protects Gallery, OTA, calls and streams before any
-    // BLE AP mutation or association. A refused start has no network cleanup.
-    try {
-      this.reserveHotspot()
-    } catch (error) {
-      store.setSyncError(error instanceof Error ? error.message : String(error))
+    console.log("[GallerySyncService] 📡 Step 3/6: Holding the glasses Wi-Fi link...")
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+      console.log("[GallerySyncService] Pre-flight aborted — glasses no longer connected")
       return
     }
     // Every fallible pre-flight gate has passed. It is now safe to replace the previous
     // in-memory queue; startFileDownload immediately recovers its durable ledger work.
     mediaProcessingQueue.reset()
-
-    // SSID unreadable + hotspot already up: connectToHotspotWifi handles BOTH "already
-    // joined" (the native connect resolves immediately) and "needs to join", and it still
-    // probes the glasses server before downloading. Skipping straight to startFileDownload
-    // would be unsafe here — nothing has proven connectivity yet.
-    if (hotspotMembershipUnknown && currentGlassesHotspot) {
-      const hotspotInfo: HotspotInfo = currentGlassesHotspot
-      store.setHotspotInfo(hotspotInfo)
-      store.setSyncState("connecting_wifi")
-      await this.connectToHotspotWifi(hotspotInfo, signal)
-      return
-    }
-
-    if (isAlreadyConnected && currentGlassesHotspot) {
-      const hotspotInfo: HotspotInfo = currentGlassesHotspot
-      store.setHotspotInfo(hotspotInfo)
-      store.setSyncState("connecting_wifi")
-      if (
-        CrustModule.isIOSAppOnMac ||
-        (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive())
-      ) {
-        console.log("[GallerySyncService] 📡 System SSID matches; establishing scoped glasses transport")
-        await this.connectToHotspotWifi(hotspotInfo, signal)
-      } else {
-        console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
-        await this.startFileDownload(hotspotInfo, signal)
-      }
-      return
-    }
-
-    // Request hotspot
-    console.log("[GallerySyncService] 📡 Step 4/6: Requesting hotspot from glasses...")
-    this.hotspotOwner = this.connectedGlassesIdentity()
-    if (!this.hotspotOwner) {
-      store.setSyncError("Connected glasses identity is unavailable")
-      await this.closeHotspot()
-      return
-    }
     store.setRequestingHotspot()
-    store.setSyncServiceOpenedHotspot(true)
-
-    // Set timeout for hotspot request - if we don't get a response, fail gracefully
-    this.hotspotRequestTimeout = BgTimer.setTimeout(() => {
-      const currentStore = useGallerySyncStore.getState()
-      if (signal?.aborted) return
-      if (currentStore.syncState === "requesting_hotspot") {
-        console.error("[GallerySyncService] Hotspot request timed out")
-        currentStore.setSyncError("Hotspot request timed out")
-        // A missing reply does not prove the requested AP never started. Retain
-        // ownership until the existing stop command confirms its closure.
-        void this.closeHotspot()
-        gallerySyncNotifications.showSyncError("Could not start hotspot - please try again")
-      }
-      this.hotspotRequestTimeout = null
-    }, TIMING.HOTSPOT_REQUEST_TIMEOUT_MS)
-
     try {
-      console.log("[GallerySyncService]   📤 Sending hotspot enable command to glasses...")
-      const enabling = BluetoothSdk.setHotspotState(true)
-      this.hotspotEnablePromise = enabling
-      try {
-        await enabling
-      } finally {
-        if (this.hotspotEnablePromise === enabling) this.hotspotEnablePromise = null
-      }
-      console.log("[GallerySyncService]   ✅ Hotspot enabled by glasses")
+      this.wifi = await holdGlassesWifi({
+        consumer: "gallery-sync",
+        signal,
+        beforeJoin: async (ssid) => {
+          store.setSyncState("connecting_wifi")
+          if (!(await this.showWifiJoinExplanation(ssid, signal))) throw new Error("Gallery sync aborted")
+        },
+        onPermissionRequired: (systemAnswer) => {
+          if (!signal.aborted) emitGalleryNotice({code: "local_network_permission_required", data: {systemAnswer}})
+        },
+      })
     } catch (error) {
-      if (signal?.aborted) return
-      // Clear the timeout since we got an immediate error
-      if (this.hotspotRequestTimeout) {
-        BgTimer.clearTimeout(this.hotspotRequestTimeout!)
-        this.hotspotRequestTimeout = null
-      }
-      console.error("[GallerySyncService]   ❌ Failed to request hotspot:", error)
-      store.setSyncError("Failed to start hotspot")
-      await this.closeHotspot()
+      if (signal.aborted) return
+      console.error("[GallerySyncService] ❌ Could not connect to the glasses:", JSON.stringify(localNetworkErrorDetails(error)))
+      store.setSyncError(error instanceof Error ? error.message : "Failed to connect to glasses WiFi")
+      return
+    }
+    // A link that goes down mid-transfer kills the download; resume from what has arrived.
+    this.wifi.onChange((event) => {
+      if (event.type !== "restored") this.interruptTransfer(`the glasses Wi-Fi link went down: ${event.reason}`)
+    })
+    const {ssid, password, gateway} = this.wifi.binding
+    const hotspotInfo: HotspotInfo = {ssid, password, ip: gateway}
+    store.setHotspotInfo(hotspotInfo)
+    store.setSyncState("connecting_wifi")
+    try {
+      if (Platform.OS === "ios") await this.waitForGlassesServer(gateway, signal)
+      if (signal.aborted) return
+      await this.startFileDownload(hotspotInfo, signal)
+    } catch (error) {
+      if (signal.aborted) return
+      store.setSyncError(error instanceof Error ? error.message : "Failed to connect to glasses WiFi")
+      const failure = await this.closeHotspot()
+      if (failure) throw failure
     }
   }
 
@@ -1134,395 +813,30 @@ class GallerySyncService {
   }
 
   /**
-   * Connect to hotspot WiFi with retry logic (unified for both platforms)
-   * Both iOS and Android benefit from retries:
-   * - iOS: Library throws "internal error" before user responds to system dialog
-   * - Android: Hotspot needs time to initialize, especially when glasses WiFi was cold
+   * iOS joins with the SSID right, then needs a moment for its routing table to reach the
+   * glasses: probe their HTTP server until it answers, for up to ten seconds.
    */
-  private async connectToHotspotWifi(hotspotInfo: HotspotInfo, signal = this.abortController?.signal): Promise<void> {
-    this.joiningHotspot = true
-    try {
-      await this.joinHotspotWifi(hotspotInfo, signal)
-    } finally {
-      this.joiningHotspot = false
-    }
-  }
-
-  private async joinHotspotWifi(hotspotInfo: HotspotInfo, signal = this.abortController?.signal): Promise<void> {
-    if (signal?.aborted) return
-    const store = useGallerySyncStore.getState()
-
-    // Pre-flight: do not attempt WiFi connection if Bluetooth already disconnected
-    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
-      console.log("[GallerySyncService] ❌ Glasses not connected - aborting WiFi connection")
-      store.setSyncError("Glasses disconnected")
-      gallerySyncNotifications.showSyncError("Glasses disconnected")
-      return
-    }
-
-    // Direct status/retry entrypoints require the same reservation as startSync.
-    try {
-      this.reserveHotspot()
-    } catch (error) {
-      store.setSyncError(error instanceof Error ? error.message : String(error))
-      return
-    }
-    // Show explanation dialog on first sync (user must acknowledge before proceeding)
-    await this.showWifiJoinExplanation(hotspotInfo.ssid, signal)
-    if (signal?.aborted) return
-
-    let lastError: any = null
-    const wifiConnectStartTime = Date.now()
-
-    console.log("[GallerySyncService] ========================================")
-    console.log("[GallerySyncService] 📡 WIFI CONNECTION PHASE")
-    console.log("[GallerySyncService] ========================================")
-    console.log(`[GallerySyncService] 🎯 Target SSID: ${hotspotInfo.ssid}`)
-    console.log(`[GallerySyncService] 🔑 Password length: ${hotspotInfo.password.length} chars`)
-    console.log(`[GallerySyncService] 🌐 Gateway IP: ${hotspotInfo.ip}`)
-    console.log(`[GallerySyncService] 📱 Platform: ${Platform.OS}`)
-    console.log(`[GallerySyncService] 🔄 Max retry attempts: ${TIMING.IOS_WIFI_MAX_RETRIES}`)
-    console.log(`[GallerySyncService] ⏱️ Retry delay: ${TIMING.IOS_WIFI_RETRY_DELAY_MS}ms`)
-
-    store.setSyncState("connecting_wifi")
-
-    // Setup app state monitoring to detect backgrounding
-    let appBackgrounded = false
-    let appBackgroundTime: number | null = null
-    const appStateHandler = (nextAppState: AppStateStatus) => {
-      if (nextAppState === "background") {
-        appBackgrounded = true
-        appBackgroundTime = Date.now()
-        console.warn("[GallerySyncService] ⚠️ 🚨 APP BACKGROUNDED during WiFi connection!")
-        console.warn("[GallerySyncService] ⚠️ This may indicate Android system dialog appeared")
-        console.warn(
-          "[GallerySyncService] ⚠️ Time since WiFi connect started:",
-          Date.now() - wifiConnectStartTime,
-          "ms",
-        )
-      } else if (nextAppState === "active" && appBackgrounded) {
-        console.log("[GallerySyncService] ✅ App returned to foreground")
-        console.log("[GallerySyncService] ⏱️ Time spent in background:", Date.now() - (appBackgroundTime || 0), "ms")
-      }
-    }
-
-    const appStateSubscription = AppState.addEventListener("change", appStateHandler)
-    console.log("[GallerySyncService] 👂 App state listener registered")
-
-    // L2: Wrap retry loop in try/finally to guarantee listener cleanup on all exit paths
-    try {
-      for (let attempt = 1; attempt <= TIMING.IOS_WIFI_MAX_RETRIES; attempt++) {
-        const attemptStartTime = Date.now()
-
-        // Check if cancelled
-        if (signal?.aborted) {
-          console.log("[GallerySyncService] 🛑 Sync was cancelled - aborting WiFi connection")
-          return
-        }
-
-        try {
-          console.log("[GallerySyncService] ----------------------------------------")
-          console.log(
-            `[GallerySyncService] 📡 ATTEMPT ${attempt}/${TIMING.IOS_WIFI_MAX_RETRIES} - Starting WiFi connection`,
-          )
-          console.log(`[GallerySyncService] ⏱️ Time since WiFi phase started: ${Date.now() - wifiConnectStartTime}ms`)
-          console.log(`[GallerySyncService] 📱 App backgrounded during connection: ${appBackgrounded}`)
-
-          console.log(`[GallerySyncService] 🔌 Connecting the glasses-local transport...`)
-          console.log(`[GallerySyncService] 🔌 Parameters:`)
-          console.log(`[GallerySyncService]    - SSID: "${hotspotInfo.ssid}"`)
-          console.log(`[GallerySyncService]    - Password: ${"*".repeat(hotspotInfo.password.length)}`)
-          console.log(`[GallerySyncService]    - joinOnce: false`)
-          console.log(`[GallerySyncService]    - isHidden: false`)
-
-          const connectCallStartTime = Date.now()
-          appBackgrounded = false // Reset flag for this attempt
-          appBackgroundTime = null
-
-          if (signal?.aborted) return
-          const joinedAddress = await keepHotspotUpWhileJoining(
-            localNetworkTransport.connect(this.networkOwner, hotspotInfo.ssid, hotspotInfo.password, {
-              gateway: hotspotInfo.ip,
-              frequency: hotspotInfo.frequency,
-              onPermissionRequired: (systemAnswer) => {
-                if (!signal?.aborted) {
-                  emitGalleryNotice({code: "local_network_permission_required", data: {systemAnswer}})
-                }
-              },
-            }),
-            {
-              enable: () => BluetoothSdk.setHotspotState(true),
-              cancel: () => void localNetworkTransport.disconnect(this.networkOwner).catch(() => undefined),
-            },
-          )
-          if (signal?.aborted) return
-
-          const connectCallDuration = Date.now() - connectCallStartTime
-          console.log(`[GallerySyncService] ✅ Glasses-local transport connected at ${joinedAddress}`)
-          console.log(`[GallerySyncService] ⏱️ Library call duration: ${connectCallDuration}ms`)
-          console.log(`[GallerySyncService] 📱 App was backgrounded during call: ${appBackgrounded}`)
-          if (appBackgrounded && appBackgroundTime) {
-            console.log(
-              `[GallerySyncService] ⏱️ Time until backgrounding: ${appBackgroundTime - connectCallStartTime}ms`,
-            )
-          }
-          if (signal?.aborted) return
-          const attemptDuration = Date.now() - attemptStartTime
-          console.log(`[GallerySyncService] ✅ WiFi connection successful!`)
-          console.log(`[GallerySyncService] ⏱️ Total attempt duration: ${attemptDuration}ms`)
-          console.log(`[GallerySyncService] 🎉 Platform: ${Platform.OS}`)
-
-          // Remove app state listener
-          appStateSubscription.remove()
-          console.log("[GallerySyncService] 👂 App state listener removed")
-
-          if (Platform.OS === "android") {
-            // Some local builds can have stale generated typings for the Bluetooth SDK module.
-            ;(BluetoothSdk as any).logCurrentWifiFrequency?.()
-          }
-
-          // iOS-specific: Wait for actual network connectivity to glasses
-          // Even though SSID is correct, iOS needs time for routing tables to update
-          // We actively probe the glasses HTTP server until it's reachable
-          if (Platform.OS === "ios") {
-            console.log(`[GallerySyncService] 🍎 Waiting for iOS network routes to glasses IP...`)
-            console.log(`[GallerySyncService] 🍎 Will probe http://${hotspotInfo.ip}:8089/api/health`)
-
-            const maxProbeAttempts = 20 // 20 attempts × 500ms = 10 seconds max
-            let networkReady = false
-
-            for (let probeNum = 1; probeNum <= maxProbeAttempts; probeNum++) {
-              if (signal?.aborted) return
-              // Declared outside the try so the `finally` can always clear it — the fetch
-              // rejects on most early probes, and an un-cleared BgTimer is a live native
-              // timer (up to 20 per attempt, 100 per sync).
-              const probeController = new AbortController()
-              let probeTimeout: number | null = null
-              try {
-                console.log(`[GallerySyncService] 🍎 Connectivity probe ${probeNum}/${maxProbeAttempts}...`)
-
-                // Try to reach the glasses health endpoint with a short timeout
-                probeTimeout = BgTimer.setTimeout(() => probeController.abort(), 1000) // 1 second timeout per probe
-
-                const probeStartTime = Date.now()
-                const probeResponse = await localNetworkTransport.fetch(`http://${hotspotInfo.ip}:8089/api/health`, {
-                  method: "GET",
-                  signal: probeController.signal,
-                })
-
-                if (signal?.aborted) return
-                const probeDuration = Date.now() - probeStartTime
-                console.log(
-                  `[GallerySyncService] 🍎 Probe ${probeNum} response: HTTP ${probeResponse.status} (${probeDuration}ms)`,
-                )
-
-                if (probeResponse.status === 200 || probeResponse.status === 404) {
-                  // 200 = health endpoint exists, 404 = glasses responded (no health endpoint)
-                  // Either way, network is working!
-                  console.log(`[GallerySyncService] 🍎 ✅ Network connectivity verified after ${probeNum} probes!`)
-                  networkReady = true
-                  break
-                }
-              } catch (probeError: unknown) {
-                if (signal?.aborted) return
-                const errorMsg = probeError instanceof Error ? probeError.message : String(probeError)
-                console.log(
-                  `[GallerySyncService] 🍎 Probe ${probeNum} failed: ${errorMsg.substring(0, 50)}${
-                    errorMsg.length > 50 ? "..." : ""
-                  }`,
-                )
-                // Continue to next probe
-              } finally {
-                if (probeTimeout !== null) BgTimer.clearTimeout(probeTimeout)
-              }
-
-              // Wait 500ms before next probe (unless this was the last attempt)
-              if (probeNum < maxProbeAttempts) {
-                await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500))
-              }
-            }
-
-            if (!networkReady) {
-              console.error(
-                `[GallerySyncService] 🍎 ❌ Network connectivity probe failed after ${maxProbeAttempts} attempts`,
-              )
-              console.error(`[GallerySyncService] 🍎 iOS routing tables may not be ready for ${hotspotInfo.ip}`)
-              throw new Error(
-                `iOS network not ready - could not reach ${hotspotInfo.ip}:8089 after ${maxProbeAttempts} attempts`,
-              )
-            }
-          }
-
-          // Start the actual download
-          const totalWifiDuration = Date.now() - wifiConnectStartTime
-          console.log("[GallerySyncService] ========================================")
-          console.log("[GallerySyncService] ✅ WIFI CONNECTION COMPLETE")
-          console.log("[GallerySyncService] ========================================")
-          console.log(`[GallerySyncService] ⏱️ Total WiFi phase duration: ${totalWifiDuration}ms`)
-          console.log(`[GallerySyncService] 🎯 Attempts used: ${attempt}/${TIMING.IOS_WIFI_MAX_RETRIES}`)
-          console.log(`[GallerySyncService] 🚀 Proceeding to file download from ${hotspotInfo.ip}:8089`)
-
-          if (signal?.aborted) return
-          await this.startFileDownload(hotspotInfo, signal)
-          return // Success - exit the retry loop
-        } catch (error: any) {
-          if (signal?.aborted) return
-          lastError = error
-          if (signal?.aborted) return
-          const attemptDuration = Date.now() - attemptStartTime
-
-          console.error("[GallerySyncService] ❌ ========================================")
-          console.error(`[GallerySyncService] ❌ WiFi ATTEMPT ${attempt} FAILED`)
-          console.error("[GallerySyncService] ❌ ========================================")
-          console.error(`[GallerySyncService] ❌ Error message: ${error?.message || "No message"}`)
-          console.error(`[GallerySyncService] ❌ Error code: ${error?.code || "No code"}`)
-          console.error(`[GallerySyncService] ❌ Error type: ${error?.name || typeof error}`)
-          console.error(`[GallerySyncService] ❌ Platform: ${Platform.OS}`)
-          console.error(`[GallerySyncService] ❌ Attempt duration: ${attemptDuration}ms`)
-          console.error(`[GallerySyncService] ❌ App was backgrounded: ${appBackgrounded}`)
-          if (appBackgrounded && appBackgroundTime) {
-            console.error(`[GallerySyncService] ❌ Time in background: ${Date.now() - appBackgroundTime}ms`)
-          }
-          console.error(
-            `[GallerySyncService] ❌ Native connection error:`,
-            JSON.stringify(localNetworkErrorDetails(error)),
-          )
-
-          // If user explicitly denied, don't retry
-          if (error?.code === "ERR_HOTSPOT_USER_DENIED" || error?.message?.includes("cancel")) {
-            console.warn("[GallerySyncService] 🚫 User cancelled WiFi connection - aborting")
-            appStateSubscription.remove()
-            store.setSyncError("WiFi connection cancelled")
-            if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-              await this.closeHotspot()
-            }
-            return
-          }
-
-          // Handle "didNotFindNetwork" - hotspot may still be initializing
-          if (error?.code === "didNotFindNetwork") {
-            console.warn("[GallerySyncService] 🔍 Network not found - hotspot may still be initializing")
-            console.warn(
-              `[GallerySyncService] 🔍 Will retry in ${TIMING.IOS_WIFI_RETRY_DELAY_MS}ms (attempt ${attempt}/${TIMING.IOS_WIFI_MAX_RETRIES})`,
-            )
-          }
-
-          // Handle "timeoutOccurred" - likely caused by app backgrounding during WiFi dialog
-          if (error?.code === "timeoutOccurred") {
-            console.error("[GallerySyncService] ⏰ WiFi connection timeout occurred")
-            console.error(`[GallerySyncService] ⏰ App was backgrounded: ${appBackgrounded}`)
-            if (appBackgrounded && appBackgroundTime) {
-              console.error(`[GallerySyncService] ⏰ Time in background: ${Date.now() - appBackgroundTime}ms`)
-              console.error("[GallerySyncService] ⏰ Android may have shown WiFi dialog that user didn't interact with")
-            }
-            console.warn(
-              `[GallerySyncService] 🔍 Will retry in ${TIMING.IOS_WIFI_RETRY_DELAY_MS}ms (attempt ${attempt}/${TIMING.IOS_WIFI_MAX_RETRIES})`,
-            )
-          }
-
-          // DISABLED: Check if WiFi was disabled during connection attempt (Android 10+ specific error)
-          // if (Platform.OS === "android" && error?.message?.includes("enable wifi manually")) {
-          //   console.error("[GallerySyncService] WiFi was disabled during connection")
-          //
-          //   // Mark that we're waiting for WiFi so we can auto-retry when user returns
-          //   this.waitingForWifiRetry = true
-          //
-          //   showAlert("WiFi Required", "WiFi must be enabled to sync photos. Please enable WiFi and try again.", [
-          //     {
-          //       text: "Cancel",
-          //       style: "cancel",
-          //       onPress: () => {
-          //         this.waitingForWifiRetry = false
-          //         this.wifiSettingsOpenedAt = null
-          //         store.setSyncError("WiFi disabled - enable WiFi and try again")
-          //         if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-          //           this.closeHotspot()
-          //         }
-          //       },
-          //     },
-          //     {
-          //       text: "Open Settings",
-          //       onPress: async () => {
-          //         // Set timestamp so we can enforce cooldown on next sync attempt
-          //         this.wifiSettingsOpenedAt = Date.now()
-          //         await SettingsNavigationUtils.openWifiSettings()
-          //         store.setSyncError("Enable WiFi and try sync again")
-          //         if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-          //           await this.closeHotspot()
-          //         }
-          //       },
-          //     },
-          //   ])
-          //   return
-          // }
-
-          // Let connection fail naturally and show generic error
-          if (Platform.OS === "android" && error?.message?.includes("enable wifi manually")) {
-            console.error("[GallerySyncService] 🚫 WiFi was disabled during connection - aborting")
-            appStateSubscription.remove()
-            store.setSyncError("Could not connect - check WiFi is enabled")
-            if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-              await this.closeHotspot()
-            }
-            return
-          }
-
-          // For "internal error" or "unableToConnect", wait and retry
-          // iOS: Gives user time to interact with system dialog
-          // Android: Gives hotspot time to fully initialize and start broadcasting
-          if (attempt < TIMING.IOS_WIFI_MAX_RETRIES) {
-            // A completed join can outlive a failed health/download probe.
-            // Release its owner before admitting another iOS association.
-            if (Platform.OS === "ios") await localNetworkTransport.disconnect(this.networkOwner)
-            const reason =
-              Platform.OS === "ios" ? "user may be seeing system dialog" : "hotspot may still be initializing"
-            console.log("[GallerySyncService] ----------------------------------------")
-            console.log(`[GallerySyncService] 🔄 Preparing retry ${attempt + 1}/${TIMING.IOS_WIFI_MAX_RETRIES}`)
-            console.log(`[GallerySyncService] ⏱️ Waiting ${TIMING.IOS_WIFI_RETRY_DELAY_MS}ms (${reason})`)
-            console.log(`[GallerySyncService] 📱 App currently: ${AppState.currentState}`)
-            await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), TIMING.IOS_WIFI_RETRY_DELAY_MS))
-            console.log(`[GallerySyncService] ⏱️ Wait complete - starting retry`)
-          } else {
-            console.error("[GallerySyncService] 🚫 No more retry attempts available")
-          }
-        }
-      }
-
-      if (signal?.aborted) return
-      // All retries exhausted
-      const totalWifiDuration = Date.now() - wifiConnectStartTime
-
-      console.error("[GallerySyncService] ❌ ========================================")
-      console.error("[GallerySyncService] ❌ WIFI CONNECTION FAILED - ALL RETRIES EXHAUSTED")
-      console.error("[GallerySyncService] ❌ ========================================")
-      console.error(`[GallerySyncService] ❌ Platform: ${Platform.OS}`)
-      console.error(`[GallerySyncService] ❌ Total attempts: ${TIMING.IOS_WIFI_MAX_RETRIES}`)
-      console.error(`[GallerySyncService] ❌ Total duration: ${totalWifiDuration}ms`)
-      console.error(`[GallerySyncService] ❌ App was backgrounded at some point: ${appBackgrounded}`)
-      console.error(`[GallerySyncService] ❌ Last error message: ${lastError?.message || "No message"}`)
-      console.error(`[GallerySyncService] ❌ Last error code: ${lastError?.code || "No code"}`)
-      console.error("[GallerySyncService] ❌ ========================================")
-
-      const userErrorMessage = lastError?.message || "Failed to connect to glasses WiFi"
-
-      store.setSyncError(userErrorMessage)
-
-      if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-        await this.closeHotspot()
-      }
-    } finally {
+  private async waitForGlassesServer(ip: string, signal: AbortSignal): Promise<void> {
+    for (let probe = 1; probe <= 20; probe++) {
+      if (signal.aborted) return
+      // Cleared in finally: an un-cleared BgTimer is a live native timer.
+      const probeController = new AbortController()
+      const probeTimeout = BgTimer.setTimeout(() => probeController.abort(), 1000)
       try {
-        // Cancellation already owns an aborted attempt's cleanup. Its late
-        // continuation must not release a subsequent Gallery session.
-        if (!signal?.aborted) {
-          const failure = await this.closeHotspot()
-          if (failure) throw failure
-        }
+        const response = await localNetworkTransport.fetch(`http://${ip}:8089/api/health`, {
+          method: "GET",
+          signal: probeController.signal,
+        })
+        // 200 = health endpoint exists, 404 = glasses responded without one; either way it works.
+        if (response.status === 200 || response.status === 404) return
+      } catch {
+        // Not reachable yet.
       } finally {
-        // A failed network release cannot skip listener cleanup.
-        appStateSubscription.remove()
+        BgTimer.clearTimeout(probeTimeout)
       }
+      await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500))
     }
+    throw new Error(`iOS network not ready - could not reach ${ip}:8089 after 20 attempts`)
   }
 
   private async fetchSyncManifest(
@@ -2088,9 +1402,7 @@ class GallerySyncService {
         await gallerySyncNotifications.showSyncError(error?.message || "Download failed")
       }
 
-      if (!signal?.aborted && useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-        await this.closeHotspot()
-      }
+      if (!signal?.aborted) await this.closeHotspot()
     }
   }
 
@@ -2309,9 +1621,7 @@ class GallerySyncService {
         await gallerySyncNotifications.showSyncError(error?.message || "Download failed")
       }
 
-      if (!signal?.aborted && useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-        await this.closeHotspot()
-      }
+      if (!signal?.aborted) await this.closeHotspot()
     }
   }
 
@@ -2438,11 +1748,6 @@ class GallerySyncService {
     // Abort any ongoing downloads
     this.invalidateAttempt()
 
-    // Clear timeout
-    if (this.hotspotConnectionTimeout) {
-      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
-      this.hotspotConnectionTimeout = null
-    }
 
     const store = useGallerySyncStore.getState()
 
@@ -2475,71 +1780,21 @@ class GallerySyncService {
     return closing
   }
 
-  private reserveHotspot(): void {
-    this.releaseHotspot ??= acquireGlassesHotspot()
-  }
-
   private async performHotspotClose(): Promise<Error | null> {
-    // A refused start never owned the AP or phone association.
-    if (!this.releaseHotspot) return null
-    // A cancelled BLE enable may finish late; retain custody until it returns
-    // before stopping the AP and admitting another caller.
-    if (this.hotspotEnablePromise) await this.hotspotEnablePromise.catch(() => undefined)
-    const store = useGallerySyncStore.getState()
-    const failures: unknown[] = []
-    console.log("[GallerySyncService] Closing hotspot...")
+    const wifi = this.wifi
+    if (!wifi) return null
+    this.wifi = null
+    useGallerySyncStore.getState().setHotspotInfo(null)
     try {
-      await localNetworkTransport.disconnect(this.networkOwner)
+      await wifi.release()
+      console.log("[GallerySyncService] Glasses Wi-Fi released")
+      return null
     } catch (error) {
-      failures.push(error)
+      console.error("[GallerySyncService] Failed to release the glasses Wi-Fi:", error)
+      return error instanceof Error ? error : new Error(String(error))
     }
-    // Phone routing and the glasses AP have independent stop operations.
-    // Always attempt the owned AP stop even if routing cleanup rejects.
-    try {
-      // Retained failure ownership cannot authorize a command to another pair.
-      if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-        const ownership = this.hotspotOwnership()
-        if (ownership === "unknown") throw new Error("Gallery hotspot owner identity is unavailable")
-        if (ownership === "same") {
-          const stopped = await BluetoothSdk.setHotspotState(false)
-          if (stopped.state !== "disabled") throw new Error("Gallery hotspot shutdown was not confirmed")
-        }
-        this.hotspotOwner = null
-        store.setSyncServiceOpenedHotspot(false)
-        store.setHotspotInfo(null)
-      }
-    } catch (error) {
-      failures.push(error)
-    }
-    if (failures.length) {
-      const failure = new AggregateError(failures, "Gallery network cleanup failed", {cause: failures[0]})
-      console.error("[GallerySyncService] Failed to close hotspot:", failure)
-      return failure
-    }
-    this.releaseHotspot()
-    this.releaseHotspot = null
-    console.log("[GallerySyncService] Hotspot closed")
-    return null
   }
 
-  private connectedGlassesIdentity(): string | null {
-    const {bluetoothMacAddress, serialNumber} = useGlassesStore.getState()
-    return bluetoothMacAddress
-      ? `mac:${bluetoothMacAddress.toUpperCase()}`
-      : serialNumber
-        ? `serial:${serialNumber}`
-        : null
-  }
-
-  private hotspotOwnership(): "same" | "different" | "unknown" {
-    const connected = this.connectedGlassesIdentity()
-    // A missing identity or a different identity field cannot prove replacement.
-    // Retain ownership until the original pair can confirm its AP is stopped.
-    if (!this.hotspotOwner || !connected || connected.split(":", 1)[0] !== this.hotspotOwner.split(":", 1)[0]) {
-      return "unknown"
-    }
-    return connected === this.hotspotOwner ? "same" : "different"
-  }
 
   private async drainProcessingQueue(): Promise<void> {
     this.drainingProcessing = true
@@ -2624,15 +1879,6 @@ class GallerySyncService {
     this.stopTransferStallWatch()
     this.invalidateAttempt()
     store.setSyncError(SYNC_INTERRUPTED_MESSAGE)
-
-    if (this.hotspotConnectionTimeout) {
-      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
-      this.hotspotConnectionTimeout = null
-    }
-    if (this.hotspotRequestTimeout) {
-      BgTimer.clearTimeout(this.hotspotRequestTimeout!)
-      this.hotspotRequestTimeout = null
-    }
 
     const generation = this.lifecycleGeneration
     const cleanup = this.closeHotspot().then((failure) => {

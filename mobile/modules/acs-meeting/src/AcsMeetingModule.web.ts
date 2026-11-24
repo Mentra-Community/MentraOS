@@ -39,10 +39,6 @@ export default {
   async rebindSoftApIngest(): Promise<string> {
     unavailable()
   },
-  async joinScopedNetwork(_ssid: string, _passphrase: string): Promise<string> {
-    unavailable()
-  },
-  async leaveScopedNetwork(): Promise<void> {},
   async probeScopedGateway(): Promise<{reachable: boolean; detail: string}> {
     return {reachable: false, detail: "no scoped network on web"}
   },

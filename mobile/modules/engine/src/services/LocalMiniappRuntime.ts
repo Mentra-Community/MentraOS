@@ -10,8 +10,7 @@
  */
 
 import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
-import {keepHotspotUpWhileJoining} from "./GlassesHotspotJoin"
-import {acquireGlassesHotspot} from "./GlassesHotspotLease"
+import {holdGlassesWifi} from "./GlassesWifi"
 import {AppState, Platform} from "react-native"
 import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
@@ -560,13 +559,12 @@ type SoftapAttempt = {
   startedAt: number
   /** Set by leave, end, or a superseding join. Checked after every await the join performs. */
   cancelled: boolean
-  /** Set only after the preceding attempt has fully settled. */
-  releaseHotspot?: () => void
   ownsResources: boolean
   transport: SoftapCallTransport | null
   /** The checklist as the miniapp last saw it; preflight rows live here until `start()` takes over. */
   progress: SoftapProgress
-  scopedLostUnsub: (() => void) | null
+  /** Stops listening to the current Wi-Fi hold; a recovery takes a new hold and listener. */
+  linkLostUnsub: (() => void) | null
   /**
    * Mid-call media rebuild. Single-flight while [recoveryActive] is true; the promise is
    * cleared when that run settles so a later walk-away can start another. Joined to the
@@ -599,49 +597,8 @@ const SOFTAP_CLEANUP_STALL_LOG_MS = 10_000
  */
 const SOFTAP_INGEST_CLOSE_WAIT_MS = 3_500
 
-/** How long the glasses get to acknowledge their hotspot off, over BLE. */
-const SOFTAP_HOTSPOT_OFF_ACK_MS = 5_000
-
 /** After a forced close there is nothing left to wait for, so this only catches a real failure. */
 const SOFTAP_FORCED_VERIFY_MS = 500
-
-/**
- * Rejection codes meaning the glasses replaced their Wi-Fi protocol session, not that the
- * command failed.
- *
- * The glasses emit `wifi_protocol_session_ready` on every `glasses_ready`, which fires on BLE
- * reconnects and ASG restarts — routine during a SoftAP teardown. The SDK cancels every pending
- * Wi-Fi request when that lands, so a hotspot command in flight is lost even though nothing is
- * actually wrong. `wifi_session_disconnected` is deliberately absent: that one is raised from the
- * store update where the glasses went away, so there is nothing left to re-send to.
- */
-const HOTSPOT_SESSION_REFRESH_CODES = new Set(["wifi_session_restarted", "wifi_session_changed"])
-
-/**
- * Let the restarted ASG command path settle before re-sending.
- *
- * `handleSetHotspotState` returns false when its network manager is not up yet, which drops the
- * command silently, so an immediate re-send would just race the same initialization. Mirrors the
- * retry spacing `disableHotspotWithRetry` uses for the sibling ASG-replacement case.
- */
-const HOTSPOT_SESSION_RETRY_DELAY_MS = 500
-
-/** Reject with [reason] if [work] has not settled in [ms]. The work itself is not cancellable. */
-function withTimeout<T>(work: Promise<T>, ms: number, reason: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(reason)), ms)
-    work.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (error) => {
-        clearTimeout(timer)
-        reject(error)
-      },
-    )
-  })
-}
 
 /** How long the next call waits for the previous one's cleanup before telling the wearer about it. */
 const SOFTAP_CLEANUP_NARRATE_AFTER_MS = 250
@@ -686,7 +643,6 @@ class LocalMiniappRuntime {
    * second call, which was recorded as a cleanup failure and refused the next
    * join. One queue so those overlapping disables wait their turn.
    */
-  private glassesHotspotCommand: Promise<unknown> = Promise.resolve()
 
   /** Connected miniapps keyed by packageName. */
   private connectedApps: Map<string, ConnectedMiniapp> = new Map()
@@ -4614,7 +4570,7 @@ class LocalMiniappRuntime {
         elapsedMs: 0,
         mediaGeneration: 0,
       },
-      scopedLostUnsub: null,
+      linkLostUnsub: null,
       recovery: null,
       recoveryActive: false,
       recoveryDeadlineAt: null,
@@ -4764,7 +4720,6 @@ class LocalMiniappRuntime {
       softapTraceFailure("softap_join_refused", {packageName, reason: cleanupError})
       throw new Error("Previous call cleanup has not finished yet. Please try joining again.")
     }
-    attempt.releaseHotspot = acquireGlassesHotspot()
     attempt.ownsResources = true
     this.narrateSoftapPreflight(attempt, "Checking the Nearby devices permission…")
     const permissionStartedAt = Date.now()
@@ -4795,12 +4750,16 @@ class LocalMiniappRuntime {
         awaitFirstFrame: (_report, options) => acsMeetingService.waitForFirstFrame(SOFTAP_FIRST_FRAME_MS, options),
         waitUntilLive: (timeoutMs) => acsMeetingService.waitUntilMediaLive(timeoutMs),
         subsystems: {
-          setHotspotState: async (enabled) => {
-            const status = await this.setGlassesHotspotState(enabled)
-            if (status.state === "enabled") {
-              return {state: status.state, ssid: status.ssid, password: status.password, localIp: status.localIp}
-            }
-            return {state: status.state}
+          holdWifi: async (report, signal) => {
+            // Native SoftAP trace lines carry this call's trace id.
+            await acsMeetingService.beginTrace()
+            const hold = await holdGlassesWifi({consumer: "mentra-call", purpose: "incoming-server", report, signal})
+            attempt.linkLostUnsub?.()
+            attempt.linkLostUnsub = hold.onChange((event) => {
+              if (event.type !== "lost") return
+              this.onSoftapLinkLost(attempt, {code: "SOFTAP_NETWORK_LOST", message: event.reason})
+            })
+            return hold
           },
           isWifiEnabled: async () => {
             // A host that cannot answer reports "on" so the preflight stands aside; the native
@@ -4808,13 +4767,6 @@ class LocalMiniappRuntime {
             const enabled = await acsMeetingService.isWifiEnabled()
             return enabled ?? true
           },
-          joinScopedNetwork: (ssid, passphrase, gateway, report) =>
-            keepHotspotUpWhileJoining(acsMeetingService.joinScopedNetwork(ssid, passphrase, gateway, report), {
-              enable: () => this.setGlassesHotspotState(true),
-              cancel: () => void acsMeetingService.cancelScopedNetworkJoin().catch(() => undefined),
-            }),
-          leaveScopedNetwork: () => acsMeetingService.leaveScopedNetwork(),
-          cancelScopedNetworkJoin: () => acsMeetingService.cancelScopedNetworkJoin(),
           probeGateway: async () => {
             const verdict = await acsMeetingService.probeScopedGateway()
             // No native probe means no verdict, and the orchestrator must not read that as "down".
@@ -4879,37 +4831,6 @@ class LocalMiniappRuntime {
       },
     })
     attempt.transport = transport
-    // A hotspot that vanishes mid-call is a real failure and a normal teardown is not, so both
-    // guards are checked: the attempt must still be the current one (a stale event from a finished
-    // call must never touch the next one) and it must not already be terminating. The unsubscribe
-    // lives on the attempt, so retiring attempt N cannot clear attempt N+1's listener. Teardown
-    // itself is left to the miniapp's terminal path, which calls `meeting.leave` — one owner.
-    attempt.scopedLostUnsub = acsMeetingService.onScopedNetworkLost((error) => {
-      if (this.softapAttempt !== attempt || attempt.cancelled) {
-        console.log("[LocalMiniappRuntime] scoped loss for a superseded SoftAP call; ignoring", error)
-        softapTrace("softap_scoped_loss_dropped", {
-          attempt: attempt.id,
-          code: error.code,
-          cause: attempt.cancelled ? "retired" : "superseded",
-          current: this.softapAttempt?.id ?? "none",
-        })
-        return
-      }
-      if (transport.isTerminating()) {
-        console.log("[LocalMiniappRuntime] scoped loss during teardown; expected", error)
-        softapTrace("softap_scoped_loss_dropped", {attempt: attempt.id, code: error.code, cause: "terminating"})
-        return
-      }
-      console.warn("[LocalMiniappRuntime] SoftAP hotspot lost mid-call", error)
-      softapTraceFailure("softap_scoped_loss_reported", {
-        attempt: attempt.id,
-        code: error.code,
-        reason: error.message,
-        attemptAgeMs: Date.now() - attempt.startedAt,
-      })
-      this.beginSoftapRecovery(attempt, transport, error)
-    })
-
     // Sign in on the phone's current internet *before* the glasses hotspot takes DNS. On device,
     // createCallAgent after the scoped join timed out at 20s and only finished once SoftAP was
     // released. It also waits for validated mobile data, which is why the wearer is told one
@@ -4949,6 +4870,39 @@ class LocalMiniappRuntime {
       attemptAgeMs: Date.now() - attempt.startedAt,
     })
     return state
+  }
+
+  /**
+   * The glasses Wi-Fi link went down mid-call. A real failure, unlike a normal teardown, so both
+   * guards are checked: the attempt must still be the current one (a stale event from a finished
+   * call must never touch the next one) and it must not already be terminating.
+   */
+  private onSoftapLinkLost(attempt: SoftapAttempt, error: {code: string; message: string}): void {
+    const transport = attempt.transport
+    if (!transport) return
+    if (this.softapAttempt !== attempt || attempt.cancelled) {
+      console.log("[LocalMiniappRuntime] scoped loss for a superseded SoftAP call; ignoring", error)
+      softapTrace("softap_scoped_loss_dropped", {
+        attempt: attempt.id,
+        code: error.code,
+        cause: attempt.cancelled ? "retired" : "superseded",
+        current: this.softapAttempt?.id ?? "none",
+      })
+      return
+    }
+    if (transport.isTerminating()) {
+      console.log("[LocalMiniappRuntime] scoped loss during teardown; expected", error)
+      softapTrace("softap_scoped_loss_dropped", {attempt: attempt.id, code: error.code, cause: "terminating"})
+      return
+    }
+    console.warn("[LocalMiniappRuntime] SoftAP hotspot lost mid-call", error)
+    softapTraceFailure("softap_scoped_loss_reported", {
+      attempt: attempt.id,
+      code: error.code,
+      reason: error.message,
+      attemptAgeMs: Date.now() - attempt.startedAt,
+    })
+    this.beginSoftapRecovery(attempt, transport, error)
   }
 
   /**
@@ -5194,9 +5148,9 @@ class LocalMiniappRuntime {
     // A cancelled reservation waiting behind another call never acquired any shared resources.
     // Its cleanup must not release the preceding call's native agent or network.
     if (!attempt.ownsResources) return
-    // Terminal intent before the first release, so the scoped network we are about to drop cannot
-    // be reported as a hotspot that walked away.
-    acsMeetingService.beginScopedTeardown()
+    // Stop listening before the first release: the link we are about to give back is not a loss.
+    attempt.linkLostUnsub?.()
+    attempt.linkLostUnsub = null
     const failures: string[] = []
     let endFailure: unknown = null
     const teardownStartedAt = Date.now()
@@ -5251,12 +5205,6 @@ class LocalMiniappRuntime {
           attempt: attempt.id,
         })
       }
-    }
-    const scopedFailure = await releaseStep("leaveScopedNetwork", () => acsMeetingService.leaveScopedNetwork())
-    if (scopedFailure) {
-      failures.push(
-        `leaveScopedNetwork: ${scopedFailure instanceof Error ? scopedFailure.message : String(scopedFailure)}`,
-      )
     }
     // Stay pinned across this wait. Unpinning onto a leftover glasses AP is what made the next
     // Start Call's `teams:create` return `Request failed (503)` — Cloudflare, no internet, not a
@@ -5320,14 +5268,6 @@ class LocalMiniappRuntime {
       })
       failures.push(`ACS leave: ${error instanceof Error ? error.message : String(error)}`)
     }
-    const hadScopedLostListener = Boolean(attempt.scopedLostUnsub)
-    attempt.scopedLostUnsub?.()
-    attempt.scopedLostUnsub = null
-    softapTrace("softap_teardown_step", {
-      attempt: attempt.id,
-      step: "scopedLostListener",
-      outcome: hadScopedLostListener ? "ok" : "not taken",
-    })
     failures.push(
       ...(await this.settleSoftapTeardown(attempt, {
         acsLeave: {ok: acsLeaveOk, durationMs: Date.now() - acsLeaveStartedAt},
@@ -5347,55 +5287,20 @@ class LocalMiniappRuntime {
       failures: failures.join("; "),
       endRefused: Boolean(endFailure),
     })
-    attempt.releaseHotspot?.()
-    attempt.releaseHotspot = undefined
     if (endFailure) throw endFailure
   }
 
   /**
-   * Send one hotspot command, re-sending it once if a session refresh cancelled it.
+   * The last gate, and the point where a timeout stops being treated as consent.
    *
-   * The retry lives inside the unit chained onto [glassesHotspotCommand] rather than around it,
-   * which is what holds the invariant: one logical hotspot operation issues at most two native
-   * commands, and no later operation runs between them. A retry outside the queue would let an
-   * `on` land between the two halves of an `off` and leave the glasses in the opposite state.
+   * Before the next call may start, this device is out of the ACS call, the WHIP listener's port
+   * is released, and the phone has a validated default route again. The first and last already
+   * ran; this waits for the port, which produced the stop-then-start failure when the listener was
+   * still inside its 3s tombstone. The glasses hotspot is the glasses Wi-Fi service's, released
+   * with the call's hold.
    *
-   * Re-sending is free because ASG compares against current state first and answers a same-state
-   * command with its current status instead of cycling the AP.
-   */
-  private setGlassesHotspotState(enabled: boolean) {
-    const send = async () => {
-      try {
-        return await BluetoothSdk.setHotspotState(enabled)
-      } catch (error) {
-        const code = (error as {code?: string} | null | undefined)?.code
-        if (!code || !HOTSPOT_SESSION_REFRESH_CODES.has(code)) throw error
-        softapTrace("softap_hotspot_session_retry", {enabled, code})
-        await new Promise<void>((resolve) => setTimeout(resolve, HOTSPOT_SESSION_RETRY_DELAY_MS))
-        return await BluetoothSdk.setHotspotState(enabled)
-      }
-    }
-    const run = this.glassesHotspotCommand.then(send, send)
-    this.glassesHotspotCommand = run.then(
-      () => undefined,
-      () => undefined,
-    )
-    return run
-  }
-
-  /**
-   * The last two gates, and the point where a timeout stops being treated as consent.
-   *
-   * Four things have to be true before the next call may start: this device is out of the ACS
-   * call, the WHIP listener's port is released, the glasses have acknowledged their hotspot off,
-   * and the phone has a validated default route again. The first and last already ran; this adds
-   * the two that were never waited for at all, and the ones that produced the stop-then-start
-   * failure — the listener was still inside its 3s tombstone and the glasses AP was still up.
-   *
-   * A bound that expires is not success. It means the resource is still held by a call nobody is
-   * in any more, so it is taken by force and re-verified. An ingest port that is still held
-   * refuses the next join. A glasses hotspot that missed its off-ack does not — the next join
-   * wants the AP up and will raise it again.
+   * A bound that expires is not success: the port is still held by a call nobody is in any more,
+   * so it is taken by force and re-verified, and a port still held refuses the next join.
    *
    * @returns failures to record; a non-empty list refuses the next join.
    */
@@ -5415,91 +5320,26 @@ class LocalMiniappRuntime {
         reason: error instanceof Error ? error.message : String(error),
       })
     }
-    const ingestMs = Date.now() - ingestStartedAt
-
-    const hotspotStartedAt = Date.now()
-    let hotspotOff = false
-    let hotspotReason = ""
-    try {
-      // Idempotent by design — the command asks for "disabled" rather than toggling — so sending
-      // it again after the transport's own stop costs nothing and is the only way to get an ack
-      // that is bound to a deadline we chose.
-      const status = await withTimeout(
-        this.setGlassesHotspotState(false),
-        SOFTAP_HOTSPOT_OFF_ACK_MS,
-        "hotspot_off_ack_timeout",
-      )
-      hotspotOff = status.state === "disabled"
-      hotspotReason = status.state
-    } catch (error) {
-      hotspotReason = error instanceof Error ? error.message : String(error)
-    }
-    const hotspotMs = Date.now() - hotspotStartedAt
-
     softapTrace("softap_teardown_settled", {
       attempt: attempt.id,
       acsLeaveMs: earlier.acsLeave.durationMs,
       acsLeaveOk: earlier.acsLeave.ok,
-      ingestClosedMs: ingestMs,
+      ingestClosedMs: Date.now() - ingestStartedAt,
       ingestClosed,
-      hotspotOffMs: hotspotMs,
-      hotspotOff,
-      hotspotDetail: hotspotReason,
       defaultNetworkMs: earlier.defaultNetwork.durationMs,
       defaultNetworkOk: earlier.defaultNetwork.ok,
     })
-
-    if (ingestClosed && hotspotOff) return []
-    return this.forceSoftapCleanup(attempt, {ingestClosed, hotspotOff, hotspotReason})
-  }
-
-  /**
-   * Take back what the bounded waits could not confirm was released.
-   *
-   * Runs only after a gate timed out, and re-verifies rather than assuming: the whole reason the
-   * barrier exists is that "it has probably finished by now" is what broke restarts.
-   */
-  private async forceSoftapCleanup(
-    attempt: SoftapAttempt,
-    gates: {ingestClosed: boolean; hotspotOff: boolean; hotspotReason: string},
-  ): Promise<string[]> {
+    if (ingestClosed) return []
+    softapTraceFailure("softap_teardown_forced", {attempt: attempt.id, ingestClosed})
     const failures: string[] = []
-    softapTraceFailure("softap_teardown_forced", {
-      attempt: attempt.id,
-      ingestClosed: gates.ingestClosed,
-      hotspotOff: gates.hotspotOff,
-      hotspotDetail: gates.hotspotReason,
-    })
-    if (!gates.ingestClosed) {
-      try {
-        await acsMeetingService.forceCloseIngest()
-        // Re-asked, not assumed: `forceCloseIngest` skips the tombstone, so the latch should be
-        // open immediately. A short bound here is enough and a failure is real.
-        const closed = await acsMeetingService.awaitIngestClosed(SOFTAP_FORCED_VERIFY_MS)
-        if (!closed) failures.push("the video receiver did not release its port")
-      } catch (error) {
-        failures.push(`forced ingest close: ${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
-    if (!gates.hotspotOff) {
-      try {
-        const status = await withTimeout(
-          this.setGlassesHotspotState(false),
-          SOFTAP_HOTSPOT_OFF_ACK_MS,
-          "hotspot_off_ack_timeout",
-        )
-        if (status.state !== "disabled") {
-          console.warn("[LocalMiniappRuntime] glasses hotspot still reported after disable; next join will raise it", {
-            attempt: attempt.id,
-            state: status.state,
-          })
-        }
-      } catch (error) {
-        console.warn("[LocalMiniappRuntime] glasses hotspot off ack missed; next join will raise it", {
-          attempt: attempt.id,
-          reason: error instanceof Error ? error.message : String(error),
-        })
-      }
+    try {
+      await acsMeetingService.forceCloseIngest()
+      // Re-asked, not assumed: `forceCloseIngest` skips the tombstone, so the latch should be
+      // open immediately. A short bound here is enough and a failure is real.
+      const closed = await acsMeetingService.awaitIngestClosed(SOFTAP_FORCED_VERIFY_MS)
+      if (!closed) failures.push("the video receiver did not release its port")
+    } catch (error) {
+      failures.push(`forced ingest close: ${error instanceof Error ? error.message : String(error)}`)
     }
     softapTrace("softap_teardown_forced_done", {
       attempt: attempt.id,

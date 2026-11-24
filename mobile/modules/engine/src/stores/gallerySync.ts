@@ -71,7 +71,6 @@ export interface GallerySyncInfo {
 
   // Hotspot info
   hotspotInfo: HotspotInfo | null
-  syncServiceOpenedHotspot: boolean
 
   // Gallery status from glasses
   glassesGalleryStatusKnown: boolean
@@ -111,7 +110,6 @@ export interface GallerySyncState extends GallerySyncInfo {
 
   // Hotspot management
   setHotspotInfo: (info: HotspotInfo | null) => void
-  setSyncServiceOpenedHotspot: (opened: boolean) => void
 
   // Gallery status from glasses
   setGlassesGalleryStatus: (photos: number, videos: number, total: number, hasContent: boolean) => void
@@ -137,7 +135,6 @@ const initialState: GallerySyncInfo & {processingFiles: Set<string>; processedFi
   queue: [],
   queueIndex: 0,
   hotspotInfo: null,
-  syncServiceOpenedHotspot: false,
   glassesGalleryStatusKnown: false,
   glassesPhotoCount: 0,
   glassesVideoCount: 0,
@@ -311,8 +308,6 @@ export const useGallerySyncStore = create<GallerySyncState>()(
 
     // Hotspot management
     setHotspotInfo: (info: HotspotInfo | null) => set({hotspotInfo: info}),
-
-    setSyncServiceOpenedHotspot: (opened: boolean) => set({syncServiceOpenedHotspot: opened}),
 
     // Gallery status from glasses
     setGlassesGalleryStatus: (photos: number, videos: number, total: number, hasContent: boolean) => {

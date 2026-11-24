@@ -28,4 +28,5 @@ export const glassesHotspot = Object.freeze({
     native().addListener("onLocalHotspotPermissionRequired", (event) =>
       listener(event.id, event.systemAnswer ?? "unknown"),
     ),
+  onLost: (listener) => native().addListener("onLocalHotspotLost", (event) => listener(event.id, event.reason)),
 })

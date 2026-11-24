@@ -5,7 +5,6 @@ import android.net.wifi.WifiManager
 import android.os.SystemClock
 import com.mentra.glassesmedia.network.InternetHold
 import com.mentra.glassesmedia.network.ScopedNetworkChangeDetector
-import com.mentra.bluetoothsdk.hotspot.ScopedNetworkError
 import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
 import com.mentra.glassesmedia.source.StillPhotoInbox
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
@@ -48,23 +47,20 @@ class AcsMeetingModule : Module() {
   }
 
   /**
-   * Held by the module, not the session, because the orchestrator joins the hotspot *before* the
-   * ACS join: the ingest source has to bind to a network that already exists. One instance means
-   * the session's ingest source and this join agree on the same [android.net.Network].
+   * The glasses network the glasses Wi-Fi service joined, shared with gallery sync, OTA and the
+   * relay. Calls borrow it: the session's ingest source binds to it, and nothing here joins or
+   * releases it.
    */
   private var scopedNetwork: ScopedSoftApNetwork? = null
 
-  // prepareAgent creates the session before joinScopedNetwork runs. Give it the same holder
-  // now, so its ingest source sees the network populated later instead of retaining null.
   @Synchronized
   private fun getOrCreateScopedNetwork(context: Context): ScopedSoftApNetwork =
-    scopedNetwork ?: ScopedSoftApNetwork(context.applicationContext).also { scopedNetwork = it }
+    scopedNetwork ?: ScopedSoftApNetwork.shared(context).also { scopedNetwork = it }
 
   /**
    * Holds cellular up across the hotspot join, and reports what the default network became.
    *
-   * Module-scoped for the same reason as [scopedNetwork]: the hold has to outlive the individual
-   * `joinScopedNetwork` call and be releasable by the same teardown that releases the scoped join.
+   * Module-scoped so it outlives a single call step and is released by the meeting teardown.
    */
   private var internetHold: InternetHold? = null
 
@@ -93,10 +89,7 @@ class AcsMeetingModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("MentraAcsMeeting")
     Function("supportsTeamsIdentity") { true }
-    // `onScopedNetworkLost` fires only for a hotspot that went away while we still wanted it: the
-    // scoped state machine drops the framework's `onLost` for a network we released ourselves, so a
-    // normal Leave or End cannot manufacture a mid-call network error.
-    Events("onState", "onIncomingPcm", "onScopedNetworkLost")
+    Events("onState", "onIncomingPcm")
 
     // Before any PeerConnectionFactory exists in this process: libwebrtc's network monitor only
     // reads the detector factory when it (re)starts, and without this detector it never sees the
@@ -123,67 +116,6 @@ class AcsMeetingModule : Module() {
       val context = appContext.reactContext ?: throw IllegalStateException("no react context")
       val manager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
       manager?.isWifiEnabled == true
-    }
-
-    /**
-     * Join the glasses hotspot as a scoped, internet-less network and return this phone's address
-     * on it. The address is what the WHIP listener binds to, so a join that produces no address is
-     * a failure rather than a network worth keeping.
-     */
-    AsyncFunction("joinScopedNetwork") { ssid: String, passphrase: String ->
-      traced("join_scoped_network", "ssid" to ssid) {
-        val context = appContext.reactContext ?: throw IllegalStateException("no react context")
-        val scoped = getOrCreateScopedNetwork(context)
-        // Cellular first, and validated, because the next line is what takes office Wi-Fi away. A
-        // phone whose cellular cannot carry TLS strands the ACS join for its whole timeout with
-        // device-wide DNS failures, which reads as a hotspot problem and is not one.
-        val hold = internetHold ?: InternetHold(context.applicationContext).also { internetHold = it }
-        val cellular = hold.awaitValidatedCellular()
-        if (!cellular.validated) {
-          hold.release()
-          throw IllegalStateException(
-            "SOFTAP_NO_CELLULAR_INTERNET: this phone's mobile data did not come up, so Teams would " +
-              "lose its connection the moment we join the glasses hotspot. Turn mobile data on and retry.",
-          )
-        }
-        val listener = object : ScopedSoftApNetwork.Listener {
-          override fun onAvailable(network: android.net.Network, localIpv4: String) = Unit
-
-          override fun onLost(error: ScopedNetworkError) {
-            com.mentra.bluetoothsdk.hotspot.SoftApTrace.failure("scoped_network_lost_midcall", "code" to error.code)
-            sendEvent(
-              "onScopedNetworkLost",
-              mapOf("code" to error.code, "message" to (error.message ?: "The glasses hotspot went away")),
-            )
-          }
-        }
-        try {
-          scoped.join(ssid, passphrase, listener)
-        } catch (error: ScopedNetworkError.WifiDisabled) {
-          // The host asks `isWifiEnabled` before it raises the hotspot, so reaching here means the
-          // radio went off inside the join itself. Nothing native can do about that is better than
-          // saying so: the panel-and-wait this replaced held the call for up to 90s behind a
-          // system sheet with no explanation, and the Wi-Fi the user then picked often became the
-          // default route with no internet, hanging the ACS token mint on DNS.
-          com.mentra.bluetoothsdk.hotspot.SoftApTrace.failure("wifi_disabled_at_join")
-          throw error
-        }
-        scoped.localIpv4() ?: throw IllegalStateException("scoped network has no IPv4 address")
-      }
-    }
-
-    /**
-     * Undo for the `scopedJoin` step. Drops only the hotspot bind.
-     *
-     * The cellular pin is a preflight resource (`prepareAgent`), not a scoped-join one. Releasing
-     * it here is what turned Cancel-during-hotspot into `Request failed (503)`: the AP was still
-     * up, Android made it the default Wi-Fi, and the next Teams create had no internet. The pin
-     * is dropped by [leaveAndAwait] / [leave] once a validated default route exists.
-     */
-    AsyncFunction("leaveScopedNetwork") {
-      traced("leave_scoped_network", "hasScopedNetwork" to (scopedNetwork != null)) {
-        scopedNetwork?.release()
-      }
     }
 
     /**
@@ -255,14 +187,14 @@ class AcsMeetingModule : Module() {
         val hold = internetHold ?: InternetHold(context.applicationContext).also { internetHold = it }
         // Request cellular rather than trusting it to be up: a phone sitting on Wi-Fi may have the
         // radio asleep, and there is nothing to pin to until it is validated. An unvalidated result
-        // is not fatal here — the current default network may still sign in fine, and the scoped
-        // join is where a phone with no mobile data gets told so by name.
+        // is not fatal here — the current default network may still sign in fine, and the meeting
+        // step's wait for a validated default network names a phone with no mobile data.
         hold.awaitValidatedCellular()
         hold.bindProcessToCellular()
         // Deliberately still pinned on the way out. The pin has to survive the hotspot join that
         // follows, because ACS re-binds its signalling when the network moves and keeps whatever
         // route it got. Teardown's `leaveAndAwait` is what drops it, and only once a validated
-        // default internet exists — not `leaveScopedNetwork`, which used to unpin onto SoftAP.
+        // default internet exists.
         meeting.prepareAgent(token, displayName, options["identityMode"] as? String ?: "guest")
         meeting.snapshot()
       }
@@ -554,8 +486,6 @@ class AcsMeetingModule : Module() {
       )
       session?.leave()
       session = null
-      scopedNetwork?.release()
-      scopedNetwork = null
       // Destruction has no owner left to release a retained request later. Close permanently
       // so a validation callback from the old module cannot re-pin a replacement module.
       internetHold?.close()

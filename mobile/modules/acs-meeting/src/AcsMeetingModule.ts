@@ -34,13 +34,7 @@ declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents
    * reuse a stale listener.
    */
   rebindSoftApIngest(): Promise<string>
-  /** SoftAP: join the glasses hotspot; resolves to the phone's IPv4 on it. */
-  joinScopedNetwork(ssid: string, passphrase: string): Promise<string>
-  /** iOS: verify DHCP against the gateway advertised by the glasses before resolving. */
-  joinScopedNetworkWithGateway?(ssid: string, passphrase: string, gateway: string): Promise<string>
   beginTrace(traceId: string): Promise<void>
-  leaveScopedNetwork(): Promise<void>
-  cancelScopedNetworkJoin?(): Promise<void>
   awaitDefaultNetworkAfterHotspot?(): Promise<{usable: boolean; detail: string; transport: string}>
   /** SoftAP: TCP-probe the hotspot gateway over the scoped network. */
   probeScopedGateway(): Promise<{reachable: boolean; detail: string}>

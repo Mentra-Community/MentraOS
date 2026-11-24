@@ -1,7 +1,6 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {StreamStartRequest, StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
-import {keepHotspotUpWhileJoining} from "./GlassesHotspotJoin"
-import {acquireGlassesHotspot} from "./GlassesHotspotLease"
+import type {GlassesWifiHold} from "./GlassesWifi"
 import {pcmToBase64} from "../utils/pcmToBase64"
 
 export interface RelayOptions {
@@ -24,9 +23,8 @@ interface NativeRelay {
   prepare(options: {
     attemptId: string
     ingestUrl: string
-    ssid: string
-    password: string
-    gatewayAddress?: string
+    /** The phone's address on the glasses network the glasses Wi-Fi service joined. */
+    bindAddress?: string
     captureAudio: boolean
     videoPassthrough?: boolean
     audioTransport: "whip" | "ble-lc3" | "none"
@@ -39,14 +37,14 @@ interface NativeRelay {
 
 export interface RelayDependencies {
   native: NativeRelay
-  hotspot(enabled: boolean): Promise<{state: string; ssid?: string; password?: string; localIp?: string}>
+  /** Hold the glasses Wi-Fi link for the whole stream; the service brings it up and back. */
+  holdWifi(signal: AbortSignal): Promise<GlassesWifiHold>
   startGlasses(request: StreamStartRequest): Promise<StreamStatusEvent | undefined>
   stopGlasses(): Promise<unknown>
   deferredStop(): void
   connected(): boolean
   sleep(ms: number): Promise<void>
   now(): number
-  acquire(): () => void
   /** Present only on hosts that can pin and decode the glasses' BLE microphone, as ACS does. */
   microphone?: {
     acquire(): () => void
@@ -63,24 +61,23 @@ export interface ManagedRelay {
   handleGlassesStatus(event: StreamStatusEvent): boolean
 }
 
-/** One attempt at a time; video stays native. All retries unwind both peers, mic and hotspot. */
+/** One attempt at a time; video stays native. Retries unwind both peers and mic; the Wi-Fi hold stays. */
 export class ManagedWebRtcRelay implements ManagedRelay {
   private cancelled = false
   private started = false
   private attempt = 0
   private attemptId: string | null = null
   private attemptError: Error | null = null
-  private hotspotTouched = false
+  private wifi: GlassesWifiHold | null = null
+  /** Aborted by cancel: the hold and the wait for a lost link can last as long as a join prompt. */
+  private readonly cancelling = new AbortController()
   private nativeTouched = false
   private preparing = false
   private prepareStop: Promise<void> | null = null
   private glassesTouched = false
-  private release: (() => void) | null = null
   private listener: {remove(): void} | null = null
   private operation: Promise<unknown> = Promise.resolve()
   private restarting = false
-  /** The hotspot survived the last cleanup, so the next attempt can skip its beacon/DHCP wait. */
-  private hotspotKept = false
   private retries = 0
   private readyAt: number | null = null
   private stopping: Promise<void> | null = null
@@ -97,7 +94,6 @@ export class ManagedWebRtcRelay implements ManagedRelay {
   start(): Promise<StreamStatusEvent | undefined> {
     if (this.started) return Promise.reject(new Error("Relay already started"))
     this.started = true
-    this.release = this.deps.acquire()
     this.listener = this.deps.native.addListener("onRelayState", (event) => {
       if (event.attemptId !== this.attemptId || this.cancelled) return
       // Preserve native uplink stages in incident logs without SDP, URLs or credentials.
@@ -118,14 +114,14 @@ export class ManagedWebRtcRelay implements ManagedRelay {
 
   cancel(): void {
     this.cancelled = true
+    this.cancelling.abort()
     this.interruptPrepare()
   }
 
   private interruptPrepare(): void {
     if (this.preparing && this.attemptId && !this.prepareStop) {
-      // Local Network permission and the join prompt can wait indefinitely. Interrupt this owned
-      // prepare before the coordinator's transition lock can reach stop(). Native stop rejects
-      // prepare and resolves only after its peers and hotspot join have been released.
+      // Interrupt this owned prepare before the coordinator's transition lock can reach stop().
+      // Native stop rejects prepare and resolves only after its peers have been released.
       this.prepareStop = this.deps.native.stop(this.attemptId)
       void this.prepareStop.catch(() => undefined) // stop() awaits and reports cleanup failure.
     }
@@ -157,33 +153,30 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     const lc3 = captureAudio && !!this.deps.microphone && typeof this.deps.native.pushOutgoingPcm === "function"
     // Claim through the same policy/ownership layer as ACS before turning off WHIP audio.
     if (lc3) this.releaseMic = this.deps.microphone!.acquire()
-    this.hotspotTouched = true // A timed-out BLE command may still have enabled the AP.
-    const hotspot = await this.deps.hotspot(true)
+    if (!this.wifi) {
+      this.wifi = await this.deps.holdWifi(this.cancelling.signal)
+      this.wifi.onChange((event) => {
+        if (event.type === "lost") this.failed(new Error(`Glasses Wi-Fi link lost: ${event.reason}`))
+        else if (event.type === "ended") this.failed(new Error(`Glasses Wi-Fi link ended: ${event.reason}`))
+      })
+    }
     this.checkpoint()
-    if (hotspot.state !== "enabled" || !hotspot.ssid || !hotspot.password)
-      throw new Error("Glasses hotspot did not start")
-    if (!this.hotspotKept) await this.deps.sleep(3_000) // Same beacon/DHCP startup allowance as ACS.
-    this.hotspotKept = false
+    // After a loss, the service brings the link back once the glasses are; wait for that.
+    const binding = await this.wifi.ready(this.cancelling.signal)
     this.checkpoint()
     this.nativeTouched = true
     this.preparing = true
     let url: string
     try {
-      // prepare joins the hotspot, which can wait on the person answering the join prompt.
-      url = await keepHotspotUpWhileJoining(
-        this.deps.native.prepare({
-          attemptId: this.attemptId,
-          ingestUrl: this.options.ingestUrl,
-          ssid: hotspot.ssid,
-          password: hotspot.password,
-          gatewayAddress: hotspot.localIp,
-          captureAudio,
-          ...(this.options.videoPassthrough === true ? {videoPassthrough: true} : {}),
-          audioTransport: lc3 ? "ble-lc3" : captureAudio ? "whip" : "none",
-          bitrate: this.options.video?.bitrate ?? 2_000_000,
-        }),
-        {enable: () => this.deps.hotspot(true), cancel: () => this.interruptPrepare()},
-      )
+      url = await this.deps.native.prepare({
+        attemptId: this.attemptId,
+        ingestUrl: this.options.ingestUrl,
+        bindAddress: binding.phoneIpv4,
+        captureAudio,
+        ...(this.options.videoPassthrough === true ? {videoPassthrough: true} : {}),
+        audioTransport: lc3 ? "ble-lc3" : captureAudio ? "whip" : "none",
+        bitrate: this.options.video?.bitrate ?? 2_000_000,
+      })
     } finally {
       this.preparing = false
     }
@@ -247,10 +240,7 @@ export class ManagedWebRtcRelay implements ManagedRelay {
       .then(async () => {
         while (!this.cancelled) {
           try {
-            // The first retry keeps the glasses hotspot up: a stalled stream or a blip on the leg is
-            // not the radio's fault, and power-cycling it costs ~10 s and drops the join for nothing.
-            // A second consecutive failure cycles it in case the hotspot itself is the problem.
-            await this.cleanupAttempt({keepHotspot: this.retries === 0 && this.deps.connected()})
+            await this.cleanupAttempt()
             if (this.cancelled) return
             if (this.retries >= 3) throw error
             await this.deps.sleep(1_000 * 2 ** this.retries++)
@@ -260,7 +250,7 @@ export class ManagedWebRtcRelay implements ManagedRelay {
             return
           } catch (failure) {
             // Cleanup failure retains ownership; never create another stream on uncertain state.
-            if (this.hotspotTouched || this.nativeTouched || this.glassesTouched) {
+            if (this.nativeTouched || this.glassesTouched) {
               try {
                 await this.cleanupAttempt()
               } catch (cleanupError) {
@@ -292,8 +282,9 @@ export class ManagedWebRtcRelay implements ManagedRelay {
       .then(() => this.operation.catch(() => undefined))
       .then(async () => {
         await this.cleanupAttempt()
-        this.release?.()
-        this.release = null
+        const wifi = this.wifi
+        this.wifi = null
+        await wifi?.release()
       })
       .finally(() => {
         this.prepareStop = null
@@ -302,7 +293,7 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     return this.stopping
   }
 
-  private async cleanupAttempt(options: {keepHotspot?: boolean} = {}): Promise<void> {
+  private async cleanupAttempt(): Promise<void> {
     const failures: unknown[] = []
     const step = async (action: () => Promise<void>) => {
       try {
@@ -331,16 +322,6 @@ export class ManagedWebRtcRelay implements ManagedRelay {
         await (this.prepareStop ?? this.deps.native.stop(id))
         this.nativeTouched = false
       })
-    this.hotspotKept = false
-    if (this.hotspotTouched && options.keepHotspot) this.hotspotKept = failures.length === 0
-    else if (this.hotspotTouched)
-      await step(async () => {
-        if (this.deps.connected()) {
-          const result = await this.deps.hotspot(false)
-          if (result.state !== "disabled") throw new Error("Glasses hotspot shutdown was not confirmed")
-        } else this.deps.deferredStop()
-        this.hotspotTouched = false
-      })
     if (failures.length) {
       this.attemptId = id // Retain the native attempt token for a subsequent cleanup retry.
       throw new Error(`Relay cleanup failed: ${failures.map((error) => asError(error).message).join("; ")}`)
@@ -365,16 +346,16 @@ export function createManagedWebRtcRelay(
   const native = requireNativeModule<NativeRelay>("MentraGlassesMediaRelay")
   const {Platform} = require("react-native") as typeof import("react-native")
   const {default: micSessionManager} = require("./MicSessionManager") as typeof import("./MicSessionManager")
+  const {holdGlassesWifi} = require("./GlassesWifi") as typeof import("./GlassesWifi")
   return new ManagedWebRtcRelay(options, onStatus, onFailure, {
     native,
-    hotspot: (enabled) => BluetoothSdk.setHotspotState(enabled),
+    holdWifi: (signal) => holdGlassesWifi({consumer: "managed-relay", purpose: "incoming-server", signal}),
     startGlasses: (request) => BluetoothSdk.startStream(request),
     stopGlasses: () => BluetoothSdk.stopStream(),
     connected,
     deferredStop,
     now: Date.now,
     sleep: (ms) => new Promise((resolve) => BgTimer.setTimeout(resolve, ms)),
-    acquire: acquireGlassesHotspot,
     ...(Platform.OS === "android" && typeof BluetoothSdk.setMicSourcePin === "function"
       ? {
           microphone: {

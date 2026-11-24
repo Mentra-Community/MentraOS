@@ -31,7 +31,6 @@ import {useAppStatusStore} from "../stores/apps"
 import {startPairingProjection, stopPairingProjection} from "./PairingProjection"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
-import {reclaimLateHotspot} from "./GlassesHotspotLease"
 
 let subs: Array<{remove: () => void}> = []
 
@@ -105,8 +104,10 @@ export function startDeviceEventRouter(): void {
       asgCameraApi.setServer(localIp || "localhost", 8089)
       GlobalEventEmitter.emit("hotspot_status_change", {enabled, ssid, password, local_ip: localIp})
       if (enabled) {
-        void reclaimLateHotspot((state) => BluetoothSdk.setHotspotState(state)).catch((error) =>
-          console.warn("[GlassesHotspot] Could not turn off the late hotspot", error),
+        // Loaded on use: the glasses Wi-Fi service reaches React Native, which the router does not.
+        const {reclaimLateHotspot} = require("./GlassesWifi") as typeof import("./GlassesWifi")
+        void reclaimLateHotspot().catch((error) =>
+          console.warn("[GlassesWifi] Could not turn off the late hotspot", error),
         )
       }
     }),

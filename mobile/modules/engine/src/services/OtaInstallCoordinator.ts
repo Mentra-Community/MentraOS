@@ -183,9 +183,8 @@ class OtaInstallCoordinator {
       this.hotspotArtifactPercent = null
       this.hotspotArtifact = null
       this.resetSessionState()
-      // Release the old phone endpoint without issuing hotspot commands to the
-      // new glasses. An in-flight preparation fences itself before BLE work.
-      void hotspotOtaTransport.teardown(false).catch(() => {})
+      // Release the old phone endpoint. An in-flight preparation fences itself before BLE work.
+      void hotspotOtaTransport.teardown().catch(() => {})
       this.emitInternalChange()
     })
   }

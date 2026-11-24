@@ -114,8 +114,6 @@ function fakeNative() {
   }))
   const updateVideoSource = mock(async () => {})
   const restartVideoSource = mock(async () => {})
-  const joinScopedNetwork = mock(async (_ssid: string, _passphrase: string) => "192.168.43.20")
-  const leaveScopedNetwork = mock(async () => {})
   const getState = mock(async () => ({state: "idle" as const, muted: false}))
   return {
     join,
@@ -124,8 +122,6 @@ function fakeNative() {
     setAudioSource,
     updateVideoSource,
     restartVideoSource,
-    joinScopedNetwork,
-    leaveScopedNetwork,
     getState,
     addListener: (event: string, listener: (event: Record<string, unknown>) => void) => {
       listeners.set(event, listener)
@@ -222,32 +218,10 @@ describe("AcsMeetingService", () => {
     const live = mock(async () => wifi)
     setAcsMeetingNativeForTests({...fakeNative(), awaitValidatedDefaultNetwork: live})
     expect(await acsMeetingService.awaitDefaultNetworkAfterHotspot()).toEqual(wifi)
-    await acsMeetingService.cancelScopedNetworkJoin()
     expect(live).toHaveBeenCalledTimes(1)
   })
 
-  test("pending join cancellation calls the supported native barrier", async () => {
-    const cancel = mock(async () => {})
-    setAcsMeetingNativeForTests({...fakeNative(), cancelScopedNetworkJoin: cancel})
-    await acsMeetingService.cancelScopedNetworkJoin()
-    expect(cancel).toHaveBeenCalledTimes(1)
-  })
 
-  test("cancel during trace setup prevents a late native hotspot join", async () => {
-    const native = fakeNative()
-    let releaseTrace!: () => void
-    const trace = new Promise<void>((resolve) => {
-      releaseTrace = resolve
-    })
-    setAcsMeetingNativeForTests({...native, beginTrace: () => trace})
-    const joining = acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw").catch((error: Error) => error)
-    await acsMeetingService.cancelScopedNetworkJoin()
-    releaseTrace()
-    const error = await joining
-    expect(error).toBeInstanceOf(Error)
-    expect(error instanceof Error ? error.message : "").toBe("Hotspot join cancelled")
-    expect(native.joinScopedNetwork).not.toHaveBeenCalled()
-  })
 
   beforeEach(() => {
     preferredMic = "glasses"
@@ -549,7 +523,7 @@ describe("AcsMeetingService", () => {
   test("a SoftAP call does not rebuild ingest when the default route flaps onto cellular", async () => {
     // Joining the glasses hotspot is what *causes* NetInfo to report none → cellular. Rebuilding
     // the WHIP listener on that flap changes the ingest port after start_stream already went out,
-    // and the glasses POST hits a tombstone (HTTP 410). A real hotspot loss is onScopedNetworkLost.
+    // and the glasses POST hits a tombstone (HTTP 410). A real hotspot loss comes from the glasses Wi-Fi service.
     const native = fakeNative()
     setAcsMeetingNativeForTests(native)
     const network = fakePhoneNetwork()
@@ -911,7 +885,7 @@ describe("AcsMeetingService", () => {
   test("a default-network change does not rebuild a SoftAP feed", async () => {
     // SoftAP media is bound to the scoped hotspot. Joining that hotspot is what makes NetInfo
     // flap `none → cellular`, and rebuilding the WHIP listener on that flap changes the ingest
-    // port after the glasses already have the old URL. A real hotspot loss is onScopedNetworkLost.
+    // port after the glasses already have the old URL. A real hotspot loss comes from the glasses Wi-Fi service.
     const native = fakeNative()
     setAcsMeetingNativeForTests(native)
     let emit: ((state: {type: string; isConnected: boolean | null}) => void) | null = null
@@ -1515,49 +1489,14 @@ describe("parseAcsVideoSource", () => {
   })
 })
 
-describe("scoped network passthrough", () => {
+describe("SoftAP agent preparation", () => {
   afterEach(() => {
     setAcsMeetingNativeForTests(undefined)
   })
 
-  test("the hotspot join returns this phone's address on the SoftAP subnet", async () => {
-    const native = fakeNative()
-    setAcsMeetingNativeForTests(native)
 
-    await expect(acsMeetingService.joinScopedNetwork("MentraLive-1234", "hunter2!")).resolves.toBe("192.168.43.20")
-    expect(native.joinScopedNetwork).toHaveBeenCalledWith("MentraLive-1234", "hunter2!")
-  })
 
-  test("iOS verifies DHCP against the gateway from the glasses instead of using the legacy join", async () => {
-    const native = fakeNative()
-    const joinScopedNetworkWithGateway = mock(
-      async (_ssid: string, _password: string, _gateway: string) => "192.168.43.142",
-    )
-    setAcsMeetingNativeForTests({...native, joinScopedNetworkWithGateway})
-    await expect(acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw", "192.168.43.1")).resolves.toBe(
-      "192.168.43.142",
-    )
-    expect(joinScopedNetworkWithGateway).toHaveBeenCalledWith("MentraLive-1234", "pw", "192.168.43.1")
-    expect(native.joinScopedNetwork).not.toHaveBeenCalled()
-    await expect(acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")).rejects.toThrow("hotspot gateway")
-    expect(joinScopedNetworkWithGateway).toHaveBeenCalledTimes(1)
-  })
 
-  test("a host that cannot join the hotspot says so instead of skipping the join", async () => {
-    // Silently resolving here is the dangerous case: the sequence would go on to an ACS join and a
-    // glasses publish with no network to meet on, and surface as a black tile several steps later.
-    const native = fakeNative()
-    setAcsMeetingNativeForTests({...native, joinScopedNetwork: undefined} as never)
-
-    await expect(acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")).rejects.toThrow("SoftAP calling")
-  })
-
-  test("releasing is safe on a host with no scoped-network support", async () => {
-    const native = fakeNative()
-    setAcsMeetingNativeForTests({...native, leaveScopedNetwork: undefined} as never)
-
-    await expect(acsMeetingService.leaveScopedNetwork()).resolves.toBeUndefined()
-  })
 
   test("prepareAgent signs in before SoftAP when the native method exists", async () => {
     const prepareAgent = mock(async () => ({state: "connecting" as const, muted: false}))
@@ -1590,36 +1529,6 @@ describe("scoped network passthrough", () => {
     }
   })
 
-  test("iOS narrates permission while native join is pending and removes the progress listener afterward", async () => {
-    let finish!: (address: string) => void
-    const pending = new Promise<string>((resolve) => {
-      finish = resolve
-    })
-    const native = {...fakeNative(), joinScopedNetwork: mock(() => pending)}
-    setAcsMeetingNativeForTests(native)
-    const os = reactNative.Platform.OS
-    reactNative.Platform.OS = "ios"
-    const report = mock((_detail: string) => {})
-    try {
-      let completed = false
-      const joined = acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw", undefined, report).then((address) => {
-        completed = true
-        return address
-      })
-      await Promise.resolve()
-      native.emit("onScopedNetworkProgress", {permissionRequired: true})
-      expect(report).toHaveBeenCalledWith(expect.stringContaining("Allow Local Network access"))
-      expect(completed).toBe(false)
-      expect(native.join).not.toHaveBeenCalled()
-      finish("192.168.43.20")
-      expect(await joined).toBe("192.168.43.20")
-      expect(native.handlerFor("onScopedNetworkProgress")).toBeUndefined()
-    } finally {
-      await acsMeetingService.leaveScopedNetwork()
-      reactNative.Platform.OS = os
-      finish("192.168.43.20")
-    }
-  })
 })
 
 /**
@@ -1629,114 +1538,6 @@ describe("scoped network passthrough", () => {
  * go away, so the honest signal depends entirely on intent: a loss is only a failure while the call
  * is still supposed to be running.
  */
-describe("scoped network loss", () => {
-  afterEach(async () => {
-    await acsMeetingService.leaveScopedNetwork()
-    setAcsMeetingNativeForTests(undefined)
-  })
-
-  async function joinedScoped() {
-    const native = fakeNative()
-    setAcsMeetingNativeForTests(native)
-    await acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")
-    return native
-  }
-
-  test("an unexpected loss reaches every subscriber", async () => {
-    const native = await joinedScoped()
-    const seen: Array<{code: string; message: string}> = []
-    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
-
-    native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "network onLost"})
-
-    expect(seen).toEqual([{code: "SOFTAP_NETWORK_LOST", message: "network onLost"}])
-  })
-
-  /** The bug this guard exists for: Leave manufacturing the error it is in the middle of avoiding. */
-  test("the loss we asked for is not reported", async () => {
-    const native = await joinedScoped()
-    const seen: unknown[] = []
-    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
-
-    acsMeetingService.beginScopedTeardown()
-    native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "released"})
-
-    expect(seen).toEqual([])
-  })
-
-  /** Intent must be raised before the release, not after it, or the callback wins the race. */
-  test("leaveScopedNetwork raises the intent before it releases", async () => {
-    const native = fakeNative()
-    const seen: unknown[] = []
-    let lostDuringRelease = false
-    native.leaveScopedNetwork.mockImplementationOnce(async () => {
-      native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "released"})
-      lostDuringRelease = true
-    })
-    setAcsMeetingNativeForTests(native)
-    await acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")
-    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
-
-    await acsMeetingService.leaveScopedNetwork()
-
-    expect(lostDuringRelease).toBe(true)
-    expect(seen).toEqual([])
-  })
-
-  test("a fresh join clears the previous call's terminal intent", async () => {
-    const native = await joinedScoped()
-    acsMeetingService.beginScopedTeardown()
-    const seen: unknown[] = []
-    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
-
-    await acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")
-    native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "network onLost"})
-
-    expect(seen).toHaveLength(1)
-  })
-
-  test("unsubscribing stops delivery", async () => {
-    const native = await joinedScoped()
-    const seen: unknown[] = []
-    const unsubscribe = acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
-
-    unsubscribe()
-    native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "network onLost"})
-
-    expect(seen).toEqual([])
-  })
-
-  /** One subscriber throwing must not swallow the loss for the one that would act on it. */
-  test("a throwing subscriber does not stop the others", async () => {
-    const native = await joinedScoped()
-    const seen: unknown[] = []
-    acsMeetingService.onScopedNetworkLost(() => {
-      throw new Error("listener exploded")
-    })
-    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
-    const originalWarn = console.warn
-    console.warn = () => {}
-
-    try {
-      native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "network onLost"})
-    } finally {
-      console.warn = originalWarn
-    }
-
-    expect(seen).toHaveLength(1)
-  })
-
-  test("a malformed native event still names the failure", async () => {
-    const native = await joinedScoped()
-    const seen: Array<{code: string; message: string}> = []
-    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
-
-    native.emit("onScopedNetworkLost", {})
-
-    expect(seen[0]).toEqual({code: "SOFTAP_NETWORK_LOST", message: "The glasses hotspot went away"})
-  })
-})
-
 describe("waitForFirstFrame", () => {
   afterEach(async () => {
     await acsMeetingService.leave("com.mentra.call")

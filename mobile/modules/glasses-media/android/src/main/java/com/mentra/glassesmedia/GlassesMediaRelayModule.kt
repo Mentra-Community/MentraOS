@@ -1,14 +1,9 @@
 package com.mentra.glassesmedia
 
 import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
-import com.mentra.bluetoothsdk.hotspot.ScopedNetworkError
-import android.content.Intent
-import android.os.Handler
-import android.os.Looper
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.PowerManager
-import android.provider.Settings
 import android.util.Base64
 import com.mentra.glassesmedia.grab.StreamFrameGrab
 import com.mentra.glassesmedia.trace.MediaLog
@@ -23,7 +18,10 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.concurrent.Executors
 
-/** Native resources for one coordinator-owned relay attempt. All transitions use one executor. */
+/**
+ * Native resources for one coordinator-owned relay attempt, on the glasses network the glasses
+ * Wi-Fi service joined. All transitions use one executor.
+ */
 class GlassesMediaRelayModule : Module() {
   private val worker = Executors.newSingleThreadExecutor()
   private var activeId: String? = null
@@ -48,27 +46,15 @@ class GlassesMediaRelayModule : Module() {
           check(activeId == null) { "Previous relay has not stopped" }
           val id = requireNotNull(options["attemptId"] as? String)
           val endpoint = requireNotNull(options["ingestUrl"] as? String)
-          val ssid = requireNotNull(options["ssid"] as? String)
-          val password = requireNotNull(options["password"] as? String)
           val context = requireNotNull(appContext.reactContext).applicationContext
           activeId = id
           val hold = InternetHold(context).also { internet = it }
           check(hold.awaitValidatedCellular().validated) {
             "Turn on phone mobile data to stream through the glasses hotspot"
           }
-          val scoped = ScopedSoftApNetwork(context).also { network = it }
-          if (!scoped.isWifiEnabled()) {
-            Handler(Looper.getMainLooper()).post {
-              appContext.currentActivity?.startActivity(Intent(Settings.Panel.ACTION_WIFI))
-            }
-            check(scoped.awaitWifiEnabled()) { "Phone Wi-Fi is disabled" }
-            Thread.sleep(ScopedSoftApNetwork.WIFI_ENABLE_SETTLE_MS)
-          }
-          val listener = object : ScopedSoftApNetwork.Listener {
-            override fun onAvailable(network: android.net.Network, localIpv4: String) = Unit
-            override fun onLost(error: ScopedNetworkError) { emit(id, "failed", "Glasses hotspot connection was lost") }
-          }
-          scoped.join(ssid, password, listener)
+          // The glasses network the glasses Wi-Fi service joined; the relay only borrows it.
+          val scoped = ScopedSoftApNetwork.shared(context).also { network = it }
+          check(scoped.network() != null) { "The phone is not on the glasses network" }
           ScopedNetworkChangeDetector.registerRelayNetwork(scoped)
           // Forward the glasses' encoded video untouched instead of decoding and encoding it again.
           // Only when the caller asked, so an old caller and every other stream keep the re-encode.
@@ -165,7 +151,7 @@ class GlassesMediaRelayModule : Module() {
     fun step(action: () -> Unit) { try { action() } catch (e: Exception) { failure = failure ?: e } }
     step { source?.close(); source = null }
     step { publisher?.close(); publisher = null }
-    step { network?.let { it.release(); ScopedNetworkChangeDetector.releaseRelayNetwork(it) }; network = null }
+    step { network?.let { ScopedNetworkChangeDetector.releaseRelayNetwork(it) }; network = null }
     step { internet?.close(); internet = null }
     step { wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null }
     step { wifiLock?.let { if (it.isHeld) it.release() }; wifiLock = null }
