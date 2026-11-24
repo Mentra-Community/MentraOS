@@ -1217,12 +1217,15 @@ public final class MentraBluetoothSDK {
         Bridge.log(
             "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(routedRequest.requestId)"
         )
+        if routedRequest.holdsPhoto { try requireHeldPhotos() }
         let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(routedRequest.requestId)", telemetryOperation: "photo request", onTimeout: requestTimeoutReporter)
         pendingPhotoRequests[routedRequest.requestId] = pending
         do {
             let event = try await withUsageOutcome(record: { (latencyMs, errorCode, event: PhotoResponseEvent?) in
                 var fileSizeBytes: Int64?
-                if case let .success(_, _, _, _, _, size?, _) = event?.response { fileSizeBytes = Int64(size) }
+                if case let .success(_, _, _, _, _, size?, _, _, _, _) = event?.response {
+                    fileSizeBytes = Int64(size)
+                }
                 analytics.recordUsage {
                     $0.photoSettled(
                         size: routedRequest.size.rawValue,
@@ -1237,7 +1240,7 @@ public final class MentraBluetoothSDK {
                 }
             }) {
                 DeviceManager.shared.requestPhoto(routedRequest)
-                return try await pending.wait(timeoutMs: routedRequest.presendThumbnail
+                return try await pending.wait(timeoutMs: routedRequest.presendThumbnail || routedRequest.holdsPhoto
                     ? MentraBluetoothSDK.photoThumbnailRequestTimeoutMs
                     : MentraBluetoothSDK.photoRequestTimeoutMs)
             }
@@ -1247,6 +1250,54 @@ public final class MentraBluetoothSDK {
             pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             throw error
         }
+    }
+
+    private func requireHeldPhotos() throws {
+        if glassesStatus.heldPhotosVersion <= 0 {
+            throw BluetoothSdkError(
+                code: "held_photos_unsupported",
+                message: "These glasses can't hold photos. Update the glasses software, or request whole photos."
+            )
+        }
+    }
+
+    /// Fetch the full size of a photo the glasses hold (a request with `deliver = "thumbnail"`),
+    /// over Bluetooth. Resolves like `requestPhoto`: with the file's URI as `photoUrl` when
+    /// `localFile`, else once it is uploaded to `webhookUrl`. The glasses keep the photo until
+    /// `releaseHeldPhotos` or 30 minutes after capture, so a failed fetch can be retried.
+    public func fetchHeldPhoto(
+        requestId: String,
+        localFile: Bool = true,
+        webhookUrl: String? = nil,
+        authToken: String? = nil
+    ) async throws -> PhotoResponseEvent {
+        guard let id = nonBlankRequestId(requestId) else {
+            throw BluetoothSdkError(code: "invalid_request", message: "A photo request ID is required.")
+        }
+        if !localFile, webhookUrl?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+            throw BluetoothSdkError(code: "invalid_request", message: "Fetch to a file, or give a webhookUrl.")
+        }
+        try requireHeldPhotos()
+        if pendingPhotoRequests[id] != nil {
+            throw BluetoothSdkError(code: "request_in_flight", message: "This photo is already being fetched.")
+        }
+        let pending = PendingResponse<PhotoResponseEvent>(operation: "held photo fetch \(id)", telemetryOperation: "held photo fetch", onTimeout: requestTimeoutReporter)
+        pendingPhotoRequests[id] = pending
+        defer {
+            if pendingPhotoRequests[id] === pending {
+                pendingPhotoRequests.removeValue(forKey: id)
+            }
+        }
+        try DeviceManager.shared.fetchHeldPhoto(
+            requestId: id, localFile: localFile, webhookUrl: webhookUrl, authToken: authToken
+        )
+        return try await pending.wait(timeoutMs: MentraBluetoothSDK.photoThumbnailRequestTimeoutMs)
+    }
+
+    /// Delete held photos on the glasses: these request IDs, or every held photo when nil.
+    public func releaseHeldPhotos(requestIds: [String]? = nil) throws {
+        try requireHeldPhotos()
+        try DeviceManager.shared.releaseHeldPhotos(requestIds: requestIds)
     }
 
     public func warmUpCamera(

@@ -796,6 +796,20 @@ class BluetoothSdkModule : Module() {
             requireSdk().stopCameraWarmUp(requestId)
         }
 
+        SdkCoroutineFunction("fetchHeldPhoto") { params: Map<String, Any?> ->
+            requireSdk()
+                .fetchHeldPhoto(
+                    requestId = params["requestId"] as? String ?: "",
+                    localFile = params["localFile"] as? Boolean ?: true,
+                    webhookUrl = params["webhookUrl"] as? String,
+                    authToken = params["authToken"] as? String,
+                ).values
+        }
+
+        SdkAsyncFunction("releaseHeldPhotos") { requestIds: List<String>? ->
+            requireSdk().releaseHeldPhotos(requestIds)
+        }
+
         // MARK: - OTA Commands
 
         SdkFunction("setOtaVersionUrl") { otaVersionUrl: String ->

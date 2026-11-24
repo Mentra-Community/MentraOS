@@ -3193,7 +3193,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             source = "Glasses gallery"
         }
         switch response {
-        case let .success(requestId, uploadUrl, _, _, _, _, timestamp):
+        case let .success(requestId, uploadUrl, _, _, _, _, timestamp, _, _, _):
             photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: source)).acknowledged(
                 requestId: requestId,
                 source: source,

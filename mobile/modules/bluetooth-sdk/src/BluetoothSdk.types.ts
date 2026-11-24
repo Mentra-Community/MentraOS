@@ -331,6 +331,12 @@ export type PhotoResponseEvent =
       transferMs?: number
       /** From the phone's request to the saved file. */
       totalMs?: number
+      /** The glasses hold the full photo: a `deliver: "thumbnail"` request. */
+      held?: boolean
+      /** A held photo's preview (≤500 px JPEG), as a `data:image/jpeg;base64,` URI. */
+      thumbnailUrl?: string
+      /** When the glasses captured the held photo, in ms since the epoch. */
+      capturedAt?: number
     }
   | {
       type: "photo_response"
@@ -831,7 +837,26 @@ type NativeCameraFovSetting = {
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
+/** Fetch a held photo's full size: see {@link BluetoothSdkPublicModule.fetchHeldPhoto}. */
+export type FetchHeldPhotoParams = {
+  /** The `requestId` of the `deliver: "thumbnail"` request that took it. */
+  requestId: string
+  /** Save it as a file on the phone (default true); otherwise upload it to `webhookUrl`. */
+  localFile?: boolean
+  webhookUrl?: string
+  authToken?: string
+}
+
 export type PhotoRequestParams = {
+  /**
+   * `"thumbnail"`: the glasses hold the full photo and send only its preview, and the request
+   * resolves once the preview arrived, with `held: true` and `thumbnailUrl`. The camera is free
+   * for the next request as soon as the capture is written. Fetch the full photo with
+   * `fetchHeldPhoto` and delete the rest with `releaseHeldPhotos`; the glasses delete held photos
+   * 30 minutes after capture. Needs `heldPhotosVersion > 0` in the glasses status. A preview that
+   * fails rejects with `PREVIEW_FAILED`, and the photo is still held.
+   */
+  deliver?: "thumbnail"
   /**
    * Send an oriented <=500px, quality-50 JPEG preview before the full photo. Default false.
    * Enables a 110-second end-to-end native deadline (ordinary requests: 30 seconds).
@@ -1698,6 +1723,14 @@ export interface BluetoothSdkPublicModule {
   setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
+  /**
+   * Fetch the full size of a photo the glasses hold (`deliver: "thumbnail"`), over Bluetooth.
+   * Resolves like `requestPhoto`: with the file's `file://` URI as `photoUrl`, or once uploaded.
+   * The glasses keep the photo, so a failed fetch can be retried.
+   */
+  fetchHeldPhoto(params: FetchHeldPhotoParams): Promise<PhotoSuccessResponseEvent>
+  /** Delete held photos on the glasses: these request IDs, or all of them when omitted. */
+  releaseHeldPhotos(requestIds?: string[] | null): Promise<void>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
   stopCameraWarmUp(requestId: string): Promise<void>
@@ -1920,6 +1953,8 @@ export interface GlassesStatus {
   packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
+  /** Held photos (`requestPhoto` with `deliver: "thumbnail"`); 0 means the glasses can't hold photos. */
+  heldPhotosVersion?: number
   bluetoothName: string
   serialNumber: string
   style: string

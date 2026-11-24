@@ -1785,6 +1785,16 @@ struct ViewState {
         try liveSgc().stopCameraWarmUp(requestId: requestId)
     }
 
+    func fetchHeldPhoto(requestId: String, localFile: Bool, webhookUrl: String?, authToken: String?) throws {
+        try liveSgc().fetchHeldPhoto(
+            requestId: requestId, localFile: localFile, webhookUrl: webhookUrl, authToken: authToken
+        )
+    }
+
+    func releaseHeldPhotos(requestIds: [String]?) throws {
+        try liveSgc().releaseHeldPhotos(requestIds: requestIds)
+    }
+
     /// Request version info from glasses.
     /// Glasses will respond with version_info message containing build number, firmware version, etc.
     func requestVersionInfo(requestId: String? = nil) {

@@ -103,6 +103,18 @@ export interface LocalPhotoTaken {
   requestId: string
 }
 
+/**
+ * A photo the glasses hold: its preview is on the phone, its full size stays on the glasses until
+ * fetched or released (or 30 minutes after capture).
+ */
+export interface HeldPhotoTaken {
+  photoId: string
+  /** The preview, ≤500 px, as a `data:image/jpeg;base64,` URI. */
+  thumbnail: {url: string}
+  /** When the glasses captured it, in ms since the epoch. */
+  takenAt: number
+}
+
 /** Pipeline stage a photo request failed at — surfaced to the miniapp so a dev
  *  sees exactly where it broke, not just a flattened message. */
 export type PhotoStage = "presign" | "command" | "capture" | "upload" | "push" | "save"
@@ -115,6 +127,8 @@ export class PhotoError extends Error {
     message: string,
     public readonly stage?: PhotoStage,
     public readonly transport?: PhotoTransport,
+    /** A held photo that failed only its preview: still on the glasses, fetch or release it by this ID. */
+    public readonly photoId?: string,
   ) {
     super(message)
     this.name = "PhotoError"
@@ -582,6 +596,104 @@ export class PhonePhotoCoordinator {
     } finally {
       this.activeRequests.delete(requestId)
       this.bleIdToCloud.delete(bleRequestId)
+    }
+  }
+
+  /** Held photos per miniapp, so one miniapp's release never deletes another's. */
+  private readonly heldPhotos = new Map<string, Set<string>>()
+
+  /** Whether the connected glasses can hold photos (take a preview first, fetch later). */
+  supportsHeldPhotos(): boolean {
+    return (useGlassesStore.getState().heldPhotosVersion ?? 0) > 0
+  }
+
+  /**
+   * Take a photo the glasses hold: resolves once its preview reached the phone, and the camera
+   * takes the next request as soon as this capture is written, so any number of these can be in
+   * flight. The full photo stays on the glasses until fetchHeldPhoto() or releaseHeldPhotos().
+   * Glasses without held photos are refused with HELD_PHOTOS_UNSUPPORTED: use takeLocalPhoto().
+   */
+  async takeHeldPhoto(packageName: string, opts: PhotoOpts): Promise<HeldPhotoTaken> {
+    const compress = parsePhotoCompression(opts.compress)
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+      throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
+    }
+    if (!this.supportsHeldPhotos()) {
+      throw new PhotoError(
+        "HELD_PHOTOS_UNSUPPORTED",
+        "These glasses can't hold photos; update their software",
+        "command",
+        "ble",
+      )
+    }
+    // The photo is fetched by this ID later, so it is the request ID on the glasses too.
+    const photoId = mintLocalRequestId()
+    const owned = this.heldPhotos.get(packageName) ?? new Set<string>()
+    this.heldPhotos.set(packageName, owned)
+    owned.add(photoId)
+    fleetEvents.photo({operationId: photoId, stage: "requested"})
+    try {
+      const response = await BluetoothSdk.requestPhoto({
+        requestId: photoId,
+        appId: packageName,
+        ...captureParams(opts, compress),
+        save: false,
+        webhookUrl: null,
+        authToken: null,
+        deliver: "thumbnail",
+      })
+      if (!response?.held || !response.thumbnailUrl) {
+        throw new PhotoError("PREVIEW_FAILED", "The glasses held the photo but sent no preview", "capture", "ble")
+      }
+      fleetEvents.photo({operationId: photoId, stage: "captured"})
+      return {photoId, thumbnail: {url: response.thumbnailUrl}, takenAt: response.capturedAt ?? response.timestamp}
+    } catch (err) {
+      fleetEvents.photo({operationId: photoId, stage: "failed", failedStage: "requested"})
+      const error = this.toPhotoError(err, "BLE_SEND_FAILED", "capture", "ble")
+      if (error.code !== "PREVIEW_FAILED") {
+        owned.delete(photoId)
+        throw error
+      }
+      // Only a failed preview leaves the photo on the glasses: give its ID, to fetch or release it.
+      throw new PhotoError(error.code, error.message, error.stage, error.transport, photoId)
+    }
+  }
+
+  /** The full size of a held photo, over Bluetooth, as a file on the phone. */
+  async fetchHeldPhoto(packageName: string, photoId: string): Promise<LocalPhotoTaken> {
+    if (!this.heldPhotos.get(packageName)?.has(photoId)) {
+      throw new PhotoError("PHOTO_NOT_HELD", `No held photo ${photoId} for this miniapp`, "command")
+    }
+    try {
+      const saved = await BluetoothSdk.fetchHeldPhoto({requestId: photoId, localFile: true})
+      if (saved?.state !== "success" || !saved.photoUrl?.startsWith("file://")) {
+        throw new PhotoError("LOCAL_PHOTO_UNAVAILABLE", "The photo was not saved on the phone", "save", "ble")
+      }
+      return {
+        fileUri: saved.photoUrl,
+        mimeType: saved.contentType || "image/jpeg",
+        size: saved.fileSizeBytes ?? -1,
+        requestId: photoId,
+      }
+    } catch (err) {
+      throw this.toPhotoError(err, "FETCH_FAILED", "capture", "ble")
+    }
+  }
+
+  /** Delete a miniapp's held photos on the glasses: these, or all of its own when omitted. */
+  async releaseHeldPhotos(packageName: string, photoIds?: string[]): Promise<void> {
+    const owned = this.heldPhotos.get(packageName)
+    if (!owned || owned.size === 0) return
+    const ids = (photoIds ?? [...owned]).filter((id) => owned.has(id))
+    if (ids.length === 0) return
+    for (const id of ids) owned.delete(id)
+    if (owned.size === 0) this.heldPhotos.delete(packageName)
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) return
+    try {
+      await BluetoothSdk.releaseHeldPhotos(ids)
+    } catch (err) {
+      // The glasses delete held photos 30 minutes after capture regardless.
+      console.warn("[PhonePhotoCoordinator] releaseHeldPhotos failed:", err)
     }
   }
 

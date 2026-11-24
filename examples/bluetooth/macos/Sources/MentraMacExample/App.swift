@@ -193,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
             try Task.checkCancellation()
             self.photoRequestId = nil
             self.action.stringValue = "Photo uploaded: \(result.requestId)"
-            guard case let .success(_, _, photoUrl, _, _, _, _) = result.response,
+            guard case let .success(_, _, photoUrl, _, _, _, _, _, _, _) = result.response,
                   let photoUrl, let url = URL(string: photoUrl) else { return }
             do {
                 let (data, response) = try await URLSession.shared.data(from: url)

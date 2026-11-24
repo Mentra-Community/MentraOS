@@ -37,7 +37,7 @@ Object.assign(cloudClientService, {startManagedPhoto, awaitManagedPhotoReady})
 // isGlassesConnected. Mock both (the real store transitively drags
 // react-native, which bun can't parse); the store state is mutable so each
 // test can flip the connection.
-let glassesState: {connection: {state: string}; capabilities?: {hasCamera?: boolean}} = {
+let glassesState: {connection: {state: string}; capabilities?: {hasCamera?: boolean}; heldPhotosVersion?: number} = {
   connection: {state: "connected"},
 }
 mock.module("../../stores/glasses", () => ({
@@ -608,6 +608,100 @@ describe("PhonePhotoCoordinator", () => {
   })
 })
 
+
+describe("held photos", () => {
+  const fetchHeldPhotoNative = mock(async (_params: unknown): Promise<unknown> => undefined)
+  const releaseHeldPhotosNative = mock(async (_ids: unknown): Promise<undefined> => undefined)
+
+  beforeEach(() => {
+    Object.assign(bluetoothSdk, {fetchHeldPhoto: fetchHeldPhotoNative, releaseHeldPhotos: releaseHeldPhotosNative})
+    fetchHeldPhotoNative.mockClear()
+    releaseHeldPhotosNative.mockClear()
+    glassesState = {connection: {state: "connected"}, heldPhotosVersion: 1} as typeof glassesState
+    requestPhotoNative.mockImplementation(async (request: unknown) => ({
+      state: "success",
+      requestId: (request as {requestId: string}).requestId,
+      held: true,
+      thumbnailUrl: "data:image/jpeg;base64,AAAA",
+      capturedAt: 1234,
+      timestamp: 2000,
+    }))
+  })
+
+  test("many held photos are in flight at once, each resolving with its preview", async () => {
+    const coord = new PhonePhotoCoordinator()
+    const release: Array<() => void> = []
+    requestPhotoNative.mockImplementation(
+      (request: unknown) =>
+        new Promise((resolve) =>
+          release.push(() =>
+            resolve({
+              state: "success",
+              requestId: (request as {requestId: string}).requestId,
+              held: true,
+              thumbnailUrl: "data:image/jpeg;base64,AAAA",
+              capturedAt: 1234,
+            }),
+          ),
+        ),
+    )
+    const pending = [coord.takeHeldPhoto("com.a", {}), coord.takeHeldPhoto("com.a", {}), coord.takeHeldPhoto("com.a", {})]
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(requestPhotoNative).toHaveBeenCalledTimes(3)
+    expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({deliver: "thumbnail", webhookUrl: null})
+    release.forEach((r) => r())
+    const taken = await Promise.all(pending)
+    expect(new Set(taken.map((t) => t.photoId)).size).toBe(3)
+    expect(taken[0]).toMatchObject({thumbnail: {url: "data:image/jpeg;base64,AAAA"}, takenAt: 1234})
+  })
+
+  test("glasses without held photos are refused before anything is sent", async () => {
+    glassesState = {connection: {state: "connected"}}
+    const error = await expectPhotoError(new PhonePhotoCoordinator().takeHeldPhoto("com.a", {}))
+    expect(error.code).toBe("HELD_PHOTOS_UNSUPPORTED")
+    expect(requestPhotoNative).not.toHaveBeenCalled()
+  })
+
+  test("fetches a held photo as a file, and only the miniapp's own", async () => {
+    fetchHeldPhotoNative.mockImplementation(async (params: unknown) => ({
+      state: "success",
+      requestId: (params as {requestId: string}).requestId,
+      photoUrl: "file:///cache/p.jpg",
+      fileSizeBytes: 99,
+    }))
+    const coord = new PhonePhotoCoordinator()
+    const {photoId} = await coord.takeHeldPhoto("com.a", {})
+    expect(await coord.fetchHeldPhoto("com.a", photoId)).toMatchObject({fileUri: "file:///cache/p.jpg", size: 99})
+    expect(fetchHeldPhotoNative.mock.calls[0]![0]).toEqual({requestId: photoId, localFile: true})
+    expect((await expectPhotoError(coord.fetchHeldPhoto("com.b", photoId))).code).toBe("PHOTO_NOT_HELD")
+  })
+
+  test("releasing deletes only the miniapp's own held photos", async () => {
+    const coord = new PhonePhotoCoordinator()
+    const a1 = await coord.takeHeldPhoto("com.a", {})
+    const a2 = await coord.takeHeldPhoto("com.a", {})
+    await coord.takeHeldPhoto("com.b", {})
+    await coord.releaseHeldPhotos("com.a", [a1.photoId, "someone-elses"])
+    expect(releaseHeldPhotosNative.mock.calls[0]![0]).toEqual([a1.photoId])
+    await coord.releaseHeldPhotos("com.a")
+    expect(releaseHeldPhotosNative.mock.calls[1]![0]).toEqual([a2.photoId])
+    await coord.releaseHeldPhotos("com.a")
+    expect(releaseHeldPhotosNative).toHaveBeenCalledTimes(2)
+    expect((await expectPhotoError(coord.fetchHeldPhoto("com.a", a1.photoId))).code).toBe("PHOTO_NOT_HELD")
+  })
+
+  test("a failed preview keeps the photo fetchable", async () => {
+    requestPhotoNative.mockImplementation(async () => {
+      throw Object.assign(new Error("Preview was not acknowledged"), {code: "PREVIEW_FAILED"})
+    })
+    fetchHeldPhotoNative.mockResolvedValue({state: "success", requestId: "x", photoUrl: "file:///p.jpg"})
+    const coord = new PhonePhotoCoordinator()
+    const error = await expectPhotoError(coord.takeHeldPhoto("com.a", {}))
+    expect(error.code).toBe("PREVIEW_FAILED")
+    expect(error.photoId).toBe((requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId)
+    expect((await coord.fetchHeldPhoto("com.a", error.photoId!)).fileUri).toBe("file:///p.jpg")
+  })
+})
 
 describe("native upload completion fallback", () => {
   test("resolves a confirmed upload without a cloud ready push", async () => {

@@ -278,6 +278,17 @@ public struct PhotoRequest {
     /// success response carries that file's URL as `photoUrl`. Nothing is uploaded, and
     /// `webhookUrl` and `transferMethod` are ignored.
     public let localFile: Bool
+    /// `"thumbnail"`: the glasses hold the full photo and send only its preview; the response
+    /// comes once the preview arrived, with `held` and `thumbnailUrl`. Fetch the full photo later
+    /// with `fetchHeldPhoto`, and release the rest with `releaseHeldPhotos`. Needs glasses whose
+    /// status has `heldPhotosVersion` > 0. `webhookUrl` and `transferMethod` are ignored.
+    public let deliver: String?
+
+    public static let deliverThumbnail = "thumbnail"
+
+    public var holdsPhoto: Bool {
+        deliver == PhotoRequest.deliverThumbnail
+    }
 
     public init(
         requestId: String? = nil,
@@ -300,7 +311,8 @@ public struct PhotoRequest {
         mode: PhotoMode = .photo,
         transferMethod: String = "auto",
         presendThumbnail: Bool = false,
-        localFile: Bool = false
+        localFile: Bool = false,
+        deliver: String? = nil
     ) {
         self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
@@ -323,6 +335,7 @@ public struct PhotoRequest {
         self.transferMethod = transferMethod
         self.presendThumbnail = presendThumbnail
         self.localFile = localFile
+        self.deliver = deliver
     }
 
     public static func from(params: [String: Any]) throws -> PhotoRequest {
@@ -407,7 +420,8 @@ public struct PhotoRequest {
             mode: PhotoMode(normalizedRawValue: params["mode"] as? String),
             transferMethod: transferMethod,
             presendThumbnail: params["presend_thumbnail"] as? Bool ?? false,
-            localFile: params["localFile"] as? Bool ?? false
+            localFile: params["localFile"] as? Bool ?? false,
+            deliver: (params["deliver"] as? String).flatMap { $0 == deliverThumbnail ? $0 : nil }
         )
     }
 
@@ -473,7 +487,8 @@ public struct PhotoRequest {
             mode: mode,
             transferMethod: transferMethod,
             presendThumbnail: presendThumbnail,
-            localFile: localFile
+            localFile: localFile,
+            deliver: deliver
         )
     }
 }
@@ -645,7 +660,13 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
         statusUrl: String?,
         contentType: String?,
         fileSizeBytes: Int?,
-        timestamp: Int
+        timestamp: Int,
+        // The glasses hold the full photo (a `deliver = "thumbnail"` request).
+        held: Bool = false,
+        // The held photo's preview, as a `data:image/jpeg;base64,` URI.
+        thumbnailUrl: String? = nil,
+        // When the glasses captured the held photo (ms since the epoch).
+        capturedAt: Int? = nil
     )
     case error(requestId: String, errorCode: String?, errorMessage: String, timestamp: Int)
 
@@ -663,7 +684,10 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
                 contentType: stringValue(values, "contentType") ?? stringValue(values, "mimeType"),
                 fileSizeBytes: intValue(values["fileSizeBytes"]) ?? intValue(values["bytes"])
                     ?? intValue(values["size"]),
-                timestamp: timestamp
+                timestamp: timestamp,
+                held: boolValue(values, "held") == true,
+                thumbnailUrl: stringValue(values, "thumbnailUrl"),
+                capturedAt: intValue(values["capturedAt"])
             )
         } else {
             self = .error(
@@ -687,21 +711,24 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
 
     public var requestId: String {
         switch self {
-        case let .success(requestId, _, _, _, _, _, _), let .error(requestId, _, _, _):
+        case let .success(requestId, _, _, _, _, _, _, _, _, _), let .error(requestId, _, _, _):
             requestId
         }
     }
 
     public var timestamp: Int {
         switch self {
-        case let .success(_, _, _, _, _, _, timestamp), let .error(_, _, _, timestamp):
+        case let .success(_, _, _, _, _, _, timestamp, _, _, _), let .error(_, _, _, timestamp):
             timestamp
         }
     }
 
     public var values: [String: Any] {
         switch self {
-        case let .success(requestId, uploadUrl, photoUrl, statusUrl, contentType, fileSizeBytes, timestamp):
+        case let .success(
+            requestId, uploadUrl, photoUrl, statusUrl, contentType, fileSizeBytes, timestamp, held, thumbnailUrl,
+            capturedAt
+        ):
             var values: [String: Any] = [
                 "state": State.success.rawValue,
                 "requestId": requestId,
@@ -719,6 +746,15 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
             }
             if let fileSizeBytes {
                 values["fileSizeBytes"] = fileSizeBytes
+            }
+            if held {
+                values["held"] = true
+            }
+            if let thumbnailUrl, !thumbnailUrl.isEmpty {
+                values["thumbnailUrl"] = thumbnailUrl
+            }
+            if let capturedAt {
+                values["capturedAt"] = capturedAt
             }
             return values
         case let .error(requestId, errorCode, errorMessage, timestamp):

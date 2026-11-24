@@ -24,6 +24,7 @@ final class PhotoRequestRoutingTests: XCTestCase {
         "ispAnalogGain": "4x",
         "presend_thumbnail": true,
         "localFile": true,
+        "deliver": "thumbnail",
     ]
 
     private func assertSameCapture(_ routed: PhotoRequest, _ request: PhotoRequest, line: UInt = #line) {
@@ -45,6 +46,7 @@ final class PhotoRequestRoutingTests: XCTestCase {
         XCTAssertEqual(routed.ispAnalogGain, request.ispAnalogGain, line: line)
         XCTAssertEqual(routed.presendThumbnail, request.presendThumbnail, line: line)
         XCTAssertEqual(routed.localFile, request.localFile, line: line)
+        XCTAssertEqual(routed.deliver, request.deliver, line: line)
     }
 
     /// The glasses were never asked for a thumbnail on iOS: routing rebuilt the request without the flag.
@@ -86,5 +88,34 @@ final class PhotoRequestRoutingTests: XCTestCase {
         let manual = PhotoRequest(size: .medium, sound: true, exposureTimeNs: 8_000_000, iso: 0).routedForCapture()
         XCTAssertEqual(manual.exposureTimeNs, 8_000_000)
         XCTAssertNil(manual.iso)
+    }
+
+    func testHeldPhotoOptionsAreParsedAndOnlyKnownValuesKept() throws {
+        let held = try PhotoRequest.from(params: ["deliver": "thumbnail"])
+        XCTAssertTrue(held.holdsPhoto)
+
+        let whole = try PhotoRequest.from(params: ["deliver": "full"])
+        XCTAssertNil(whole.deliver)
+        XCTAssertFalse(whole.holdsPhoto)
+    }
+
+    func testHeldPhotoResponseKeepsItsMetadata() {
+        let event = PhotoResponseEvent(values: [
+            "requestId": "photo-1",
+            "success": true,
+            "held": true,
+            "thumbnailUrl": "data:image/jpeg;base64,AA==",
+            "capturedAt": 1_700_000_000_000,
+            "bytes": 1234,
+        ])
+        XCTAssertEqual(event.values["held"] as? Bool, true)
+        XCTAssertEqual(event.values["thumbnailUrl"] as? String, "data:image/jpeg;base64,AA==")
+        XCTAssertEqual(event.values["capturedAt"] as? Int, 1_700_000_000_000)
+        XCTAssertEqual(event.values["fileSizeBytes"] as? Int, 1234)
+
+        let whole = PhotoResponseEvent(values: ["requestId": "photo-2", "success": true])
+        XCTAssertNil(whole.values["held"])
+        XCTAssertNil(whole.values["thumbnailUrl"])
+        XCTAssertNil(whole.values["capturedAt"])
     }
 }

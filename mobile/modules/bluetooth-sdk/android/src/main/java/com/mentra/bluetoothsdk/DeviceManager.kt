@@ -2207,6 +2207,20 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         live.stopCameraWarmUp(requestId)
     }
 
+    fun fetchHeldPhoto(requestId: String, localFile: Boolean, webhookUrl: String?, authToken: String?) {
+        val live =
+            sgc as? MentraLive
+                ?: throw BluetoothSdkException("unsupported_device", "This command requires Mentra Live glasses.")
+        live.fetchHeldPhoto(requestId, localFile, webhookUrl, authToken)
+    }
+
+    fun releaseHeldPhotos(requestIds: List<String>?) {
+        val live =
+            sgc as? MentraLive
+                ?: throw BluetoothSdkException("unsupported_device", "This command requires Mentra Live glasses.")
+        live.releaseHeldPhotos(requestIds)
+    }
+
     /**
      * Read glasses media step volume (0—5) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).

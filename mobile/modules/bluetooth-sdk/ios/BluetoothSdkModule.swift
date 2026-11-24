@@ -610,6 +610,21 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try sdk.stopCameraWarmUp(requestId: requestId)
         }
 
+        AsyncFunction("fetchHeldPhoto") { (params: [String: Any]) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.fetchHeldPhoto(
+                requestId: params["requestId"] as? String ?? "",
+                localFile: params["localFile"] as? Bool ?? true,
+                webhookUrl: params["webhookUrl"] as? String,
+                authToken: params["authToken"] as? String
+            ).values
+        }
+
+        AsyncFunction("releaseHeldPhotos") { (requestIds: [String]?) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try sdk.releaseHeldPhotos(requestIds: requestIds)
+        }
+
         // MARK: - OTA Commands
 
         Function("setOtaVersionUrl") { (otaVersionUrl: String) in

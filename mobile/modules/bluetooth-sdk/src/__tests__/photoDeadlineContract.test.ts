@@ -60,12 +60,12 @@ describe("thumbnail end-to-end deadline", () => {
     },
   )
 
-  it("selects the opt-in budget in both public SDK request lifecycles", () => {
+  it("selects the opt-in budget for preview-first and held requests in both public SDK request lifecycles", () => {
     expect(android).toMatch(
-      /pending.await\(\s*if \(routedRequest.presendThumbnail\) PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS else PHOTO_REQUEST_TIMEOUT_MS/,
+      /pending.await\(\s*if \(routedRequest.presendThumbnail \|\| routedRequest.holdsPhoto\) \{\s*PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS\s*\} else \{\s*PHOTO_REQUEST_TIMEOUT_MS/,
     )
     expect(ios).toMatch(
-      /pending.wait\(timeoutMs: routedRequest.presendThumbnail\s*\? MentraBluetoothSDK.photoThumbnailRequestTimeoutMs\s*: MentraBluetoothSDK.photoRequestTimeoutMs/,
+      /pending.wait\(timeoutMs: routedRequest.presendThumbnail \|\| routedRequest.holdsPhoto\s*\? MentraBluetoothSDK.photoThumbnailRequestTimeoutMs\s*: MentraBluetoothSDK.photoRequestTimeoutMs/,
     )
     expect(literal(android, "PHOTO_REQUEST_TIMEOUT_MS")).toBe(30_000)
     expect(literal(ios, "photoRequestTimeoutMs")).toBe(30_000)

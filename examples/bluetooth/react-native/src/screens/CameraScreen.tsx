@@ -7,6 +7,7 @@ import { FastTransferCard } from '../components/FastTransferCard';
 import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { HeldPhotosCard } from './HeldPhotosCard';
 import { colors } from '../components/theme';
 import {
   galleryHotspotPasswordLabel,
@@ -655,6 +656,9 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         />
       </LinearGradient>
       {captureMode === 'photo' ? <FastTransferCard connected={connected} /> : null}
+      {connected && captureMode === 'photo' ? (
+        <HeldPhotosCard />
+      ) : null}
     </ScrollView>
   );
 }

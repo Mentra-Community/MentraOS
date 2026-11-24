@@ -1158,6 +1158,7 @@ class MentraBluetoothSdk private constructor(
         Bridge.log(
             "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${routedRequest.requestId}"
         )
+        if (routedRequest.holdsPhoto) requireHeldPhotos()
         val pending = PendingResponse<PhotoResponseEvent>("photo request ${routedRequest.requestId}", "photo request")
         pendingPhotoRequests[routedRequest.requestId] = pending
         try {
@@ -1180,7 +1181,11 @@ class MentraBluetoothSdk private constructor(
             ) {
                 deviceManager.requestPhoto(routedRequest)
                 pending.await(
-                    if (routedRequest.presendThumbnail) PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS else PHOTO_REQUEST_TIMEOUT_MS,
+                    if (routedRequest.presendThumbnail || routedRequest.holdsPhoto) {
+                        PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS
+                    } else {
+                        PHOTO_REQUEST_TIMEOUT_MS
+                    },
                 )
             }
         } finally {
@@ -1213,6 +1218,51 @@ class MentraBluetoothSdk private constructor(
         } finally {
             pendingCameraStatusRequests.remove(effectiveRequestId, pending)
         }
+    }
+
+    private fun requireHeldPhotos() {
+        if (getRawGlassesStatus().heldPhotosVersion <= 0) {
+            throw BluetoothSdkException(
+                "held_photos_unsupported",
+                "These glasses can't hold photos. Update the glasses software, or request whole photos.",
+            )
+        }
+    }
+
+    /**
+     * Fetch the full size of a photo the glasses hold (a request with `deliver = "thumbnail"`),
+     * over Bluetooth. Resolves like [requestPhoto]: with the file's URI as `photoUrl` when
+     * [localFile], else once it is uploaded to [webhookUrl]. The glasses keep the photo until
+     * [releaseHeldPhotos] or 30 minutes after capture, so a failed fetch can be retried.
+     */
+    suspend fun fetchHeldPhoto(
+        requestId: String,
+        localFile: Boolean = true,
+        webhookUrl: String? = null,
+        authToken: String? = null,
+    ): PhotoResponseEvent {
+        val id = nonBlankRequestId(requestId)
+            ?: throw BluetoothSdkException("invalid_request", "A photo request ID is required.")
+        if (!localFile && webhookUrl.isNullOrBlank()) {
+            throw BluetoothSdkException("invalid_request", "Fetch to a file, or give a webhookUrl.")
+        }
+        requireHeldPhotos()
+        val pending = PendingResponse<PhotoResponseEvent>("held photo fetch $id", "held photo fetch")
+        if (pendingPhotoRequests.putIfAbsent(id, pending) != null) {
+            throw BluetoothSdkException("request_in_flight", "This photo is already being fetched.")
+        }
+        try {
+            deviceManager.fetchHeldPhoto(id, localFile, webhookUrl, authToken)
+            return pending.await(PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS)
+        } finally {
+            pendingPhotoRequests.remove(id, pending)
+        }
+    }
+
+    /** Delete held photos on the glasses: these request IDs, or every held photo when null. */
+    fun releaseHeldPhotos(requestIds: List<String>? = null) {
+        requireHeldPhotos()
+        deviceManager.releaseHeldPhotos(requestIds)
     }
 
     fun stopCameraWarmUp(requestId: String) {

@@ -836,6 +836,19 @@ class MentraLive : SGCManager() {
 
     // BLE photo transfer tracking
     private var blePhotoTransfers: MutableMap<String, BlePhotoTransfer> = ConcurrentHashMap()
+    private val lastBleImgNumber = java.util.concurrent.atomic.AtomicLong(0)
+
+    /**
+     * A Bluetooth image ID no other transfer of this process has: the clock's milliseconds, or one
+     * past the last ID when two requests fall in the same millisecond (a burst, concurrent fetches).
+     */
+    private fun nextBleImgId(): String {
+        val number = lastBleImgNumber.updateAndGet { last -> maxOf(System.currentTimeMillis(), last + 1) }
+        return "I" + String.format("%09d", number % 1000000000)
+    }
+
+    /** Held photos' previews (data URIs) by requestId, until the request's terminal response. */
+    private val heldPreviews: MutableMap<String, String> = ConcurrentHashMap()
 
     /** Expected incident log relay files from glasses (B… firmware, L… logcat). */
     private val bleIncidentLogRelays = ConcurrentHashMap<String, BleIncidentLogRelay>()
@@ -874,6 +887,8 @@ class MentraLive : SGCManager() {
             var webhookUrl: String?
     ) {
         var isThumbnail: Boolean = false
+        /** A held-photo request (deliver "thumbnail"): no full photo follows its preview. */
+        var held: Boolean = false
         /** The photo stays on the phone as a file instead of being uploaded. */
         var localFile: Boolean = false
         var authToken: String? = null
@@ -996,6 +1011,9 @@ class MentraLive : SGCManager() {
         }
 
         fun addPacket(index: Int, data: ByteArray): Boolean {
+            // The first packet seen can be the file's short last one (the ones before it lost on a
+            // link still settling after a reconnect): a larger packet gives the real pack size.
+            if (actualPackSize in 1 until data.size) recalculateTotalPackets(data.size)
             if (dynamicPayload && (index < 0 || index >= totalPackets || actualPackSize <= 0 ||
                             data.size != minOf(actualPackSize, fileSize - index * actualPackSize))) {
                 return false
@@ -1345,6 +1363,8 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "hotspotOtaVersion", 0)
             wifiDirectLink.glassesVersion = 0
             wifiDirectLink.onGlassesDisconnected()
+            DeviceStore.apply("glasses", "heldPhotosVersion", 0)
+            heldPreviews.clear()
         }
         val isEqual = state == connectionState
         if (isEqual) {
@@ -4773,6 +4793,13 @@ class MentraLive : SGCManager() {
                 val photoState = json.optString("state", "")
                 val photoSuccess = "success" == photoState || json.optBoolean("success", false)
 
+                if (!json.optBoolean("fetch", false)) {
+                    // A held photo's request ended (or failed): no full photo follows its preview.
+                    blePhotoTransfers.entries.removeIf { it.value.held && it.value.requestId == requestId }
+                    val preview = heldPreviews.remove(requestId)
+                    if (photoSuccess && preview != null) json.put("thumbnailUrl", preview)
+                }
+
                 try {
                     Bridge.sendPhotoResponse(jsonObjectToMap(json))
                 } catch (e: JSONException) {
@@ -5692,6 +5719,9 @@ class MentraLive : SGCManager() {
                             wifiDirectLink.glassesVersion = it.toInt()
                         }
                     }
+                    (fields["held_photos"] as? Number)?.let {
+                        DeviceStore.apply("glasses", "heldPhotosVersion", it.toInt())
+                    }
                     if (fields.containsKey("hotspot_ota_version")) {
                         val version = fields["hotspot_ota_version"]
                         if (version is Number) {
@@ -5852,13 +5882,18 @@ class MentraLive : SGCManager() {
                     !it.isThumbnail && it.requestId == requestId &&
                         bleImgId == "T" + it.bleImgId.drop(1)
                 }
-                if (parent == null) {
+                // A held preview names itself: after a reconnect this connection has no parent.
+                val held = json.optBoolean("held", false) || parent?.held == true
+                if (parent == null && !held) {
                     Log.w(TAG, "Ignoring thumbnail for an unknown photo request")
                     return
                 }
                 // Duplicate ready messages must not erase packets already received.
                 blePhotoTransfers.getOrPut(bleImgId) {
-                    BlePhotoTransfer(bleImgId, requestId, null).apply { isThumbnail = true }
+                    BlePhotoTransfer(bleImgId, requestId, null).apply {
+                        isThumbnail = true
+                        this.held = held
+                    }
                 }
             }
 
@@ -7591,6 +7626,9 @@ class MentraLive : SGCManager() {
             json.put("save", save)
             json.put("sound", sound)
             if (request.presendThumbnail) json.put("presend_thumbnail", true)
+            if (request.holdsPhoto) {
+                json.put("deliver", PhotoRequest.DELIVER_THUMBNAIL)
+            }
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 Bridge.log(
                         "LIVE: Using manual exposure time for photo request " +
@@ -7608,7 +7646,7 @@ class MentraLive : SGCManager() {
             PhotoRequest.appendScanFields(json, request)
 
             // Always generate BLE ID for potential fallback
-            val bleImgId = "I" + String.format("%09d", System.currentTimeMillis() % 1000000000)
+            val bleImgId = nextBleImgId()
             json.put("bleImgId", bleImgId)
 
             // Miniapps may explicitly skip direct Wi-Fi upload and force the
@@ -7622,7 +7660,10 @@ class MentraLive : SGCManager() {
             if (fastLink != null) json.put("fastTransfer", true)
 
             // Always prepare for potential BLE transfer
-            if (localFile) {
+            if (request.holdsPhoto) {
+                // Only the preview crosses now; it finds this request by its "T" ID.
+                blePhotoTransfers[bleImgId] = BlePhotoTransfer(bleImgId, requestId, null).apply { held = true }
+            } else if (localFile) {
                 val transfer = BlePhotoTransfer(bleImgId, requestId, null)
                 transfer.localFile = true
                 blePhotoTransfers[bleImgId] = transfer
@@ -7649,6 +7690,42 @@ class MentraLive : SGCManager() {
             sendJson(json, true)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating photo request JSON", e)
+        }
+    }
+
+    /**
+     * Send a held photo's full size over Bluetooth, through the ordinary BLE photo transfer for
+     * its request: saved on the phone (`localFile`) or uploaded to `webhookUrl`, then the usual
+     * terminal `photo_response` for [requestId].
+     */
+    fun fetchHeldPhoto(requestId: String, localFile: Boolean, webhookUrl: String?, authToken: String?) {
+        val bleImgId = nextBleImgId()
+        val transfer = BlePhotoTransfer(bleImgId, requestId, if (localFile) null else webhookUrl)
+        transfer.localFile = localFile
+        transfer.authToken = authToken
+        blePhotoTransfers[bleImgId] = transfer
+        try {
+            val json = JSONObject()
+            json.put("type", "fetch_photo")
+            json.put("requestId", requestId)
+            json.put("bleImgId", bleImgId)
+            Bridge.log("LIVE: Fetching held photo " + requestId + " as " + bleImgId)
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            blePhotoTransfers.remove(bleImgId)
+            Log.e(TAG, "Error creating fetch_photo JSON", e)
+        }
+    }
+
+    /** Delete held photos on the glasses: these, or all of them when [requestIds] is null. */
+    fun releaseHeldPhotos(requestIds: List<String>?) {
+        try {
+            val json = JSONObject()
+            json.put("type", "release_photos")
+            if (requestIds == null) json.put("all", true) else json.put("requestIds", JSONArray(requestIds))
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating release_photos JSON", e)
         }
     }
 
@@ -12090,12 +12167,15 @@ class MentraLive : SGCManager() {
 
     private fun processAndUploadBlePhoto(transfer: BlePhotoTransfer, imageData: ByteArray) {
         if (transfer.isThumbnail) {
+            val thumbnailUrl = "data:image/jpeg;base64," + android.util.Base64.encodeToString(imageData, android.util.Base64.NO_WRAP)
+            // The held request's terminal response follows this preview's acknowledgement.
+            if (transfer.held) heldPreviews[transfer.requestId] = thumbnailUrl
             Bridge.sendPhotoStatus(mapOf(
                 "type" to "photo_status",
                 "requestId" to transfer.requestId,
                 "status" to "thumbnail_received",
                 "timestamp" to System.currentTimeMillis(),
-                "thumbnailUrl" to ("data:image/jpeg;base64," + android.util.Base64.encodeToString(imageData, android.util.Base64.NO_WRAP)),
+                "thumbnailUrl" to thumbnailUrl,
                 "fileSizeBytes" to imageData.size,
             ))
             return
