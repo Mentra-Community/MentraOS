@@ -63,6 +63,12 @@ console.log('\n━━━ Step 3: Prebuild + bundle ━━━');
 // Google Play then serves only the matching split to each device.
 process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = APK_ARCHITECTURES;
 console.log(`APK architectures: ${APK_ARCHITECTURES}`);
+// The gradlew client JVM defaults to a 64 MB heap, and it relays every line the
+// daemon prints. A cold build prints thousands of D8 Kotlin-metadata stack
+// traces, and once that backlog outgrew 64 MB the client died with
+// OutOfMemoryError mid-build (release for b52e7660ba, 2026-11-23). The daemon's
+// own heap is org.gradle.jvmargs in gradle.properties; this is only the client.
+process.env.GRADLE_OPTS = `${process.env.GRADLE_OPTS ?? ''} -Xmx1g`.trim();
 
 // Clean android/ to avoid cached version number issues
 await $({ stdio: 'inherit' })`rm -rf android`;
