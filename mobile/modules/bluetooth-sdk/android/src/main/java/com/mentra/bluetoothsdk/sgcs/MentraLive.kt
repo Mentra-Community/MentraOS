@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.status.GlassesAppCapabilities
 import com.mentra.bluetoothsdk.PhotoCompression
 import com.mentra.bluetoothsdk.hotspot.GlassesWifiDirect
 
@@ -5694,15 +5695,10 @@ class MentraLive : SGCManager() {
                             DeviceStore.apply("glasses", "systemTimeMs", v.toLong())
                         }
                     }
-                    (fields["deferred_photos"] as? Number)?.let {
-                        DeviceStore.apply("glasses", "deferredPhotosVersion", it.toInt())
-                    }
-                    (fields["wifi_direct_version"] as? Number)?.let { GlassesWifiDirect.version = it.toInt() }
-                    if (fields.containsKey("hotspot_ota_version")) {
-                        val version = fields["hotspot_ota_version"]
-                        if (version is Number) {
-                            DeviceStore.apply("glasses", "hotspotOtaVersion", version.toInt())
-                        }
+                    GlassesAppCapabilities.from(fields)?.let {
+                        DeviceStore.apply("glasses", "deferredPhotosVersion", it.deferredPhotos)
+                        GlassesWifiDirect.version = it.wifiDirect
+                        DeviceStore.apply("glasses", "hotspotOtaVersion", it.hotspotOta)
                     }
 
                     // Negotiate wire caps from ANY version_info chunk, not only the one

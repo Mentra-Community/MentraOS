@@ -4048,15 +4048,9 @@ class MentraLive: NSObject, SGCManager {
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
-                if let deferredPhotosVersion = fields["deferred_photos"] as? NSNumber {
-                    DeviceStore.shared.apply("glasses", "deferredPhotosVersion", deferredPhotosVersion.intValue)
-                }
-                if let hotspotOtaVersion = fields["hotspot_ota_version"] as? NSNumber {
-                    DeviceStore.shared.apply(
-                        "glasses",
-                        "hotspotOtaVersion",
-                        hotspotOtaVersion.intValue
-                    )
+                if let capabilities = GlassesAppCapabilities(fields: fields) {
+                    DeviceStore.shared.apply("glasses", "deferredPhotosVersion", capabilities.deferredPhotos)
+                    DeviceStore.shared.apply("glasses", "hotspotOtaVersion", capabilities.hotspotOta)
                 }
                 if let bluetoothMacAddress = nonEmptyStringValue(fields, "bt_mac_address") {
                     recordWifiAdbPeerIdentity(bluetoothMacAddress)
