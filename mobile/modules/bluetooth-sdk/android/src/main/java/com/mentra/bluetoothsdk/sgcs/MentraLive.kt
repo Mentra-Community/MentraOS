@@ -2382,9 +2382,11 @@ class MentraLive : SGCManager() {
 
     /** Remember what the connected glasses reported so later rejections can be read correctly. */
     private fun rememberSecureFirmware(secure: Boolean) {
-        if (isSavedGlassesSecureFirmware() == secure) return
+        if (DeviceStore.get("bluetooth", "mentra_live_secure_firmware") as? Boolean == secure) return
         DeviceStore.apply("bluetooth", "mentra_live_secure_firmware", secure)
         Bridge.saveSetting("mentra_live_secure_firmware", secure)
+        // Older firmware, newly known or rolled back to: the app starts its audio.
+        if (!secure) connectedDevice?.let { prepareClassicAudio(it) }
     }
 
     /**
@@ -4645,6 +4647,7 @@ class MentraLive : SGCManager() {
                     resolveUnknownCapabilityReadiness("pairing_info")
                 }
                 maybeInitiateCtkdAudioAfterBleReady()
+                connectedDevice?.let { prepareClassicAudio(it) }
                 Bridge.sendPairingInfo(
                         json.optBoolean("had_previous_bond", false),
                         jsonNullableString(json, "pairing_code"),
@@ -8398,6 +8401,15 @@ class MentraLive : SGCManager() {
 
     private fun prepareClassicAudio(device: BluetoothDevice) {
         if (!canConnectClassicAudio(device)) return
+        // Secure glasses (BES 3.4+) connect their owner's A2DP/HFP themselves; starting it here
+        // too races them, and in pairing mode Android shows "Couldn't connect". The app start
+        // below is only for glasses on 3.3 or older: delete it once none remain.
+        val secure = sessionPairingInfoSecure
+                ?: if (isExplicitPairingAttempt()) selectedTargetSecureCapability() ?: false.takeIf { unknownCapabilityWaitExpired }
+                else DeviceStore.get("bluetooth", "mentra_live_secure_firmware") as? Boolean
+        if (secure == true) return refreshClassicAudioConnectionState(device)
+        // Not known yet: pairing_info, or its deadline, calls this again.
+        if (secure == null) return
         val gatt = bluetoothGatt
         classicAudioServiceDiscovery.connectWhenDiscovered(device) {
             if (bluetoothGatt === gatt && canConnectClassicAudio(device)) connectA2dpProfile(device)
@@ -8596,6 +8608,7 @@ class MentraLive : SGCManager() {
                             "after glasses_ready — treating the pairing target as legacy firmware"
             )
             resolveUnknownCapabilityReadiness("unknown_capability_timeout")
+            connectedDevice?.let { prepareClassicAudio(it) }
         }
         unknownCapabilityWaitRunnable = runnable
         handler.postDelayed(
