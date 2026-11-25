@@ -16,7 +16,7 @@ abstract class ControllerManager {
     abstract fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean)
 
     // Camera & Media
-    abstract fun requestPhoto(request: PhotoRequest)
+    abstract fun uploadPhoto(request: PhotoRequest)
     abstract fun startStream(message: Map<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: Map<String, Any>)

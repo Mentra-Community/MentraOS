@@ -1,5 +1,5 @@
 const {warmUpCameraParamsForNative} = require("../_private/cameraRequestPayload")
-const {photoRequestParamsForNative} = require("../_private/photoRequestPayload")
+const {photoCaptureParamsForNative, photoUploadParamsForNative} = require("../_private/photoRequestPayload")
 
 const baseParams = {
   requestId: "photo-1",
@@ -10,26 +10,15 @@ const baseParams = {
   sound: true,
 }
 
-describe("photoRequestParamsForNative", () => {
-  it("presends a thumbnail only when opted in, preserving the full-photo options", () => {
-    expect(photoRequestParamsForNative(baseParams)).not.toHaveProperty("presend_thumbnail")
-    expect(photoRequestParamsForNative({...baseParams, presend_thumbnail: false})).not.toHaveProperty("presend_thumbnail")
-    expect(photoRequestParamsForNative({...baseParams, presend_thumbnail: true})).toEqual({
-      ...photoRequestParamsForNative(baseParams), presend_thumbnail: true,
-    })
-    expect(photoRequestParamsForNative({...baseParams, presend_thumbnail: true, transferMethod: "direct"}).transferMethod).toBe("direct")
-  })
-  it("asks native to keep the photo on the phone only when opted in", () => {
-    expect(photoRequestParamsForNative(baseParams)).not.toHaveProperty("localFile")
-    expect(photoRequestParamsForNative({...baseParams, localFile: false})).not.toHaveProperty("localFile")
-    expect(photoRequestParamsForNative({...baseParams, webhookUrl: null, localFile: true})).toEqual({
-      ...photoRequestParamsForNative(baseParams),
-      webhookUrl: "",
-      localFile: true,
-    })
+describe("photoUploadParamsForNative", () => {
+  it("sends a capture's settings without an upload target", () => {
+    const {webhookUrl: _webhook, authToken: _token, ...capture} = baseParams
+    const request = photoUploadParamsForNative(baseParams)
+    const {transferMethod: _method, webhookUrl: _url, ...settings} = request
+    expect(photoCaptureParamsForNative(capture)).toEqual(settings)
   })
   it("produces only supported native payload keys", () => {
-    const payload = photoRequestParamsForNative(baseParams)
+    const payload = photoUploadParamsForNative(baseParams)
     expect(Object.keys(payload).sort()).toEqual(
       ["compress", "mode", "requestId", "size", "sound", "transferMethod", "webhookUrl"].sort(),
     )
@@ -39,19 +28,19 @@ describe("photoRequestParamsForNative", () => {
   it("omits requestId when omitted or blank so native can generate it", () => {
     const {requestId: _requestId, ...withoutRequestId} = baseParams
 
-    expect(photoRequestParamsForNative(withoutRequestId)).not.toHaveProperty("requestId")
-    expect(photoRequestParamsForNative({...baseParams, requestId: ""})).not.toHaveProperty("requestId")
-    expect(photoRequestParamsForNative({...baseParams, requestId: "  "})).not.toHaveProperty("requestId")
+    expect(photoUploadParamsForNative(withoutRequestId)).not.toHaveProperty("requestId")
+    expect(photoUploadParamsForNative({...baseParams, requestId: ""})).not.toHaveProperty("requestId")
+    expect(photoUploadParamsForNative({...baseParams, requestId: "  "})).not.toHaveProperty("requestId")
   })
 
   it("preserves explicit requestId", () => {
-    expect(photoRequestParamsForNative(baseParams).requestId).toBe("photo-1")
+    expect(photoUploadParamsForNative(baseParams).requestId).toBe("photo-1")
   })
 
   it("includes ISO only with manual exposure", () => {
-    expect(photoRequestParamsForNative({...baseParams, iso: 400})).not.toHaveProperty("iso")
+    expect(photoUploadParamsForNative({...baseParams, iso: 400})).not.toHaveProperty("iso")
 
-    const payload = photoRequestParamsForNative({
+    const payload = photoUploadParamsForNative({
       ...baseParams,
       exposureTimeNs: 8_333_333,
       iso: 401.8,
@@ -62,13 +51,13 @@ describe("photoRequestParamsForNative", () => {
   })
 
   it("includes save only when explicitly set", () => {
-    expect(photoRequestParamsForNative(baseParams)).not.toHaveProperty("save")
-    expect(photoRequestParamsForNative({...baseParams, save: true}).save).toBe(true)
-    expect(photoRequestParamsForNative({...baseParams, save: false}).save).toBe(false)
+    expect(photoUploadParamsForNative(baseParams)).not.toHaveProperty("save")
+    expect(photoUploadParamsForNative({...baseParams, save: true}).save).toBe(true)
+    expect(photoUploadParamsForNative({...baseParams, save: false}).save).toBe(false)
   })
 
   it("includes scan-mode booleans when explicitly set", () => {
-    const payload = photoRequestParamsForNative({
+    const payload = photoUploadParamsForNative({
       ...baseParams,
       mfnr: false,
       zsl: false,
@@ -83,7 +72,7 @@ describe("photoRequestParamsForNative", () => {
   })
 
   it("includes zsl and mfnr independently when set", () => {
-    const payload = photoRequestParamsForNative({
+    const payload = photoUploadParamsForNative({
       ...baseParams,
       mfnr: true,
       zsl: false,
@@ -94,23 +83,23 @@ describe("photoRequestParamsForNative", () => {
   })
 
   it("omits zsl and mfnr when unset", () => {
-    const payload = photoRequestParamsForNative(baseParams)
+    const payload = photoUploadParamsForNative(baseParams)
     expect(payload).not.toHaveProperty("zsl")
     expect(payload).not.toHaveProperty("mfnr")
   })
 
   it("preserves text capture mode", () => {
-    expect(photoRequestParamsForNative({...baseParams, mode: "text"}).mode).toBe("text")
+    expect(photoUploadParamsForNative({...baseParams, mode: "text"}).mode).toBe("text")
   })
 
   it("preserves explicit transfer methods and defaults to auto", () => {
-    expect(photoRequestParamsForNative(baseParams).transferMethod).toBe("auto")
-    expect(photoRequestParamsForNative({...baseParams, transferMethod: "direct"}).transferMethod).toBe("direct")
-    expect(photoRequestParamsForNative({...baseParams, transferMethod: "ble"}).transferMethod).toBe("ble")
+    expect(photoUploadParamsForNative(baseParams).transferMethod).toBe("auto")
+    expect(photoUploadParamsForNative({...baseParams, transferMethod: "direct"}).transferMethod).toBe("direct")
+    expect(photoUploadParamsForNative({...baseParams, transferMethod: "ble"}).transferMethod).toBe("ble")
   })
 
   it("rejects an unknown transfer method at runtime", () => {
-    expect(() => photoRequestParamsForNative({...baseParams, transferMethod: "wifi"} as any)).toThrow(
+    expect(() => photoUploadParamsForNative({...baseParams, transferMethod: "wifi"} as any)).toThrow(
       'Invalid transferMethod "wifi". Expected "auto", "direct", or "ble".',
     )
   })
@@ -159,12 +148,12 @@ describe("warmUpCameraParamsForNative", () => {
 
 describe("canonical photo compression", () => {
   it.each(["none", "low", "medium", "high"] as const)("sends %s unchanged", (compress) => {
-    expect(photoRequestParamsForNative({...baseParams, compress}).compress).toBe(compress)
+    expect(photoUploadParamsForNative({...baseParams, compress}).compress).toBe(compress)
   })
   it("defaults omission to none", () => {
-    expect(photoRequestParamsForNative({...baseParams, compress: undefined}).compress).toBe("none")
+    expect(photoUploadParamsForNative({...baseParams, compress: undefined}).compress).toBe("none")
   })
   it.each(["heavy", "", "HIGH", null, 1, false])("rejects invalid compression %p", (compress) => {
-    expect(() => photoRequestParamsForNative({...baseParams, compress} as never)).toThrow("Invalid photo compression")
+    expect(() => photoUploadParamsForNative({...baseParams, compress} as never)).toThrow("Invalid photo compression")
   })
 })

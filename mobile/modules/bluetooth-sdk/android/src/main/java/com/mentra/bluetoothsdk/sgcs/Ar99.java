@@ -434,8 +434,8 @@ public class Ar99 extends SGCManager {
   }
 
   @Override
-  public void requestPhoto(PhotoRequest request) {
-    Bridge.log(TAG + ": requestPhoto not implemented for AR99 yet");
+  public void uploadPhoto(PhotoRequest request) {
+    Bridge.log(TAG + ": uploadPhoto not implemented for AR99 yet");
   }
 
   @Override

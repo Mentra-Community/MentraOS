@@ -793,9 +793,9 @@ describe("AcsMeetingService", () => {
       awaitGlassesStill: mock(async () => ({bytes: 1_186_932, shownAt: 11})),
       cancelGlassesStill: mock(async () => {}),
     }
-    const requestPhoto = mock(async () => ({state: "success"}))
+    const uploadPhoto = mock(async () => ({state: "success"}))
     const previousAddListener = bluetoothSdk.addListener
-    bluetoothSdk.requestPhoto = requestPhoto
+    bluetoothSdk.uploadPhoto = uploadPhoto
     bluetoothSdk.addListener = () => ({remove: () => {}})
     setAcsMeetingNativeForTests(native)
     await acsMeetingService.join("com.mentra.call", {
@@ -811,7 +811,7 @@ describe("AcsMeetingService", () => {
 
     expect(result).toMatchObject({ok: true, bytes: 1_186_932})
     expect(holds).toEqual(["card", "live"])
-    const [request] = requestPhoto.mock.calls[0] as unknown as [Record<string, unknown>]
+    const [request] = uploadPhoto.mock.calls[0] as unknown as [Record<string, unknown>]
     expect(request).toMatchObject({
       requestId: result.requestId,
       size: "max",

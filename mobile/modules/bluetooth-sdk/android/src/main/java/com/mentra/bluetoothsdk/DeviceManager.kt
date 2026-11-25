@@ -2186,6 +2186,16 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         live.stopCameraWarmUp(requestId)
     }
 
+    private fun liveForPhotos(): MentraLive =
+        sgc as? MentraLive
+            ?: throw BluetoothSdkException("unsupported_device", "This command requires Mentra Live glasses.")
+
+    fun capturePhoto(request: PhotoRequest, deferred: Boolean) = liveForPhotos().capturePhoto(routedForCapture(request), deferred)
+
+    fun fetchPhoto(request: PhotoRequest, preview: Boolean) = liveForPhotos().fetchPhoto(request, preview)
+
+    fun releasePhotos(requestIds: List<String>?) = liveForPhotos().releasePhotos(requestIds)
+
     /**
      * Read glasses media step volume (0—5) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).
@@ -2305,22 +2315,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         updateMicState()
     }
 
-    fun requestPhoto(request: PhotoRequest) {
-        val exposureNs: Long? =
-            request.exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
-                when {
-                    v > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
-                    else -> v.toLong()
-                }
-            }
-        val manualIso = if (exposureNs != null) request.iso?.takeIf { it > 0 } else null
-        val routed =
-            request.copy(
-                exposureTimeNs = exposureNs?.toDouble(),
-                iso = manualIso,
-            )
+    fun uploadPhoto(request: PhotoRequest) {
+        val routed = routedForCapture(request)
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} size=${routed.size.value} mode=${routed.mode.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.uploadPhoto requestId=${routed.requestId} size=${routed.size.value} mode=${routed.mode.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=${routed.exposureTimeNs} iso=${routed.iso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {
@@ -2329,7 +2327,20 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             )
             return
         }
-        activeSgc.requestPhoto(routed)
+        activeSgc.uploadPhoto(routed)
+    }
+
+    /** A manual exposure only when it is valid, and its ISO only with it. */
+    private fun routedForCapture(request: PhotoRequest): PhotoRequest {
+        val exposureNs: Long? =
+            request.exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
+                when {
+                    v > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
+                    else -> v.toLong()
+                }
+            }
+        val manualIso = if (exposureNs != null) request.iso?.takeIf { it > 0 } else null
+        return request.copy(exposureTimeNs = exposureNs?.toDouble(), iso = manualIso)
     }
 
     fun rgbLedControl(

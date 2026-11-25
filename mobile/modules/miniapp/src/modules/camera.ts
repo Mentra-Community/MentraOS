@@ -103,6 +103,33 @@ export interface PhotoTaken {
   expiresAt: number
 }
 
+/** A photo's preview: the glasses' at most 500 px JPEG, as a `data:image/jpeg;base64,` URL. */
+export interface PhotoPreview {
+  url: string
+  width?: number
+  height?: number
+}
+
+/**
+ * One photo, in stages ({@link CameraModule.capture}). Any number can be in flight: a capture is
+ * refused (`CAMERA_BUSY`) only while another one is being taken, never because photos are being sent.
+ */
+export interface PhotoCapture {
+  readonly photoId: string
+  /** Resolves once the glasses took the photo: the camera is free for the next one. */
+  readonly captured: Promise<void>
+  /** A small preview, which comes for every photo before its full size. */
+  readonly preview: Promise<PhotoPreview>
+  /**
+   * The full photo, kept on the phone as {@link CameraModule.takePhoto}'s is. The first call asks
+   * the glasses to send it; until then it waits on the glasses (deferred delivery), for 30 minutes
+   * at most. Later calls return the same photo.
+   */
+  photo(): Promise<PhotoTaken>
+  /** The full photo isn't needed: the glasses delete it. Stages not reached yet reject. */
+  release(): Promise<void>
+}
+
 /** What {@link CameraModule.takeCloudPhoto} resolves to: a photo uploaded to Mentra's cloud. */
 export interface CloudPhotoTaken {
   /** Request id that correlates glasses status, upload, and phone/cloud logs. */
@@ -167,6 +194,12 @@ export interface StopVideoRecordingOptions {
   uploadAuthToken?: string
 }
 
+/** A stage the caller may never await is not an unhandled rejection. */
+function quiet<T>(promise: Promise<T>): Promise<T> {
+  promise.catch(() => undefined)
+  return promise
+}
+
 export class CameraModule {
   constructor(private readonly session: MiniappSession) {}
 
@@ -192,8 +225,9 @@ export class CameraModule {
   /**
    * Take a photo with the glasses camera. Requires CAMERA permission declared in miniapp.json.
    *
-   * The glasses send the photo to the phone over Bluetooth, and it stays there as one of the miniapp's
-   * own files: no internet connection is needed and nothing is uploaded. Read it with
+   * The same as `capture(options).photo()`, releasing the glasses' copy once the photo is here. The
+   * photo comes to the phone (over the glasses Wi-Fi link when it is up, else Bluetooth) and stays
+   * there as one of the miniapp's own files: no internet connection is needed and nothing is uploaded. Read it with
    * `session.blob.bytes(photo.key)`, show it in the miniapp's screen from `photo.url`, and send it
    * wherever the miniapp needs it. The phone deletes it after 30 minutes.
    *
@@ -201,8 +235,9 @@ export class CameraModule {
    * `session.capabilities.hasCamera` before calling.
    */
   async takePhoto(options: TakePhotoOptions = {}): Promise<PhotoTaken> {
+    // One request, which every Mentra App with local photos answers; a current one serves it as
+    // capture(options).photo() and then releases the glasses' copy.
     const photo = await this.session.sendRequest<PhotoTaken>(
-      // `delivery` asks the Mentra App to keep the photo on the phone. One that predates local photos ignores it.
       {...this.photoRequest(options), delivery: "local"},
       options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined,
     )
@@ -213,6 +248,36 @@ export class CameraModule {
       throw new Error("This Mentra App can't keep photos on the phone yet. Update the Mentra App.")
     }
     return photo
+  }
+
+  /**
+   * Take a photo in stages: `captured` when the camera is free again, `preview` for every photo,
+   * `photo()` for its full size, which stays on the glasses until first asked for, and `release()`
+   * when it isn't needed. Requires CAMERA permission declared in miniapp.json. Use it to take
+   * photos back to back and fetch only the ones you keep. Needs a Mentra App with photo captures
+   * (a newer one than `takePhoto` needs).
+   */
+  capture(options: TakePhotoOptions = {}): PhotoCapture {
+    const photoId = `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+    const timeout = options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined
+    const started = quiet(this.session.sendRequest<void>({...this.photoRequest(options), type: MiniappRequestType.PHOTO_CAPTURE, photoId}, timeout))
+    const stage = <T>(name: "captured" | "preview" | "photo") =>
+      quiet(started.then(() => this.session.sendRequest<T>({type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId, stage: name}, timeout)))
+    // Each stage is asked for when first awaited, once.
+    let captured: Promise<void> | undefined
+    let preview: Promise<PhotoPreview> | undefined
+    let photo: Promise<PhotoTaken> | undefined
+    return {
+      photoId,
+      get captured() {
+        return (captured ??= stage<void>("captured"))
+      },
+      get preview() {
+        return (preview ??= stage<PhotoPreview>("preview"))
+      },
+      photo: () => (photo ??= stage<PhotoTaken>("photo")),
+      release: () => started.then(() => this.session.sendRequest<void>({type: MiniappRequestType.PHOTO_RELEASE, photoId})),
+    }
   }
 
   /**

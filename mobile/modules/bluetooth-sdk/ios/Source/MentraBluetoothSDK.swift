@@ -180,6 +180,8 @@ final class PendingResponse<T> {
         self.onTimeout = onTimeout
     }
 
+    var isCompleted: Bool { completed }
+
     func resolve(_ value: T) {
         guard !completed else { return }
         completed = true
@@ -252,15 +254,6 @@ public final class MentraBluetoothSDK {
     /// A photo response is terminal only after capture, encoding, transport, and upload.
     /// Max-quality BLE fallback can legitimately exceed the generic command deadline.
     private static let photoRequestTimeoutMs = 30000
-    // Mirrors AsgConstants.PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS and the Android facade.
-    // Reserve capture, preview ACK/retries, full delivery, then terminal-event transit.
-    private static let photoCaptureTimeoutMs = 45000
-    private static let photoThumbnailTimeoutSeconds = 30
-    private static let photoDeliveryTimeoutMs = 30000
-    private static let photoResponseMarginMs = 5000
-    private static let photoThumbnailRequestTimeoutMs =
-        photoCaptureTimeoutMs + photoThumbnailTimeoutSeconds * 1000
-            + photoDeliveryTimeoutMs + photoResponseMarginMs
     private static let otaBesVersionWaitMs = 5000
     private static let otaMtkVersionWaitMs = 2000
     private static let otaVersionPollMs = 100
@@ -771,7 +764,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "auto_power_off_enabled", enabled)
     }
 
-    @available(*, deprecated, message: "Sticky action-button photo presets are deprecated. Prefer per-request requestPhoto(...) options (e.g. mode .text for text sensor size/crop, or explicit per-shot fields). This method still works but will be removed in a future release.")
+    @available(*, deprecated, message: "Sticky action-button photo presets are deprecated. Prefer per-request uploadPhoto(...) options (e.g. mode .text for text sensor size/crop, or explicit per-shot fields). This method still works but will be removed in a future release.")
     public func setPhotoCaptureDefaults(_ settings: PhotoCaptureDefaults) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_photo",
@@ -1211,11 +1204,13 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.setSystemTime(timestampMs)
     }
 
-    public func requestPhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent {
+    /// A photo sent to `webhookUrl`: uploaded by the glasses over their own Wi-Fi, or relayed by the
+    /// phone over Bluetooth. A photo kept on the phone is `takePhoto`.
+    public func uploadPhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent {
         let routedRequest = nonBlankRequestId(request.requestId).map { request.withRequestId($0) }
             ?? request.withRequestId(generatedCameraRequestId("photo"))
         Bridge.log(
-            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(routedRequest.requestId)"
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.uploadPhoto requestId=\(routedRequest.requestId)"
         )
         let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(routedRequest.requestId)", telemetryOperation: "photo request", onTimeout: requestTimeoutReporter)
         pendingPhotoRequests[routedRequest.requestId] = pending
@@ -1236,10 +1231,8 @@ public final class MentraBluetoothSDK {
                     )
                 }
             }) {
-                DeviceManager.shared.requestPhoto(routedRequest)
-                return try await pending.wait(timeoutMs: routedRequest.presendThumbnail
-                    ? MentraBluetoothSDK.photoThumbnailRequestTimeoutMs
-                    : MentraBluetoothSDK.photoRequestTimeoutMs)
+                DeviceManager.shared.uploadPhoto(routedRequest)
+                return try await pending.wait(timeoutMs: MentraBluetoothSDK.photoRequestTimeoutMs)
             }
             pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             return event
@@ -1247,6 +1240,43 @@ public final class MentraBluetoothSDK {
             pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             throw error
         }
+    }
+
+    private var photoCaptures: [String: PhotoCapture] = [:]
+
+    /// A photo kept on the phone, whole: `capturePhoto`, its `photo()`, then its release.
+    public func takePhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent {
+        let capture = try capturePhoto(request)
+        defer { capture.release() }
+        return try await capture.photo()
+    }
+
+    /// Take a photo that is kept on the phone, in stages: see `PhotoCapture`. Any number can be in
+    /// flight: the glasses refuse a capture only while another one is being taken (`CAMERA_BUSY`).
+    public func capturePhoto(_ request: PhotoRequest) throws -> PhotoCapture {
+        let routed = nonBlankRequestId(request.requestId).map { request.withRequestId($0) }
+            ?? request.withRequestId(generatedCameraRequestId("photo"))
+        // The glasses keep a photo 30 minutes; nothing arrives for an older capture.
+        let cutoff = Date().addingTimeInterval(-30 * 60)
+        photoCaptures = photoCaptures.filter { !$0.value.done && $0.value.createdAt > cutoff }
+        let deferred = glassesStatus.deferredPhotosVersion > 0
+        let capture = PhotoCapture(
+            request: routed,
+            deferred: deferred,
+            glasses: PhotoCapture.Glasses(
+                fetch: { request, preview in try? DeviceManager.shared.fetchPhoto(request, preview: preview) },
+                release: { requestId in try? DeviceManager.shared.releasePhotos(requestIds: [requestId]) },
+                forget: { [weak self] requestId in self?.photoCaptures.removeValue(forKey: requestId) }
+            )
+        )
+        photoCaptures[routed.requestId] = capture
+        do {
+            try DeviceManager.shared.capturePhoto(routed, deferred: deferred)
+        } catch {
+            photoCaptures.removeValue(forKey: routed.requestId)
+            throw error
+        }
+        return capture
     }
 
     public func warmUpCamera(
@@ -2749,6 +2779,7 @@ public final class MentraBluetoothSDK {
         case "photo_response":
             let event = PhotoResponseEvent(values: data)
             handlePhotoResponseForRequests(event)
+            photoCaptures[event.requestId]?.onResponse(event)
             if case let .error(requestId, errorCode, _, _) = event.response,
                requestId == BluetoothSdkUsageTracker.localPhotoRequestId
             {
@@ -2756,7 +2787,19 @@ public final class MentraBluetoothSDK {
             }
             delegate?.mentraBluetoothSDK(self, didReceive: .photoResponse(event))
         case "photo_status":
-            delegate?.mentraBluetoothSDK(self, didReceive: .photoStatus(PhotoStatusEvent(values: data)))
+            let event = PhotoStatusEvent(values: data)
+            photoCaptures[event.requestId]?.onStatus(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .photoStatus(event))
+        case "photo_preview":
+            photoCaptures[data["requestId"] as? String ?? ""]?.onPreview(
+                PhotoPreview(
+                    url: data["url"] as? String ?? "",
+                    width: (data["width"] as? NSNumber)?.intValue,
+                    height: (data["height"] as? NSNumber)?.intValue
+                )
+            )
+        case "glasses_ready":
+            photoCaptures.values.forEach { $0.resume() }
         case "camera_status":
             let event = CameraStatusEvent(values: data)
             handleCameraStatusForRequests(event)

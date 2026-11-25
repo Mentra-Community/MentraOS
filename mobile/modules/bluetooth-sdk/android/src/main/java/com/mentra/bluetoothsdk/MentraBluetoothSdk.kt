@@ -136,15 +136,6 @@ class MentraBluetoothSdk private constructor(
         // A photo response is terminal only after capture, encoding, transport, and upload.
         // Max-quality BLE fallback can legitimately exceed the generic command deadline.
         private const val PHOTO_REQUEST_TIMEOUT_MS = 30_000L
-        // Mirrors AsgConstants.PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS and the iOS facade.
-        // Reserve capture, preview ACK/retries, full delivery, then terminal-event transit.
-        private const val PHOTO_CAPTURE_TIMEOUT_MS = 45_000L
-        private const val PHOTO_THUMBNAIL_TIMEOUT_SECONDS = 30L
-        private const val PHOTO_DELIVERY_TIMEOUT_MS = 30_000L
-        private const val PHOTO_RESPONSE_MARGIN_MS = 5_000L
-        private const val PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS =
-            PHOTO_CAPTURE_TIMEOUT_MS + PHOTO_THUMBNAIL_TIMEOUT_SECONDS * 1000L +
-                PHOTO_DELIVERY_TIMEOUT_MS + PHOTO_RESPONSE_MARGIN_MS
         private const val WIFI_SCAN_TIMEOUT_MS = 20_000L
         private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
@@ -702,7 +693,7 @@ class MentraBluetoothSdk private constructor(
     @Deprecated(
         message =
             "Sticky action-button photo presets are deprecated. Prefer per-request " +
-                "requestPhoto(...) options (e.g. mode=TEXT for text sensor size/crop, or explicit per-shot fields). " +
+                "uploadPhoto(...) options (e.g. mode=TEXT for text sensor size/crop, or explicit per-shot fields). " +
                 "This method still works but will be removed in a future release.",
     )
     suspend fun setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): SettingsAckEvent =
@@ -1137,13 +1128,17 @@ class MentraBluetoothSdk private constructor(
         deviceManager.setSystemTime(timestampMs)
     }
 
-    suspend fun requestPhoto(request: PhotoRequest): PhotoResponseEvent {
+    /**
+     * A photo sent to [PhotoRequest.webhookUrl]: uploaded by the glasses over their own Wi-Fi, or
+     * relayed by the phone over Bluetooth. A photo kept on the phone is [takePhoto].
+     */
+    suspend fun uploadPhoto(request: PhotoRequest): PhotoResponseEvent {
         val routedRequest =
             nonBlankRequestId(request.requestId)
                 ?.let { if (it == request.requestId) request else request.copy(requestId = it) }
                 ?: request.copy(requestId = generatedCameraRequestId("photo"))
         Bridge.log(
-            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${routedRequest.requestId}"
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.uploadPhoto requestId=${routedRequest.requestId}"
         )
         val pending = PendingResponse<PhotoResponseEvent>("photo request ${routedRequest.requestId}", "photo request")
         pendingPhotoRequests[routedRequest.requestId] = pending
@@ -1165,10 +1160,8 @@ class MentraBluetoothSdk private constructor(
                     }
                 },
             ) {
-                deviceManager.requestPhoto(routedRequest)
-                pending.await(
-                    if (routedRequest.presendThumbnail) PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS else PHOTO_REQUEST_TIMEOUT_MS,
-                )
+                deviceManager.uploadPhoto(routedRequest)
+                pending.await(PHOTO_REQUEST_TIMEOUT_MS)
             }
         } finally {
             pendingPhotoRequests.remove(routedRequest.requestId, pending)
@@ -1200,6 +1193,52 @@ class MentraBluetoothSdk private constructor(
         } finally {
             pendingCameraStatusRequests.remove(effectiveRequestId, pending)
         }
+    }
+
+    private val photoCaptures = ConcurrentHashMap<String, PhotoCapture>()
+
+    private val captureGlasses =
+        object : PhotoCapture.Glasses {
+            override fun fetch(request: PhotoRequest, preview: Boolean) = deviceManager.fetchPhoto(request, preview)
+
+            override fun release(requestId: String) = deviceManager.releasePhotos(listOf(requestId))
+
+            override fun forget(requestId: String) {
+                photoCaptures.remove(requestId)
+            }
+        }
+
+    /** A photo kept on the phone, whole: [capturePhoto], its [PhotoCapture.photo], then its release. */
+    suspend fun takePhoto(request: PhotoRequest): PhotoResponseEvent {
+        val capture = capturePhoto(request)
+        try {
+            return capture.photo()
+        } finally {
+            capture.release()
+        }
+    }
+
+    /**
+     * Take a photo that is kept on the phone, in stages: see [PhotoCapture]. Any number can be in
+     * flight: the glasses refuse a capture only while another one is being taken (`CAMERA_BUSY`).
+     */
+    fun capturePhoto(request: PhotoRequest): PhotoCapture {
+        val routed =
+            nonBlankRequestId(request.requestId)
+                ?.let { if (it == request.requestId) request else request.copy(requestId = it) }
+                ?: request.copy(requestId = generatedCameraRequestId("photo"))
+        // The glasses keep a photo 30 minutes; nothing arrives for an older capture.
+        val cutoff = System.currentTimeMillis() - 30 * 60_000L
+        photoCaptures.values.removeIf { it.done || it.createdAtMs < cutoff }
+        val capture = PhotoCapture(routed, getRawGlassesStatus().deferredPhotosVersion > 0, captureGlasses)
+        photoCaptures[routed.requestId] = capture
+        try {
+            deviceManager.capturePhoto(routed, getRawGlassesStatus().deferredPhotosVersion > 0)
+        } catch (e: Exception) {
+            photoCaptures.remove(routed.requestId)
+            throw e
+        }
+        return capture
     }
 
     fun stopCameraWarmUp(requestId: String) {
@@ -2000,13 +2039,26 @@ class MentraBluetoothSdk private constructor(
             "photo_response" -> {
                 val event = PhotoResponseEvent(data)
                 handlePhotoResponseForRequests(event)
+                photoCaptures[event.requestId]?.onResponse(event)
                 val response = event.response
                 if (response is PhotoResponse.Error && event.requestId == BluetoothSdkUsageTracker.LOCAL_PHOTO_REQUEST_ID) {
                     analytics.recordUsage { buttonPhotoFailed(response.errorCode) }
                 }
                 dispatchToListeners { it.onPhotoResponse(event) }
             }
-            "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
+            "photo_status" -> {
+                val event = PhotoStatusEvent(data)
+                photoCaptures[event.requestId]?.onStatus(event)
+                dispatchToListeners { it.onPhotoStatus(event) }
+            }
+            "photo_preview" -> {
+                val requestId = data["requestId"] as? String ?: ""
+                val url = data["url"] as? String ?: ""
+                photoCaptures[requestId]?.onPreview(
+                    PhotoPreview(url, (data["width"] as? Number)?.toInt(), (data["height"] as? Number)?.toInt()),
+                )
+            }
+            "glasses_ready" -> photoCaptures.values.forEach { it.resume() }
             "camera_status" -> {
                 val event = CameraStatusEvent(data)
                 handleCameraStatusForRequests(event)

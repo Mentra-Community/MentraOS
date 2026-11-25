@@ -475,6 +475,16 @@ function unwatch(): void {
   deadlineTimer = null
 }
 
+/**
+ * Hold the link only if it is up now (someone else brought it up): for a use that is just as well
+ * served over Bluetooth, like a file fetch, and must not bring the link up itself. Null when it
+ * is down, coming up or going down.
+ */
+export async function holdGlassesWifiIfUp(consumer: string): Promise<GlassesWifiHold | null> {
+  if (holders.size === 0 || !binding || lostAt !== null || bringingUp || takingDown) return null
+  return holdGlassesWifi({consumer})
+}
+
 /** Whether anyone holds the link now. */
 export function glassesWifiHeld(): boolean {
   return holders.size > 0 || takingDown !== null

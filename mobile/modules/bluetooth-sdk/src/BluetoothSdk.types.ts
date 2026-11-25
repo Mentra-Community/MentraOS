@@ -289,9 +289,9 @@ export type PhotoResponseEvent =
       type: "photo_response"
       state: "success"
       requestId: string
-      /** Where the photo was uploaded; empty for a `localFile` request. */
+      /** Where the photo was uploaded. */
       uploadUrl: string
-      /** The upload target's own URL for the photo, or the saved file's `file://` URI for a `localFile` request. */
+      /** The upload target's own URL for the photo. */
       photoUrl?: string
       statusUrl?: string
       contentType?: string
@@ -321,7 +321,6 @@ export type PhotoStatusState =
   | "uploaded"
   | "ready_for_transfer"
   | "transferring"
-  | "thumbnail_received"
   | "failed"
 
 export type PhotoResolvedConfig = {
@@ -398,8 +397,6 @@ export type PhotoStatusEvent = {
   captureMetadata?: PhotoCaptureMetadata
   errorCode?: string
   errorMessage?: string
-  /** Present on thumbnail_received: a JPEG data URI, not the final photo. */
-  thumbnailUrl?: string
   fileSizeBytes?: number
 }
 
@@ -686,7 +683,7 @@ export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 
 /**
  * @deprecated Sticky action-button photo presets via {@link BluetoothSdkPublicModule.setPhotoCaptureDefaults}
- * are deprecated. Prefer per-request {@link BluetoothSdkPublicModule.requestPhoto} options
+ * are deprecated. Prefer per-request {@link BluetoothSdkPublicModule.uploadPhoto} options
  * (e.g. `mode: "text"` for text sensor size/crop, or explicit `aeExposureDivisor`) instead of
  * persisting button-photo tuning on the glasses.
  */
@@ -797,27 +794,12 @@ type NativeCameraFovSetting = {
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
-export type PhotoRequestParams = {
-  /**
-   * Send an oriented <=500px, quality-50 JPEG preview before the full photo. Default false.
-   * Enables a 110-second end-to-end native deadline (ordinary requests: 30 seconds).
-   */
-  presend_thumbnail?: boolean
+/** The settings of one capture, shared by `capturePhoto` and `uploadPhoto`. */
+export type PhotoCaptureParams = {
   requestId?: string
   appId?: string
   size: PhotoSize
   mode?: PhotoMode
-  /** `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer. */
-  transferMethod?: PhotoTransferMethod
-  webhookUrl: string | null
-  authToken: string | null
-  /**
-   * Keep the photo on the phone: it comes over BLE, is saved as a JPEG file, and the success
-   * response carries that file's `file://` URI as `photoUrl`, with `fileSizeBytes`. Nothing is
-   * uploaded, and `webhookUrl`, `authToken` and `transferMethod` are ignored. The file is in the
-   * app's cache folder and is the caller's to move or delete. Default false.
-   */
-  localFile?: boolean
   compress?: PhotoCompression
   save?: boolean
   sound: boolean
@@ -837,6 +819,39 @@ export type PhotoRequestParams = {
   mfnr?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
+}
+
+/** A photo uploaded where `webhookUrl` says, by the glasses over Wi-Fi or by the phone over Bluetooth. */
+export type PhotoUploadParams = PhotoCaptureParams & {
+  /** `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer. */
+  transferMethod?: PhotoTransferMethod
+  webhookUrl: string | null
+  authToken: string | null
+}
+
+/** A photo's preview: the glasses' at most 500 px JPEG, as a `data:image/jpeg;base64,` URL. */
+export type PhotoPreview = {url: string; width?: number; height?: number}
+
+/** A full photo kept on the phone: a JPEG in the app's cache folder, the caller's to move or delete. */
+export type PhotoTaken = {requestId: string; fileUri: string; mimeType: string; size: number}
+
+/**
+ * One photo kept on the phone, in stages. Any number can be in flight: the glasses refuse a capture
+ * only while another one is being taken (`CAMERA_BUSY`), never because photos are being sent.
+ */
+export interface PhotoCapture {
+  readonly requestId: string
+  /** Resolves once the glasses wrote the photo: the camera takes the next one. */
+  readonly captured: Promise<void>
+  /** The glasses' preview, which comes for every photo before its full size. */
+  readonly preview: Promise<PhotoPreview>
+  /**
+   * The full photo. The first call asks the glasses to send it; until then it waits on the
+   * glasses (deferred delivery), for 30 minutes at most. Later calls return the same photo.
+   */
+  photo(): Promise<PhotoTaken>
+  /** The full photo isn't needed: the glasses delete it. Stages not reached yet reject. */
+  release(): Promise<void>
 }
 
 export type WarmUpCameraParams = {
@@ -1626,7 +1641,7 @@ export interface BluetoothSdkPublicModule {
   setAutoPowerOffEnabled(enabled: boolean): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
-   * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
+   * `uploadPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
    * fields). Still functional until removed in a future release.
    */
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
@@ -1652,7 +1667,15 @@ export interface BluetoothSdkPublicModule {
    */
   setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
-  requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
+  /**
+   * A photo sent to `webhookUrl`: uploaded by the glasses over their own Wi-Fi, or relayed by the
+   * phone over Bluetooth. Resolves once it is there. A photo kept on the phone is `takePhoto`.
+   */
+  uploadPhoto(params: PhotoUploadParams): Promise<PhotoSuccessResponseEvent>
+  /** A photo kept on the phone, in stages: see {@link PhotoCapture}. */
+  capturePhoto(params: PhotoCaptureParams): PhotoCapture
+  /** A photo kept on the phone, whole: `capturePhoto(params).photo()`, then its release. */
+  takePhoto(params: PhotoCaptureParams): Promise<PhotoTaken>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
   stopCameraWarmUp(requestId: string): Promise<void>
@@ -1875,6 +1898,8 @@ export interface GlassesStatus {
   packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
+  /** Deferred photos (`capturePhoto` keeps the full photo on the glasses until asked); 0 without. */
+  deferredPhotosVersion?: number
   bluetoothName: string
   serialNumber: string
   style: string

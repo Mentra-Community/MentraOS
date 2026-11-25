@@ -189,7 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MentraBluetoothSDKDele
             defer {
                 if self.photoRequestId == request.requestId { self.photoRequestId = nil }
             }
-            let result = try await self.sdk.requestPhoto(request)
+            let result = try await self.sdk.uploadPhoto(request)
             try Task.checkCancellation()
             self.photoRequestId = nil
             self.action.stringValue = "Photo uploaded: \(result.requestId)"

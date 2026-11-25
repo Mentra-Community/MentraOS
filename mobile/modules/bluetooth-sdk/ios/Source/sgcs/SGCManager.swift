@@ -66,7 +66,7 @@ protocol SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_ request: PhotoRequest)
+    func uploadPhoto(_ request: PhotoRequest)
     func startStream(_ message: [String: Any])
     func stopStream()
     /// Re-advertise glasses-owned stream control after the phone SDK remounts.

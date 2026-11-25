@@ -208,3 +208,34 @@ test("takePhoto preserves compression and rejects invalid values before dispatch
   }
   expect(requestCalls).toHaveLength(5)
 })
+
+describe("CameraModule.capture", () => {
+  test("starts the capture, then asks for each stage by the photo's ID, and releases it", async () => {
+    const {session, requestCalls} = mockSession(PHOTO)
+    const capture = new CameraModule(session).capture({size: "high"})
+    expect(requestCalls[0]).toMatchObject({type: MiniappRequestType.PHOTO_CAPTURE, photoId: capture.photoId, size: "high"})
+    await capture.captured
+    await capture.preview
+    await expect(capture.photo()).resolves.toEqual(PHOTO)
+    await capture.photo()
+    await capture.release()
+    expect(requestCalls.slice(1)).toEqual([
+      {type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId: capture.photoId, stage: "captured"},
+      {type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId: capture.photoId, stage: "preview"},
+      // photo() asks once; later calls return the same photo.
+      {type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId: capture.photoId, stage: "photo"},
+      {type: MiniappRequestType.PHOTO_RELEASE, photoId: capture.photoId},
+    ])
+  })
+
+  test("a capture the host refuses rejects every stage", async () => {
+    const session = {
+      _hasManifestPermission: () => true,
+      sendRequest: () => Promise.reject(new Error("CAMERA_BUSY")),
+    } as unknown as MiniappSession
+    const capture = new CameraModule(session).capture()
+    await expect(capture.captured).rejects.toThrow("CAMERA_BUSY")
+    await expect(capture.preview).rejects.toThrow("CAMERA_BUSY")
+    await expect(capture.photo()).rejects.toThrow("CAMERA_BUSY")
+  })
+})

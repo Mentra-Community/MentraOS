@@ -615,7 +615,7 @@ class AcsMeetingService {
       await getNative()?.cancelGlassesStill?.(requestId)
     },
     requestGlassesPhoto: ({requestId, uploadUrl}) =>
-      BluetoothSdk.requestPhoto({
+      BluetoothSdk.uploadPhoto({
         requestId,
         size: "max",
         mode: "photo",

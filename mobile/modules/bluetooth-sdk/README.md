@@ -238,7 +238,7 @@ Each usage occurrence below is one event, sent when it happens:
   `forget`, `cancel`, `bluetooth_off`, `link_lost`, or `unknown`), and the
   battery levels seen during the connection. A connection already up when the
   SDK started is not reported.
-- `bluetooth_sdk_photo_taken`: a `requestPhoto` call settled, or a photo taken
+- `bluetooth_sdk_photo_taken`: an `uploadPhoto` call settled, or a photo taken
   with the glasses button failed (successful button photos never reach the
   phone). Carries `trigger` (`api` / `button`), `success`, `error_code`,
   `latency_ms`, the requested size, mode, compression, gallery save and
@@ -380,7 +380,7 @@ each event is sent from. PostHog receives a locally generated anonymous SDK inst
 
 React Native apps can import optional lifecycle helpers from the `react`
 subpath for common lifecycle plumbing. Use the root `BluetoothSdk` object for
-commands such as `requestPhoto()`, `startStream()`, and `setMicState()`.
+commands such as `uploadPhoto()`, `startStream()`, and `setMicState()`.
 
 ```tsx
 import {Button, Text, View} from "react-native"
@@ -637,7 +637,7 @@ React Native narrows returned values to success shapes where the raw listener ev
 
 | API | Returned Value After `await` | Error Path |
 | --- | --- | --- |
-| `requestPhoto(...)` | Terminal `PhotoSuccessResponseEvent` with `state: "success"` after capture and delivery finish. `uploadUrl` is always present; webhook JSON metadata such as `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes` is included when the receiver returns it. | Rejects when raw `photo_response.state === "error"`, the SDK cannot send the command, or the terminal photo response times out. |
+| `uploadPhoto(...)` | Terminal `PhotoSuccessResponseEvent` with `state: "success"` after capture and delivery finish. `uploadUrl` is always present; webhook JSON metadata such as `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes` is included when the receiver returns it. | Rejects when raw `photo_response.state === "error"`, the SDK cannot send the command, or the terminal photo response times out. |
 | `startVideoRecording(...)` | `VideoRecordingStartedStatusEvent` with `success: true` and `status: "recording_started"`. | Rejects on `success: false` statuses such as `already_recording`, send failure, or timeout. |
 | `stopVideoRecording(...)` | `VideoRecordingStoppedStatusEvent` with `success: true` and `status: "recording_stopped"`. When a webhook URL is supplied, resolves after the video upload succeeds. | Rejects on `success: false` statuses such as `not_recording`, webhook upload failure, send failure, or timeout. |
 | `queryVideoRecordingStatus(requestId)` | `VideoRecordingStatusEvent` with the current `recording` state and elapsed `duration_ms` when available. | Rejects when disconnected, another video command uses the same request ID, or the response times out. |
@@ -714,7 +714,7 @@ Mentra Live also rejects `ota_start` before acknowledgement when its known batte
 ## Photo Upload
 
 ```ts
-const photo = await BluetoothSdk.requestPhoto({
+const photo = await BluetoothSdk.uploadPhoto({
   size: "medium",
   webhookUrl: "https://api.example.com/mentra/photo",
   authToken: "optional-token",
@@ -726,37 +726,21 @@ const photo = await BluetoothSdk.requestPhoto({
 console.log("photo delivered", photo.photoUrl ?? photo.uploadUrl, photo.fileSizeBytes)
 ```
 
-`requestPhoto(...)` resolves only after the full photo action reaches terminal success: capture completed and the photo was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. If you omit `requestId`, the SDK generates one and the terminal response includes it. It rejects if the ASG reports `state: "error"`, if phone-side fallback upload fails, if the SDK cannot send the command, or if no terminal `photo_response` arrives within 30 seconds (110 seconds when `presend_thumbnail` is enabled). Photo requests use this longer operation-specific deadline because max-quality BLE fallback can legitimately exceed the 15-second deadline used by ordinary commands. Use `photo_status` for intermediate stages such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_status` is progress, while `photo_response` is terminal success/error. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+`uploadPhoto(...)` resolves only after the full photo action reaches terminal success: capture completed and the photo was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. If you omit `requestId`, the SDK generates one and the terminal response includes it. It rejects if the ASG reports `state: "error"`, if phone-side fallback upload fails, if the SDK cannot send the command, or if no terminal `photo_response` arrives within 30 seconds. Photo requests use this longer operation-specific deadline because max-quality BLE fallback can legitimately exceed the 15-second deadline used by ordinary commands. Use `photo_status` for intermediate stages such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_status` is progress, while `photo_response` is terminal success/error. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
-To keep the photo on the phone and upload nothing, pass `localFile: true` and no `webhookUrl`:
+To keep the photo on the phone and upload nothing, use `capturePhoto`. It returns at once with the capture's stages:
 
 ```ts
-const photo = await BluetoothSdk.requestPhoto({size: "medium", webhookUrl: null, authToken: null, sound: true, localFile: true})
-console.log("photo saved", photo.photoUrl, photo.fileSizeBytes) // file:///.../photo_<id>.jpg
+const capture = BluetoothSdk.capturePhoto({size: "medium", sound: true})
+await capture.captured // the camera is free for the next photo
+const preview = await capture.preview // {url: "data:image/jpeg;base64,...", width, height}, at most 500 px
+const photo = await capture.photo() // {requestId, fileUri: "file:///.../photo_<id>.jpg", mimeType, size}
+await capture.release() // the full photo isn't needed (any more): the glasses delete it
 ```
 
-The glasses send the photo over Bluetooth, whatever `transferMethod` says, and the SDK saves it as a JPEG in the app's cache folder. `photoUrl` is that file's `file://` URI and `uploadUrl` is empty. The file is yours to move or delete. It needs no internet connection. A save failure rejects with `PHONE_SAVE_FAILED`.
+`takePhoto(options)` is `capturePhoto(options).photo()` followed by `release()`: the whole photo, and the glasses' copy deleted.
 
-Set `presend_thumbnail: true` to receive a JPEG preview over Bluetooth before the
-full photo (default: `false`). Listen for `photo_status` with
-`status: "thumbnail_received"`; `thumbnailUrl` is a JPEG data URI and
-`fileSizeBytes` is the preview size. The preview preserves aspect ratio, is at
-most 500 pixels on its longest edge, never upscales, and uses JPEG quality 50.
-Preview pixels match the full delivered image's display orientation, including
-EXIF rotation/mirroring on direct uploads; no EXIF-aware preview renderer is needed.
-It does not resolve `requestPhoto()` or replace the full webhook delivery.
-The opted-in end-to-end deadline is 110 seconds: capture (45) + preview
-transfer/retries and ACK (30) + full delivery (30) + response transit margin (5).
-Both native SDK facades mirror ASG's constants; the glasses job watchdog is 105
-seconds. Progress and preview ACK never restart these timers.
-An upload target is required; save-only capture does not support previews.
-Compatible ASG firmware is required; older firmware may ignore this option.
-
-On the BLE delivery path, full-image encoding overlaps preview transmission,
-but the full image is sent only after the phone acknowledges the preview.
-Preview send failure or a missing acknowledgement fails the request rather than
-starting a competing transfer. ASG timing logs use `BlePhotoTiming`; thumbnail
-transmission and CPU processing overlap, so their durations are not additive.
+Every photo gets its preview first. The full photo waits on the glasses (deferred delivery) until the first `photo()` call asks for it, for 30 minutes at most; later calls return the same photo, and not calling `photo()` is how a photo is skipped. The file is in the app's cache folder and is yours to move or delete. It needs no internet connection. Any number of captures can be in flight: the glasses refuse one (`CAMERA_BUSY`) only while another is being taken, never because photos are being sent. After the glasses restart or reconnect, the SDK asks again for the previews and photos it still waits for. A preview that didn't arrive rejects `preview` with `PREVIEW_FAILED`; the full photo can still be asked for. Glasses without deferred photos (`deferredPhotosVersion` 0 in the glasses status) send the whole photo at once: `photo()` resolves with it, and it is also the preview.
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 

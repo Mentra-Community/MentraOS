@@ -18,6 +18,7 @@ private let modelExtractionQueue = DispatchQueue(label: "com.mentra.model-extrac
 
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
+    @MainActor private var photoCaptures: [String: PhotoCapture] = [:]
 
     public func definition() -> ModuleDefinition {
         Name("BluetoothSdk")
@@ -561,14 +562,14 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.queryGalleryStatus().values
         }
 
-        AsyncFunction("requestPhoto") { (params: [String: Any]) in
+        AsyncFunction("uploadPhoto") { (params: [String: Any]) in
             let req = try PhotoRequest.from(params: params)
             Bridge.log(
-                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) size=\(req.size.rawValue) compress=\(req.compress.rawValue) aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
+                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.uploadPhoto requestId=\(req.requestId) size=\(req.size.rawValue) compress=\(req.compress.rawValue) aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
             )
 
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.requestPhoto(req).values
+            return try await sdk.uploadPhoto(req).values
         }
 
         AsyncFunction("warmUpCamera") { (params: [String: Any]) in
@@ -608,6 +609,37 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("stopCameraWarmUp") { (requestId: String) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             try sdk.stopCameraWarmUp(requestId: requestId)
+        }
+
+        // A capture's stages, by its request ID: the JS PhotoCapture awaits each one.
+        AsyncFunction("capturePhoto") { (params: [String: Any]) in
+            let request = try PhotoRequest.from(params: params)
+            return try await MainActor.run {
+                let capture = try self.bluetoothSdk().capturePhoto(request)
+                let cutoff = Date().addingTimeInterval(-30 * 60)
+                self.photoCaptures = self.photoCaptures.filter { $0.value.createdAt > cutoff }
+                self.photoCaptures[capture.requestId] = capture
+                return capture.requestId
+            }
+        }
+
+        AsyncFunction("photoCaptureStage") { (requestId: String, stage: String) -> [String: Any]? in
+            guard let capture = await MainActor.run(body: { self.photoCaptures[requestId] }) else {
+                throw BluetoothSdkError(code: "photo_released", message: "No photo capture \(requestId).")
+            }
+            switch stage {
+            case "captured":
+                try await capture.captured()
+                return nil
+            case "preview":
+                return try await capture.preview().values
+            default:
+                return try await capture.photo().values
+            }
+        }
+
+        AsyncFunction("releasePhotoCapture") { (requestId: String) in
+            await MainActor.run { self.photoCaptures.removeValue(forKey: requestId)?.release() }
         }
 
         // MARK: - OTA Commands

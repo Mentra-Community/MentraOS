@@ -141,7 +141,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setAutoPowerOffEnabled: bindPublicMethod("setAutoPowerOffEnabled"),
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
-   * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
+   * `uploadPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
    * fields). Still functional until removed in a future release.
    */
   setPhotoCaptureDefaults: (settings: PhotoCaptureDefaults) => {
@@ -164,7 +164,9 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   releaseCameraFovOverride: bindPublicMethod("releaseCameraFovOverride"),
   setCameraTuningConfig: bindPublicMethod("setCameraTuningConfig"),
   queryGalleryStatus: bindPublicMethod("queryGalleryStatus"),
-  requestPhoto: bindPublicMethod("requestPhoto"),
+  uploadPhoto: bindPublicMethod("uploadPhoto"),
+  capturePhoto: bindPublicMethod("capturePhoto"),
+  takePhoto: bindPublicMethod("takePhoto"),
   warmUpCamera: bindPublicMethod("warmUpCamera"),
   stopCameraWarmUp: bindPublicMethod("stopCameraWarmUp"),
   startVideoRecording: bindPublicMethod("startVideoRecording"),
@@ -303,7 +305,11 @@ export type {
   PhotoTransferMethod,
   PhotoResponseEvent,
   PhotoRequestedCaptureConfig,
-  PhotoRequestParams,
+  PhotoCapture,
+  PhotoCaptureParams,
+  PhotoPreview,
+  PhotoTaken,
+  PhotoUploadParams,
   PhotoSize,
   PhotoStatusEvent,
   PhotoStatusState,

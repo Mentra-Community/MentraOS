@@ -1173,7 +1173,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             cameraStatus = "Camera: webhook upload requested (\(requestId))"
             let responseEvent: PhotoResponseEvent
             do {
-                responseEvent = try await mentraBluetoothSdk.requestPhoto(
+                responseEvent = try await mentraBluetoothSdk.uploadPhoto(
                     buildPhotoRequest(requestId: requestId, webhookUrl: uploadUrl)
                 )
             } catch {
@@ -1208,7 +1208,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         cameraStatus = "Camera: requested phone upload (\(requestId))"
         let responseEvent: PhotoResponseEvent
         do {
-            responseEvent = try await mentraBluetoothSdk.requestPhoto(
+            responseEvent = try await mentraBluetoothSdk.uploadPhoto(
                 buildPhotoRequest(requestId: requestId, webhookUrl: uploadUrl)
             )
         } catch {
@@ -1220,7 +1220,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             throw error
         }
         handlePhotoResponse(responseEvent)
-        append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
+        append(tag: "TX", text: "uploadPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
     }
 
     private func captureToGlassesStorage() async throws {
@@ -1235,7 +1235,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
         let responseEvent: PhotoResponseEvent
         do {
-            responseEvent = try await mentraBluetoothSdk.requestPhoto(
+            responseEvent = try await mentraBluetoothSdk.uploadPhoto(
                 buildPhotoRequest(requestId: requestId, webhookUrl: nil, save: true)
             )
         } catch {

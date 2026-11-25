@@ -4,7 +4,7 @@ import type {
   MentraLivePairingState,
   PairFailureEvent,
   PhotoCaptureMetadata,
-  PhotoRequestParams,
+  PhotoUploadParams,
   PhotoSize,
   PhotoStatusEvent,
 } from "@mentra/bluetooth-sdk"
@@ -66,8 +66,6 @@ export default function App() {
   const [aeDivisor, setAeDivisor] = useState<3 | 5>(3)
   const [isoCap, setIsoCap] = useState(800)
   const [capturing, setCapturing] = useState(false)
-  const [presendThumbnail, setPresendThumbnail] = useState(false)
-  const [thumbnail, setThumbnail] = useState<{uri: string; bytes: number} | null>(null)
   const [lastCapture, setLastCapture] = useState<CaptureResult | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [pairingState, setPairingState] = useState<MentraLivePairingState>({state: "normal"})
@@ -79,7 +77,7 @@ export default function App() {
   const metadataRef = useRef<PhotoCaptureMetadata | undefined>(undefined)
   const uploadedUriRef = useRef<string | null>(null)
 
-  const scanFields = useCallback((): Partial<PhotoRequestParams> => {
+  const scanFields = useCallback((): Partial<PhotoUploadParams> => {
     if (!scanMode) {
       return {size: "medium", compress: "none", sound: true, zsl, mfnr}
     }
@@ -123,9 +121,6 @@ export default function App() {
     const statusSub = BluetoothSdk.addListener("photo_status", (event: PhotoStatusEvent) => {
       if (pendingRequestId.current && event.requestId === pendingRequestId.current) {
         setStatusMessage(event.status)
-        if (event.status === "thumbnail_received" && event.thumbnailUrl) {
-          setThumbnail({uri: event.thumbnailUrl, bytes: event.fileSizeBytes ?? 0})
-        }
         if (event.captureMetadata) {
           metadataRef.current = event.captureMetadata
         }
@@ -212,7 +207,6 @@ export default function App() {
   const handleTakePhoto = async () => {
     if (pendingRequestId.current) return
     setCapturing(true)
-    setThumbnail(null)
     setLastCapture(null)
     setStatusMessage("starting")
     metadataRef.current = undefined
@@ -222,11 +216,10 @@ export default function App() {
     try {
       const webhookUrl = await ensureReceiver()
       const fields = scanFields()
-      const response = await BluetoothSdk.requestPhoto({
+      const response = await BluetoothSdk.uploadPhoto({
         requestId,
         webhookUrl,
         authToken: null,
-        presend_thumbnail: presendThumbnail,
         ...fields,
         size: fields.size ?? "medium",
         compress: fields.compress ?? "none",
@@ -319,21 +312,6 @@ export default function App() {
             <Group name="Scan Mode capture">
               <View style={styles.row}>
                 <View style={styles.labelBlock}>
-                  <Text style={styles.label}>Presend thumbnail</Text>
-                  <Text style={styles.hintInline}>500px long edge, JPEG quality 50, then the full photo.</Text>
-                </View>
-                <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityLabel="Presend thumbnail"
-                  accessibilityState={{checked: presendThumbnail, disabled: capturing}}
-                  disabled={capturing}
-                  hitSlop={12}
-                  onPress={() => setPresendThumbnail(value => !value)}>
-                  <Text style={{fontSize: 28}}>{presendThumbnail ? "☑" : "☐"}</Text>
-                </Pressable>
-              </View>
-              <View style={styles.row}>
-                <View style={styles.labelBlock}>
                   <Text style={styles.label}>ZSL</Text>
                   <Text style={styles.hintInline}>Zero-shutter-lag preview buffering. Off for scan mode.</Text>
                 </View>
@@ -359,7 +337,7 @@ export default function App() {
                 <>
                   <Text style={styles.hint}>
                     Preset: max, AE÷{aeDivisor}, ISO cap {isoCap}, compress none, sound off. Sends granular
-                    requestPhoto fields only (never scanMode:true).
+                    uploadPhoto fields only (never scanMode:true).
                   </Text>
                   <View style={styles.row}>
                     <Text style={styles.label}>AE divisor</Text>
@@ -391,12 +369,6 @@ export default function App() {
               </View>
               {statusMessage ? <Text style={styles.status}>Status: {statusMessage}</Text> : null}
             </Group>
-            {thumbnail ? (
-              <Group name="Thumbnail">
-                <Image source={{uri: thumbnail.uri}} style={styles.preview} resizeMode="contain" />
-                <Text style={styles.meta}>{(thumbnail.bytes / 1024).toFixed(1)} KB</Text>
-              </Group>
-            ) : null}
             {lastCapture?.fileUri ? (
               <Group name="Last capture">
                 <Image source={{uri: lastCapture.fileUri}} style={styles.preview} resizeMode="contain" />

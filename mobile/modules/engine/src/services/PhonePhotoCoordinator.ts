@@ -6,10 +6,10 @@
  *          → coordinator.takePhoto(packageName, opts)
  *            ├── (precheck) glasses connected + hasCamera
  *            ├── cloudClientService.startManagedPhoto → {requestId, uploadUrl, readUrl}  (cloud-v2 runtime presign)
- *            ├── BluetoothSdk.requestPhoto(requestId, size, uploadUrl, compress, sound)
+ *            ├── BluetoothSdk.uploadPhoto(requestId, size, uploadUrl, compress, sound)
  *            └── race:
  *                  - cloudClientService.awaitManagedPhotoReady(requestId) resolves on photo.ready push
- *                  - BluetoothSdk.requestPhoto rejects if terminal photo_response is an error
+ *                  - BluetoothSdk.uploadPhoto rejects if terminal photo_response is an error
  *                  - handlePhotoError(requestId, code, message) rejects if MantleManager observes
  *                    the same BLE photo_response error before the native promise crosses the bridge
  *
@@ -32,7 +32,13 @@
 import {parsePhotoCompression, type PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 import {Buffer} from "buffer"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {PhotoSize, PhotoTransferMethod} from "@mentra/bluetooth-sdk/internal"
+import type {
+  PhotoCapture as BluetoothPhotoCapture,
+  PhotoPreview,
+  PhotoSize,
+  PhotoTransferMethod,
+} from "@mentra/bluetooth-sdk/internal"
+import type {fetchGlassesFile} from "./GlassesFiles"
 import {cloudClientService} from "./CloudClientService"
 import {fleetEvents} from "./fleet/fleetEvents"
 import {isGlassesConnected} from "./GlassesReadiness"
@@ -101,6 +107,20 @@ export interface LocalPhotoTaken {
   mimeType: string
   size: number
   requestId: string
+}
+
+/**
+ * One photo kept on the phone, in stages (the Bluetooth SDK's PhotoCapture, with the Wi-Fi link
+ * for the full photo): `captured` when the camera is free again, `preview` (at most 500 px) for
+ * every photo, `photo()` the full size, which waits on the glasses until first asked for, and
+ * `release()` when it isn't needed.
+ */
+export interface PhoneCapture {
+  readonly photoId: string
+  readonly captured: Promise<void>
+  readonly preview: Promise<PhotoPreview>
+  photo(): Promise<LocalPhotoTaken>
+  release(): Promise<void>
 }
 
 /** Pipeline stage a photo request failed at — surfaced to the miniapp so a dev
@@ -187,6 +207,12 @@ const saveStreamFrameFile: StreamFrameSave = (requestId, jpeg) => {
 
 let bleRequestCounter = 0
 
+/** A stage the caller may never await is not an unhandled rejection. */
+function quiet<T>(promise: Promise<T>): Promise<T> {
+  promise.catch(() => undefined)
+  return promise
+}
+
 /** Short 4-hex-char correlation id sent over BLE instead of the full cloud
  *  requestId UUID (wire v2 keeps BLE JSON small). */
 function mintBleRequestId(): string {
@@ -236,6 +262,9 @@ export class PhonePhotoCoordinator {
     private readonly streamFrames: StreamFrameSource = nativeStreamFrames,
     private readonly uploadStreamFrame: StreamFrameUpload = putStreamFrame,
     private readonly saveStreamFrame: StreamFrameSave = saveStreamFrameFile,
+    // Loaded on use: the glasses Wi-Fi service reaches native modules a capture never needs.
+    private readonly fetchFile: typeof fetchGlassesFile = (fileId, overBluetooth) =>
+      (require("./GlassesFiles") as typeof import("./GlassesFiles")).fetchGlassesFile(fileId, overBluetooth),
   ) {}
 
   /** The relayed stream's next frame, or null when no stream passes through this phone. */
@@ -355,12 +384,12 @@ export class PhonePhotoCoordinator {
     // Every stage reports under that ID, and no report can throw or wait.
     fleetEvents.photo({operationId: requestId, stage: "requested"})
 
-    // 3) Drive glasses over BLE. requestPhoto now resolves at terminal
+    // 3) Drive glasses over BLE. uploadPhoto now resolves at terminal
     //    photo_response success, so run it beside the cloud poll instead of
     //    awaiting it before polling. Native defaults transferMethod to "auto"
     //    (Wi-Fi direct with BLE fallback) unless the miniapp forces BLE.
     try {
-      void BluetoothSdk.requestPhoto({
+      void BluetoothSdk.uploadPhoto({
         requestId: bleRequestId,
         appId: packageName,
         ...captureParams(opts, compress),
@@ -461,127 +490,114 @@ export class PhonePhotoCoordinator {
     return {photoUrl: readUrl, mimeType: "image/jpeg", size: frame.bytes, requestId}
   }
 
+  /** Each miniapp's captures, so one miniapp never reaches another's and a closing one releases its own. */
+  private readonly captures = new Map<string, Map<string, PhoneCapture>>()
+
   /**
-   * Save a frame taken from the stream as this request's photo, for takeLocalPhoto(). Like any
-   * local photo it never touches the cloud.
+   * Take a photo that stays on the phone, in stages: no cloud request and no upload. Any number can
+   * be in flight; the glasses refuse a capture only while another is being taken (`CAMERA_BUSY`).
+   * The full photo comes over the glasses Wi-Fi link when it is up, else over Bluetooth.
    */
-  private saveStreamFramePhoto(requestId: string, frame: StreamFrame): LocalPhotoTaken {
-    fleetEvents.photo({operationId: requestId, stage: "requested"})
-    let fileUri: string
-    try {
-      fileUri = this.saveStreamFrame(requestId, Buffer.from(frame.base64, "base64"))
-    } catch (err) {
-      fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
-      const detail = err instanceof Error ? err.message : String(err)
-      throw new PhotoError(
-        "LOCAL_PHOTO_UNAVAILABLE",
-        `Could not save the photo taken from the stream: ${detail}`,
-        "save",
-      )
-    }
-    fleetEvents.photo({operationId: requestId, stage: "captured"})
-    return {fileUri, mimeType: "image/jpeg", size: frame.bytes, requestId}
+  capturePhoto(packageName: string, opts: PhotoOpts, photoId = mintLocalRequestId()): PhoneCapture {
+    const owned = this.captures.get(packageName) ?? new Map<string, PhoneCapture>()
+    this.captures.set(packageName, owned)
+    const forget = () => owned.delete(photoId)
+    const capture = this.startCapture(packageName, opts, photoId, forget)
+    owned.set(photoId, capture)
+    return capture
   }
 
-  /**
-   * Take a photo that stays on the phone: no cloud request and no upload. The glasses send it
-   * over BLE (the only route to the phone), native saves it as a JPEG file, and that file is
-   * the result. It works with no internet connection.
-   */
+  /** A miniapp's own capture by its photo ID. */
+  capture(packageName: string, photoId: string): PhoneCapture {
+    const capture = this.captures.get(packageName)?.get(photoId)
+    if (!capture) throw new PhotoError("PHOTO_RELEASED", `No photo ${photoId} for this miniapp`, "command")
+    return capture
+  }
+
+  /** A miniapp closed: its photos still on the glasses are deleted. */
+  async releaseCaptures(packageName: string): Promise<void> {
+    const owned = this.captures.get(packageName)
+    this.captures.delete(packageName)
+    await Promise.all([...(owned?.values() ?? [])].map((capture) => capture.release().catch(() => undefined)))
+  }
+
+  /** takePhoto's local delivery: the whole photo, as capturePhoto(...).photo() gives it. */
   async takeLocalPhoto(packageName: string, opts: PhotoOpts): Promise<LocalPhotoTaken> {
-    const compress = parsePhotoCompression(opts.compress)
-    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
-      throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
-    }
-
-    const flowStarted = performance.now()
-    const requestId = mintLocalRequestId()
-    // As in takePhoto(): a stream this phone relays holds the glasses camera, and its next frame
-    // is the photo.
-    const streamFrame = await this.grabStreamFrame(opts)
-    if (streamFrame) return this.saveStreamFramePhoto(requestId, streamFrame)
-
-    const bleRequestId = mintBleRequestId()
-    this.bleIdToCloud.set(bleRequestId, requestId)
-    const abort = new AbortController()
-    // Wired before the request is sent, as in takePhoto(): a fast glasses error must find its slot.
-    const outcome = new Promise<PhotoResult>((resolve, reject) => {
-      this.activeRequests.set(requestId, {packageName, abort, resolve, reject})
-    })
-    const captureWatchdog = setTimeout(() => {
-      const e = this.activeRequests.get(requestId)
-      if (!e) return
-      e.abort.abort()
-      e.reject(
-        new PhotoError(
-          "CAPTURE_TIMEOUT",
-          "Photo capture did not complete. The take_photo command, media processing or BLE transfer may have stalled.",
-          "capture",
-          "ble",
-        ),
-      )
-    }, CAPTURE_PIPELINE_TIMEOUT_MS)
-    const clearWatchdog = () => clearTimeout(captureWatchdog)
-    void outcome.then(clearWatchdog, clearWatchdog)
-
-    fleetEvents.photo({operationId: requestId, stage: "requested"})
-
+    const capture = this.capturePhoto(packageName, opts)
     try {
-      void BluetoothSdk.requestPhoto({
-        requestId: bleRequestId,
-        appId: packageName,
-        ...captureParams(opts, compress),
-        webhookUrl: null,
-        authToken: null,
-        localFile: true,
-      })
-        .then((response) => {
-          const e = this.activeRequests.get(requestId)
-          if (!e || e.abort.signal.aborted) return
-          // Native answers a local request once, when the file is saved. Anything else means
-          // this native build cannot keep photos on the phone; don't wait out the watchdog.
-          const saved = response?.state === "success" && response.requestId === bleRequestId ? response : undefined
-          const fileUri = saved?.photoUrl
-          if (!saved || !fileUri?.startsWith("file://")) {
-            e.reject(new PhotoError("LOCAL_PHOTO_UNAVAILABLE", "The photo was not saved on the phone", "save", "ble"))
-            return
-          }
-          e.resolve({
-            photoUrl: fileUri,
-            mimeType: saved.contentType || "image/jpeg",
-            size: saved.fileSizeBytes ?? -1,
-          })
-        })
-        .catch((err) => {
-          const e = this.activeRequests.get(requestId)
-          if (!e) return
-          e.abort.abort()
-          e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
-        })
-    } catch (err) {
-      this.activeRequests.delete(requestId)
-      this.bleIdToCloud.delete(bleRequestId)
-      fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
-      throw this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble")
-    }
-
-    try {
-      const result = await outcome
-      fleetEvents.photo({operationId: requestId, stage: "captured"})
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.debug(
-          `[PhonePhotoCoordinator] takeLocalPhoto complete ${Math.round(
-            performance.now() - flowStarted,
-          )}ms requestId=${requestId}`,
-        )
-      }
-      return {fileUri: result.photoUrl, mimeType: result.mimeType, size: result.size, requestId}
-    } catch (err) {
-      fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
-      throw err
+      return await capture.photo()
     } finally {
-      this.activeRequests.delete(requestId)
-      this.bleIdToCloud.delete(bleRequestId)
+      void capture.release().catch(() => undefined)
+    }
+  }
+
+  private startCapture(packageName: string, opts: PhotoOpts, photoId: string, forget: () => void): PhoneCapture {
+    const failed = (err: unknown) => {
+      fleetEvents.photo({operationId: photoId, stage: "failed", failedStage: "requested"})
+      throw this.toPhotoError(err, "BLE_SEND_FAILED", "capture", "ble")
+    }
+    const started = (async () => {
+      if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+        throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
+      }
+      // A stream this phone relays holds the glasses camera, and its next frame is the photo.
+      return (await this.grabStreamFrame(opts)) ?? null
+    })()
+    fleetEvents.photo({operationId: photoId, stage: "requested"})
+    const glasses = started.then((frame) =>
+      frame
+        ? null
+        : BluetoothSdk.capturePhoto({
+            requestId: photoId,
+            appId: packageName,
+            ...captureParams(opts, parsePhotoCompression(opts.compress)),
+          }),
+    )
+    const stage = <T>(fromGlasses: (c: BluetoothPhotoCapture) => Promise<T>, fromFrame: (f: StreamFrame) => T) =>
+      quiet(Promise.all([started, glasses]).then(([frame, c]) => (c ? fromGlasses(c) : fromFrame(frame!))))
+    const captured = stage(
+      (c) => c.captured,
+      () => undefined,
+    ).then(() => fleetEvents.photo({operationId: photoId, stage: "captured"}), failed)
+    let preview: Promise<PhotoPreview> | undefined
+    let photo: Promise<LocalPhotoTaken> | undefined
+    return {
+      photoId,
+      captured: quiet(captured),
+      get preview() {
+        return (preview ??= stage(
+          (c) => c.preview,
+          (f) => ({url: `data:image/jpeg;base64,${f.base64}`, width: f.width, height: f.height}),
+        ))
+      },
+      photo: () =>
+        (photo ??= stage(
+          async (c) => {
+            const overBluetooth = () =>
+              c.photo().then((p) => ({fileUri: p.fileUri, mimeType: p.mimeType, size: p.size, requestId: photoId}))
+            // Older glasses push the whole photo; only glasses that keep it serve it by ID.
+            if ((useGlassesStore.getState().deferredPhotosVersion ?? 0) <= 0) return overBluetooth()
+            await c.captured
+            let viaBluetooth: Promise<LocalPhotoTaken> | undefined
+            const fileUri = await this.fetchFile(photoId, () => (viaBluetooth = overBluetooth()).then((p) => p.fileUri))
+            return viaBluetooth ? viaBluetooth : {fileUri, mimeType: "image/jpeg", size: -1, requestId: photoId}
+          },
+          (f) => this.saveStreamFramePhoto(photoId, f),
+        )),
+      release: async () => {
+        forget()
+        await (await glasses.catch(() => null))?.release()
+      },
+    }
+  }
+
+  /** A frame taken from the stream, saved as this photo's file. */
+  private saveStreamFramePhoto(requestId: string, frame: StreamFrame): LocalPhotoTaken {
+    try {
+      return {fileUri: this.saveStreamFrame(requestId, Buffer.from(frame.base64, "base64")), mimeType: "image/jpeg", size: frame.bytes, requestId}
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      throw new PhotoError("LOCAL_PHOTO_UNAVAILABLE", `Could not save the photo taken from the stream: ${detail}`, "save")
     }
   }
 

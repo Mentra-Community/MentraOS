@@ -504,7 +504,7 @@ class R1: NSObject, ControllerManager {
     }
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
-    func requestPhoto(_: PhotoRequest) {}
+    func uploadPhoto(_: PhotoRequest) {}
     func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
     func stopVideoRecording(requestId _: String) {}
     func startStream(_: [String: Any]) {}

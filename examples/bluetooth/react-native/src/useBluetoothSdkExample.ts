@@ -16,7 +16,7 @@ import BluetoothSdk, {
   type DeviceModel,
   type MicLc3Event,
   type MicPcmEvent,
-  type PhotoRequestParams,
+  type PhotoUploadParams,
   type PhotoSuccessResponseEvent,
   type PhotoStatusEvent,
   type SettingsAckEvent,
@@ -240,7 +240,7 @@ export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'low' | 'medium' | 'high' | 'max';
-export type PhotoCompression = NonNullable<PhotoRequestParams['compress']>;
+export type PhotoCompression = NonNullable<PhotoUploadParams['compress']>;
 export type PhotoTransferMethod = 'auto' | 'direct' | 'ble';
 export type PhotoDestination = 'phone' | 'cloud' | 'glasses';
 export type PhotoAeExposureDivisor = 2 | 3 | 5;
@@ -1249,7 +1249,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function addRequestTuningFields(
-    fields: Omit<PhotoRequestParams, 'requestId' | 'webhookUrl' | 'authToken'>,
+    fields: Omit<PhotoUploadParams, 'requestId' | 'webhookUrl' | 'authToken'>,
   ) {
     if (!photoExposureManual && photoAeExposureDivisor !== null) {
       fields.aeExposureDivisor = photoAeExposureDivisor;
@@ -1283,7 +1283,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function buildPhotoRequestFields(textModeEnabled: boolean): Omit<
-    PhotoRequestParams,
+    PhotoUploadParams,
     'requestId' | 'webhookUrl' | 'authToken'
   > {
     return addRequestTuningFields({
@@ -1498,7 +1498,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       resetBarcodeScan();
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
       try {
-        const response = await BluetoothSdk.requestPhoto({
+        const response = await BluetoothSdk.uploadPhoto({
           requestId,
           webhookUrl: uploadUrlText,
           authToken: null,
@@ -1539,7 +1539,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
     let response: PhotoSuccessResponseEvent;
     try {
-      response = await BluetoothSdk.requestPhoto({
+      response = await BluetoothSdk.uploadPhoto({
         requestId,
         webhookUrl: receiver.uploadUrl,
         authToken: null,
@@ -1578,7 +1578,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
     let response: PhotoSuccessResponseEvent;
     try {
-      response = await BluetoothSdk.requestPhoto({
+      response = await BluetoothSdk.uploadPhoto({
         requestId,
         webhookUrl: null,
         authToken: null,

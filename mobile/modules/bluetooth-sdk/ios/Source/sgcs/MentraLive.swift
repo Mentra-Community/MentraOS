@@ -710,7 +710,10 @@ enum K900ProtocolUtils {
 }
 
 private struct BlePhotoTransfer {
-    var isThumbnail = false
+    /// A deferred photo's preview, of this size.
+    var preview = false
+    var previewWidth: Int?
+    var previewHeight: Int?
     /// The photo stays on the phone as a file instead of being uploaded.
     var localFile = false
     let bleImgId: String
@@ -1535,6 +1538,7 @@ class MentraLive: NSObject, SGCManager {
             DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
             DeviceStore.shared.apply("glasses", "wifiMacAddress", "")
             DeviceStore.shared.apply("glasses", "hotspotOtaVersion", 0)
+            DeviceStore.shared.apply("glasses", "deferredPhotosVersion", 0)
         }
         connectionState = state
         pairFlow(
@@ -1690,6 +1694,17 @@ class MentraLive: NSObject, SGCManager {
     private var fileWriteCharacteristic: CBCharacteristic?
     private var activeFileTransfers = [String: MentraLiveFileTransferSession]()
     private var blePhotoTransfers = [String: BlePhotoTransfer]()
+    private var lastBleImgNumber = 0
+    private let bleImgIdLock = NSLock()
+
+    /// A Bluetooth image ID no other transfer of this process has: the clock's milliseconds, or one
+    /// past the last ID when two requests fall in the same millisecond (a burst, concurrent fetches).
+    private func nextBleImgId() -> String {
+        bleImgIdLock.lock()
+        defer { bleImgIdLock.unlock() }
+        lastBleImgNumber = max(Int(Date().timeIntervalSince1970 * 1000), lastBleImgNumber + 1)
+        return "I" + String(format: "%09d", lastBleImgNumber % 100_000_000)
+    }
     private(set) var bleIncidentLogRelays = [String: BleIncidentLogRelayEntry]()
     /// BES bytes kept on the phone until the MTK log for the same report has been uploaded.
     private var heldBesLogs = [String: HeldBesLog]()
@@ -2608,9 +2623,32 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
-    func requestPhoto(_ request: PhotoRequest) {
+    func uploadPhoto(_ request: PhotoRequest) {
+        sendTakePhoto(request, localFile: false, deferred: false)
+    }
+
+    /// A photo kept on the phone. On glasses with deferred photos (`deferred`) the glasses keep it
+    /// and send only its preview, then the full photo on `fetchPhoto`; on older glasses it comes
+    /// whole now, as a file.
+    func capturePhoto(_ request: PhotoRequest, deferred: Bool) {
+        sendTakePhoto(request, localFile: !deferred, deferred: deferred)
+    }
+
+    /// Ask the glasses for a deferred photo's full size, or (`preview`) its preview again.
+    func fetchPhoto(_ request: PhotoRequest, preview: Bool) {
+        var json: [String: Any] = [
+            "type": "fetch_photo",
+            "requestId": request.requestId,
+            "size": request.size.rawValue,
+            "compress": request.compress.rawValue,
+        ]
+        if preview { json["preview"] = true }
+        sendJson(json, wakeUp: true)
+    }
+
+    private func sendTakePhoto(_ request: PhotoRequest, localFile: Bool, deferred: Bool) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) mode=\(request.mode.rawValue) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
+            "LIVE: PHOTO PIPELINE [5/6] uploadPhoto() entry requestId=\(request.requestId) mode=\(request.mode.rawValue) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
@@ -2618,14 +2656,16 @@ class MentraLive: NSObject, SGCManager {
             "requestId": request.requestId,
         ]
 
-        // Always generate BLE ID for potential fallback
-        let bleImgId =
-            "I" + String(format: "%09d", Int(Date().timeIntervalSince1970 * 1000) % 100_000_000)
-        json["bleImgId"] = bleImgId
-        json["transferMethod"] = request.localFile ? "ble" : request.transferMethod
-        if request.presendThumbnail { json["presend_thumbnail"] = true }
+        // The glasses keep a deferred photo and name the files they send (preview, then full photo).
+        let bleImgId = deferred ? "" : nextBleImgId()
+        if !deferred {
+            json["bleImgId"] = bleImgId
+            json["transferMethod"] = localFile ? "ble" : request.transferMethod
+        }
 
-        if request.localFile {
+        if deferred {
+            // Nothing to prepare: the glasses' files name their request.
+        } else if localFile {
             var transfer = BlePhotoTransfer(
                 bleImgId: bleImgId, requestId: request.requestId, webhookUrl: ""
             )
@@ -2652,7 +2692,7 @@ class MentraLive: NSObject, SGCManager {
         }
 
         // Add authToken to JSON if provided
-        if !request.localFile, let authToken = request.authToken, !authToken.isEmpty {
+        if !localFile, !deferred, let authToken = request.authToken, !authToken.isEmpty {
             json["authToken"] = authToken
         }
 
@@ -2676,10 +2716,21 @@ class MentraLive: NSObject, SGCManager {
         request.appendScanFields(to: &json)
 
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=\(request.localFile ? "ble (local file)" : request.transferMethod)"
+            "LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=\(deferred ? "deferred" : localFile ? "ble (local file)" : request.transferMethod)"
         )
         Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
 
+        sendJson(json, wakeUp: true)
+    }
+
+    /// Delete deferred photos on the glasses: these, or all of them when `requestIds` is nil.
+    func releasePhotos(requestIds: [String]?) {
+        var json: [String: Any] = ["type": "release_photos"]
+        if let requestIds {
+            json["requestIds"] = requestIds
+        } else {
+            json["all"] = true
+        }
         sendJson(json, wakeUp: true)
     }
 
@@ -3997,6 +4048,9 @@ class MentraLive: NSObject, SGCManager {
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
+                if let deferredPhotosVersion = fields["deferred_photos"] as? NSNumber {
+                    DeviceStore.shared.apply("glasses", "deferredPhotosVersion", deferredPhotosVersion.intValue)
+                }
                 if let hotspotOtaVersion = fields["hotspot_ota_version"] as? NSNumber {
                     DeviceStore.shared.apply(
                         "glasses",
@@ -4875,6 +4929,8 @@ class MentraLive: NSObject, SGCManager {
         advertiseFilePayloadCapabilityToBes()
         openL2capFileChannel()
         sendBleMtuConfig()
+        // Deferred photos still waited for are asked again: a restart loses what was queued.
+        Bridge.sendTypedMessage("glasses_ready", body: [:])
 
         // Invalidate any version fields from a prior link session so the next version_info
         // cannot leave a stale build number in RN (ASG is source of truth for PackageInfo).
@@ -5182,19 +5238,15 @@ class MentraLive: NSObject, SGCManager {
         let bleImgId = json["bleImgId"] as? String ?? ""
         let requestId = json["requestId"] as? String ?? ""
         let compressionDurationMs = json["compressionDurationMs"] as? Int64 ?? 0
-        if json["thumbnail"] as? Bool == true, !bleImgId.isEmpty, !requestId.isEmpty {
-            guard blePhotoTransfers.values.contains(where: {
-                !$0.isThumbnail && $0.requestId == requestId && bleImgId == "T" + $0.bleImgId.dropFirst()
-            }) else {
-                Bridge.log("LIVE: Ignoring thumbnail for an unknown photo request")
-                return
-            }
-            // Preserve any packets already received when the ready message is repeated.
-            if blePhotoTransfers[bleImgId] == nil {
-                var transfer = BlePhotoTransfer(bleImgId: bleImgId, requestId: requestId, webhookUrl: "")
-                transfer.isThumbnail = true
-                blePhotoTransfers[bleImgId] = transfer
-            }
+        if json["deferred"] as? Bool == true, !bleImgId.isEmpty, !requestId.isEmpty, blePhotoTransfers[bleImgId] == nil {
+            // A deferred photo's preview or full photo: the glasses name the file, and a restart or
+            // reconnect since the request doesn't matter. A repeated ready message keeps the packets.
+            var transfer = BlePhotoTransfer(bleImgId: bleImgId, requestId: requestId, webhookUrl: "")
+            transfer.preview = json["preview"] as? Bool == true
+            transfer.localFile = !transfer.preview
+            transfer.previewWidth = (json["width"] as? NSNumber)?.intValue
+            transfer.previewHeight = (json["height"] as? NSNumber)?.intValue
+            blePhotoTransfers[bleImgId] = transfer
         }
 
         Bridge.log(
@@ -5930,15 +5982,13 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func processAndUploadBlePhoto(_ transfer: BlePhotoTransfer, imageData: Data) {
-        if transfer.isThumbnail {
-            Bridge.sendPhotoStatus([
-                "type": "photo_status",
-                "requestId": transfer.requestId,
-                "status": "thumbnail_received",
-                "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
-                "thumbnailUrl": "data:image/jpeg;base64," + imageData.base64EncodedString(),
-                "fileSizeBytes": imageData.count,
-            ])
+        if transfer.preview {
+            let preview = PhotoPreview(
+                url: "data:image/jpeg;base64," + imageData.base64EncodedString(),
+                width: transfer.previewWidth,
+                height: transfer.previewHeight
+            )
+            Bridge.sendTypedMessage("photo_preview", body: preview.values.merging(["requestId": transfer.requestId]) { $1 })
             return
         }
         if transfer.localFile {

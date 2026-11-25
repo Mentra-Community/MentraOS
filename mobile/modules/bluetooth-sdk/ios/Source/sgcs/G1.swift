@@ -280,7 +280,7 @@ class G1: NSObject, SGCManager {
 
     func sendButtonMaxRecordingTime(_: Int) {}
 
-    func requestPhoto(_: PhotoRequest) {}
+    func uploadPhoto(_: PhotoRequest) {}
 
     func startStream(_: [String: Any]) {}
 

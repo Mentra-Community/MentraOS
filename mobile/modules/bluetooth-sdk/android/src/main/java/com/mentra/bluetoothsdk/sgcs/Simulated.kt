@@ -33,8 +33,8 @@ class Simulated : SGCManager() {
     }
 
     // Camera & Media
-    override fun requestPhoto(request: PhotoRequest) {
-        Bridge.log("requestPhoto save=${request.save}, sound=${request.sound}")
+    override fun uploadPhoto(request: PhotoRequest) {
+        Bridge.log("uploadPhoto save=${request.save}, sound=${request.sound}")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {

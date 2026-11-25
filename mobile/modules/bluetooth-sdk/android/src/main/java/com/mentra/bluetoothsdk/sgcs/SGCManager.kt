@@ -52,7 +52,7 @@ abstract class SGCManager {
     abstract fun sortMicRanking(list: MutableList<String>): MutableList<String>
 
     // Camera & Media
-    abstract fun requestPhoto(request: PhotoRequest)
+    abstract fun uploadPhoto(request: PhotoRequest)
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()
     /**

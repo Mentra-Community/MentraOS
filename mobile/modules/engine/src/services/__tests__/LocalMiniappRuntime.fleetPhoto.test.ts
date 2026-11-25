@@ -8,11 +8,14 @@ import {fleetEvents, type FleetPhotoEvent} from "../fleet/fleetEvents"
 // Same approach as LocalMiniappRuntime.softap.test.ts: run the shipped handlePhoto against faked I/O instead of
 // loading the Expo app singleton and every hardware service behind it.
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
-const start = source.search(/^ {2}private async handlePhoto\(/m)
-if (start < 0) throw new Error("Missing runtime method handlePhoto")
+// From the permission check and option parsing handlePhoto shares with camera.capture().
+const start = source.search(/^ {2}private cameraPermitted\(/m)
+if (start < 0) throw new Error("Missing runtime method cameraPermitted")
 const rest = source.slice(start)
-const end = rest.search(/^ {2}}$/m)
-if (end < 0) throw new Error("Missing end of runtime method handlePhoto")
+// Through sendPhotoError, which the photo handlers answer failures with.
+const errorAt = rest.indexOf("  private sendPhotoError(")
+const end = errorAt < 0 ? -1 : errorAt + rest.slice(errorAt).search(/^ {2}}$/m)
+if (end < 0) throw new Error("Missing runtime method sendPhotoError")
 const compiled = new Bun.Transpiler({loader: "ts"}).transformSync(`class Host { ${rest.slice(0, end + 3)} }`)
 
 const PACKAGE = "com.mentra.camera"

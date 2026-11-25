@@ -1493,8 +1493,8 @@ class Nimo : SGCManager() {
 
     // ---------- SGCManager: Camera & Media (no camera) ----------
 
-    override fun requestPhoto(request: PhotoRequest) {
-        Bridge.log("NIMO: requestPhoto - not supported (no camera)")
+    override fun uploadPhoto(request: PhotoRequest) {
+        Bridge.log("NIMO: uploadPhoto - not supported (no camera)")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {

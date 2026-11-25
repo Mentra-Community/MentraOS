@@ -3623,8 +3623,8 @@ class G2 : SGCManager() {
     }
 
     // Camera & Media - G2 has no camera
-    override fun requestPhoto(request: PhotoRequest) {
-        Bridge.log("G2: requestPhoto - not supported (no camera)")
+    override fun uploadPhoto(request: PhotoRequest) {
+        Bridge.log("G2: uploadPhoto - not supported (no camera)")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {

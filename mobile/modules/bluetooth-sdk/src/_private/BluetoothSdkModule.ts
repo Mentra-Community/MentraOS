@@ -37,7 +37,11 @@ import {
   ObservableStoreCategory,
   OtaQueryResult,
   OtaStartAckEvent,
-  PhotoRequestParams,
+  PhotoCapture,
+  PhotoCaptureParams,
+  PhotoPreview,
+  PhotoTaken,
+  PhotoUploadParams,
   PhotoSuccessResponseEvent,
   PublicBluetoothStatus,
   RgbLedAction,
@@ -62,7 +66,7 @@ import {
   WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
 import {warmUpCameraParamsForNative} from "./cameraRequestPayload"
-import {photoRequestParamsForNative} from "./photoRequestPayload"
+import {photoCaptureParamsForNative, photoUploadParamsForNative} from "./photoRequestPayload"
 import {streamRequestParamsForNative} from "./streamRequestPayload"
 
 /**
@@ -190,7 +194,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   resetWearTuning(): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
-   * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop).
+   * `uploadPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop).
    */
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
   setVideoRecordingDefaults(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
@@ -210,7 +214,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
    */
   setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
-  requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
+  uploadPhoto(params: PhotoUploadParams): Promise<PhotoSuccessResponseEvent>
+  capturePhoto(params: PhotoCaptureParams): PhotoCapture
+  takePhoto(params: PhotoCaptureParams): Promise<PhotoTaken>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   stopCameraWarmUp(requestId: string): Promise<void>
 
@@ -758,9 +764,64 @@ NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | Sc
   }
 }
 
-const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)
-NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
-  return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
+const nativeRequestPhoto = NativeBluetoothSdkModule.uploadPhoto.bind(NativeBluetoothSdkModule)
+NativeBluetoothSdkModule.uploadPhoto = function (params: PhotoUploadParams) {
+  return nativeRequestPhoto(photoUploadParamsForNative(params) as unknown as PhotoUploadParams)
+}
+
+const nativeModule = NativeBluetoothSdkModule as unknown as Record<string, unknown>
+const nativeCapturePhoto = bindNativeMethod<(params: Record<string, unknown>) => Promise<string>>(nativeModule, "capturePhoto")
+const nativePhotoCaptureStage = bindNativeMethod<(requestId: string, stage: string) => Promise<unknown>>(
+  nativeModule,
+  "photoCaptureStage",
+)
+const nativeReleasePhotoCapture = bindNativeMethod<(requestId: string) => Promise<void>>(nativeModule, "releasePhotoCapture")
+
+/** Each stage is a promise the caller may never await: none of them is an unhandled rejection. */
+function quiet<T>(promise: Promise<T>): Promise<T> {
+  promise.catch(() => undefined)
+  return promise
+}
+
+NativeBluetoothSdkModule.takePhoto = async function (params: PhotoCaptureParams): Promise<PhotoTaken> {
+  const capture = NativeBluetoothSdkModule.capturePhoto(params)
+  try {
+    return await capture.photo()
+  } finally {
+    void capture.release().catch(() => undefined)
+  }
+}
+
+NativeBluetoothSdkModule.capturePhoto = function (params: PhotoCaptureParams): PhotoCapture {
+  const requestId =
+    params.requestId?.trim() || `photo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  const started = quiet(nativeCapturePhoto({...photoCaptureParamsForNative(params), requestId}))
+  const stage = (name: "captured" | "preview" | "photo") =>
+    quiet(started.then(() => nativePhotoCaptureStage(requestId, name)))
+  // Each stage is asked for when first awaited, once.
+  let captured: Promise<void> | undefined
+  let preview: Promise<PhotoPreview> | undefined
+  let photo: Promise<PhotoTaken> | undefined
+  return {
+    requestId,
+    get captured() {
+      return (captured ??= quiet(stage("captured").then(() => undefined)))
+    },
+    get preview() {
+      return (preview ??= stage("preview") as Promise<PhotoPreview>)
+    },
+    photo: () =>
+      (photo ??= stage("photo").then((value) => {
+        const response = value as PhotoSuccessResponseEvent
+        return {
+          requestId,
+          fileUri: response.photoUrl ?? "",
+          mimeType: response.contentType || "image/jpeg",
+          size: response.fileSizeBytes ?? -1,
+        }
+      })),
+    release: () => started.then(() => nativeReleasePhotoCapture(requestId)),
+  }
 }
 
 const nativeWarmUpCamera = NativeBluetoothSdkModule.warmUpCamera.bind(NativeBluetoothSdkModule)

@@ -231,7 +231,7 @@ These are the supported React Native app developer entrypoints:
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget`, `unpair` |
 | Display | `displayText`, `clearDisplay`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
-| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
+| Camera and gallery | `uploadPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setPreferredMic`, `setVoiceActivityDetectionEnabled`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
 | LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
@@ -485,7 +485,7 @@ Use photo requests when your app needs the glasses to capture a photo and upload
 Android:
 
 ```kotlin
-val photo = sdk.requestPhoto(
+val photo = sdk.uploadPhoto(
     PhotoRequest(
         requestId = "assistant-${System.currentTimeMillis()}",
         size = PhotoSize.MEDIUM,
@@ -503,7 +503,7 @@ println("Photo delivered: ${photo.response.requestId}")
 iOS:
 
 ```swift
-let photo = try await sdk.requestPhoto(
+let photo = try await sdk.uploadPhoto(
     PhotoRequest(
         requestId: "assistant-\(Date().timeIntervalSince1970)",
         size: .medium,
@@ -521,7 +521,7 @@ print("Photo delivered: \(photo.requestId)")
 React Native:
 
 ```ts
-const photo = await BluetoothSdk.requestPhoto({
+const photo = await BluetoothSdk.uploadPhoto({
   requestId: `assistant-${Date.now()}`,
   size: 'medium',
   webhookUrl: 'https://api.example.com/mentra/photo',
@@ -534,7 +534,7 @@ const photo = await BluetoothSdk.requestPhoto({
 console.log('Photo delivered', photo.photoUrl ?? photo.uploadUrl);
 ```
 
-`requestPhoto(...)` resolves after capture and webhook delivery finish. It rejects when the glasses reject the request, phone-side Bluetooth fallback upload fails, the SDK cannot send the command, or the terminal photo response times out. Omit `exposureTimeNs` or pass `null` for auto exposure. Pass a positive nanosecond value for one-shot manual exposure, for example `8_333_333` for about 1/120s. Pass `iso` with manual exposure when you want a specific sensor gain; `iso` is ignored when auto exposure is active. The camera light is always enabled for photo capture and streaming as a privacy indicator.
+`uploadPhoto(...)` resolves after capture and webhook delivery finish. It rejects when the glasses reject the request, phone-side Bluetooth fallback upload fails, the SDK cannot send the command, or the terminal photo response times out. Omit `exposureTimeNs` or pass `null` for auto exposure. Pass a positive nanosecond value for one-shot manual exposure, for example `8_333_333` for about 1/120s. Pass `iso` with manual exposure when you want a specific sensor gain; `iso` is ignored when auto exposure is active. The camera light is always enabled for photo capture and streaming as a privacy indicator.
 
 Your webhook should accept multipart form data with a `photo` file and `requestId`. If you include `authToken`, the uploader adds `Authorization: Bearer <token>` on the webhook request.
 
@@ -816,7 +816,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. |
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
-| `photo_response` | `PhotoResponseEvent` | Terminal photo request success or failure event. `requestPhoto(...)` resolves after capture and webhook delivery finish, and rejects on glasses, phone-relay, send, or timeout failure. |
+| `photo_response` | `PhotoResponseEvent` | Terminal photo request success or failure event. `uploadPhoto(...)` resolves after capture and webhook delivery finish, and rejects on glasses, phone-relay, send, or timeout failure. |
 | `video_recording_status` | `VideoRecordingStatusEvent` | Video recording start/stop succeeds or fails, or a status query reports whether the glasses are recording. `startVideoRecording(...)` resolves from `recording_started`; `stopVideoRecording(...)` resolves from `recording_stopped` unless a webhook upload was requested, in which case it waits for upload success. |
 | `media_success` / `media_error` | `MediaUploadEvent` | Raw glasses media upload completion events. Video webhook stops use these events to resolve or reject the `stopVideoRecording(...)` promise after recording has stopped. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
@@ -860,7 +860,7 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | `connect` / `connectDefault` | `connect` saves connected glasses as default and cancels existing connection attempts unless options override that behavior. `connectDefault` uses the app-restored default device. |
 | `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
 | `setMicState` | `useGlassesMic = true`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
-| `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. `exposureTimeNs` is optional; omitted or `null` means auto exposure. `iso` is only used with manual `exposureTimeNs`. The camera light is always enabled by the SDK. |
+| `PhotoRequest` / `uploadPhoto` | Pass explicit size, compression, and sound. `exposureTimeNs` is optional; omitted or `null` means auto exposure. `iso` is only used with manual `exposureTimeNs`. The camera light is always enabled by the SDK. |
 | `startVideoRecording` / `stopVideoRecording` | `startVideoRecording` resolves from `recording_started`. `stopVideoRecording` without a webhook resolves from `recording_stopped`; with a webhook it waits for `recording_stopped` plus video `media_success` and rejects on video `media_error`. |
 | `StreamRequest` / `startStream` | `sound = true` by default in native SDK calls. The SDK sends stream keep-alives automatically, and the camera light is always enabled while streaming. |
 

@@ -9,10 +9,32 @@ const requestPhotoNative = mock(async (_req: unknown): Promise<unknown> => undef
 const warmUpCameraNative = mock(async (_req: unknown): Promise<undefined> => undefined)
 const stopCameraWarmUpNative = mock(async (_requestId: string): Promise<undefined> => undefined)
 
+/** A Bluetooth SDK capture that went well, unless a test says otherwise. */
+type NativeCapture = {
+  requestId: string
+  captured: Promise<void>
+  preview: Promise<{url: string; width?: number; height?: number}>
+  photo: () => Promise<{requestId: string; fileUri: string; mimeType: string; size: number}>
+  release: () => Promise<void>
+}
+const nativeReleases: string[] = []
+const goodCapture = (params: unknown): NativeCapture => {
+  const {requestId} = params as {requestId: string}
+  return {
+    requestId,
+    captured: Promise.resolve(),
+    preview: Promise.resolve({url: "data:image/jpeg;base64,AAAA", width: 500, height: 375}),
+    photo: async () => ({requestId, fileUri: "file:///cache/ble.jpg", mimeType: "image/jpeg", size: 99}),
+    release: async () => void nativeReleases.push(requestId),
+  }
+}
+const capturePhotoNative = mock(goodCapture)
+
 import {bluetoothSdk} from "./bluetoothSdkTestMock"
 
 Object.assign(bluetoothSdk, {
-  requestPhoto: requestPhotoNative,
+  uploadPhoto: requestPhotoNative,
+  capturePhoto: capturePhotoNative,
   warmUpCamera: warmUpCameraNative,
   stopCameraWarmUp: stopCameraWarmUpNative,
 })
@@ -37,7 +59,7 @@ Object.assign(cloudClientService, {startManagedPhoto, awaitManagedPhotoReady})
 // isGlassesConnected. Mock both (the real store transitively drags
 // react-native, which bun can't parse); the store state is mutable so each
 // test can flip the connection.
-let glassesState: {connection: {state: string}; capabilities?: {hasCamera?: boolean}} = {
+let glassesState: {connection: {state: string}; capabilities?: {hasCamera?: boolean}; deferredPhotosVersion?: number} = {
   connection: {state: "connected"},
 }
 mock.module("../../stores/glasses", () => ({
@@ -52,10 +74,14 @@ const {fleetEvents} = await import("../fleet/fleetEvents")
 
 beforeEach(() => {
   Object.assign(bluetoothSdk, {
-    requestPhoto: requestPhotoNative,
+    uploadPhoto: requestPhotoNative,
+    capturePhoto: capturePhotoNative,
     warmUpCamera: warmUpCameraNative,
     stopCameraWarmUp: stopCameraWarmUpNative,
   })
+  capturePhotoNative.mockClear()
+  capturePhotoNative.mockImplementation(goodCapture)
+  nativeReleases.length = 0
   requestPhotoNative.mockClear()
   warmUpCameraNative.mockClear()
   stopCameraWarmUpNative.mockClear()
@@ -308,45 +334,22 @@ describe("PhonePhotoCoordinator", () => {
     })
   })
 
-  describe("local photos", () => {
-    const SAVED = {
-      type: "photo_response",
-      state: "success",
-      uploadUrl: "",
-      photoUrl: "file:///cache/mentra_local_photos/photo_1.jpg",
-      contentType: "image/jpeg",
-      fileSizeBytes: 61234,
-      timestamp: 1,
-    }
-    /** Native answers a local request with the saved file, under the short BLE id it was sent. */
-    const savesTheFile = () =>
-      requestPhotoNative.mockImplementation(async (req) => ({
-        ...SAVED,
-        requestId: (req as {requestId: string}).requestId,
-      }))
-
-    test("takes the photo over BLE with no cloud request and resolves with the saved file", async () => {
-      savesTheFile()
+  describe("photos kept on the phone", () => {
+    test("takes the photo with no cloud request and resolves with the file", async () => {
       const coord = new PhonePhotoCoordinator()
       const result = await coord.takeLocalPhoto("com.a", {size: "low", saveToGallery: true, transferMethod: "direct"})
-      expect(result).toEqual({
-        fileUri: SAVED.photoUrl,
-        mimeType: "image/jpeg",
-        size: 61234,
-        requestId: expect.stringMatching(/^p[0-9a-z]+$/),
-      })
+      expect(result).toEqual({fileUri: "file:///cache/ble.jpg", mimeType: "image/jpeg", size: 99, requestId: expect.stringMatching(/^p[0-9a-z]+$/)})
       expect(startManagedPhoto).not.toHaveBeenCalled()
-      expect(awaitManagedPhotoReady).not.toHaveBeenCalled()
-      const arg = requestPhotoNative.mock.calls[0]![0] as Record<string, unknown>
-      expect(arg).toMatchObject({appId: "com.a", size: "low", save: true, webhookUrl: null, localFile: true})
-      expect(arg.requestId).toMatch(/^[0-9a-f]{4}$/)
-      // The glasses can only reach the phone over BLE; native forces it, whatever the miniapp asked.
-      expect("transferMethod" in arg).toBe(false)
-      expect(coord.owns(result.requestId)).toBe(false)
+      const arg = capturePhotoNative.mock.calls[0]![0] as Record<string, unknown>
+      expect(arg).toMatchObject({requestId: result.requestId, appId: "com.a", size: "low", save: true})
+      // The photo comes to the phone however the miniapp asked: no upload target, no transfer method.
+      expect("transferMethod" in arg || "webhookUrl" in arg).toBe(false)
+      // takeLocalPhoto releases the glasses' copy once the photo is here.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(nativeReleases).toEqual([result.requestId])
     })
 
-    test("reports the photo to Fleet under the phone's own request ID", async () => {
-      savesTheFile()
+    test("reports the photo to Fleet under its own ID", async () => {
       const stages: string[] = []
       const stop = fleetEvents.subscribe({photo: (event) => stages.push(`${event.stage}:${event.operationId}`)})
       try {
@@ -357,31 +360,59 @@ describe("PhonePhotoCoordinator", () => {
       }
     })
 
-    test("rejects when native answers without a saved file, instead of waiting for the watchdog", async () => {
-      requestPhotoNative.mockImplementation(async () => undefined)
-      const err = await expectPhotoError(new PhonePhotoCoordinator().takeLocalPhoto("com.a", {}))
-      expect(err.code).toBe("LOCAL_PHOTO_UNAVAILABLE")
-      expect(err.stage).toBe("save")
+    test("many captures are in flight at once, each with its preview", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const captures = [coord.capturePhoto("com.a", {}), coord.capturePhoto("com.a", {}), coord.capturePhoto("com.a", {})]
+      const previews = await Promise.all(captures.map((capture) => capture.preview))
+      expect(capturePhotoNative).toHaveBeenCalledTimes(3)
+      expect(new Set(captures.map((capture) => capture.photoId)).size).toBe(3)
+      expect(previews[0]).toEqual({url: "data:image/jpeg;base64,AAAA", width: 500, height: 375})
     })
 
-    test("a glasses error rejects with its code, through the short BLE id", async () => {
-      requestPhotoNative.mockImplementation(() => new Promise<never>(() => {}))
+    test("glasses that keep the photo give it over the glasses file fetch, which falls back to Bluetooth", async () => {
+      glassesState = {connection: {state: "connected"}, deferredPhotosVersion: 1}
+      const fetchFile = mock(async (_fileId: string, _overBluetooth: () => Promise<string>) => "file:///cache/wifi.jpg")
+      const coord = new PhonePhotoCoordinator(undefined, undefined, undefined, fetchFile)
+      const capture = coord.capturePhoto("com.a", {}, "p9")
+      expect(await capture.photo()).toEqual({fileUri: "file:///cache/wifi.jpg", mimeType: "image/jpeg", size: -1, requestId: "p9"})
+      expect(fetchFile.mock.calls[0]![0]).toBe("p9")
+      const bluetooth = new PhonePhotoCoordinator(undefined, undefined, undefined, (_id, overBluetooth) => overBluetooth())
+      expect((await bluetooth.capturePhoto("com.a", {}).photo()).fileUri).toBe("file:///cache/ble.jpg")
+    })
+
+    test("a miniapp reaches only its own captures, and its own are released when it closes", async () => {
       const coord = new PhonePhotoCoordinator()
-      const p = coord.takeLocalPhoto("com.a", {})
-      await new Promise((r) => setTimeout(r, 5))
-      const bleId = (requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId
-      expect(coord.owns(bleId)).toBe(true)
-      coord.handlePhotoError(bleId, "CAMERA_BUSY", "Busy")
-      const err = await expectPhotoError(p)
-      expect(err.code).toBe("CAMERA_BUSY")
-      expect(coord.owns(bleId)).toBe(false)
+      const a = coord.capturePhoto("com.a", {}, "pa")
+      coord.capturePhoto("com.a", {}, "pb")
+      expect(coord.capture("com.a", "pa")).toBe(a)
+      expect(() => coord.capture("com.b", "pa")).toThrow("No photo pa")
+      await coord.releaseCaptures("com.a")
+      expect(nativeReleases.sort()).toEqual(["pa", "pb"])
+      expect(() => coord.capture("com.a", "pa")).toThrow("No photo pa")
+    })
+
+    test("a capture the glasses refuse rejects with their code and counts as failed", async () => {
+      capturePhotoNative.mockImplementation((params: unknown) => {
+        const refused = Promise.reject(Object.assign(new Error("Busy"), {code: "CAMERA_BUSY"}))
+        refused.catch(() => undefined)
+        return {...goodCapture(params), captured: refused}
+      })
+      const stages: string[] = []
+      const stop = fleetEvents.subscribe({photo: (event) => stages.push(event.stage)})
+      try {
+        const err = await expectPhotoError(new PhonePhotoCoordinator().capturePhoto("com.a", {}).captured)
+        expect(err.code).toBe("CAMERA_BUSY")
+        expect(stages).toEqual(["requested", "failed"])
+      } finally {
+        stop()
+      }
     })
 
     test("rejects with GLASSES_NOT_CONNECTED before sending anything", async () => {
       glassesState = {connection: {state: "disconnected"}}
       const err = await expectPhotoError(new PhonePhotoCoordinator().takeLocalPhoto("com.a", {}))
       expect(err.code).toBe("GLASSES_NOT_CONNECTED")
-      expect(requestPhotoNative).not.toHaveBeenCalled()
+      expect(capturePhotoNative).not.toHaveBeenCalled()
     })
   })
 
@@ -396,7 +427,7 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative).not.toHaveBeenCalled()
     })
 
-    test("BluetoothSdk.requestPhoto rejection surfaces as PhotoError(BLE_SEND_FAILED) and releases the slot", async () => {
+    test("BluetoothSdk.uploadPhoto rejection surfaces as PhotoError(BLE_SEND_FAILED) and releases the slot", async () => {
       // Hang the ready push so the BLE rejection deterministically wins.
       awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
       requestPhotoNative.mockRejectedValueOnce(new Error("BLE down"))
@@ -903,36 +934,22 @@ describe("a photo during a stream this phone relays", () => {
         size: 6,
         requestId,
       })
-      expect(requestPhotoNative).not.toHaveBeenCalled()
+      expect(capturePhotoNative).not.toHaveBeenCalled()
       expect(startManagedPhoto).not.toHaveBeenCalled()
       expect(upload).not.toHaveBeenCalled()
-      expect(coord.owns(result.requestId)).toBe(false)
     })
 
     test("a stream that stops before its next frame leaves the photo to the glasses", async () => {
       const {coord, save} = streamingLocally(null)
-      requestPhotoNative.mockImplementation(async (req) => ({
-        type: "photo_response",
-        state: "success",
-        requestId: (req as {requestId: string}).requestId,
-        uploadUrl: "",
-        photoUrl: "file:///cache/mentra_local_photos/photo_1.jpg",
-        contentType: "image/jpeg",
-        fileSizeBytes: 61234,
-        timestamp: 1,
-      }))
       const result = await coord.takeLocalPhoto("com.a", {})
-      expect(result.fileUri).toBe("file:///cache/mentra_local_photos/photo_1.jpg")
+      expect(result.fileUri).toBe("file:///cache/ble.jpg")
       expect(save).not.toHaveBeenCalled()
     })
 
     test("a caller that paused the stream for the camera gets the camera, not a frame", async () => {
       const {coord, grab, save} = streamingLocally()
-      requestPhotoNative.mockImplementation(async () => {
-        throw new Error("sent")
-      })
-      await expectPhotoError(coord.takeLocalPhoto("com.a", {streamFrame: false}))
-      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+      await coord.takeLocalPhoto("com.a", {streamFrame: false})
+      expect(capturePhotoNative).toHaveBeenCalledTimes(1)
       expect(grab).not.toHaveBeenCalled()
       expect(save).not.toHaveBeenCalled()
     })

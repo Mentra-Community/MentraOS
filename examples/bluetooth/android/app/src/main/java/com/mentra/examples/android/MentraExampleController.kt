@@ -1023,7 +1023,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
         val responseEvent = try {
             withContext(Dispatchers.IO) {
-                mentraBluetoothSdk.requestPhoto(
+                mentraBluetoothSdk.uploadPhoto(
                     buildPhotoRequest(
                         requestId = requestId,
                         webhookUrl = uploadUrl,
@@ -1061,7 +1061,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
         val responseEvent = try {
             withContext(Dispatchers.IO) {
-                mentraBluetoothSdk.requestPhoto(
+                mentraBluetoothSdk.uploadPhoto(
                     buildPhotoRequest(
                         requestId = requestId,
                         webhookUrl = uploadUrl,
@@ -1077,7 +1077,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             throw error
         }
         handlePhotoResponse(responseEvent)
-        addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
+        addEvent("TX", "uploadPhoto requestId=$requestId webhookUrl=$uploadUrl")
     }
 
     private suspend fun captureToGlassesStorage() {
@@ -1096,7 +1096,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
         val responseEvent = try {
             withContext(Dispatchers.IO) {
-                mentraBluetoothSdk.requestPhoto(
+                mentraBluetoothSdk.uploadPhoto(
                     buildPhotoRequest(requestId = requestId, webhookUrl = "", save = true)
                 )
             }
@@ -3845,7 +3845,7 @@ println("Video stopped: ${'$'}{stopped.status}")
     val saveLine = if (photoDestination == PhotoDestination.GLASSES_STORAGE) "\n      save = true," else ""
     return """
 $prefix
-val photo = mentraBluetoothSdk.requestPhoto(
+val photo = mentraBluetoothSdk.uploadPhoto(
     PhotoRequest(
       size = PhotoSize.${when(size) { "low" -> "LOW"; "high" -> "HIGH"; "max" -> "MAX"; else -> "MEDIUM" }},
       webhookUrl = $webhookLine,$saveLine

@@ -18,7 +18,7 @@ function resetNative(): void {
     "displayText",
     "connectDefault",
     "stopScan",
-    "requestPhoto",
+    "uploadPhoto",
     "warmUpCamera",
   ]) {
     mockNative[name] = jest.fn()

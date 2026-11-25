@@ -1568,7 +1568,7 @@ class G1 : SGCManager() {
 
     }
 
-    override fun requestPhoto(request: PhotoRequest) {
+    override fun uploadPhoto(request: PhotoRequest) {
 
     }
 

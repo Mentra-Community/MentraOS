@@ -15,7 +15,7 @@ import UltraliteSDK
 class Mach1: UltraliteBaseViewController, SGCManager {
     func sendIncidentId(_: String, apiBaseUrl _: String?) {}
 
-    func requestPhoto(_: PhotoRequest) {}
+    func uploadPhoto(_: PhotoRequest) {}
 
     func sendGalleryMode() {}
 

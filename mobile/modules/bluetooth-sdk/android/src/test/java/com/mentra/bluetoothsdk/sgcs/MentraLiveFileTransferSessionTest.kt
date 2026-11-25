@@ -22,6 +22,22 @@ class MentraLiveFileTransferSessionTest {
         }
     }
 
+    @Test fun shortLastPacketFirstThenFullPackets() {
+        // After a reconnect the first packet through can be the last, short one.
+        for (flags in listOf(0, 2)) {
+            val source = ByteArray(4611) { (it % 251).toByte() }
+            val session = MentraLive.FileTransferSession("T1", source.size, flags)
+            session.recalculateTotalPackets(211)
+            assertTrue(session.addPacket(11, source.copyOfRange(4400, 4611)))
+            for (index in 0 until 11) {
+                assertTrue(session.addPacket(index, source.copyOfRange(index * 400, index * 400 + 400)))
+            }
+            assertEquals(12, session.totalPackets)
+            assertTrue(session.isComplete)
+            assertArrayEquals(source, session.assembleFile())
+        }
+    }
+
     @Test fun legacyInflatedSizeAndLargeUnflaggedPayloads() {
         // Flag 1 enables batched ACKs but still uses legacy size semantics.
         for ((pack, headerSize, actualSize, packets) in listOf(

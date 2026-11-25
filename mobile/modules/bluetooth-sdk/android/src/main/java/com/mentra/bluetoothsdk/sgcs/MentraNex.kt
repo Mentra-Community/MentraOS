@@ -362,8 +362,8 @@ class MentraNex : SGCManager() {
     override fun requestVersionInfo() { Bridge.log("Nex: requestVersionInfo operation not supported") }
 
     // Camera & Media: Not supported on Nex (No camera)
-    override fun requestPhoto(request: PhotoRequest) {
-        Bridge.log("Nex: requestPhoto operation not supported")
+    override fun uploadPhoto(request: PhotoRequest) {
+        Bridge.log("Nex: uploadPhoto operation not supported")
     }
     override fun startStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startStream operation not supported") }
     override fun stopStream() { Bridge.log("Nex: stopStream operation not supported") }

@@ -167,7 +167,7 @@ class Mach1 : SGCManager() {
         return list
     }
 
-    override fun requestPhoto(request: PhotoRequest) {
+    override fun uploadPhoto(request: PhotoRequest) {
 
     }
 

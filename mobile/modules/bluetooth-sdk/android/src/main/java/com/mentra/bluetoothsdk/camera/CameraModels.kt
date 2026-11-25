@@ -203,7 +203,8 @@ enum class PhotoMode(val value: String) {
 data class PhotoRequest @JvmOverloads constructor(
     val requestId: String = generatedCameraRequestId("photo"),
     val size: PhotoSize,
-    val webhookUrl: String,
+    /** Where the glasses (or the phone, over BLE) upload the photo; ignored by `capturePhoto`. */
+    val webhookUrl: String = "",
     val authToken: String? = null,
     val compress: PhotoCompression = PhotoCompression.NONE,
     val save: Boolean = false,
@@ -224,13 +225,6 @@ data class PhotoRequest @JvmOverloads constructor(
     val mode: PhotoMode = PhotoMode.PHOTO,
     /** `direct` disables BLE fallback; `ble` skips direct upload; `auto` tries both. */
     val transferMethod: String = "auto",
-    val presendThumbnail: Boolean = false,
-    /**
-     * Keep the photo on the phone: it comes over BLE, is saved as a JPEG file, and the
-     * success response carries that file's URI as `photoUrl`. Nothing is uploaded, and
-     * `webhookUrl` and `transferMethod` are ignored.
-     */
-    val localFile: Boolean = false,
 ) {
     companion object {
         private fun transferMethodFromValue(value: Any?): String {
@@ -282,8 +276,6 @@ data class PhotoRequest @JvmOverloads constructor(
                 sound = boolValue(values, "sound") ?: true,
                 mode = PhotoMode.fromValue(stringValue(values, "mode")),
                 transferMethod = transferMethodFromValue(values["transferMethod"]),
-                presendThumbnail = boolValue(values, "presend_thumbnail") ?: false,
-                localFile = boolValue(values, "localFile") ?: false,
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
                 aeExposureDivisor = aeDivisor,
@@ -482,6 +474,16 @@ private fun Map<String, Any>.withOptionalPhotoMetadata(
         success.fileSizeBytes?.let { this["fileSizeBytes"] = it }
     }
 
+/** A photo's preview: the glasses' at most 500 px JPEG, as a `data:image/jpeg;base64,` URL. */
+data class PhotoPreview(val url: String, val width: Int?, val height: Int?) {
+    val values: Map<String, Any>
+        get() = buildMap {
+            put("url", url)
+            width?.let { put("width", it) }
+            height?.let { put("height", it) }
+        }
+}
+
 data class PhotoResponseEvent(
     val response: PhotoResponse,
 ) {
@@ -494,8 +496,6 @@ data class PhotoResponseEvent(
 data class PhotoStatusEvent(
     val values: Map<String, Any>,
 ) {
-    val thumbnailUrl: String? get() = stringValue(values, "thumbnailUrl")
-    val fileSizeBytes: Long? get() = longValue(values, "fileSizeBytes")
     val requestId: String get() = stringValue(values, "requestId").orEmpty()
     val status: String get() = stringValue(values, "status").orEmpty()
     val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()

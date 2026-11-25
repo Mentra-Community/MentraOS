@@ -1074,16 +1074,16 @@ class Nimo: NSObject, SGCManager {
 
     // MARK: - SGCManager: Camera & Media (no camera)
 
-    func requestPhoto(
+    func uploadPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
         compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?,
         iso _: Int?
     ) {
-        Bridge.log("NIMO: requestPhoto - not supported (no camera)")
+        Bridge.log("NIMO: uploadPhoto - not supported (no camera)")
     }
 
-    func requestPhoto(_: PhotoRequest) {
-        Bridge.log("NIMO: requestPhoto(PhotoRequest) - not supported (no camera)")
+    func uploadPhoto(_: PhotoRequest) {
+        Bridge.log("NIMO: uploadPhoto(PhotoRequest) - not supported (no camera)")
     }
 
     func startStream(_: [String: Any]) {

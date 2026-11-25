@@ -217,6 +217,12 @@ export enum MiniappRequestType {
 
   // ----- Photos, streaming -----
   PHOTO = "miniapp_photo",
+  /** Start a photo in stages (`camera.capture`): `{photoId, ...options}`; answers once it started. */
+  PHOTO_CAPTURE = "miniapp_photo_capture",
+  /** One stage of a capture: `{photoId, stage: "captured" | "preview" | "photo"}`. */
+  PHOTO_CAPTURE_STAGE = "miniapp_photo_capture_stage",
+  /** A capture's full photo isn't needed: `{photoId}`; the glasses delete it. */
+  PHOTO_RELEASE = "miniapp_photo_release",
   VIDEO_RECORDING_START = "miniapp_video_recording_start",
   VIDEO_RECORDING_STOP = "miniapp_video_recording_stop",
   STREAM_START = "miniapp_stream_start",

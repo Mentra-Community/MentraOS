@@ -54,7 +54,7 @@ import {MiniappSystemActions} from "./MiniappSystemActions"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {fleetEvents} from "./fleet/fleetEvents"
-import {PhotoError, phonePhotoCoordinator, type PhotoOpts} from "./PhonePhotoCoordinator"
+import {PhotoError, phonePhotoCoordinator, type LocalPhotoTaken, type PhotoOpts} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
@@ -1181,6 +1181,7 @@ class LocalMiniappRuntime {
     const cameraCleanup = Promise.allSettled([
       this.leaveMeetingForApp(packageName),
       phonePhotoCoordinator.stopWarmUpForApp(packageName),
+      phonePhotoCoordinator.releaseCaptures(packageName),
       phoneStreamCoordinator.stop(packageName),
       phoneVideoCoordinator.stopForApp(packageName),
     ]).then((results) => {
@@ -1546,6 +1547,11 @@ class LocalMiniappRuntime {
       // Cloud-coordinated features
       case MiniappRequestType.PHOTO:
         void this.handlePhoto(packageName, payload, requestId)
+        break
+      case MiniappRequestType.PHOTO_CAPTURE:
+      case MiniappRequestType.PHOTO_CAPTURE_STAGE:
+      case MiniappRequestType.PHOTO_RELEASE:
+        void this.handlePhotoCapture(packageName, requestType, payload, requestId)
         break
       case MiniappRequestType.CAMERA_WARM_UP:
         void this.handleCameraWarmUp(packageName, payload, requestId)
@@ -3864,7 +3870,14 @@ class LocalMiniappRuntime {
     packageName: string,
     opts: PhotoOpts,
   ): Promise<{requestId: string; key: string; url?: string; mimeType: string; size: number; expiresAt: number}> {
-    const photo = await phonePhotoCoordinator.takeLocalPhoto(packageName, opts)
+    return this.keepPhotoForMiniapp(packageName, await phonePhotoCoordinator.takeLocalPhoto(packageName, opts))
+  }
+
+  /** Hand a photo file on the phone to the miniapp as an expiring blob (see takeLocalPhoto). */
+  private async keepPhotoForMiniapp(
+    packageName: string,
+    photo: LocalPhotoTaken,
+  ): Promise<{requestId: string; key: string; url?: string; mimeType: string; size: number; expiresAt: number}> {
     try {
       const blob = this.blobStore.storeExpiringFile(
         packageName,
@@ -3896,42 +3909,47 @@ class LocalMiniappRuntime {
     }
   }
 
-  private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
-    // Manifest CAMERA permission gate.
+  /** The manifest's CAMERA permission, or an error answer naming the operation. */
+  private cameraPermitted(packageName: string, requestId: string | undefined, operation: string): boolean {
     const app = this.connectedApps.get(packageName)
-    const hasCameraPermission = app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")
-    if (!hasCameraPermission) {
-      logPermissionNotDeclared(packageName, "CAMERA", "to take a photo", `{"type": "CAMERA"}`)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
-        message: `CAMERA permission not declared in miniapp.json. Add {"type": "CAMERA"} to the "permissions" array.`,
-        permission: "CAMERA",
-        operation: MiniappRequestType.PHOTO,
-      })
-      return
-    }
+    if (app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")) return true
+    logPermissionNotDeclared(packageName, "CAMERA", "to take a photo", `{"type": "CAMERA"}`)
+    this.sendResult(packageName, requestId, false, undefined, {
+      code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+      message: `CAMERA permission not declared in miniapp.json. Add {"type": "CAMERA"} to the "permissions" array.`,
+      permission: "CAMERA",
+      operation,
+    })
+    return false
+  }
 
+  private photoOpts(payload: Record<string, unknown>): PhotoOpts {
+    return {
+      size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
+      mode: payload.mode as "photo" | "text" | undefined,
+      transferMethod: payload.transferMethod as "auto" | "direct" | "ble" | undefined,
+      compress: parsePhotoCompression(payload.compress),
+      sound: payload.sound as boolean | undefined,
+      saveToGallery: payload.saveToGallery as boolean | undefined,
+      exposureTimeNs: payload.exposureTimeNs as number | undefined,
+      iso: payload.iso as number | null | undefined,
+      aeExposureDivisor: payload.aeExposureDivisor as number | undefined,
+      isoCap: payload.isoCap as number | undefined,
+      noiseReduction: payload.noiseReduction as boolean | undefined,
+      edgeEnhancement: payload.edgeEnhancement as boolean | undefined,
+      zsl: payload.zsl as boolean | undefined,
+      mfnr: payload.mfnr as boolean | undefined,
+      ispDigitalGain: payload.ispDigitalGain as number | undefined,
+      ispAnalogGain: payload.ispAnalogGain as string | undefined,
+      // Call pauses its stream to take a full-size photo; a stream frame must not replace it.
+      streamFrame: !acsMeetingService.photoPauseHeld(),
+    }
+  }
+
+  private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+    if (!this.cameraPermitted(packageName, requestId, MiniappRequestType.PHOTO)) return
     try {
-      const opts: PhotoOpts = {
-        size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
-        mode: payload.mode as "photo" | "text" | undefined,
-        transferMethod: payload.transferMethod as "auto" | "direct" | "ble" | undefined,
-        compress: parsePhotoCompression(payload.compress),
-        sound: payload.sound as boolean | undefined,
-        saveToGallery: payload.saveToGallery as boolean | undefined,
-        exposureTimeNs: payload.exposureTimeNs as number | undefined,
-        iso: payload.iso as number | null | undefined,
-        aeExposureDivisor: payload.aeExposureDivisor as number | undefined,
-        isoCap: payload.isoCap as number | undefined,
-        noiseReduction: payload.noiseReduction as boolean | undefined,
-        edgeEnhancement: payload.edgeEnhancement as boolean | undefined,
-        zsl: payload.zsl as boolean | undefined,
-        mfnr: payload.mfnr as boolean | undefined,
-        ispDigitalGain: payload.ispDigitalGain as number | undefined,
-        ispAnalogGain: payload.ispAnalogGain as string | undefined,
-        // Call pauses its stream to take a full-size photo; a stream frame must not replace it.
-        streamFrame: !acsMeetingService.photoPauseHeld(),
-      }
+      const opts = this.photoOpts(payload)
       // A request for local delivery gets the photo as one of the miniapp's own files and never
       // touches the cloud. Miniapps built before local delivery don't ask, and keep the cloud URL.
       const result =
@@ -3942,13 +3960,49 @@ class LocalMiniappRuntime {
       // The photo reached the miniapp. A call with no request ID has nobody to answer, so nothing was delivered.
       if (requestId) fleetEvents.photo({operationId: result.requestId, stage: "delivered"})
     } catch (err) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "Photo request failed",
-        stage: (err as {stage?: string}).stage,
-        transport: (err as {transport?: string}).transport,
-      })
+      this.sendPhotoError(packageName, requestId, err, "Photo request failed")
     }
+  }
+
+  /** `camera.capture()`: start a capture, answer one of its stages, or release it. */
+  private async handlePhotoCapture(
+    packageName: string,
+    type: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const photoId = typeof payload.photoId === "string" ? payload.photoId : ""
+    try {
+      if (type === MiniappRequestType.PHOTO_CAPTURE) {
+        if (!this.cameraPermitted(packageName, requestId, type)) return
+        phonePhotoCoordinator.capturePhoto(packageName, this.photoOpts(payload), photoId || undefined)
+        this.sendResult(packageName, requestId, true)
+        return
+      }
+      const capture = phonePhotoCoordinator.capture(packageName, photoId)
+      if (type === MiniappRequestType.PHOTO_RELEASE) {
+        await capture.release()
+        this.sendResult(packageName, requestId, true)
+      } else if (payload.stage === "captured") {
+        this.sendResult(packageName, requestId, true, await capture.captured)
+      } else if (payload.stage === "preview") {
+        this.sendResult(packageName, requestId, true, await capture.preview)
+      } else {
+        this.sendResult(packageName, requestId, true, await this.keepPhotoForMiniapp(packageName, await capture.photo()))
+        if (requestId) fleetEvents.photo({operationId: photoId, stage: "delivered"})
+      }
+    } catch (err) {
+      this.sendPhotoError(packageName, requestId, err, "Photo capture failed")
+    }
+  }
+
+  private sendPhotoError(packageName: string, requestId: string | undefined, err: unknown, fallback: string) {
+    this.sendResult(packageName, requestId, false, undefined, {
+      code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+      message: err instanceof Error ? err.message : fallback,
+      stage: (err as {stage?: string}).stage,
+      transport: (err as {transport?: string}).transport,
+    })
   }
 
   private async handleCameraWarmUp(

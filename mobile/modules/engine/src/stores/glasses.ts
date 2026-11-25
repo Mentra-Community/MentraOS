@@ -161,6 +161,7 @@ const initialState: GlassesStore = {
   mtkFirmwareVersion: "",
   besFirmwareVersion: "",
   hotspotOtaVersion: 0,
+  deferredPhotosVersion: 0,
   // wifi info
   wifi: {state: "disconnected"},
   wifiStatusKnown: false,
@@ -233,6 +234,7 @@ export const useGlassesStore = create<GlassesState>()(
         if (!isGlassesConnected(next.connection)) {
           next.wifiStatusKnown = false
           next.hotspotOtaVersion = 0
+          next.deferredPhotosVersion = 0
           // packageName is deliberately NOT cleared here. It is only ever safe to clear together
           // with buildNumber, which the native session boundary does atomically (both arrive in
           // version_info_1). Clearing identity alone would leave a stale sideloaded buildNumber

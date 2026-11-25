@@ -111,7 +111,7 @@ func sendRgbLedControl(requestId: String, packageName _: String?, action _: Stri
 
 //     func sendJson(_: [String: Any], wakeUp _: Bool) {}
 
-//     func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?) {}
+//     func uploadPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?) {}
 
 //     func forget() {}
 

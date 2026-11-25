@@ -2,13 +2,6 @@
 import XCTest
 
 final class PhotoLocalFileTests: XCTestCase {
-    func testLocalFileIsOptInAndSurvivesRequestRouting() throws {
-        XCTAssertFalse(try PhotoRequest.from(params: ["size": "low"]).localFile)
-        let request = try PhotoRequest.from(params: ["size": "low", "localFile": true])
-        XCTAssertTrue(request.localFile)
-        XCTAssertTrue(request.withRequestId("routed").localFile)
-    }
-
     func testSavingKeepsAJpegOnThePhoneUnchanged() throws {
         let jpeg = Data([0xFF, 0xD8, 1, 2, 3, 0xFF, 0xD9])
         let directory = FileManager.default.temporaryDirectory

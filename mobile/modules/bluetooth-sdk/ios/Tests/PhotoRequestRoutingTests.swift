@@ -22,8 +22,6 @@ final class PhotoRequestRoutingTests: XCTestCase {
         "zsl": false,
         "ispDigitalGain": 2,
         "ispAnalogGain": "4x",
-        "presend_thumbnail": true,
-        "localFile": true,
     ]
 
     private func assertSameCapture(_ routed: PhotoRequest, _ request: PhotoRequest, line: UInt = #line) {
@@ -43,22 +41,10 @@ final class PhotoRequestRoutingTests: XCTestCase {
         XCTAssertEqual(routed.zsl, request.zsl, line: line)
         XCTAssertEqual(routed.ispDigitalGain, request.ispDigitalGain, line: line)
         XCTAssertEqual(routed.ispAnalogGain, request.ispAnalogGain, line: line)
-        XCTAssertEqual(routed.presendThumbnail, request.presendThumbnail, line: line)
-        XCTAssertEqual(routed.localFile, request.localFile, line: line)
-    }
-
-    /// The glasses were never asked for a thumbnail on iOS: routing rebuilt the request without the flag.
-    func testThumbnailFlagReachesTheGlasses() throws {
-        let request = try PhotoRequest.from(params: ["size": "medium", "presend_thumbnail": true])
-        XCTAssertTrue(request.presendThumbnail)
-        XCTAssertTrue(request.routedForCapture().presendThumbnail)
-        XCTAssertFalse(try PhotoRequest.from(params: ["size": "medium"]).routedForCapture().presendThumbnail)
     }
 
     func testRoutingKeepsEveryField() throws {
         let request = try PhotoRequest.from(params: everyField)
-        XCTAssertTrue(request.presendThumbnail)
-        XCTAssertTrue(request.localFile)
         XCTAssertEqual(request.aeExposureDivisor, 4)
 
         let routed = request.routedForCapture()

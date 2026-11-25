@@ -18,7 +18,7 @@ protocol ControllerManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_ request: PhotoRequest)
+    func uploadPhoto(_ request: PhotoRequest)
     func startStream(_ message: [String: Any])
     func stopStream()
     func sendStreamKeepAlive(_ message: [String: Any])

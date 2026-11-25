@@ -6,6 +6,7 @@ import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { DeferredPhotosCard } from './DeferredPhotosCard';
 import { colors } from '../components/theme';
 import {
   galleryHotspotPasswordLabel,
@@ -100,7 +101,7 @@ console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
         ispAnalogGain !== null ? `  ispAnalogGain: "${ispAnalogGain}",` : null,
       ].filter((line): line is string => line !== null).join('\n');
   if (saveOnGlasses) {
-    return `${prefix}const photo = await BluetoothSdk.requestPhoto({
+    return `${prefix}const photo = await BluetoothSdk.uploadPhoto({
   webhookUrl: null,
   authToken: null,
   save: true,
@@ -112,14 +113,14 @@ console.log("Photo saved on glasses", savedPhoto?.name)`;
   }
   if (!useCloudServer) {
     return `${prefix}const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
-const photo = await BluetoothSdk.requestPhoto({
+const photo = await BluetoothSdk.uploadPhoto({
   webhookUrl: uploadUrl,
   authToken: null,
 ${requestFields}
 })
 console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
   }
-  return `${prefix}const photo = await BluetoothSdk.requestPhoto({
+  return `${prefix}const photo = await BluetoothSdk.uploadPhoto({
   webhookUrl,
   authToken: null,
 ${requestFields}
@@ -653,6 +654,9 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           status={sdk.cameraSettingsStatus}
         />
       </LinearGradient>
+      {connected && captureMode === 'photo' ? (
+        <DeferredPhotosCard />
+      ) : null}
     </ScrollView>
   );
 }

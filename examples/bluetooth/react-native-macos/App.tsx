@@ -79,7 +79,7 @@ export default function App() {
       if (pending && !signal.aborted && event.requestId === requestId) setLastAction(`Photo: ${event.status}`);
     });
     try {
-      const photo = await BluetoothSdk.requestPhoto({requestId, webhookUrl: url.href, size: 'medium', authToken: null, compress: 'none', sound: true});
+      const photo = await BluetoothSdk.uploadPhoto({requestId, webhookUrl: url.href, size: 'medium', authToken: null, compress: 'none', sound: true});
       if (signal.aborted) return;
       setPhotoUrl(photo.photoUrl);
       setLastAction(`Photo uploaded: ${photo.requestId}`);

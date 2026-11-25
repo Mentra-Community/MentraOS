@@ -161,7 +161,7 @@ export const bluetoothSdkMock = {
   setSystemTime: jest.fn(() => Promise.resolve()),
   logCurrentWifiFrequency: jest.fn(() => Promise.resolve()),
   queryGalleryStatus: jest.fn(() => Promise.resolve()),
-  requestPhoto: jest.fn(() => Promise.resolve()),
+  uploadPhoto: jest.fn(() => Promise.resolve()),
   startOtaUpdate: jest.fn(() => Promise.resolve()),
   sendOtaQueryStatus: jest.fn(() =>
     Promise.resolve({

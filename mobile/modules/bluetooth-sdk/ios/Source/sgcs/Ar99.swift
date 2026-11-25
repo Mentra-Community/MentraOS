@@ -599,8 +599,8 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_: PhotoRequest) {
-        Bridge.log("AR99: requestPhoto not implemented")
+    func uploadPhoto(_: PhotoRequest) {
+        Bridge.log("AR99: uploadPhoto not implemented")
     }
 
     func startStream(_: [String: Any]) {}

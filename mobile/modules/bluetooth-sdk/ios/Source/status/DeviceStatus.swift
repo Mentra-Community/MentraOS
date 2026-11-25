@@ -231,6 +231,11 @@ struct GlassesStatus: CustomStringConvertible {
         intValue(values["hotspotOtaVersion"]) ?? 0
     }
 
+    /// Deferred photos (`capturePhoto`): the glasses' version, 0 without.
+    var deferredPhotosVersion: Int {
+        intValue(values["deferredPhotosVersion"]) ?? 0
+    }
+
     var bluetoothName: String {
         stringValue(values, "bluetoothName") ?? ""
     }
@@ -784,6 +789,10 @@ struct GlassesStatusUpdate: CustomStringConvertible {
 
     var hotspotOtaVersion: Int? {
         optionalIntValue(values, "hotspotOtaVersion")
+    }
+
+    var deferredPhotosVersion: Int? {
+        optionalIntValue(values, "deferredPhotosVersion")
     }
 
     var bluetoothName: String? {

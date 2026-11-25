@@ -1,5 +1,5 @@
 import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
-import type {PhotoRequestParams, PhotoSize, PhotoTransferMethod} from "../BluetoothSdk.types"
+import type {PhotoCaptureParams, PhotoUploadParams, PhotoSize, PhotoTransferMethod} from "../BluetoothSdk.types"
 
 const PHOTO_TRANSFER_METHODS = new Set<PhotoTransferMethod>(["auto", "direct", "ble"])
 
@@ -36,30 +36,30 @@ function nonBlankString(value?: string | null): string | undefined {
 }
 
 /** Expo Android bridge rejects null values in Map<String, Any> — omit optional nullish fields. */
-export function photoRequestParamsForNative(params: PhotoRequestParams): Record<string, string | number | boolean> {
+export function photoUploadParamsForNative(params: PhotoUploadParams): Record<string, string | number | boolean> {
+  const payload = photoCaptureParamsForNative(params)
+  payload.transferMethod = photoTransferMethodForNative(params.transferMethod)
+  payload.webhookUrl = params.webhookUrl ?? ""
+  if (params.authToken != null && params.authToken.length > 0) {
+    payload.authToken = params.authToken
+  }
+  return payload
+}
+
+/** The capture settings of either kind of photo request, for the native bridge. */
+export function photoCaptureParamsForNative(params: PhotoCaptureParams): Record<string, string | number | boolean> {
   const payload: Record<string, string | number | boolean> = {
     size: normalizePhotoSizeTier(params.size),
     mode: params.mode ?? "photo",
-    transferMethod: photoTransferMethodForNative(params.transferMethod),
-    webhookUrl: params.webhookUrl ?? "",
     compress: parsePhotoCompression(params.compress),
     sound: params.sound,
   }
   const requestId = nonBlankString(params.requestId)
-  if (params.presend_thumbnail === true) {
-    payload.presend_thumbnail = true
-  }
-  if (params.localFile === true) {
-    payload.localFile = true
-  }
   if (requestId != null) {
     payload.requestId = requestId
   }
   if (params.save != null) {
     payload.save = params.save
-  }
-  if (params.authToken != null && params.authToken.length > 0) {
-    payload.authToken = params.authToken
   }
   const exposureTimeNs = params.exposureTimeNs
   const hasManualExposure = exposureTimeNs != null && Number.isFinite(exposureTimeNs) && exposureTimeNs > 0

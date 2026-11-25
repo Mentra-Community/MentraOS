@@ -40,8 +40,9 @@ before calling so you don't fire a request the glasses can't satisfy.
 ## Take a photo
 
 `takePhoto` sends the request, waits while the glasses capture and send the
-photo to the phone over Bluetooth, then resolves with where your miniapp finds
-it. The photo works without an internet connection.
+photo to the phone (over the glasses Wi-Fi link when it is up, else over
+Bluetooth), then resolves with where your miniapp finds it. The photo works
+without an internet connection.
 
 ```typescript
 const photo = await session.camera.takePhoto({ size: "high", sound: false });
@@ -74,6 +75,27 @@ The result is a `PhotoTaken`:
 | `mimeType` | `string` | MIME type of the image, e.g. `"image/jpeg"`. |
 | `size` | `number` | Image size in bytes. |
 | `expiresAt` | `number` | When the phone deletes the photo, as a Unix time in milliseconds. |
+
+## Take photos in stages
+
+`capture` returns at once with the photo's stages. Use it to take photos back to
+back and fetch only the ones you keep: the glasses send a small preview of
+every photo, and the full photo waits on the glasses until you ask for it.
+
+```typescript
+const capture = session.camera.capture({ size: "high" });
+await capture.captured;                      // the camera is free for the next photo
+const preview = await capture.preview;       // { url, width, height }, at most 500 px
+const photo = await capture.photo();         // the full photo, as takePhoto gives it
+await capture.release();                     // or skip photo(): the glasses delete it
+```
+
+Photos are never refused because others are being sent; only a capture
+requested while another is being taken rejects with `CAMERA_BUSY`. `preview.url`
+is a `data:image/jpeg;base64,` URL. The full photo stays on the glasses for 30
+minutes at most; `photo()` asks for it the first time and returns the same photo
+after that. `takePhoto(options)` is `capture(options).photo()`, releasing the
+glasses' copy once the photo is on the phone.
 
 ## Use the photo
 

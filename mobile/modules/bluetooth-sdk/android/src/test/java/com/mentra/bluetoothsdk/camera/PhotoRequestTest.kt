@@ -33,25 +33,6 @@ class PhotoRequestTest {
     }
 
     @Test
-    fun `thumbnail is opt in and survives request routing copies`() {
-        val fields = mapOf("size" to "medium", "webhookUrl" to "https://example.com/upload")
-        assertThat(PhotoRequest.fromMap(fields).presendThumbnail).isFalse()
-        assertThat(PhotoRequest.fromMap(fields + ("presend_thumbnail" to false)).presendThumbnail).isFalse()
-        val request = PhotoRequest.fromMap(fields + ("presend_thumbnail" to true))
-        assertThat(request.copy(requestId = "routed").presendThumbnail).isTrue()
-        assertThat(request.transferMethod).isEqualTo("auto")
-    }
-
-    @Test
-    fun `local file delivery is opt in and survives request routing copies`() {
-        val fields = mapOf("size" to "low")
-        assertThat(PhotoRequest.fromMap(fields).localFile).isFalse()
-        val request = PhotoRequest.fromMap(fields + ("localFile" to true))
-        assertThat(request.copy(requestId = "routed").localFile).isTrue()
-        assertThat(request.webhookUrl).isEmpty()
-    }
-
-    @Test
     fun `constructor generates requestId when omitted`() {
         val request =
             PhotoRequest(

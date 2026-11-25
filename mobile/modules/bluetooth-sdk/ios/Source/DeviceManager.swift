@@ -1785,6 +1785,18 @@ struct ViewState {
         try liveSgc().stopCameraWarmUp(requestId: requestId)
     }
 
+    func capturePhoto(_ request: PhotoRequest, deferred: Bool) throws {
+        try liveSgc().capturePhoto(request.routedForCapture(), deferred: deferred)
+    }
+
+    func fetchPhoto(_ request: PhotoRequest, preview: Bool) throws {
+        try liveSgc().fetchPhoto(request, preview: preview)
+    }
+
+    func releasePhotos(requestIds: [String]?) throws {
+        try liveSgc().releasePhotos(requestIds: requestIds)
+    }
+
     /// Request version info from glasses.
     /// Glasses will respond with version_info message containing build number, firmware version, etc.
     func requestVersionInfo(requestId: String? = nil) {
@@ -1899,10 +1911,10 @@ struct ViewState {
         }
     }
 
-    func requestPhoto(_ request: PhotoRequest) {
+    func uploadPhoto(_ request: PhotoRequest) {
         let routed = request.routedForCapture()
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress.rawValue) save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(routed.exposureTimeNs.map { String($0) } ?? "nil") iso=\(routed.iso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.uploadPhoto requestId=\(routed.requestId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress.rawValue) save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(routed.exposureTimeNs.map { String($0) } ?? "nil") iso=\(routed.iso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(
@@ -1910,7 +1922,7 @@ struct ViewState {
             )
             return
         }
-        sgc.requestPhoto(routed)
+        sgc.uploadPhoto(routed)
     }
 
     func connectDefault(requiresAncs: Bool = true) {

@@ -115,6 +115,8 @@ export type {
   CameraFovResult,
   CameraRoiPosition,
   CloudPhotoTaken,
+  PhotoCapture,
+  PhotoPreview,
   PhotoTaken,
   SetCameraFovOptions,
   StartVideoRecordingOptions,

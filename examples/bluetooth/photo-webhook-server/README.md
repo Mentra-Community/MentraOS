@@ -2,7 +2,7 @@
 
 This tiny local server is for testing Mentra Live photo and video uploads during SDK development.
 
-It receives `requestPhoto` and video-recording webhook uploads, saves the media on your computer, and serves JSON status endpoints that the Android, iOS, and React Native example apps can poll to show a preview.
+It receives `uploadPhoto` and video-recording webhook uploads, saves the media on your computer, and serves JSON status endpoints that the Android, iOS, and React Native example apps can poll to show a preview.
 
 ## Run
 

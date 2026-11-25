@@ -81,8 +81,8 @@ class Simulated: SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_ request: PhotoRequest) {
-        Bridge.log("requestPhoto save=\(request.save) sound=\(request.sound)")
+    func uploadPhoto(_ request: PhotoRequest) {
+        Bridge.log("uploadPhoto save=\(request.save) sound=\(request.sound)")
     }
 
     func startStream(_: [String: Any]) {

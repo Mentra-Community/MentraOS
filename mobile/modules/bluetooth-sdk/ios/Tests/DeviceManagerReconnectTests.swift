@@ -305,7 +305,7 @@ private final class ReconnectRecordingDevice: SGCManager {
     }
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
-    func requestPhoto(_: PhotoRequest) {}
+    func uploadPhoto(_: PhotoRequest) {}
     func startStream(_: [String: Any]) {}
     func stopStream() {}
     func sendStreamKeepAlive(_: [String: Any]) {}

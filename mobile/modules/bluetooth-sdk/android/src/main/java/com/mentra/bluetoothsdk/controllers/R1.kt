@@ -862,7 +862,7 @@ class R1 : ControllerManager() {
     override fun setMicEnabled(enabled: Boolean) {}
     override fun sortMicRanking(list: MutableList<String>): MutableList<String> = list
     override fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean) {}
-    override fun requestPhoto(request: PhotoRequest) {}
+    override fun uploadPhoto(request: PhotoRequest) {}
     override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {}
     override fun stopVideoRecording(requestId: String) {}
     override fun startStream(message: Map<String, Any>) {}

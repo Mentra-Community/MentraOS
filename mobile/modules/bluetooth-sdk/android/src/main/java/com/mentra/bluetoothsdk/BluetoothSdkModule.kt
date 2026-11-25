@@ -131,6 +131,8 @@ private inline fun <
 }
 
 class BluetoothSdkModule : Module() {
+    private val photoCaptures = java.util.concurrent.ConcurrentHashMap<String, PhotoCapture>()
+
     private var sdk: MentraBluetoothSdk? = null
     private var deviceManager: DeviceManager? = null
     private val logForwarding = LogForwardingBudget()
@@ -763,12 +765,12 @@ class BluetoothSdkModule : Module() {
 
         SdkCoroutineFunction("queryGalleryStatus") { -> requireSdk().queryGalleryStatus().values }
 
-        SdkCoroutineFunction("requestPhoto") { params: Map<String, Any?> ->
+        SdkCoroutineFunction("uploadPhoto") { params: Map<String, Any?> ->
             val req = PhotoRequest.fromMap(params)
             Bridge.log(
-                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} size=${req.size} mode=${req.mode.value} compress=${req.compress} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
+                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.uploadPhoto requestId=${req.requestId} size=${req.size} mode=${req.mode.value} compress=${req.compress} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
-            requireSdk().requestPhoto(req).values
+            requireSdk().uploadPhoto(req).values
         }
 
         SdkCoroutineFunction("warmUpCamera") { params: Map<String, Any?> ->
@@ -787,6 +789,29 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("stopCameraWarmUp") { requestId: String ->
             requireSdk().stopCameraWarmUp(requestId)
+        }
+
+        // A capture's stages, by its request ID: the JS PhotoCapture awaits each one.
+        SdkAsyncFunction("capturePhoto") { params: Map<String, Any?> ->
+            val capture = requireSdk().capturePhoto(PhotoRequest.fromMap(params))
+            val cutoff = System.currentTimeMillis() - 30 * 60_000L
+            photoCaptures.values.removeIf { it.createdAtMs < cutoff }
+            photoCaptures[capture.requestId] = capture
+            capture.requestId
+        }
+
+        SdkCoroutineFunction("photoCaptureStage") { requestId: String, stage: String ->
+            val capture = photoCaptures[requestId]
+                ?: throw BluetoothSdkException("photo_released", "No photo capture $requestId.")
+            when (stage) {
+                "captured" -> capture.captured().let { null }
+                "preview" -> capture.preview().values
+                else -> capture.photo().values
+            }
+        }
+
+        SdkAsyncFunction("releasePhotoCapture") { requestId: String ->
+            photoCaptures.remove(requestId)?.release()
         }
 
         // MARK: - OTA Commands

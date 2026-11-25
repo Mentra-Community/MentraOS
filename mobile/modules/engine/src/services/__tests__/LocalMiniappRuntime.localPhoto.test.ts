@@ -7,10 +7,11 @@ import {readFileSync} from "node:fs"
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
 const start = source.search(/^ {2}private async takeLocalPhoto\(/m)
 if (start < 0) throw new Error("Missing runtime method takeLocalPhoto")
-const handler = source.indexOf("  private async handlePhoto(", start)
-if (handler < 0) throw new Error("Missing runtime method handlePhoto")
+// Through sendPhotoError: takeLocalPhoto, keepPhotoForMiniapp, handlePhoto, handlePhotoFetch.
+const handler = source.indexOf("  private sendPhotoError(", start)
+if (handler < 0) throw new Error("Missing runtime method sendPhotoError")
 const end = source.slice(handler).search(/^ {2}}$/m)
-if (end < 0) throw new Error("Missing end of runtime method handlePhoto")
+if (end < 0) throw new Error("Missing end of runtime method sendPhotoError")
 const compiled = new Bun.Transpiler({loader: "ts"}).transformSync(
   `class Host { ${source.slice(start, handler + end + 3)} }`,
 )
@@ -18,7 +19,13 @@ const compiled = new Bun.Transpiler({loader: "ts"}).transformSync(
 const PACKAGE = "com.mentra.camera"
 
 class PhotoError extends Error {
-  constructor(readonly code: string, message: string, readonly stage?: string, readonly transport?: string) {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly stage?: string,
+    readonly transport?: string,
+    readonly photoId?: string,
+  ) {
     super(message)
   }
 }
@@ -46,6 +53,15 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
       uri: "file:///documents/mentra_blobs/core.mu_1.p/com.mentra.camera/mywpiww0-abc.jpg",
     }
   })
+  const released = mock(async () => {})
+  const capturePhoto = mock((_pkg: string, _opts: unknown, _photoId?: string) => ({}))
+  const capture = mock((_pkg: string, photoId: string) => ({
+    photoId,
+    captured: Promise.resolve(),
+    preview: Promise.resolve({url: "data:image/jpeg;base64,/9j/", width: 500, height: 375}),
+    photo: async () => ({fileUri: `file:///cache/${photoId}.jpg`, mimeType: "image/jpeg", size: 61234, requestId: photoId}),
+    release: released,
+  }))
   const discardFile = mock((_uri: string) => {})
   const dataUrlOf = mock(
     async (_pkg: string, _key: string, _maxBytes: number): Promise<string | null> => "data:image/jpeg;base64,/9j/",
@@ -69,11 +85,11 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
     "acsMeetingService",
     `${compiled}; return Host`,
   )(
-    {takePhoto, takeLocalPhoto},
+    {takePhoto, takeLocalPhoto, capturePhoto, capture},
     {photo: () => {}},
     (value: unknown) => value ?? "none",
     () => {},
-    {PHOTO: "photo"},
+    {PHOTO: "photo", PHOTO_CAPTURE: "capture", PHOTO_CAPTURE_STAGE: "stage", PHOTO_RELEASE: "release"},
     {PERMISSION_NOT_DECLARED: "PERMISSION_NOT_DECLARED", INTERNAL: "INTERNAL"},
     PhotoError,
     30 * 60 * 1000,
@@ -82,13 +98,13 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
     {photoPauseHeld: () => opts.photoPauseHeld === true},
   )
   const host = new Host()
-  const results: Array<{ok: boolean; data?: unknown; error?: {code?: string; stage?: string}}> = []
+  const results: Array<{ok: boolean; data?: unknown; error?: {code?: string; stage?: string; photoId?: string}}> = []
   host.connectedApps = new Map([[PACKAGE, {installedManifest: {permissions: [{type: "CAMERA"}]}}]])
   host.blobStore = {storeExpiringFile, discardFile, dataUrlOf}
   host.sendResult = (_pkg: string, _requestId: string | undefined, ok: boolean, data?: unknown, error?: never) => {
     results.push({ok, data, error})
   }
-  return {host, results, takePhoto, takeLocalPhoto, storeExpiringFile, discardFile, dataUrlOf, miniappFileUrl}
+  return {host, results, takePhoto, takeLocalPhoto, capturePhoto, capture, released, storeExpiringFile, discardFile, dataUrlOf, miniappFileUrl}
 }
 
 describe("handlePhoto with local delivery", () => {
@@ -164,5 +180,34 @@ describe("handlePhoto with local delivery", () => {
     await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
     expect(f.discardFile).toHaveBeenCalledWith("file:///cache/mentra_local_photos/photo_1.jpg")
     expect(f.results[0]).toMatchObject({ok: false, error: {code: "PHOTO_STORE_FAILED", stage: "save"}})
+  })
+})
+
+describe("camera.capture()", () => {
+  test("starts a capture under its photo ID, answers its stages, and keeps the photo as takePhoto's", async () => {
+    const f = fixture()
+    await f.host.handlePhotoCapture(PACKAGE, "capture", {photoId: "p9", size: "high"}, "req-1")
+    expect(f.capturePhoto).toHaveBeenCalledWith(PACKAGE, expect.objectContaining({size: "high"}), "p9")
+    await f.host.handlePhotoCapture(PACKAGE, "stage", {photoId: "p9", stage: "preview"}, "req-2")
+    await f.host.handlePhotoCapture(PACKAGE, "stage", {photoId: "p9", stage: "photo"}, "req-3")
+    await f.host.handlePhotoCapture(PACKAGE, "release", {photoId: "p9"}, "req-4")
+    expect(f.capture).toHaveBeenCalledWith(PACKAGE, "p9")
+    expect(f.storeExpiringFile).toHaveBeenCalledWith(PACKAGE, "photo/p9", "file:///cache/p9.jpg", "image/jpeg")
+    expect(f.results).toMatchObject([
+      {ok: true},
+      {ok: true, data: {url: "data:image/jpeg;base64,/9j/", width: 500}},
+      {ok: true, data: {requestId: "p9", key: "photo/p9"}},
+      {ok: true},
+    ])
+    expect(f.released).toHaveBeenCalled()
+  })
+
+  test("an unknown or released capture is an error for the miniapp", async () => {
+    const f = fixture()
+    f.capture.mockImplementation(() => {
+      throw new PhotoError("PHOTO_RELEASED", "No photo p0 for this miniapp", "command")
+    })
+    await f.host.handlePhotoCapture(PACKAGE, "stage", {photoId: "p0", stage: "photo"}, "req-1")
+    expect(f.results[0]).toMatchObject({ok: false, error: {code: "PHOTO_RELEASED"}})
   })
 })

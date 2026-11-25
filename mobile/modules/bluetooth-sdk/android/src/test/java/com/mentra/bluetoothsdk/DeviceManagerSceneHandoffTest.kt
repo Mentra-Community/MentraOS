@@ -622,7 +622,7 @@ class DeviceManagerSceneHandoffTest {
             DeviceStore.set("glasses", "micEnabled", enabled)
         }
         override fun sortMicRanking(list: MutableList<String>) = list
-        override fun requestPhoto(request: PhotoRequest) {}
+        override fun uploadPhoto(request: PhotoRequest) {}
         override fun startStream(message: MutableMap<String, Any>) {}
         override fun stopStream() {}
         override fun sendStreamKeepAlive(message: MutableMap<String, Any>) {}

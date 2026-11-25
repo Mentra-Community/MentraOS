@@ -251,8 +251,21 @@ public struct CameraFovResult: CustomStringConvertible {
     }
 }
 
+/// A photo's preview: the glasses' at most 500 px JPEG, as a `data:image/jpeg;base64,` URL.
+public struct PhotoPreview {
+    public let url: String
+    public let width: Int?
+    public let height: Int?
+
+    public var values: [String: Any] {
+        var values: [String: Any] = ["url": url]
+        if let width { values["width"] = width }
+        if let height { values["height"] = height }
+        return values
+    }
+}
+
 public struct PhotoRequest {
-    public let presendThumbnail: Bool
     public let requestId: String
     public let size: PhotoSize
     public let mode: PhotoMode
@@ -274,10 +287,6 @@ public struct PhotoRequest {
     public let zsl: Bool?
     public let ispDigitalGain: Int?
     public let ispAnalogGain: String?
-    /// Keep the photo on the phone: it comes over BLE, is saved as a JPEG file, and the
-    /// success response carries that file's URL as `photoUrl`. Nothing is uploaded, and
-    /// `webhookUrl` and `transferMethod` are ignored.
-    public let localFile: Bool
 
     public init(
         requestId: String? = nil,
@@ -298,9 +307,7 @@ public struct PhotoRequest {
         ispDigitalGain: Int? = nil,
         ispAnalogGain: String? = nil,
         mode: PhotoMode = .photo,
-        transferMethod: String = "auto",
-        presendThumbnail: Bool = false,
-        localFile: Bool = false
+        transferMethod: String = "auto"
     ) {
         self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
@@ -321,8 +328,6 @@ public struct PhotoRequest {
         self.ispAnalogGain = ispAnalogGain
         self.mode = mode
         self.transferMethod = transferMethod
-        self.presendThumbnail = presendThumbnail
-        self.localFile = localFile
     }
 
     public static func from(params: [String: Any]) throws -> PhotoRequest {
@@ -405,9 +410,7 @@ public struct PhotoRequest {
             ispDigitalGain: optionalInt("ispDigitalGain"),
             ispAnalogGain: params["ispAnalogGain"] as? String,
             mode: PhotoMode(normalizedRawValue: params["mode"] as? String),
-            transferMethod: transferMethod,
-            presendThumbnail: params["presend_thumbnail"] as? Bool ?? false,
-            localFile: params["localFile"] as? Bool ?? false
+            transferMethod: transferMethod
         )
     }
 
@@ -471,9 +474,7 @@ public struct PhotoRequest {
             ispDigitalGain: ispDigitalGain,
             ispAnalogGain: ispAnalogGain,
             mode: mode,
-            transferMethod: transferMethod,
-            presendThumbnail: presendThumbnail,
-            localFile: localFile
+            transferMethod: transferMethod
         )
     }
 }

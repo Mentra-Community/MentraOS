@@ -86,7 +86,7 @@ private func cameraSdkCall(
     let saveLine = photoDestination == .glassesStorage ? "\n          save: true," : ""
     return """
     \(prefix)
-    let photo = try await mentraBluetoothSdk.requestPhoto(
+    let photo = try await mentraBluetoothSdk.uploadPhoto(
         PhotoRequest(
           size: .\(size),
           webhookUrl: \(webhookUrl),\(saveLine)
