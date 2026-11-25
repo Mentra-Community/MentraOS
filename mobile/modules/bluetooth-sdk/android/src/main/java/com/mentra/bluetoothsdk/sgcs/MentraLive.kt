@@ -1,6 +1,7 @@
 package com.mentra.bluetoothsdk.sgcs
 
 import com.mentra.bluetoothsdk.PhotoCompression
+import com.mentra.bluetoothsdk.hotspot.GlassesWifiDirect
 
 // Mentra
 // old augmentos imports:
@@ -1163,6 +1164,14 @@ class MentraLive : SGCManager() {
         this.hasMic = true
         this.context = Bridge.getContext()
         forgetLegacyCoreToken()
+        GlassesWifiDirect.sender = { json ->
+            if (connectionState == ConnTypes.CONNECTED) {
+                sendJson(json, true)
+                true
+            } else {
+                false
+            }
+        }
 
         // Initialize bluetooth adapter
         val bluetoothManager =
@@ -1320,6 +1329,7 @@ class MentraLive : SGCManager() {
         if (state == ConnTypes.DISCONNECTED) {
             wifiAdbPeerIdentity = null
             DeviceStore.apply("glasses", "hotspotOtaVersion", 0)
+            GlassesWifiDirect.onGlassesDisconnected()
         }
         val isEqual = state == connectionState
         if (isEqual) {
@@ -4723,6 +4733,7 @@ class MentraLive : SGCManager() {
                         error = json.optString("error", "").ifEmpty { null },
                 )
             }
+            "wifi_direct_status" -> GlassesWifiDirect.onGlassesStatus(json)
             "hotspot_status_update" -> {
                 // Process hotspot status information (same pattern as "wifi_status")
                 val hotspotEnabled = json.optBoolean("hotspot_enabled", false)
@@ -5660,6 +5671,7 @@ class MentraLive : SGCManager() {
                             DeviceStore.apply("glasses", "systemTimeMs", v.toLong())
                         }
                     }
+                    (fields["wifi_direct_version"] as? Number)?.let { GlassesWifiDirect.version = it.toInt() }
                     if (fields.containsKey("hotspot_ota_version")) {
                         val version = fields["hotspot_ota_version"]
                         if (version is Number) {

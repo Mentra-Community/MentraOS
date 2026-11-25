@@ -35,7 +35,6 @@ declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents
    */
   rebindSoftApIngest(): Promise<string>
   beginTrace(traceId: string): Promise<void>
-  awaitDefaultNetworkAfterHotspot?(): Promise<{usable: boolean; detail: string; transport: string}>
   /** SoftAP: TCP-probe the hotspot gateway over the scoped network. */
   probeScopedGateway(): Promise<{reachable: boolean; detail: string}>
   getState(): Promise<AcsMeetingState>

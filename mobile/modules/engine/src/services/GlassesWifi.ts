@@ -59,11 +59,11 @@ export interface GlassesWifiHold {
   release(): Promise<void>
 }
 
-/** Bringing the link up failed, at the glasses' hotspot or at the phone's join. */
+/** Bringing the link up failed: the glasses did not enable it, or the phone did not join it. */
 export class GlassesWifiError extends Error {
   /** The native join's code, e.g. `SOFTAP_UNAVAILABLE`, when it has one. */
   readonly code?: string
-  constructor(readonly stage: "hotspot" | "join", readonly cause: unknown) {
+  constructor(readonly stage: "enable" | "join", readonly cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause))
     this.name = "GlassesWifiError"
     const code = (cause as {code?: unknown} | null)?.code
@@ -89,6 +89,9 @@ const holders = new Set<Holder>()
 let binding: GlassesWifiBinding | null = null
 let bringingUp: Promise<GlassesWifiBinding> | null = null
 let takingDown: Promise<void> | null = null
+type Link = "hotspot" | "wifi_direct"
+/** The radio of the link up or coming up. */
+let link: Link | null = null
 let lostAt: number | null = null
 /** Why the link ended, while it stays down; ready() rejects with it. */
 let endedReason: string | null = null
@@ -185,18 +188,20 @@ export async function holdGlassesWifi(options: GlassesWifiHoldOptions): Promise<
   }
 }
 
+/**
+ * The radio, chosen once per bring-up from the platform and the glasses' capability: Wi-Fi Direct
+ * on Android with glasses that advertise `wifi_direct_version`, the hotspot otherwise.
+ */
+function chooseLink(): Link {
+  return localNetworkTransport.wifiDirectAvailable() ? "wifi_direct" : "hotspot"
+}
+
 function bringUp(first: Holder | null): Promise<GlassesWifiBinding> {
   const attempt = (async () => {
     const report = (line: string) => first?.options.report?.(line)
-    const status = await enableHotspot(report).catch((error) => {
-      throw new GlassesWifiError("hotspot", error)
-    })
-    assertWanted()
-    await beforeJoin(first, status.ssid)
-    assertWanted()
-    const joined = await joinWithRetry(status, first, report).catch((error) => {
-      throw error instanceof GlassesWifiError ? error : new GlassesWifiError("join", error)
-    })
+    link = chooseLink()
+    console.log(`[GlassesWifi] Bringing up the ${link} link`)
+    const joined = link === "wifi_direct" ? await joinWifiDirect(report) : await joinHotspot(first, report)
     const wasLost = lostAt !== null
     binding = joined
     lostAt = null
@@ -210,6 +215,33 @@ function bringUp(first: Holder | null): Promise<GlassesWifiBinding> {
   }
   attempt.then(settled, settled)
   return attempt
+}
+
+async function joinHotspot(first: Holder | null, report: (line: string) => void): Promise<GlassesWifiBinding> {
+  const status = await enableHotspot(report).catch((error) => {
+    throw new GlassesWifiError("enable", error)
+  })
+  assertWanted()
+  await beforeJoin(first, status.ssid)
+  assertWanted()
+  return await joinWithRetry(status, first, report).catch((error) => {
+    throw error instanceof GlassesWifiError ? error : new GlassesWifiError("join", error)
+  })
+}
+
+/** The native join asks the glasses for their group over Bluetooth and joins it, with no prompt. */
+async function joinWifiDirect(report: (line: string) => void): Promise<GlassesWifiBinding> {
+  assertWanted()
+  const incoming = [...holders].some((holder) => holder.options.purpose === "incoming-server")
+  const joined = await localNetworkTransport
+    .connectWifiDirect(incoming ? "incoming-server" : "outgoing-client")
+    .catch((error) => {
+      throw new GlassesWifiError("join", error)
+    })
+  if (!joined.gateway) throw new GlassesWifiError("join", new Error("The glasses reported no group address"))
+  report(`Joined the glasses' Wi-Fi Direct group ${joined.ssid}`)
+  // A group has no password the consumers need: the phone joined it with the one the glasses sent.
+  return {ssid: joined.ssid, password: "", gateway: joined.gateway, phoneIpv4: joined.localAddress}
 }
 
 async function enableHotspot(report: (line: string) => void) {
@@ -339,9 +371,13 @@ async function takeDown(): Promise<void> {
   lostAt = null
   endedReason = null
   await localNetworkTransport
-    .disconnect(owner, true)
+    .disconnect(owner)
     .catch((error) => console.warn("[GlassesWifi] Leaving the glasses network failed", error))
   releasedAt = Date.now()
+  // Leaving the Wi-Fi Direct group above also told the glasses to remove it.
+  const down = link
+  link = null
+  if (down === "wifi_direct") return
   // Glasses away now get their AP turned off on return, by reclaimLateHotspot, or by their idle stop.
   if (!isGlassesConnected(useGlassesStore.getState().connection)) return
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -421,7 +457,7 @@ function watch(): void {
   )
   const networkLost = localNetworkTransport.onLost(() => lose("the phone left the glasses network"))
   const hotspot = BluetoothSdk.addListener("hotspot_status_change", (event) => {
-    if (event.state !== "enabled" && !bringingUp) lose("the glasses turned their hotspot off")
+    if (link === "hotspot" && event.state !== "enabled" && !bringingUp) lose("the glasses turned their hotspot off")
   })
   watching = () => {
     unsubscribeStore()

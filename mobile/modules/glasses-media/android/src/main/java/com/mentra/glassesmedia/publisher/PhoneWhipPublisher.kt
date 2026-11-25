@@ -1,10 +1,8 @@
 package com.mentra.glassesmedia.publisher
 
 import android.content.Context
-import android.net.ConnectivityManager
 import android.os.Handler
 import android.os.HandlerThread
-import com.mentra.glassesmedia.network.InternetHold
 import com.mentra.bluetoothsdk.hotspot.SoftApTrace
 import com.mentra.glassesmedia.trace.MediaLog
 import com.mentra.glassesmedia.passthrough.EncodedFrameBuffer
@@ -81,13 +79,8 @@ class PhoneWhipPublisher(
       try {
         val url = endpoint.toHttpUrl()
         require(url.isHttps) { "Managed WHIP requires HTTPS" }
-        val manager = context.getSystemService(ConnectivityManager::class.java)
-        val internet = InternetHold.findValidatedCellular(manager)
-          ?: error("Phone mobile data is unavailable")
-        SoftApTrace.stage("whip_uplink_network", "network" to internet)
-        client = OkHttpClient.Builder().socketFactory(internet.socketFactory)
-          .dns(object : okhttp3.Dns { override fun lookup(hostname: String) = internet.getAllByName(hostname).toList() })
-          .callTimeout(20, TimeUnit.SECONDS).followRedirects(false).build()
+        // The phone's default network is its internet, whatever it is; the glasses link is not.
+        client = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).followRedirects(false).build()
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions())
         egl = EglBase.create()
         adm = JavaAudioDeviceModule.builder(context)
@@ -101,8 +94,9 @@ class PhoneWhipPublisher(
           }
         factory = PeerConnectionFactory.builder()
           .setOptions(PeerConnectionFactory.Options().apply {
-            // The receiver keeps Wi-Fi; this peer uses real cellular handles from the inventory.
-            networkIgnoreMask = 2 or 8 or 16 // WIFI, VPN, LOOPBACK
+            // Whatever the phone's internet is, Wi-Fi included. A candidate on the glasses link
+            // (it has no route out) simply never pairs with Cloudflare.
+            networkIgnoreMask = 8 or 16 // VPN, LOOPBACK
           })
           .setAudioDeviceModule(adm)
           .setVideoEncoderFactory(

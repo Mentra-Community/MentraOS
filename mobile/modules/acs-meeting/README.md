@@ -124,7 +124,6 @@ mobile/modules/glasses-media/android/src/main/java/com/mentra/glassesmedia/
 ├── network/
 │   ├── ScopedSoftApNetwork.kt    Joins the glasses hotspot as an internet-less network
 │   ├── ScopedNetworkChangeDetector.kt  Makes libwebrtc see that network
-│   ├── InternetHold.kt           Cellular request + process pin + default-network waits
 │   └── NetworkFacts.kt           Bounded, readable network state for traces
 ├── video/
 │   ├── I420Packer.kt             Stride-aware planar copy; planeMinBytes guards
@@ -387,7 +386,7 @@ the single session executor an unbounded `get()` is the hang that made Cancel si
 "Leaving the meeting" while the next join queued behind the same stuck hang-up.
 
 On the JS side, a SoftAP leave is not just a hang-up: `retireSoftapAttempt` also stops the
-glasses publisher, releases the hotspot and drops the cellular pin.
+glasses publisher and releases the call's hold on the glasses link.
 
 ### End for everyone
 
@@ -689,26 +688,11 @@ around it matters so much.
 `PeerConnectionFactory`. Without it libwebrtc's `BasicNetworkManager` never sees the hotspot
 and the phone's WHIP answer has no host candidate.
 
-**`InternetHold`** is three distinct things that are easy to conflate:
-
-- `awaitValidatedCellular()` — ask Android to bring cellular up and confirm it validated,
-  in `prepareAgent`, before the glasses network takes the phone's Wi-Fi.
-- `bindProcessToCellular()` / `unbindProcess()` — the process-wide route pin.
-- `awaitValidatedDefault()` — when this app's *default route* actually switched. Holding a
-  cellular request does not answer that, and only this is a valid precondition for a join
-  that must reach the internet.
-
-**The pin has one exception, and it is subtle.** A `ServerSocket` bound to 192.168.43.x while
-the UID is marked cellular accepts the bind but never sees the glasses' SYN — ICMP and ARP
-still work, TCP to the listener times out. So `withIngestUnpinned` lifts the pin across
-exactly the WHIP bind and restores it in a `finally`. Both `join` and `rebindSoftApIngest`
-go through it.
-
-**The pin is not the glasses network's.** Releasing the call's Wi-Fi hold never drops it.
-Releasing the pin there is what turned Cancel-during-hotspot into `Request failed (503)`: the
-AP was still up, Android made it the default Wi-Fi, and the next Teams create had no
-internet. The pin is dropped by `leave` / `leaveAndAwait` via
-`releaseWhenDefaultInternetReady()`, and only once a validated default route exists.
+**No internet code of its own.** Internet traffic (ACS, Teams, the managed WHIP uplink) uses
+the phone's default network, whatever it is: Wi-Fi, cellular or Ethernet. The glasses link
+carries only glasses traffic: the hotspot sends no default route (the MTK no-default-router
+patch) and the scoped join drops `NET_CAPABILITY_INTERNET`, and a Wi-Fi Direct group stays on
+Android's local network. Nothing pins the process to a transport.
 
 The join's device-specific behaviours (a radio that goes off inside the join, and Samsung's
 assoc-reject of the first specifier after leaving another network) are handled once, in

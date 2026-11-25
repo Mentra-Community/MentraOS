@@ -50,10 +50,10 @@ public final class GlassesMediaRelayModule: Module {
             }
         }
 
-        AsyncFunction("leaveLocalHotspot") { (id: String, waitForInternet: Bool, promise: Promise) in
+        AsyncFunction("leaveLocalHotspot") { (id: String, promise: Promise) in
             self.queue.async {
                 guard self.localHotspotOwner == id else { promise.resolve(nil); return }
-                self.localHotspot.leave(waitForInternet: waitForInternet) { result in
+                self.localHotspot.leave { result in
                     self.queue.async {
                         switch result {
                         case .success:
@@ -167,30 +167,25 @@ private final class ManagedRelaySession {
                 guard verified == address else {
                     self.finish(.failure(LocalMediaError("The glasses hotspot address changed before the relay started"))); return
                 }
-                self.hotspot.awaitInternet { usable, _ in
+                // Internet traffic uses the phone's default network, whatever it is.
+                let publisher = PhoneWhipPublisher(endpoint: endpoint, captureAudio: captureAudio, bitrate: bitrate, onState: onState)
+                self.publisher = publisher
+                let receiver = LocalWhipIngestSource()
+                self.receiver = receiver
+                // The publisher takes the frame first. The phone's own preview of the
+                // stream is a guest: it reads the pixels this relay already decoded, so
+                // showing the wearer their video downloads nothing.
+                receiver.onFrame = { [weak publisher] buffer in
+                    DecodedFrameTap.shared.relay(buffer) { publisher?.onFrame($0) }
+                }
+                receiver.onPcm = { [weak publisher] in publisher?.onPcm($0, rate: $1, channels: $2) }
+                receiver.onStateChange = { state, reason in if state == .failed { onState("failed", "Glasses receiver: \(reason)") } }
+                receiver.setPcmDeliveryEnabled(captureAudio)
+                receiver.prepare(config: SourceConfig(url: "", kind: .softap, bindAddress: address)) { result in
                     self.queue.async {
                         guard !self.stopped else { return }
-                        guard usable else { self.finish(.failure(LocalMediaError("Connect cellular or Ethernet internet to stream through the glasses hotspot"))); return }
-                        let publisher = PhoneWhipPublisher(endpoint: endpoint, captureAudio: captureAudio, bitrate: bitrate, onState: onState)
-                        self.publisher = publisher
-                        let receiver = LocalWhipIngestSource()
-                        self.receiver = receiver
-                        // The publisher takes the frame first. The phone's own preview of the
-                        // stream is a guest: it reads the pixels this relay already decoded, so
-                        // showing the wearer their video downloads nothing.
-                        receiver.onFrame = { [weak publisher] buffer in
-                            DecodedFrameTap.shared.relay(buffer) { publisher?.onFrame($0) }
-                        }
-                        receiver.onPcm = { [weak publisher] in publisher?.onPcm($0, rate: $1, channels: $2) }
-                        receiver.onStateChange = { state, reason in if state == .failed { onState("failed", "Glasses receiver: \(reason)") } }
-                        receiver.setPcmDeliveryEnabled(captureAudio)
-                        receiver.prepare(config: SourceConfig(url: "", kind: .softap, bindAddress: address)) { result in
-                            self.queue.async {
-                                guard !self.stopped else { return }
-                                if case .success = result { publisher.start() }
-                                self.finish(result)
-                            }
-                        }
+                        if case .success = result { publisher.start() }
+                        self.finish(result)
                     }
                 }
             }

@@ -17,6 +17,8 @@ export type OtaLocalNetworkConnection = {
   connected: boolean
   ssid: string
   localAddress?: string
+  /** The glasses' address on the joined network. */
+  gateway?: string
 }
 
 export type OtaLocalNetworkLostEvent = {ssid: string}
@@ -69,6 +71,13 @@ export const otaLocalNetwork = Object.freeze({
     if (!MentraLocalNetwork) throw new Error("Scoped local networking is not available in this native build")
     return MentraLocalNetwork.connect(ssid, password, incoming)
   },
+  /** The glasses' Wi-Fi Direct group instead of their hotspot; the native join asks them for it. */
+  connectWifiDirect: async (incoming = true): Promise<OtaLocalNetworkConnection> => {
+    if (!MentraLocalNetwork) throw new Error("Scoped local networking is not available in this native build")
+    return MentraLocalNetwork.connectWifiDirect(incoming)
+  },
+  /** Whether this phone and the connected glasses can use Wi-Fi Direct now: Android only. */
+  wifiDirectAvailable: (): boolean => MentraLocalNetwork?.wifiDirectAvailable?.() === true,
   request: async (
     requestId: string,
     url: string,

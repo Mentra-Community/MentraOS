@@ -548,10 +548,9 @@ function resetPermissionWarnings(packageName: string): void {
  * One attempt to start a SoftAP call, from the first permission check to the last release.
  *
  * The unit is the attempt rather than the transport because the transport only exists for the
- * second half of it. Everything the wearer can cancel — the Nearby-devices prompt, the wait for
- * mobile data, the ACS sign-in — happens before `transport.start()`, and each of those leaves
- * something behind (a signed-in agent, a process-wide cellular pin) that only the attempt knows
- * about.
+ * second half of it. Everything the wearer can cancel — the Nearby-devices prompt and the ACS
+ * sign-in — happens before `transport.start()`, and leaves something behind (a signed-in agent)
+ * that only the attempt knows about.
  */
 type SoftapAttempt = {
   id: number
@@ -4506,8 +4505,7 @@ class LocalMiniappRuntime {
    * Everything is hung off one [SoftapAttempt] registered before the first `await`, because the
    * cancellable part of this starts immediately and the transport only exists halfway through.
    * The attempt is also what `meeting.leave` unwinds: leaving only the ACS call would strand the
-   * glasses publishing into a listener nobody reads, the phone on a hotspot it no longer needs,
-   * and this process pinned to cellular.
+   * glasses publishing into a listener nobody reads, and the phone on a link it no longer needs.
    */
   private async joinSoftapMeeting(
     packageName: string,
@@ -4543,8 +4541,8 @@ class LocalMiniappRuntime {
         reason: error instanceof Error ? error.message : String(error),
         attemptAgeMs: Date.now() - attempt.startedAt,
       })
-      // Unwind whatever the attempt reached — including the preflight-owned agent and cellular
-      // pin, which the transport never sees — before the failure surfaces.
+      // Unwind whatever the attempt reached — including the preflight-owned agent, which the
+      // transport never sees — before the failure surfaces.
       await this.retireSoftapAttempt({attempt}).catch(() => undefined)
       throw error
     }
@@ -4665,7 +4663,7 @@ class LocalMiniappRuntime {
   /**
    * Narrates preflight work on the first row while it is still pending.
    *
-   * Permissions, mobile data, and the ACS sign-in take most of a minute between them and happen
+   * Permissions and the ACS sign-in take most of a minute between them and happen
    * before the transport exists, so without this the wearer watches five pending rows and
    * concludes the app has hung. No new step and no protocol change: it is the `hotspot` row's
    * detail, which the connecting screen renders as its one sub-line until step 1 starts.
@@ -4772,7 +4770,6 @@ class LocalMiniappRuntime {
             // No native probe means no verdict, and the orchestrator must not read that as "down".
             return verdict ?? {reachable: true, detail: "probe unsupported on this host"}
           },
-          awaitValidatedDefaultNetwork: () => acsMeetingService.awaitValidatedDefaultNetwork(),
           onGlassesStreamStatus: (listener) => {
             const sub = BluetoothSdk.addListener("stream_status", (event) => {
               // The glasses narrate over BLE, which is slow enough that a status from the previous
@@ -4833,8 +4830,7 @@ class LocalMiniappRuntime {
     attempt.transport = transport
     // Sign in on the phone's current internet *before* the glasses hotspot takes DNS. On device,
     // createCallAgent after the scoped join timed out at 20s and only finished once SoftAP was
-    // released. It also waits for validated mobile data, which is why the wearer is told one
-    // honest thing about the whole window rather than nothing at all.
+    // released. The wearer is told one honest thing about the whole window rather than nothing.
     this.narrateSoftapPreflight(attempt, "Signing in to Teams…")
     const prepareStartedAt = Date.now()
     softapTrace("softap_prepare_agent_begin", {attempt: attempt.id})
@@ -5137,9 +5133,8 @@ class LocalMiniappRuntime {
    * Releases everything one attempt could own, in the reverse of the order it was taken.
    *
    * The scoped network and the ACS agent are released unconditionally, not only when the transport
-   * built them: `prepareAgent` signs in and pins this whole process to cellular *before* the
-   * transport exists, so a Cancel during sign-in would otherwise leave both behind. Both releases
-   * are idempotent.
+   * built them: `prepareAgent` signs in *before* the transport exists, so a Cancel during sign-in
+   * would otherwise leave the agent behind. Both releases are idempotent.
    *
    * Failures are collected rather than swallowed. Reporting a clean teardown that did not happen
    * is what lets the next call start on leaked state.
@@ -5206,38 +5201,6 @@ class LocalMiniappRuntime {
         })
       }
     }
-    // Stay pinned across this wait. Unpinning onto a leftover glasses AP is what made the next
-    // Start Call's `teams:create` return `Request failed (503)` — Cloudflare, no internet, not a
-    // Teams configuration problem.
-    const defaultNetworkStartedAt = Date.now()
-    let defaultNetworkOk = false
-    try {
-      const network = await acsMeetingService.awaitDefaultNetworkAfterHotspot()
-      defaultNetworkOk = true
-      softapTrace("softap_teardown_step", {
-        attempt: attempt.id,
-        step: "awaitValidatedDefaultNetwork",
-        outcome: "ok",
-        durationMs: Date.now() - defaultNetworkStartedAt,
-        // Null is "this host cannot tell", which is a different fact from an unusable route, and
-        // the cellular pin is dropped on the strength of this answer.
-        network: network?.detail ?? "unknown",
-        usable: network?.usable ?? "unknown",
-      })
-    } catch (error) {
-      console.warn("[LocalMiniappRuntime] default network after SoftAP teardown is unverified", {
-        attempt: attempt.id,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      softapTraceFailure("softap_teardown_step", {
-        attempt: attempt.id,
-        step: "awaitValidatedDefaultNetwork",
-        outcome: "failed",
-        durationMs: Date.now() - defaultNetworkStartedAt,
-        reason: error instanceof Error ? error.message : String(error),
-      })
-    }
-    const defaultNetworkMs = Date.now() - defaultNetworkStartedAt
     const acsLeaveStartedAt = Date.now()
     let acsLeaveOk = false
     try {
@@ -5271,7 +5234,6 @@ class LocalMiniappRuntime {
     failures.push(
       ...(await this.settleSoftapTeardown(attempt, {
         acsLeave: {ok: acsLeaveOk, durationMs: Date.now() - acsLeaveStartedAt},
-        defaultNetwork: {ok: defaultNetworkOk, durationMs: defaultNetworkMs},
       })),
     )
     if (failures.length > 0) {
@@ -5306,7 +5268,7 @@ class LocalMiniappRuntime {
    */
   private async settleSoftapTeardown(
     attempt: SoftapAttempt,
-    earlier: {acsLeave: {ok: boolean; durationMs: number}; defaultNetwork: {ok: boolean; durationMs: number}},
+    earlier: {acsLeave: {ok: boolean; durationMs: number}},
   ): Promise<string[]> {
     const ingestStartedAt = Date.now()
     let ingestClosed = false
@@ -5326,8 +5288,6 @@ class LocalMiniappRuntime {
       acsLeaveOk: earlier.acsLeave.ok,
       ingestClosedMs: Date.now() - ingestStartedAt,
       ingestClosed,
-      defaultNetworkMs: earlier.defaultNetwork.durationMs,
-      defaultNetworkOk: earlier.defaultNetwork.ok,
     })
     if (ingestClosed) return []
     softapTraceFailure("softap_teardown_forced", {attempt: attempt.id, ingestClosed})
@@ -5358,8 +5318,8 @@ class LocalMiniappRuntime {
       attempt: this.softapAttempt?.id ?? "none",
     })
     try {
-      // A SoftAP call owns the hotspot, the scoped network, and the cellular pin as well as the
-      // ACS call, and retiring the attempt releases all of them. Returning before that finishes is
+      // A SoftAP call holds the glasses Wi-Fi link as well as the ACS call, and retiring the
+      // attempt releases both. Returning before that finishes is
       // what let the next Start race this teardown.
       if (this.softapAttempt) {
         await this.retireSoftapAttempt()

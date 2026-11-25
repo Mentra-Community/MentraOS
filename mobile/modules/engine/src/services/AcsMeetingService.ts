@@ -339,21 +339,6 @@ export function parseAcsVideoSource(raw: unknown): AcsVideoSource {
 }
 
 /**
- * The app's default network after a hotspot join.
- *
- * `usable` is the only field to branch on; the rest is for the note the wearer sees and the trace.
- * A held cellular request brings the radio up but does not promise the default route has switched
- * or validated, so this is asked separately rather than inferred from the hold.
- */
-export interface DefaultNetworkStatus {
-  transport: string
-  validated: boolean
-  present: boolean
-  usable: boolean
-  detail: string
-}
-
-/**
  * Which path the wearer took into the call.
  *
  * Diagnostic only — nothing behaves differently — but it is carried all the way to the native
@@ -439,7 +424,6 @@ type NativeModule = {
   /** Is this phone's Wi-Fi radio on? Absent on natives that predate the preflight. */
   isWifiEnabled?(): Promise<boolean>
   beginTrace?(traceId: string): Promise<void>
-  awaitDefaultNetworkAfterHotspot?(): Promise<DefaultNetworkStatus>
   /**
    * TCP-probe the hotspot gateway over the scoped network. Absent on natives that predate it.
    * `detail` is a one-line human summary (address, port, latency or the failure).
@@ -447,11 +431,6 @@ type NativeModule = {
   probeScopedGateway?(): Promise<{reachable: boolean; detail: string}>
   /** The joined hotspot: `prefix` is what the media path must stay inside. */
   scopedNetworkInfo?(): Promise<{available: boolean; localIpv4: string | null; prefix: string | null}>
-  /**
-   * Wait for the app's default network to be validated, after the hotspot join changed it.
-   * Absent on natives that predate the cellular transition handling.
-   */
-  awaitValidatedDefaultNetwork?(): Promise<DefaultNetworkStatus>
   getState(): Promise<MeetingState>
   /**
    * Hand one chunk of already-decoded microphone PCM to the ACS uplink. Synchronous on purpose:
@@ -811,27 +790,6 @@ class AcsMeetingService {
   }
 
   /**
-   * Wait until the phone's default network is validated again after the hotspot join.
-   *
-   * Joining the glasses hotspot takes the phone off Wi-Fi, and ACS needs the internet for the very
-   * next step. Waiting is what turns a 40-second join timeout with device-wide DNS failures into a
-   * short, named wait — or an honest failure. Null when the host cannot tell.
-   */
-  async awaitValidatedDefaultNetwork(): Promise<DefaultNetworkStatus | null> {
-    const native = getNative()
-    if (!native?.awaitValidatedDefaultNetwork) return null
-    return await native.awaitValidatedDefaultNetwork()
-  }
-
-  /** Cleanup may restore home Wi-Fi; only the live SoftAP leg requires cellular on iOS. */
-  async awaitDefaultNetworkAfterHotspot(): Promise<DefaultNetworkStatus | null> {
-    const native = getNative()
-    return native?.awaitDefaultNetworkAfterHotspot
-      ? await native.awaitDefaultNetworkAfterHotspot()
-      : await this.awaitValidatedDefaultNetwork()
-  }
-
-  /**
    * Can this phone reach the glasses over the hotspot it just joined? Null when the host cannot
    * tell (no native support), so the orchestrator narrates nothing rather than a guess.
    */
@@ -940,7 +898,7 @@ class AcsMeetingService {
   }
 
   /**
-   * On Android, pin cellular and sign in before the glasses hotspot exists.
+   * On Android, sign in before the glasses link exists.
    *
    * SoftAP DNS cannot resolve Teams hosts. Doing this on the phone's existing internet is what
    * stops `createCallAgent` from hanging until the hotspot is torn down.

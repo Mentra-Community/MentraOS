@@ -12,7 +12,7 @@ export const glassesHotspot: {
     /** The hotspot's channel in MHz, when the glasses report it: a Mac scans only that channel first. */
     frequency?: number,
   ): Promise<string>
-  leave(id: string, waitForInternet?: boolean): Promise<void>
+  leave(id: string): Promise<void>
   /** A join with this id has waited a few seconds for Local Network access, which the person may have denied.
    * `systemAnswer` is the connection state and path reason that left it waiting, for logs. */
   onPermissionRequired(listener: (id: string, systemAnswer: string) => void): {remove(): void}

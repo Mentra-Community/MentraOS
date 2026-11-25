@@ -185,12 +185,32 @@ export const localNetworkTransport = {
     return result.localAddress
   },
 
-  async disconnect(caller: symbol, waitForInternet = false): Promise<void> {
+  /** Android: whether the phone and the connected glasses can use the Wi-Fi Direct link now. */
+  wifiDirectAvailable: (): boolean => supportsScopedConnection() && otaLocalNetwork.wifiDirectAvailable(),
+
+  /**
+   * Join the glasses' Wi-Fi Direct group; the native join asks the glasses for it over Bluetooth.
+   * Requests then go over it like over the hotspot.
+   */
+  async connectWifiDirect(purpose: "outgoing-client" | "incoming-server"): Promise<{
+    ssid: string
+    localAddress?: string
+    gateway?: string
+  }> {
+    connectionGeneration += 1
+    scopedConnectionActive = false
+    nativeJobs.clear()
+    const result = await otaLocalNetwork.connectWifiDirect(purpose === "incoming-server")
+    scopedConnectionActive = true
+    return result
+  },
+
+  async disconnect(caller: symbol): Promise<void> {
     if (iosHotspotOwner && iosHotspotOwner.caller !== caller) return
     connectionGeneration += 1
     if (iosHotspotOwner) {
       const owner = iosHotspotOwner.nativeId
-      await glassesHotspot.leave(owner, waitForInternet)
+      await glassesHotspot.leave(owner)
       if (iosHotspotOwner?.nativeId === owner) iosHotspotOwner = null
     }
     if (supportsScopedConnection()) {

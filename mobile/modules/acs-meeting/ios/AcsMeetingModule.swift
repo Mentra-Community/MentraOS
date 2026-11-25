@@ -70,24 +70,12 @@ public class AcsMeetingModule: Module {
             }
         }
 
-        AsyncFunction("awaitDefaultNetworkAfterHotspot") { (promise: Promise) in
-            self.hotspot.awaitInternet(allowWifiAfterRelease: true) { usable, detail in
-                promise.resolve(["usable": usable, "detail": detail, "transport": usable ? detail : "unknown", "validated": usable, "present": usable])
-            }
-        }
-
         AsyncFunction("beginTrace") { (traceId: String) in
             MediaLog.log("SOFTAP_TRACE trace=\(traceId) stage=ios_begin")
         }
         AsyncFunction("probeScopedGateway") { (promise: Promise) in
             self.hotspot.probeGateway { reachable, detail in
                 promise.resolve(["reachable": reachable, "detail": detail])
-            }
-        }
-
-        AsyncFunction("awaitValidatedDefaultNetwork") { (promise: Promise) in
-            self.hotspot.awaitInternet { usable, detail in
-                promise.resolve(["usable": usable, "detail": detail, "transport": usable ? detail : "unknown", "validated": usable, "present": usable])
             }
         }
 

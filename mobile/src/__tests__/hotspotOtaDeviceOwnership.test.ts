@@ -16,10 +16,10 @@ jest.mock("../../modules/engine/src/services/asg/localNetworkTransport", () => (
 // The glasses Wi-Fi service owns the hotspot and the join; OTA only holds the link it gives.
 jest.mock("../../modules/engine/src/services/GlassesWifi", () => {
   class GlassesWifiError extends Error {
-    stage: "hotspot" | "join"
+    stage: "enable" | "join"
     cause: Error & {code?: string}
     code?: string
-    constructor(stage: "hotspot" | "join", cause: Error & {code?: string}) {
+    constructor(stage: "enable" | "join", cause: Error & {code?: string}) {
       super(cause.message)
       this.stage = stage
       this.cause = cause
@@ -123,7 +123,7 @@ it("does not publish an OTA URL when the incoming listener fails, and releases t
 
 it("names a hotspot failure and a join failure apart, keeping the native join's facts", async () => {
   const {GlassesWifiError} = service
-  service.holdGlassesWifi.mockRejectedValueOnce(new GlassesWifiError("hotspot", new Error("hotspot did not start")))
+  service.holdGlassesWifi.mockRejectedValueOnce(new GlassesWifiError("enable", new Error("hotspot did not start")))
   await expect(hotspotOtaTransport.prepare(check)).rejects.toMatchObject({code: "hotspot_start_failed"})
 
   const nativeFailure = Object.assign(new Error("Hotspot join timed out"), {code: "ERR_HOTSPOT_JOIN"})

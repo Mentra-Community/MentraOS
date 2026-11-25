@@ -1741,14 +1741,30 @@ class OtaInstallCoordinator {
               this.maybeStartGlobalTimeout()
             }
           }
-          const manifestUrl = await hotspotOtaTransport.prepare(this.preparedCheckResult, (progress) => {
-            if (!isCurrentAttempt()) return
-            this.hotspotPhase = progress.phase
-            this.hotspotArtifact = progress.artifact ? {...progress.artifact} : null
-            this.hotspotArtifactPercent =
-              progress.artifact && progress.artifact.contentLength > 0 ? progress.artifact.artifactPercent : null
-            this.emitInternalChange()
-          })
+          const manifestUrl = await hotspotOtaTransport.prepare(
+            this.preparedCheckResult,
+            (progress) => {
+              if (!isCurrentAttempt()) return
+              this.hotspotPhase = progress.phase
+              this.hotspotArtifact = progress.artifact ? {...progress.artifact} : null
+              this.hotspotArtifactPercent =
+                progress.artifact && progress.artifact.contentLength > 0 ? progress.artifact.artifactPercent : null
+              this.emitInternalChange()
+            },
+            (endpoint) => {
+              // The glasses Wi-Fi link came back at another address (the ASG app replaced itself):
+              // the resumed update continues from the manifest served there.
+              if (!isCurrentAttempt() || this.hotspotManifestUrl === null) return
+              this.hotspotManifestUrl = endpoint
+              // The recovery worker owns a downgrade detour: an ota_start now would start a
+              // parallel install under it, as retry() explains. The detour needs no link.
+              if (this.isInVersionChangeDetour()) return
+              console.log(`[OTA_PROGRESS] sending ota_start with the restored hotspot manifest URL: ${endpoint}`)
+              void BluetoothSdk.startOtaUpdate(endpoint).catch((error) =>
+                console.warn("[OTA_PROGRESS] ota_start for the restored link failed", error),
+              )
+            },
+          )
           if (!isCurrentAttempt()) return
           this.hotspotManifestUrl = manifestUrl
           // React Native timers pause while the join prompt is up: count again from its answer.

@@ -1,7 +1,7 @@
 /**
  * @fileoverview Sequences a SoftAP call. Sequencing only — no sockets, no peers, no BLE.
  *
- * The glasses open a hotspot, the host joins it while retaining cellular or Ethernet internet, and the
+ * The glasses Wi-Fi service links the phone to the glasses, the phone keeps its own internet, and the
  * glasses publish WebRTC straight to a listener on the phone. Cloudflare is not involved at all.
  *
  * The order below is the whole point of this file, and one step in it is load-bearing:
@@ -1235,15 +1235,6 @@ export function createSoftapCallDeps(args: {
      */
     probeGateway?: () => Promise<{reachable: boolean; detail: string}>
     /**
-     * Wait for the phone's default network to be validated again after the hotspot join took Wi-Fi
-     * away. Optional because only Android hosts can answer it.
-     *
-     * Not fatal when it reports an unusable network: the wearer is told, and the join is attempted
-     * anyway. Aborting here would fail calls that recover a second later, and the ACS join has its
-     * own bounded timeout for the case that does not.
-     */
-    awaitValidatedDefaultNetwork?: () => Promise<{usable: boolean; detail: string} | null>
-    /**
      * Glasses `stream_status` events, so the publish step can say "camera starting" and "offer
      * posted" instead of going quiet for the whole BLE round trip. Returns an unsubscribe.
      */
@@ -1291,29 +1282,6 @@ export function createSoftapCallDeps(args: {
     },
     cancelScopedNetworkJoin: async () => holding?.abort(),
     joinMeeting: async ({ssid, passphrase, bindAddress}, report) => {
-      // The hotspot join just took this phone off Wi-Fi, so the route Teams needs is whatever
-      // Android promoted in its place. Waiting for it to validate is what stopped the ACS join
-      // from burning its whole timeout on DNS that could not resolve yet.
-      if (subsystems.awaitValidatedDefaultNetwork) {
-        report?.("Waiting for an internet route outside the glasses hotspot so Teams can connect")
-        try {
-          const network = await subsystems.awaitValidatedDefaultNetwork()
-          if (network) {
-            softapTrace(network.usable ? "default_network_ok" : "default_network_unvalidated", {
-              detail: network.detail,
-            })
-            report?.(
-              network.usable
-                ? `Internet is on ${network.detail}`
-                : `Internet is not confirmed yet (${network.detail}); joining Teams anyway`,
-            )
-          }
-        } catch (error) {
-          softapTraceFailure("default_network_check_threw", {
-            reason: error instanceof Error ? error.message : String(error),
-          })
-        }
-      }
       report?.("Binding the video receiver and joining Teams")
       await subsystems.joinMeeting(packageName, {
         meetingUrl: args.meetingUrl,

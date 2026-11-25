@@ -24,7 +24,8 @@ import java.util.concurrent.CountDownLatch
  * ## Dual-homing
  *
  * The request drops `NET_CAPABILITY_INTERNET` (see [ScopedNetworkRequestSpec]), so Android never
- * promotes the hotspot to the default network and ACS keeps using cellular.
+ * promotes the hotspot to the default network: internet traffic keeps the phone's default network,
+ * whatever it is.
  */
 class ScopedSoftApNetwork(private val context: Context) {
 
@@ -48,12 +49,41 @@ class ScopedSoftApNetwork(private val context: Context) {
     private var localIpv4: String? = null
     private var spec: ScopedNetworkRequestSpec? = null
     private var listener: Listener? = null
+    /** The second link: the glasses' Wi-Fi Direct group, when that is what is joined. */
+    private val direct = WifiDirectJoin(context)
+    private var joinedDirect: WifiDirectJoin.Joined? = null
 
     /** The joined network, or null. Pass this to anything that must send over the SoftAP link. */
     fun network(): Network? = synchronized(lock) { network }
 
-    /** This phone's address on the hotspot subnet, e.g. `192.168.43.20`. */
-    fun localIpv4(): String? = synchronized(lock) { localIpv4 }
+    /** This phone's address on the glasses' subnet, e.g. `192.168.43.20`. */
+    fun localIpv4(): String? = synchronized(lock) { localIpv4 ?: joinedDirect?.localIpv4 }
+
+    /**
+     * True on Wi-Fi Direct: the phone keeps its own internet, and there is no [network] to bind to.
+     */
+    fun keepsPhoneInternet(): Boolean = synchronized(lock) { joinedDirect != null }
+
+    /** The Wi-Fi Direct group's interface name, while it is the joined link. */
+    fun wifiDirectInterface(): String? = synchronized(lock) { joinedDirect?.interfaceName }
+
+    /** Whether the phone and the connected glasses can use Wi-Fi Direct now. */
+    fun wifiDirectAvailable(): Boolean = direct.available()
+
+    /**
+     * Join the glasses' Wi-Fi Direct group instead of their hotspot: ask them for it over Bluetooth
+     * and join with its name and passphrase, with no prompt. Returns the group's name; the phone's
+     * address on it is [localIpv4] and the glasses' is [gatewayIpv4].
+     *
+     * @throws ScopedNetworkError when the glasses or the phone can't, or on release
+     */
+    @Throws(ScopedNetworkError::class)
+    fun joinWifiDirect(listener: Listener? = null): String {
+        release()
+        val joined = direct.join { listener?.onLost(ScopedNetworkError.Lost("the Wi-Fi Direct group")) }
+        synchronized(lock) { joinedDirect = joined }
+        return joined.ssid
+    }
 
     /**
      * The subnet this phone joined, straight from `LinkProperties`.
@@ -64,6 +94,7 @@ class ScopedSoftApNetwork(private val context: Context) {
      * subnet.
      */
     fun scopedPrefix(): Ipv4Prefix? {
+        synchronized(lock) { joinedDirect }?.let { return Ipv4Prefix(it.localIpv4, it.prefixLength) }
         val net = network() ?: return null
         val properties = connectivityManager().getLinkProperties(net) ?: return null
         return properties.linkAddresses
@@ -71,7 +102,8 @@ class ScopedSoftApNetwork(private val context: Context) {
             ?.let { link -> link.address.hostAddress?.let { Ipv4Prefix(it, link.prefixLength) } }
     }
 
-    fun isAvailable(): Boolean = synchronized(lock) { state.phase == ScopedNetworkState.Phase.AVAILABLE }
+    fun isAvailable(): Boolean =
+        synchronized(lock) { state.phase == ScopedNetworkState.Phase.AVAILABLE || joinedDirect != null }
 
     /** Station radio on? `WifiNetworkSpecifier` is a no-op while this is false. */
     fun isWifiEnabled(): Boolean {
@@ -97,7 +129,7 @@ class ScopedSoftApNetwork(private val context: Context) {
     /**
      * True when a VPN is this app's default network — i.e. our UID falls inside its captured
      * ranges. A VPN that excludes us (split tunneling) or is simply installed does not count: the
-     * default network is then cellular/Wi-Fi and the hotspot path works.
+     * default network is then another one and the hotspot path works.
      */
     fun isVpnCapturingApp(): Boolean {
         val manager = connectivityManager()
@@ -114,6 +146,7 @@ class ScopedSoftApNetwork(private val context: Context) {
      * deliberately advertise no default route. Falls back to `.1` of the phone's /24.
      */
     fun gatewayIpv4(): String? {
+        synchronized(lock) { joinedDirect }?.let { return it.gateway }
         val net = network() ?: return null
         val properties = connectivityManager().getLinkProperties(net)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -128,19 +161,21 @@ class ScopedSoftApNetwork(private val context: Context) {
      * Prove the phone can reach the glasses over the network it just joined.
      *
      * TCP, through [Network.getSocketFactory], so the kernel routes via the hotspot's table rather
-     * than the cellular default that unbound sockets would take. A *refused* connection is a pass:
+     * than the default network that unbound sockets would take. A *refused* connection is a pass:
      * the SYN arrived and the RST came back, which is the reachability question. Only a timeout or
      * an unreachable-network error is a fail.
      */
     fun probeGateway(timeoutMs: Int = GATEWAY_PROBE_TIMEOUT_MS): GatewayProbe {
-        val net = network() ?: return GatewayProbe(false, "no scoped network")
+        val net = network()
+        if (net == null && !keepsPhoneInternet()) return GatewayProbe(false, "no scoped network")
         val gateway = gatewayIpv4() ?: return GatewayProbe(false, "no gateway address on the scoped network")
         var lastFailure = "no ports tried"
         for (port in GATEWAY_PROBE_PORTS) {
             val startedAt = android.os.SystemClock.elapsedRealtime()
             val socket =
                 try {
-                    net.socketFactory.createSocket()
+                    // The Wi-Fi Direct group has no Network: its subnet is directly reachable.
+                    net?.socketFactory?.createSocket() ?: java.net.Socket()
                 } catch (error: java.io.IOException) {
                     // netd answers EPERM when a VPN owns our UID and forbids binding elsewhere.
                     val message = error.message ?: error.javaClass.simpleName
@@ -269,7 +304,6 @@ class ScopedSoftApNetwork(private val context: Context) {
                         "ssid" to ssid,
                         "localIpv4" to resolvedIpv4,
                         "joinMs" to (System.currentTimeMillis() - startedAtMs),
-                        "defaultNetworkIsCellular" to defaultNetworkIsCellular(manager),
                     )
                     // Does the address we were just handed exist in the kernel's interface table,
                     // and under the name LinkProperties claims? ICE gathers from that table, so a
@@ -473,11 +507,15 @@ class ScopedSoftApNetwork(private val context: Context) {
 
     /** Drop the network. A join in progress on another thread stops waiting and fails. */
     fun release() {
-        synchronized(lock) {
+        val wasDirect = synchronized(lock) {
             releases++
             pendingReady?.countDown()
             releaseLocked()
+            joinedDirect.also { joinedDirect = null } != null
         }
+        // Ends a Wi-Fi Direct join in progress too, and tells the glasses to remove the group.
+        direct.release()
+        if (wasDirect) SoftApTrace.stage("wifi_direct_released")
     }
 
     private fun releaseLocked() {
@@ -531,13 +569,6 @@ class ScopedSoftApNetwork(private val context: Context) {
             ?.firstOrNull { it.address is Inet4Address }
             ?.address
             ?.hostAddress
-
-    /** Dual-homing check: the default route must still be cellular after the scoped join. */
-    private fun defaultNetworkIsCellular(manager: ConnectivityManager): Boolean {
-        val active = manager.activeNetwork ?: return false
-        val capabilities = manager.getNetworkCapabilities(active) ?: return false
-        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
-    }
 
     companion object {
         @Volatile private var sharedInstance: ScopedSoftApNetwork? = null

@@ -26,7 +26,6 @@ class GlassesMediaRelayModule : Module() {
   private val worker = Executors.newSingleThreadExecutor()
   private var activeId: String? = null
   private var network: ScopedSoftApNetwork? = null
-  private var internet: InternetHold? = null
   private var source: LocalWhipIngestSource? = null
   private var publisher: PhoneWhipPublisher? = null
   private var wakeLock: PowerManager.WakeLock? = null
@@ -48,13 +47,9 @@ class GlassesMediaRelayModule : Module() {
           val endpoint = requireNotNull(options["ingestUrl"] as? String)
           val context = requireNotNull(appContext.reactContext).applicationContext
           activeId = id
-          val hold = InternetHold(context).also { internet = it }
-          check(hold.awaitValidatedCellular().validated) {
-            "Turn on phone mobile data to stream through the glasses hotspot"
-          }
           // The glasses network the glasses Wi-Fi service joined; the relay only borrows it.
           val scoped = ScopedSoftApNetwork.shared(context).also { network = it }
-          check(scoped.network() != null) { "The phone is not on the glasses network" }
+          check(scoped.isAvailable()) { "The phone is not on the glasses network" }
           ScopedNetworkChangeDetector.registerRelayNetwork(scoped)
           // Forward the glasses' encoded video untouched instead of decoding and encoding it again.
           // Only when the caller asked, so an old caller and every other stream keep the re-encode.
@@ -75,11 +70,7 @@ class GlassesMediaRelayModule : Module() {
             if (state == SourceState.FAILED) emit(id, "failed", "Glasses receiver: $reason")
           }
           incoming.setPcmDeliveryEnabled(options["captureAudio"] != false && !bleAudio)
-          // A listener created while pinned to cellular cannot reply to the glasses over Wi-Fi.
-          // Restore cellular before opening the outgoing publisher, including when the bind fails.
-          hold.withProcessUnpinned {
-            incoming.start(SourceConfig("", SourceKind.SOFTAP, scoped.localIpv4()))
-          }
+          incoming.start(SourceConfig("", SourceKind.SOFTAP, scoped.localIpv4()))
           wakeLock = context.getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Mentra:managed-relay").apply { acquire() }
           wifiLock = context.getSystemService(WifiManager::class.java)?.createWifiLock(
@@ -152,7 +143,6 @@ class GlassesMediaRelayModule : Module() {
     step { source?.close(); source = null }
     step { publisher?.close(); publisher = null }
     step { network?.let { ScopedNetworkChangeDetector.releaseRelayNetwork(it) }; network = null }
-    step { internet?.close(); internet = null }
     step { wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null }
     step { wifiLock?.let { if (it.isHeld) it.release() }; wifiLock = null }
     failure?.let { throw it }

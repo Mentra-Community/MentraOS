@@ -1299,52 +1299,6 @@ describe("createSoftapCallDeps", () => {
     ])
   })
 
-
-
-
-  test.each(["cellular", "ethernet"])("the join waits for %s internet before asking ACS for anything", async (transport) => {
-    // Joining the hotspot takes this phone off Wi-Fi, and signing in to ACS is the very next thing
-    // that needs the internet. On device that ordering cost a 30s stall plus the join step's own
-    // timeout, so the wait has to happen first, not concurrently.
-    const order: string[] = []
-    const {deps: real} = deps({
-      awaitValidatedDefaultNetwork: async () => {
-        order.push("awaitDefault")
-        return {usable: true, detail: `${transport} (validated)`}
-      },
-      joinMeeting: async () => {
-        order.push("joinMeeting")
-        return {state: "connecting", ingestUrl: "http://192.168.43.20:8790/whip"}
-      },
-    })
-
-    const details: string[] = []
-    await real.joinMeeting({ssid: "MentraLive-1234", passphrase: "hunter2!", bindAddress: "192.168.43.20"}, (d) =>
-      details.push(d),
-    )
-
-    expect(order).toEqual(["awaitDefault", "joinMeeting"])
-    expect(details.some((d) => d.includes("internet route outside the glasses hotspot"))).toBe(true)
-    expect(details.some((d) => d.includes(`Internet is on ${transport} (validated)`))).toBe(true)
-  })
-
-  test("an unvalidated default network is narrated but does not abort the join", async () => {
-    // A route that validates a second later would otherwise fail a call that was about to work.
-    // The ACS join has its own bounded timeout for the case that does not recover, and it now
-    // reports a nameable cause rather than a bare deadline.
-    const {deps: real} = deps({
-      awaitValidatedDefaultNetwork: async () => ({usable: false, detail: "cellular (unvalidated)"}),
-    })
-
-    const details: string[] = []
-    await expect(
-      real.joinMeeting({ssid: "MentraLive-1234", passphrase: "hunter2!", bindAddress: "192.168.43.20"}, (d) =>
-        details.push(d),
-      ),
-    ).resolves.toBeDefined()
-    expect(details.some((d) => d.includes("not confirmed yet") && d.includes("joining Teams anyway"))).toBe(true)
-  })
-
   test("a host that cannot report its default network says nothing and still joins", async () => {
     // iOS and older Android hosts have no answer here. Narrating a guess would be worse than
     // silence, and refusing to join would ground SoftAP on every host but the newest.
@@ -1442,8 +1396,6 @@ describe("createSoftapCallDeps", () => {
     await thrown.deps.startHotspot()
     await expect(thrown.deps.joinScopedNetwork("MentraLive-1234", "hunter2!")).resolves.toBe("192.168.43.20")
   })
-
-
 
   test("the glasses are told to publish in host-only ICE mode", async () => {
     // An empty stun server is what puts the glasses in host-only mode; a configured one would add
@@ -1549,11 +1501,6 @@ describe("createSoftapCallDeps", () => {
       },
     ])
   })
-
-
-
-
-
 
   test("the hotspot step holds the glasses Wi-Fi link and the stop releases it", async () => {
     const harness = deps()

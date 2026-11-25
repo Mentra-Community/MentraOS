@@ -3,7 +3,6 @@ package com.mentra.acsmeeting
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.SystemClock
-import com.mentra.glassesmedia.network.InternetHold
 import com.mentra.glassesmedia.network.ScopedNetworkChangeDetector
 import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
 import com.mentra.glassesmedia.source.StillPhotoInbox
@@ -57,35 +56,6 @@ class AcsMeetingModule : Module() {
   private fun getOrCreateScopedNetwork(context: Context): ScopedSoftApNetwork =
     scopedNetwork ?: ScopedSoftApNetwork.shared(context).also { scopedNetwork = it }
 
-  /**
-   * Holds cellular up across the hotspot join, and reports what the default network became.
-   *
-   * Module-scoped so it outlives a single call step and is released by the meeting teardown.
-   */
-  private var internetHold: InternetHold? = null
-
-  /**
-   * Lift the cellular process pin only across a SoftAP WHIP bind.
-   *
-   * A ServerSocket bound to 192.168.43.x while this UID is marked cellular accepts the bind
-   * but never sees the glasses' SYN — ICMP/ARP still work, TCP to the listener times out.
-   * Join already does this; recovery rebind must too.
-   */
-  private inline fun <T> withIngestUnpinned(bind: () -> T): T {
-    val hold = internetHold
-    if (hold == null) {
-      SoftApTrace.stage("native_ingest_bind", "unpinned" to false, "reason" to "no cellular hold")
-      return bind()
-    }
-    hold.unbindProcess()
-    try {
-      SoftApTrace.stage("native_ingest_bind", "unpinned" to true)
-      return bind()
-    } finally {
-      hold.bindProcessToCellular()
-    }
-  }
-
   override fun definition() = ModuleDefinition {
     Name("MentraAcsMeeting")
     Function("supportsTeamsIdentity") { true }
@@ -119,28 +89,6 @@ class AcsMeetingModule : Module() {
     }
 
     /**
-     * The app's validated default network, waited for before the ACS join.
-     *
-     * Separate from the cellular hold on purpose: holding a request asks Android to bring cellular
-     * up, it does not say when this app's default route switches to it. Only this answers that, and
-     * it is the precondition for a join that has to reach the internet.
-     */
-    AsyncFunction("awaitValidatedDefaultNetwork") {
-      traced("await_validated_default_network") {
-        val context = appContext.reactContext ?: throw IllegalStateException("no react context")
-        val hold = internetHold ?: InternetHold(context.applicationContext).also { internetHold = it }
-        val network = hold.awaitValidatedDefault()
-        mapOf(
-          "transport" to network.transport,
-          "validated" to network.validated,
-          "present" to network.present,
-          "usable" to network.usable,
-          "detail" to network.toString(),
-        )
-      }
-    }
-
-    /**
      * The joined hotspot as the framework describes it. `prefix` is the invariant the media path is
      * checked against: the selected ICE candidate must sit inside it.
      */
@@ -161,12 +109,8 @@ class AcsMeetingModule : Module() {
     }
 
     /**
-     * Sign in to ACS before the glasses hotspot is up. SoftAP DNS cannot resolve Teams hosts, so
-     * [join] after the scoped network is a media bind, not another `createCallAgent`.
-     *
-     * Pinned to cellular for the duration, because "before the hotspot" means "on whatever Wi-Fi
-     * the phone is already on", and a slow AP is enough to blow the sign-in deadline. The pin is
-     * dropped before [join] opens the WHIP listener — see [InternetHold.bindProcessToCellular].
+     * Sign in to ACS before the glasses link is up, so [join] after it is a media bind, not another
+     * `createCallAgent`. Internet traffic uses the phone's default network, whatever it is.
      */
     AsyncFunction("prepareAgent") { options: Map<String, Any?> ->
       traced("prepare_agent", "hasSession" to (session != null)) {
@@ -184,17 +128,6 @@ class AcsMeetingModule : Module() {
           },
           scopedNetwork = getOrCreateScopedNetwork(context),
         ).also { session = it }
-        val hold = internetHold ?: InternetHold(context.applicationContext).also { internetHold = it }
-        // Request cellular rather than trusting it to be up: a phone sitting on Wi-Fi may have the
-        // radio asleep, and there is nothing to pin to until it is validated. An unvalidated result
-        // is not fatal here — the current default network may still sign in fine, and the meeting
-        // step's wait for a validated default network names a phone with no mobile data.
-        hold.awaitValidatedCellular()
-        hold.bindProcessToCellular()
-        // Deliberately still pinned on the way out. The pin has to survive the hotspot join that
-        // follows, because ACS re-binds its signalling when the network moves and keeps whatever
-        // route it got. Teardown's `leaveAndAwait` is what drops it, and only once a validated
-        // default internet exists.
         meeting.prepareAgent(token, displayName, options["identityMode"] as? String ?: "guest")
         meeting.snapshot()
       }
@@ -240,9 +173,6 @@ class AcsMeetingModule : Module() {
           },
           scopedNetwork = getOrCreateScopedNetwork(context),
         ).also { session = it }
-        // The process is already pinned to cellular by now (sign-in and the scoped join both pin, and
-        // ACS keeps the route its sockets were created with). Lift it only across the WHIP listener
-        // bind, which is the one socket that must stay on the hotspot.
         val joined = meeting.join(
           token,
           meetingUrl,
@@ -254,7 +184,6 @@ class AcsMeetingModule : Module() {
           audioDelayMs,
           origin,
           identityMode = options["identityMode"] as? String ?: "guest",
-          bindIngestUnpinned = { bind -> withIngestUnpinned(bind) },
         )
         // Prefer the join snapshot: getState() can race a leave from a respawned miniapp
         // restore and drop the URL the orchestrator needs to tell the glasses.
@@ -267,7 +196,6 @@ class AcsMeetingModule : Module() {
     AsyncFunction("leave") {
       traced("leave", "hasSession" to (session != null)) {
         session?.leave()
-        internetHold?.releaseWhenDefaultInternetReady()
       }
     }
 
@@ -275,20 +203,12 @@ class AcsMeetingModule : Module() {
      * Leave, and resolve only once the cleanup has actually finished.
      *
      * `leave` queues its work and returns, which is fine for a wearer who is done but useless to a
-     * host that has to know when the next call may safely start. This also drops the cellular
-     * process pin — but only once the phone has a validated default internet again. Unpinning
-     * onto a leftover glasses hotspot is what made the next `teams:create` return 503.
+     * host that has to know when the next call may safely start.
      */
     AsyncFunction("leaveAndAwait") { options: Map<String, Any?> ->
       val timeoutMs = (options["timeoutMs"] as? Number)?.toLong() ?: 20_000L
       traced("leave_and_await", "timeoutMs" to timeoutMs, "hasSession" to (session != null)) {
-        val completed = try {
-          session?.leaveAndAwait(timeoutMs) ?: true
-        } finally {
-          // In the `finally` so a cleanup that timed out still drops the pin. The pin is the one
-          // resource whose leak breaks the *next* call rather than this one.
-          internetHold?.releaseWhenDefaultInternetReady()
-        }
+        val completed = session?.leaveAndAwait(timeoutMs) ?: true
         mapOf("completed" to completed)
       }
     }
@@ -467,7 +387,7 @@ class AcsMeetingModule : Module() {
     AsyncFunction("rebindSoftApIngest") {
       traced("rebind_softap_ingest", "hasSession" to (session != null)) {
         val meeting = session ?: throw IllegalStateException("No active meeting to rebind")
-        meeting.rebindSoftApIngest { bind -> withIngestUnpinned(bind) }
+        meeting.rebindSoftApIngest()
       }
     }
 
@@ -482,14 +402,9 @@ class AcsMeetingModule : Module() {
         "native_module_destroyed",
         "hasSession" to (session != null),
         "hasScopedNetwork" to (scopedNetwork != null),
-        "hasCellularHold" to (internetHold != null),
       )
       session?.leave()
       session = null
-      // Destruction has no owner left to release a retained request later. Close permanently
-      // so a validation callback from the old module cannot re-pin a replacement module.
-      internetHold?.close()
-      internetHold = null
     }
   }
 

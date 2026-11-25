@@ -74,9 +74,15 @@ class HotspotOtaTransport {
   private preparing: Promise<string> | null = null
   private generation = 0
 
+  /**
+   * Serve the update to the glasses over the glasses Wi-Fi link and return its manifest URL.
+   * `onEndpoint` gets the new URL when the link comes back at another address, for example after
+   * the ASG app replaced itself; the glasses resume the update from it.
+   */
   async prepare(
     checkResult: OtaCheckCurrentGlassesResult,
     onProgress?: (progress: HotspotOtaProgress) => void,
+    onEndpoint?: (manifestUrl: string) => void,
   ): Promise<string> {
     const ownerRevision = otaDeviceSessionRevision()
     if (this.teardownPromise) await this.teardownPromise
@@ -101,7 +107,7 @@ class HotspotOtaTransport {
         throw new Error("The OTA glasses have changed")
       }
     }
-    const preparation = this.prepareAttempt(checkResult, assertCurrent, onProgress)
+    const preparation = this.prepareAttempt(checkResult, assertCurrent, onProgress, onEndpoint)
     this.preparing = preparation
     try {
       return await preparation
@@ -123,6 +129,7 @@ class HotspotOtaTransport {
     checkResult: OtaCheckCurrentGlassesResult,
     assertCurrent: () => void,
     onProgress?: (progress: HotspotOtaProgress) => void,
+    onEndpoint?: (manifestUrl: string) => void,
   ): Promise<string> {
     const manifestBody = checkResult.manifestBody
     if (!manifestBody) throw new Error("The selected OTA check has no manifest body")
@@ -169,27 +176,26 @@ class HotspotOtaTransport {
           )
         }
       }
-      const artifactPaths = Object.fromEntries(this.prepared.map((artifact) => [artifact.sha256, artifact.filePath]))
-      // Start exactly one native listener to learn its selected port, then atomically replace
-      // the placeholder with the immutable rewritten manifest before ota_start is sent.
-      const server = await otaServer.start("{}", artifactPaths, localAddress)
-      this.serverStarted = true
-      assertCurrent()
-      const manifest = rewriteManifestForLocalServer(manifestBody, this.prepared, server.baseUrl)
-      const published = await otaServer.start(manifest, artifactPaths, server.host)
-      assertCurrent()
-      if (published.manifestUrl !== server.manifestUrl) {
-        throw new Error("Local OTA server endpoint changed while publishing the manifest")
-      }
+      const manifestUrl = await this.serve(manifestBody, localAddress, assertCurrent)
       this.active = true
       onProgress?.({phase: "serving"})
-      return published.manifestUrl
+      // The phone's address comes from the link at each step: when it comes back at another one,
+      // serve there and hand the glasses the new URL.
+      const wifi = this.wifi
+      wifi.onChange((event) => {
+        if (event.type !== "restored" || this.wifi !== wifi || !this.active) return
+        this.serve(manifestBody, event.binding.phoneIpv4, assertCurrent).then(
+          (url) => onEndpoint?.(url),
+          (error) => console.warn("[OTA_PROGRESS] serving at the restored address failed", error),
+        )
+      })
+      return manifestUrl
     } catch (error) {
       if (error instanceof OtaArtifactError || error instanceof HotspotOtaTransportError) {
         throw error
       }
       const message = error instanceof Error ? error.message : String(error)
-      if (error instanceof GlassesWifiError && error.stage === "hotspot") {
+      if (error instanceof GlassesWifiError && error.stage === "enable") {
         throw new HotspotOtaTransportError(hotspotStartErrorCode(message), message)
       }
       if (error instanceof GlassesWifiError) {
@@ -205,6 +211,25 @@ class HotspotOtaTransport {
       }
       throw new HotspotOtaTransportError("hotspot_server_failed", message)
     }
+  }
+
+  /**
+   * Start exactly one native listener on [address] to learn its port, then atomically replace the
+   * placeholder with the manifest rewritten for it, before the glasses are given the URL.
+   */
+  private async serve(manifestBody: string, address: string | undefined, assertCurrent: () => void): Promise<string> {
+    const artifactPaths = Object.fromEntries(this.prepared.map((artifact) => [artifact.sha256, artifact.filePath]))
+    if (this.serverStarted) await otaServer.stop()
+    const server = await otaServer.start("{}", artifactPaths, address)
+    this.serverStarted = true
+    assertCurrent()
+    const manifest = rewriteManifestForLocalServer(manifestBody, this.prepared, server.baseUrl)
+    const published = await otaServer.start(manifest, artifactPaths, server.host)
+    assertCurrent()
+    if (published.manifestUrl !== server.manifestUrl) {
+      throw new Error("Local OTA server endpoint changed while publishing the manifest")
+    }
+    return published.manifestUrl
   }
 
   /** Android 13+ requires the nearby-WiFi runtime grant before WifiNetworkSpecifier is usable. */

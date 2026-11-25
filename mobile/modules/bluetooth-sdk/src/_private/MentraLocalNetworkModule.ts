@@ -58,7 +58,9 @@ declare class MentraLocalNetworkNativeModule extends NativeModule<LocalNetworkEv
     ssid: string,
     password: string,
     incoming: boolean,
-  ): Promise<{connected: boolean; ssid: string; localAddress?: string}>
+  ): Promise<{connected: boolean; ssid: string; localAddress?: string; gateway?: string}>
+  connectWifiDirect(incoming: boolean): Promise<{connected: boolean; ssid: string; localAddress?: string; gateway?: string}>
+  wifiDirectAvailable(): boolean
   request(
     requestId: string,
     url: string,

@@ -61,9 +61,11 @@ mock.module("../../utils/timers", () => ({
 }))
 
 // The phone's one native join.
+let wifiDirect = false
+let directJoins = 0
 let joins = 0
 let joinAnswers: Array<string | Error | Promise<string>> = []
-const disconnects: boolean[] = []
+let disconnects = 0
 const lostListeners = new Set<() => void>()
 mock.module("../asg/localNetworkTransport", () => ({
   localNetworkTransport: {
@@ -73,8 +75,13 @@ mock.module("../asg/localNetworkTransport", () => ({
       if (answer instanceof Error) throw answer
       return answer
     },
-    disconnect: async (_owner: symbol, waitForInternet = false) => {
-      disconnects.push(waitForInternet)
+    wifiDirectAvailable: () => wifiDirect,
+    connectWifiDirect: async () => {
+      directJoins++
+      return {ssid: "DIRECT-ML-abcd", localAddress: "192.168.43.50", gateway: "192.168.43.1"}
+    },
+    disconnect: async () => {
+      disconnects++
     },
     onLost: (listener: () => void) => {
       lostListeners.add(listener)
@@ -93,8 +100,10 @@ beforeEach(() => {
   commands.length = 0
   script = []
   joins = 0
+  directJoins = 0
+  wifiDirect = false
   joinAnswers = []
-  disconnects.length = 0
+  disconnects = 0
   connection = {state: "connected", fullyBooted: true}
   now = 1_000_000
   Date.now = () => now
@@ -123,7 +132,7 @@ describe("one shared link", () => {
     await call.release()
     await call.release()
     expect(commands).toEqual([true, false])
-    expect(disconnects).toEqual([true])
+    expect(disconnects).toBe(1)
   })
 
   test("a holder arriving while the link comes up waits for the same join", async () => {
@@ -151,11 +160,11 @@ describe("one shared link", () => {
     expect(commands).toEqual([true, false])
   })
 
-  test("a glasses hotspot that will not start fails at the hotspot stage", async () => {
+  test("a glasses hotspot that will not start fails at the enable stage", async () => {
     script = [{state: "disabled"}, {state: "disabled"}, {state: "disabled"}]
     const error = await holdGlassesWifi({consumer: "gallery"}).catch((e) => e)
     expect(error).toBeInstanceOf(GlassesWifiError)
-    expect(error.stage).toBe("hotspot")
+    expect(error.stage).toBe("enable")
     expect(joins).toBe(0)
   })
 })
@@ -362,3 +371,41 @@ describe("a late hotspot", () => {
     expect(await reclaimLateHotspot()).toBe(false)
   })
 })
+
+describe("the Wi-Fi Direct link", () => {
+  test("glasses and a phone that can hold a group get it instead of the hotspot, and its release sends no hotspot command", async () => {
+    wifiDirect = true
+    const gallery = await holdGlassesWifi({consumer: "gallery"})
+    expect(gallery.binding).toEqual({ssid: "DIRECT-ML-abcd", password: "", gateway: "192.168.43.1", phoneIpv4: "192.168.43.50"})
+    expect(commands).toEqual([])
+    expect(joins).toBe(0)
+    await gallery.release()
+    expect(commands).toEqual([])
+    expect(disconnects).toBe(1)
+  })
+
+  test("a hotspot-off report does not end a Wi-Fi Direct link: starting the group stops the hotspot", async () => {
+    wifiDirect = true
+    const hold = await holdGlassesWifi({consumer: "ota"})
+    const events: string[] = []
+    hold.onChange((event) => events.push(event.type))
+    hotspotListeners.forEach((listener) => listener({state: "disabled"}))
+    await settle()
+    expect(events).toEqual([])
+    await hold.release()
+  })
+
+  test("the radio is chosen again when the link comes back", async () => {
+    wifiDirect = true
+    const hold = await holdGlassesWifi({consumer: "ota"})
+    wifiDirect = false
+    setLink("disconnected")
+    setLink("connected", true)
+    await settle()
+    expect(directJoins).toBe(1)
+    expect(joins).toBe(1)
+    expect(hold.binding.ssid).toBe("MentraLive_abc123")
+    await hold.release()
+  })
+})
+

@@ -11,7 +11,7 @@ import android.net.NetworkCapabilities
  * `NET_CAPABILITY_INTERNET` — assertable without a device.
  *
  * Dropping the internet capability is what keeps the phone dual-homed: Android will not promote the
- * glasses hotspot to the default network, so ACS traffic stays on cellular while media crosses the
+ * glasses hotspot to the default network, so internet traffic stays on the phone's own while media crosses the
  * local link. The other half of that guarantee is the MTK firmware patch that stops the AP
  * advertising a default route.
  */

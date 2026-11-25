@@ -67,7 +67,17 @@ class MentraLocalNetworkModule : Module() {
         }
 
         AsyncFunction("connect") { ssid: String, password: String, incoming: Boolean, promise: Promise ->
-            connect(ssid, password, incoming, promise)
+            connect(ssid, password, incoming, wifiDirect = false, promise)
+        }
+
+        /** The glasses' Wi-Fi Direct group instead of their hotspot; this asks them for it too. */
+        AsyncFunction("connectWifiDirect") { incoming: Boolean, promise: Promise ->
+            connect("", "", incoming, wifiDirect = true, promise)
+        }
+
+        /** Whether this phone and the connected glasses can use Wi-Fi Direct now. */
+        Function("wifiDirectAvailable") {
+            appContext.reactContext?.let { ScopedSoftApNetwork.shared(it).wifiDirectAvailable() } == true
         }
 
         AsyncFunction("request") {
@@ -116,7 +126,7 @@ class MentraLocalNetworkModule : Module() {
             "ConnectivityManager is unavailable"
         }
 
-    private fun connect(ssid: String, password: String, incoming: Boolean, promise: Promise) {
+    private fun connect(ssid: String, password: String, incoming: Boolean, wifiDirect: Boolean, promise: Promise) {
         joins.execute {
             disconnect()
             val context = appContext.reactContext?.applicationContext
@@ -142,7 +152,7 @@ class MentraLocalNetworkModule : Module() {
                     }
                 }
             try {
-                network.join(ssid, password, listener, incoming)
+                val name = if (wifiDirect) network.joinWifiDirect(listener) else ssid.also { network.join(it, password, listener, incoming) }
                 if (!current()) {
                     promise.reject("ERR_LOCAL_WIFI_CANCELLED", "Local WiFi connection cancelled", null)
                     return@execute
@@ -151,8 +161,9 @@ class MentraLocalNetworkModule : Module() {
                 promise.resolve(
                     buildMap<String, Any> {
                         put("connected", true)
-                        put("ssid", ssid)
+                        put("ssid", name)
                         network.localIpv4()?.let { put("localAddress", it) }
+                        network.gatewayIpv4()?.let { put("gateway", it) }
                     },
                 )
             } catch (error: Exception) {
@@ -277,9 +288,10 @@ class MentraLocalNetworkModule : Module() {
     }
 
     private fun openConnection(requestId: String, url: String): HttpURLConnection {
-        val network = synchronized(lock) { scoped }?.network()
+        val scoped = synchronized(lock) { scoped }?.takeIf { it.isAvailable() }
             ?: throw IllegalStateException("Local WiFi is not connected")
-        val connection = network.openConnection(URL(url)) as HttpURLConnection
+        // A Wi-Fi Direct group has no Network: its subnet is directly reachable.
+        val connection = (scoped.network()?.openConnection(URL(url)) ?: URL(url).openConnection()) as HttpURLConnection
         activeConnections[requestId] = connection
         return connection
     }

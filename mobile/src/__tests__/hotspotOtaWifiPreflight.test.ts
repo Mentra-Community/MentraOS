@@ -29,10 +29,10 @@ jest.mock("../../modules/engine/src/services/HotspotGlassesIdentity", () => ({
 const binding = {ssid: "A", password: "password", gateway: "192.168.43.1", phoneIpv4: "192.168.43.2"}
 jest.mock("../../modules/engine/src/services/GlassesWifi", () => {
   class GlassesWifiError extends Error {
-    stage: "hotspot" | "join"
+    stage: "enable" | "join"
     cause: Error & {code?: string}
     code?: string
-    constructor(stage: "hotspot" | "join", cause: Error & {code?: string}) {
+    constructor(stage: "enable" | "join", cause: Error & {code?: string}) {
       super(cause.message)
       this.stage = stage
       this.cause = cause

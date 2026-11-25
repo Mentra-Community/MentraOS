@@ -197,29 +197,7 @@ describe("AcsMeetingService", () => {
     expect((await result).message).toBe("The meeting changed during admission")
   })
 
-  test("cleanup can wait for restored Wi-Fi without changing the live cellular requirement", async () => {
-    const cellular = {usable: true, detail: "cellular", transport: "cellular", present: true, validated: true}
-    const wifi = {...cellular, detail: "wifi", transport: "wifi"}
-    const live = mock(async () => cellular)
-    const restored = mock(async () => wifi)
-    setAcsMeetingNativeForTests({
-      ...fakeNative(),
-      awaitValidatedDefaultNetwork: live,
-      awaitDefaultNetworkAfterHotspot: restored,
-    })
-    expect(await acsMeetingService.awaitValidatedDefaultNetwork()).toEqual(cellular)
-    expect(await acsMeetingService.awaitDefaultNetworkAfterHotspot()).toEqual(wifi)
-    expect(live).toHaveBeenCalledTimes(1)
-    expect(restored).toHaveBeenCalledTimes(1)
-  })
 
-  test("older native builds keep their existing cleanup network wait", async () => {
-    const wifi = {usable: true, detail: "wifi", transport: "wifi", present: true, validated: true}
-    const live = mock(async () => wifi)
-    setAcsMeetingNativeForTests({...fakeNative(), awaitValidatedDefaultNetwork: live})
-    expect(await acsMeetingService.awaitDefaultNetworkAfterHotspot()).toEqual(wifi)
-    expect(live).toHaveBeenCalledTimes(1)
-  })
 
 
 

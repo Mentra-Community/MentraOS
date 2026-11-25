@@ -283,7 +283,7 @@ class AcsMeetingSession(
    * attach its result to a session that has already moved on.
    *
    * Same pattern as the ingest source's generation. It exists because `createCallAgent` is a future
-   * with no timeout of its own: on device it stalled for 30 s while cellular was still validating,
+   * with no timeout of its own: on device it stalled for 30 s while the default network was still validating,
    * and a cancelled join that later succeeds would otherwise leave a live agent nobody owns.
    */
   private val joinGeneration = AtomicInteger(0)
@@ -411,12 +411,6 @@ class AcsMeetingSession(
     /** `created` (Start) or `joined` (Join); see [callOrigin]. Diagnostic only. */
     origin: String = "unknown",
     identityMode: String = "guest",
-    /**
-     * Runs the WHIP listener bind, and exists so the caller can lift a process-wide network pin
-     * across exactly that call. Takes the block rather than being a pair of before/after hooks so
-     * the pin cannot be left off if the bind throws. See [network.InternetHold.bindProcessToCellular].
-     */
-    bindIngestUnpinned: (() -> Unit) -> Unit = { bind -> bind() },
   ): Map<String, Any> {
     // Both glasses and phone feed RawOutgoingAudioStream so ACS never owns
     // the phone audio route (no MODE_IN_COMMUNICATION, no forced speaker).
@@ -456,8 +450,8 @@ class AcsMeetingSession(
         // Tear down any previous call without announcing idle: the caller already
         // holds a "connecting" snapshot, and an idle event landing after it made
         // the host and miniapp flash out of "joining" on every join.
-        // A SoftAP join that already signed in on cellular must keep that agent:
-        // recreating it on the glasses hotspot is the ACS_AGENT_TIMEOUT we just hit.
+        // A SoftAP join that already signed in must keep that agent: recreating it
+        // after the glasses link is up is the ACS_AGENT_TIMEOUT we just hit.
         val reuseAgent = agentPrepared && callAgent != null && preparedToken == token && preparedIdentityMode == identityMode
         leaveLocked(emitIdle = false, keepAgent = reuseAgent)
         // After the teardown, because that teardown bumps the generation itself. Everything that
@@ -658,16 +652,11 @@ class AcsMeetingSession(
         // return an ingest URL while 192.168.43.x is still assigned. WHEP still
         // attaches after the call exists — it has a URL going in, not coming out.
         if (videoSource is MeetingVideoSourceSpec.SoftAp) {
-          // Unpinned for the bind only: this socket is a ServerSocket on 192.168.43.79 and cannot
-          // be re-scoped afterwards, so a cellular mark here leaves the glasses' SYN unanswered.
-          // The pin is back on by the time the Teams join below runs.
-          bindIngestUnpinned {
-            media.attach(
-              video = { planes -> forwardGlassesPlanes(planes) },
-              pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
-              config = videoSource.toConfig(),
-            )
-          }
+          media.attach(
+            video = { planes -> forwardGlassesPlanes(planes) },
+            pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
+            config = videoSource.toConfig(),
+          )
         }
 
         val locator = TeamsMeetingLinkLocator(teamsUrl)
@@ -802,7 +791,7 @@ class AcsMeetingSession(
    * Blocks on [executor] so it cannot race [join] / [leaveLocked]. Returns the new ingest URL
    * the glasses must be told; throws rather than hand back a stale listener.
    */
-  fun rebindSoftApIngest(bindIngestUnpinned: (() -> Unit) -> Unit = { bind -> bind() }): String {
+  fun rebindSoftApIngest(): String {
     val done = CountDownLatch(1)
     val result = AtomicReference<String?>(null)
     val failure = AtomicReference<Exception?>(null)
@@ -818,15 +807,7 @@ class AcsMeetingSession(
         }
         val address = scopedNetwork?.localIpv4()
           ?: throw IllegalStateException("scoped network has no IPv4 address after rejoin")
-        // Same pin-lift as [join]: a listener bound while this UID is marked cellular
-        // never receives the glasses' TCP SYN, even though ping/ARP succeed.
-        lateinit var url: String
-        bindIngestUnpinned {
-          url = media.rebindIngest(
-            SourceConfig("", SourceKind.SOFTAP, address),
-            REBIND_INGEST_CLOSE_MS,
-          )
-        }
+        val url = media.rebindIngest(SourceConfig("", SourceKind.SOFTAP, address), REBIND_INGEST_CLOSE_MS)
         SoftApTrace.stage("session_rebind_ingest_end", "url" to url)
         result.set(url)
       } catch (error: Exception) {
@@ -1876,7 +1857,7 @@ class AcsMeetingSession(
    * Sign in to ACS with a deadline, and make sure nothing survives a missed one.
    *
    * `createCallAgent` returns a future with no timeout of its own, and it is the first thing after
-   * the hotspot join that needs the internet. Unbounded, a cellular route that had not validated
+   * the hotspot join that needs the internet. Unbounded, a default route that had not validated
    * yet turned into a 30 s stall followed by the join step's own timeout — one opaque failure
    * covering a specific, nameable cause.
    *
