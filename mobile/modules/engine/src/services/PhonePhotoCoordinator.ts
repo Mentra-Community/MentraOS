@@ -35,6 +35,7 @@ import {BgTimer} from "../utils/timers"
 import BluetoothSdk, {holdCameraWarm, type CameraWarmHold} from "@mentra/bluetooth-sdk/internal"
 import type {
   PhotoCapture as BluetoothPhotoCapture,
+  PhotoCaptureWithPreview as BluetoothPhotoCaptureWithPreview,
   PhotoPreview,
   PhotoSize,
   PhotoTransferMethod,
@@ -87,6 +88,8 @@ export interface PhotoOpts {
   mfnr?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
+  /** A capture (`capturePhoto`) also sends its small preview. */
+  preview?: boolean
   /**
    * False when the caller paused the stream to give the camera to this photo, so a frame from
    * that stream must not stand in for it. Default true.
@@ -111,8 +114,8 @@ export interface LocalPhotoTaken {
 
 /**
  * One photo kept on the phone, in stages (the Bluetooth SDK's PhotoCapture, with the Wi-Fi link
- * for the full photo): `captured` when the camera is free again, `preview` (at most 500 px) for
- * every photo, `photo()` the full size, which waits on the glasses until first asked for, and
+ * for the full photo): `captured` when the camera is free again, `preview` (at most 500 px) when
+ * the capture asked for one (it rejects with `PREVIEW_NOT_REQUESTED` otherwise), `photo()` the full size, which waits on the glasses until first asked for, and
  * `release()` when it isn't needed.
  */
 export interface PhoneCapture {
@@ -530,7 +533,7 @@ export class PhonePhotoCoordinator {
 
   /** takePhoto's local delivery: the whole photo, as capturePhoto(...).photo() gives it. */
   async takeLocalPhoto(packageName: string, opts: PhotoOpts): Promise<LocalPhotoTaken> {
-    const capture = this.capturePhoto(packageName, opts)
+    const capture = this.capturePhoto(packageName, {...opts, preview: false})
     try {
       return await capture.photo()
     } finally {
@@ -558,6 +561,7 @@ export class PhonePhotoCoordinator {
             requestId: photoId,
             appId: packageName,
             ...captureParams(opts, parsePhotoCompression(opts.compress)),
+            preview: opts.preview === true,
           }),
     )
     const stage = <T>(fromGlasses: (c: BluetoothPhotoCapture) => Promise<T>, fromFrame: (f: StreamFrame) => T) =>
@@ -572,8 +576,13 @@ export class PhonePhotoCoordinator {
       photoId,
       captured: quiet(captured),
       get preview() {
+        if (!opts.preview) {
+          return (preview ??= quiet(
+            Promise.reject(new PhotoError("PREVIEW_NOT_REQUESTED", "Ask for a preview with preview: true when capturing", "command")),
+          ))
+        }
         return (preview ??= stage(
-          (c) => c.preview,
+          (c) => (c as BluetoothPhotoCaptureWithPreview).preview,
           (f) => ({url: `data:image/jpeg;base64,${f.base64}`, width: f.width, height: f.height}),
         ))
       },

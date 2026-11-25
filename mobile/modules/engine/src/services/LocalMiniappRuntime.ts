@@ -3951,6 +3951,7 @@ class LocalMiniappRuntime {
       mfnr: payload.mfnr as boolean | undefined,
       ispDigitalGain: payload.ispDigitalGain as number | undefined,
       ispAnalogGain: payload.ispAnalogGain as string | undefined,
+      preview: payload.preview === true,
       // Call pauses its stream to take a full-size photo; a stream frame must not replace it.
       streamFrame: !acsMeetingService.photoPauseHeld(),
     }

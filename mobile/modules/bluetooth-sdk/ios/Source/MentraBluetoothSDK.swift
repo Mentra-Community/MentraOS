@@ -1257,9 +1257,9 @@ public final class MentraBluetoothSDK {
 
     private var photoCaptures: [String: PhotoCapture] = [:]
 
-    /// A photo kept on the phone, whole: `capturePhoto`, its `photo()`, then its release.
+    /// A photo kept on the phone, whole, with no preview: `capturePhoto`, its `photo()`, then its release.
     public func takePhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent {
-        let capture = try capturePhoto(request)
+        let capture = try capturePhoto(request.withPreview(false))
         defer { capture.release() }
         return try await capture.photo()
     }
@@ -1272,7 +1272,7 @@ public final class MentraBluetoothSDK {
         // The glasses keep a photo 30 minutes; nothing arrives for an older capture.
         let cutoff = Date().addingTimeInterval(-30 * 60)
         photoCaptures = photoCaptures.filter { !$0.value.done && $0.value.createdAt > cutoff }
-        let deferred = glassesStatus.deferredPhotosVersion > 0
+        let deferred = glassesStatus.deferredPhotosVersion >= PhotoCapture.deferredPhotosVersion
         let capture = PhotoCapture(
             request: routed,
             deferred: deferred,

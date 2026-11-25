@@ -8,10 +8,11 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * One photo kept on the phone, in stages. [captured]: the camera is done and free for the next
- * one. [preview]: the glasses' at most 500 px preview. [photo]: the full photo as a file; the first
+ * one. [preview]: the glasses' at most 500 px preview, when the request asked for one
+ * ([PhotoRequest.preview]). [photo]: the full photo as a file; the first
  * call asks the glasses to send it, and until then it waits on the glasses ("deferred delivery").
  * [release]: the full photo isn't needed, and the glasses delete it. Glasses without deferred
- * photos send the whole photo at once; it is then also the preview.
+ * photos send the whole photo at once; it is then also the preview, if one was asked for.
  */
 class PhotoCapture internal constructor(
     val request: PhotoRequest,
@@ -33,9 +34,18 @@ class PhotoCapture internal constructor(
     private val photoStage = CompletableDeferred<PhotoResponseEvent>()
     private val photoAsked = AtomicBoolean(!deferred)
 
+    init {
+        if (!request.preview) {
+            previewStage.completeExceptionally(
+                BluetoothSdkException("preview_not_requested", "Ask for a preview with preview = true when capturing."),
+            )
+        }
+    }
+
     /** Resolves once the glasses wrote the photo: the camera takes the next request. */
     suspend fun captured() = await(capturedStage, CAPTURED_TIMEOUT_MS, "capture")
 
+    /** The preview, if the request asked for one; else it fails with `preview_not_requested`. */
     suspend fun preview(): PhotoPreview = await(previewStage, STAGE_TIMEOUT_MS, "preview")
 
     /** The full photo; `photoUrl` is a `file://` URI in the app's cache folder, the caller's to move. */
@@ -107,9 +117,11 @@ class PhotoCapture internal constructor(
         return PhotoPreview(url, bounds.outWidth.takeIf { it > 0 }, bounds.outHeight.takeIf { it > 0 })
     }
 
-    private companion object {
-        const val CAPTURED_TIMEOUT_MS = 45_000L
+    internal companion object {
+        /** Glasses from this `deferred_photos` version on keep the full photo and send a preview only when asked. */
+        const val DEFERRED_PHOTOS_VERSION = 2
+        private const val CAPTURED_TIMEOUT_MS = 45_000L
         // Capture, preview ACK and retries, then the send queue's wait behind other photos.
-        const val STAGE_TIMEOUT_MS = 110_000L
+        private const val STAGE_TIMEOUT_MS = 110_000L
     }
 }

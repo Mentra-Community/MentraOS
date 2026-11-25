@@ -232,6 +232,8 @@ data class PhotoRequest @JvmOverloads constructor(
     val mode: PhotoMode = PhotoMode.PHOTO,
     /** `direct` disables BLE fallback; `ble` skips direct upload; `auto` tries both. */
     val transferMethod: String = "auto",
+    /** `capturePhoto` only: the glasses send a small preview after the capture ([PhotoCapture.preview]). */
+    val preview: Boolean = false,
 ) {
     companion object {
         private fun transferMethodFromValue(value: Any?): String {
@@ -293,6 +295,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 zsl = boolValue(values, "zsl"),
                 ispDigitalGain = ispDigitalGain,
                 ispAnalogGain = ispAnalogGain,
+                preview = boolValue(values, "preview") ?: false,
             )
         }
 

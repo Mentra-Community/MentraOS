@@ -33,6 +33,12 @@ class PhotoRequestTest {
     }
 
     @Test
+    fun `a preview is asked for only with preview true`() {
+        assertThat(PhotoRequest.fromMap(emptyMap()).preview).isFalse()
+        assertThat(PhotoRequest.fromMap(mapOf("preview" to true)).preview).isTrue()
+    }
+
+    @Test
     fun `size defaults to auto and keeps a named size`() {
         assertThat(PhotoRequest(sound = true).size).isEqualTo(PhotoSize.AUTO)
         assertThat(PhotoRequest.fromMap(emptyMap()).size).isEqualTo(PhotoSize.AUTO)

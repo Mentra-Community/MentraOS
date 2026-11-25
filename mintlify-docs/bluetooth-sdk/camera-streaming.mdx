@@ -126,17 +126,17 @@ Upload and BLE transfer statuses such as `uploading`, `compressing`, `ble_fallba
 
 ## Photos To The Phone (React Native)
 
-To keep the photo on the phone and upload nothing, use `capturePhoto`. Its preview comes first; the full photo stays on the glasses until `photo()` asks for it:
+To keep the photo on the phone and upload nothing, use `capturePhoto`. With `preview: true` the glasses send a small preview first, over Bluetooth; without it they send none, and the capture has no `preview`. The full photo stays on the glasses until `photo()` asks for it:
 
 ```ts
-const capture = BluetoothSdk.capturePhoto({size: 'medium', sound: true});
+const capture = BluetoothSdk.capturePhoto({size: 'medium', sound: true, preview: true});
 await capture.captured;                 // the camera is free for the next photo
 const preview = await capture.preview;  // {url: "data:image/jpeg;base64,...", width, height}
 const photo = await capture.photo();    // {requestId, fileUri, mimeType, size}
 await capture.release();                // or skip photo(): the glasses delete it
 ```
 
-`takePhoto(options)` is `capturePhoto(options).photo()` followed by `release()`.
+`takePhoto(options)` is `capturePhoto(options).photo()` followed by `release()`, with no preview. For a preview only, await `preview` and `release()` without calling `photo()`.
 
 ### Photos over Wi-Fi
 
@@ -158,7 +158,7 @@ The SDK picks the radio (Wi-Fi Direct on Android with glasses that support it, o
 ```ts
 const run = BluetoothSdk.captureContinuous({size: 'medium', sound: false, maxPending: 12});
 run.onPhoto((capture) => {
-  // a normal capture: captured, preview, photo(), release()
+  // a normal capture: captured, photo(), release(); preview too with preview: true
 });
 run.onState((state) => {
   // "capturing" | "paused"

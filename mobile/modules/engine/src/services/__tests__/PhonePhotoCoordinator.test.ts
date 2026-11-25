@@ -349,11 +349,12 @@ describe("PhonePhotoCoordinator", () => {
   describe("photos kept on the phone", () => {
     test("takes the photo with no cloud request and resolves with the file", async () => {
       const coord = new PhonePhotoCoordinator()
-      const result = await coord.takeLocalPhoto("com.a", {size: "low", saveToGallery: true, transferMethod: "direct"})
+      const result = await coord.takeLocalPhoto("com.a", {size: "low", saveToGallery: true, transferMethod: "direct", preview: true})
       expect(result).toEqual({fileUri: "file:///cache/ble.jpg", mimeType: "image/jpeg", size: 99, requestId: expect.stringMatching(/^p[0-9a-z]+$/)})
       expect(startManagedPhoto).not.toHaveBeenCalled()
       const arg = capturePhotoNative.mock.calls[0]![0] as Record<string, unknown>
-      expect(arg).toMatchObject({requestId: result.requestId, appId: "com.a", size: "low", save: true})
+      // A whole photo asks for no preview.
+      expect(arg).toMatchObject({requestId: result.requestId, appId: "com.a", size: "low", save: true, preview: false})
       // The photo comes to the phone however the miniapp asked: no upload target, no transfer method.
       expect("transferMethod" in arg || "webhookUrl" in arg).toBe(false)
       // takeLocalPhoto releases the glasses' copy once the photo is here.
@@ -374,11 +375,21 @@ describe("PhonePhotoCoordinator", () => {
 
     test("many captures are in flight at once, each with its preview", async () => {
       const coord = new PhonePhotoCoordinator()
-      const captures = [coord.capturePhoto("com.a", {}), coord.capturePhoto("com.a", {}), coord.capturePhoto("com.a", {})]
+      const opts = {preview: true}
+      const captures = [coord.capturePhoto("com.a", opts), coord.capturePhoto("com.a", opts), coord.capturePhoto("com.a", opts)]
       const previews = await Promise.all(captures.map((capture) => capture.preview))
+      expect(capturePhotoNative.mock.calls.map((call) => (call[0] as {preview?: boolean}).preview)).toEqual([true, true, true])
       expect(capturePhotoNative).toHaveBeenCalledTimes(3)
       expect(new Set(captures.map((capture) => capture.photoId)).size).toBe(3)
       expect(previews[0]).toEqual({url: "data:image/jpeg;base64,AAAA", width: 500, height: 375})
+    })
+
+    test("a capture without preview: true asks the glasses for none, and its preview stage is refused", async () => {
+      const capture = new PhonePhotoCoordinator().capturePhoto("com.a", {})
+      const err = await expectPhotoError(capture.preview)
+      expect(err.code).toBe("PREVIEW_NOT_REQUESTED")
+      await capture.captured
+      expect((capturePhotoNative.mock.calls[0]![0] as {preview?: boolean}).preview).toBe(false)
     })
 
     test("a miniapp reaches only its own captures, and its own are released when it closes", async () => {

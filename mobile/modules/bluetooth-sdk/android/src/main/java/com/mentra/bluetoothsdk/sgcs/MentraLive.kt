@@ -7626,8 +7626,9 @@ class MentraLive : SGCManager() {
             }
             PhotoRequest.appendScanFields(json, request)
             if (deferred) {
-                // The glasses keep it and name the files they send (preview, then full photo).
+                // The glasses keep it and name the files they send (preview if asked, then full photo).
                 json.put("deferred", true)
+                if (request.preview) json.put("preview", true)
                 Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching deferred take_photo " + requestId)
                 sendJson(json, true)
                 return

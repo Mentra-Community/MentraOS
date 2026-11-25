@@ -5,9 +5,9 @@ import XCTest
 final class PhotoCaptureTests: XCTestCase {
     private var calls: [String] = []
 
-    private func capture() -> PhotoCapture {
+    private func capture(preview: Bool = true) -> PhotoCapture {
         PhotoCapture(
-            request: PhotoRequest(requestId: "p1", size: .medium, sound: true),
+            request: PhotoRequest(requestId: "p1", size: .medium, sound: true, preview: preview),
             deferred: true,
             glasses: PhotoCapture.Glasses(
                 fetch: { [unowned self] _, preview in calls.append(preview ? "preview" : "fetch") },
@@ -35,5 +35,20 @@ final class PhotoCaptureTests: XCTestCase {
         capture.onPreview(PhotoPreview(url: "data:image/jpeg;base64,AA==", width: 500, height: 375))
         capture.resume()
         XCTAssertEqual(calls, ["preview"])
+    }
+
+    func testWithoutAPreviewAskedForThereIsNone() async {
+        let capture = capture(preview: false)
+        capture.onStatus(PhotoStatusEvent(values: ["requestId": "p1", "status": "captured"]))
+        capture.resume()
+        XCTAssertEqual(calls, [])
+        do {
+            _ = try await capture.preview()
+            XCTFail("preview() should throw")
+        } catch let error as BluetoothSdkError {
+            XCTAssertEqual(error.code, "preview_not_requested")
+        } catch {
+            XCTFail("unexpected \(error)")
+        }
     }
 }

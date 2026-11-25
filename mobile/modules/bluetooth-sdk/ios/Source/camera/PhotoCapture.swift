@@ -2,10 +2,11 @@ import Foundation
 import ImageIO
 
 /// One photo kept on the phone, in stages. `captured()`: the camera is done and free for the next
-/// one. `preview()`: the glasses' at most 500 px preview. `photo()`: the full photo as a file; the
+/// one. `preview()`: the glasses' at most 500 px preview, when the request asked for one
+/// (`PhotoRequest.preview`). `photo()`: the full photo as a file; the
 /// first call asks the glasses to send it, and until then it waits on the glasses ("deferred
 /// delivery"). `release()`: the full photo isn't needed, and the glasses delete it. Glasses without
-/// deferred photos send the whole photo at once; it is then also the preview.
+/// deferred photos send the whole photo at once; it is then also the preview, if one was asked for.
 @MainActor
 public final class PhotoCapture {
     struct Glasses {
@@ -24,6 +25,8 @@ public final class PhotoCapture {
     private let photoStage = PendingResponse<PhotoResponseEvent>(operation: "photo")
     private var photoAsked: Bool
 
+    /// Glasses from this `deferred_photos` version on keep the full photo and send a preview only when asked.
+    static let deferredPhotosVersion = 2
     private static let capturedTimeoutMs = 45000
     // Capture, preview ACK and retries, then the send queue's wait behind other photos.
     private static let stageTimeoutMs = 110_000
@@ -33,6 +36,12 @@ public final class PhotoCapture {
         self.deferred = deferred
         self.glasses = glasses
         photoAsked = !deferred
+        if !request.preview {
+            previewStage.reject(BluetoothSdkError(
+                code: "preview_not_requested",
+                message: "Ask for a preview with preview: true when capturing."
+            ))
+        }
     }
 
     /// Returns once the glasses wrote the photo: the camera takes the next request.
@@ -40,6 +49,7 @@ public final class PhotoCapture {
         try await capturedStage.wait(timeoutMs: Self.capturedTimeoutMs)
     }
 
+    /// The preview, if the request asked for one; else it throws `preview_not_requested`.
     public func preview() async throws -> PhotoPreview {
         try await previewStage.wait(timeoutMs: Self.stageTimeoutMs)
     }

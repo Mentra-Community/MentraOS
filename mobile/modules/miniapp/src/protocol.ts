@@ -222,13 +222,16 @@ export enum MiniappRequestType {
 
   // ----- Photos, streaming -----
   PHOTO = "miniapp_photo",
-  /** Start a photo in stages (`camera.capture`): `{photoId, ...options}`; answers once it started. */
+  /**
+   * Start a photo in stages (`camera.capture`): `{photoId, preview?, ...options}`; answers once it
+   * started. Without `preview: true` the glasses send no preview and the `preview` stage is refused.
+   */
   PHOTO_CAPTURE = "miniapp_photo_capture",
   /** One stage of a capture: `{photoId, stage: "captured" | "preview" | "photo"}`. */
   PHOTO_CAPTURE_STAGE = "miniapp_photo_capture_stage",
   /** A capture's full photo isn't needed: `{photoId}`; the glasses delete it. */
   PHOTO_RELEASE = "miniapp_photo_release",
-  /** Start a continuous capture (`camera.captureContinuous`): `{runId, ...photo options, maxPending?}`. */
+  /** Start a continuous capture (`camera.captureContinuous`): `{runId, preview?, ...photo options, maxPending?}`. */
   CAMERA_CONTINUOUS_START = "miniapp_camera_continuous_start",
   /** One photo in a continuous capture's turn (`run.capture`): `{runId, photoId, ...photo options}`. */
   CAMERA_CONTINUOUS_CAPTURE = "miniapp_camera_continuous_capture",

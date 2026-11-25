@@ -220,8 +220,8 @@ test("takePhoto preserves compression and rejects invalid values before dispatch
 describe("CameraModule.capture", () => {
   test("starts the capture, then asks for each stage by the photo's ID, and releases it", async () => {
     const {session, requestCalls} = mockSession(PHOTO)
-    const capture = new CameraModule(session).capture({size: "high"})
-    expect(requestCalls[0]).toMatchObject({type: MiniappRequestType.PHOTO_CAPTURE, photoId: capture.photoId, size: "high"})
+    const capture = new CameraModule(session).capture({size: "high", preview: true})
+    expect(requestCalls[0]).toMatchObject({type: MiniappRequestType.PHOTO_CAPTURE, photoId: capture.photoId, size: "high", preview: true})
     await capture.captured
     await capture.preview
     await expect(capture.photo()).resolves.toEqual(PHOTO)
@@ -236,12 +236,20 @@ describe("CameraModule.capture", () => {
     ])
   })
 
+  test("without preview: true no preview is asked for, and the capture has none", async () => {
+    const {session, requestCalls} = mockSession(PHOTO)
+    const capture = new CameraModule(session).capture({size: "high"})
+    expect(requestCalls[0]).not.toHaveProperty("preview")
+    expect("preview" in capture).toBe(false)
+    await expect(capture.photo()).resolves.toEqual(PHOTO)
+  })
+
   test("a capture the host refuses rejects every stage", async () => {
     const session = {
       _hasManifestPermission: () => true,
       sendRequest: () => Promise.reject(new Error("CAMERA_BUSY")),
     } as unknown as MiniappSession
-    const capture = new CameraModule(session).capture()
+    const capture = new CameraModule(session).capture({preview: true})
     await expect(capture.captured).rejects.toThrow("CAMERA_BUSY")
     await expect(capture.preview).rejects.toThrow("CAMERA_BUSY")
     await expect(capture.photo()).rejects.toThrow("CAMERA_BUSY")
@@ -281,8 +289,27 @@ describe("CameraModule continuous capture", () => {
     expect(run.state).toBe("capturing")
     const asked = await run.capture({sound: true})
     expect(requests.at(-1)).toMatchObject({type: MiniappRequestType.CAMERA_CONTINUOUS_CAPTURE, runId, photoId: asked.photoId})
+    expect("preview" in asked).toBe(false)
     await run.stop()
     expect(requests.at(-1)).toEqual({type: MiniappRequestType.CAMERA_CONTINUOUS_STOP, runId})
     expect(listeners.size).toBe(0)
+  })
+
+  test("a run asked with preview: true gives each photo a preview", async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const session = {
+      _hasManifestPermission: () => true,
+      sendRequest: (payload: Record<string, unknown>) => {
+        requests.push(payload)
+        return Promise.resolve(undefined)
+      },
+      on: () => () => undefined,
+    } as unknown as MiniappSession
+    const run = new CameraModule(session).captureContinuous({preview: true})
+    expect(requests[0]).toMatchObject({type: MiniappRequestType.CAMERA_CONTINUOUS_START, preview: true})
+    const asked = await run.capture()
+    expect(requests.at(-1)).toMatchObject({type: MiniappRequestType.CAMERA_CONTINUOUS_CAPTURE, preview: true})
+    await asked.preview
+    expect(requests.at(-1)).toEqual({type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId: asked.photoId, stage: "preview"})
   })
 })

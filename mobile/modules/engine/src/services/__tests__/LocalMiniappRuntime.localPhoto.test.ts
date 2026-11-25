@@ -176,8 +176,8 @@ describe("handlePhoto with local delivery", () => {
 describe("camera.capture()", () => {
   test("starts a capture under its photo ID, answers its stages, and keeps the photo as takePhoto's", async () => {
     const f = fixture()
-    await f.host.handlePhotoCapture(PACKAGE, "capture", {photoId: "p9", size: "high"}, "req-1")
-    expect(f.capturePhoto).toHaveBeenCalledWith(PACKAGE, expect.objectContaining({size: "high"}), "p9")
+    await f.host.handlePhotoCapture(PACKAGE, "capture", {photoId: "p9", size: "high", preview: true}, "req-1")
+    expect(f.capturePhoto).toHaveBeenCalledWith(PACKAGE, expect.objectContaining({size: "high", preview: true}), "p9")
     await f.host.handlePhotoCapture(PACKAGE, "stage", {photoId: "p9", stage: "preview"}, "req-2")
     await f.host.handlePhotoCapture(PACKAGE, "stage", {photoId: "p9", stage: "photo"}, "req-3")
     await f.host.handlePhotoCapture(PACKAGE, "release", {photoId: "p9"}, "req-4")

@@ -37,8 +37,10 @@ import {
   ObservableStoreCategory,
   OtaQueryResult,
   OtaStartAckEvent,
+  CapturePhotoParams,
   PhotoCapture,
   PhotoCaptureParams,
+  PhotoCaptureWithPreview,
   PhotoPreview,
   PhotoTaken,
   PhotoUploadParams,
@@ -216,7 +218,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   uploadPhoto(params: PhotoUploadParams): Promise<PhotoSuccessResponseEvent>
-  capturePhoto(params: PhotoCaptureParams): PhotoCapture
+  capturePhoto(params: CapturePhotoParams & {preview: true}): PhotoCaptureWithPreview
+  capturePhoto(params: CapturePhotoParams): PhotoCapture
   takePhoto(params: PhotoCaptureParams): Promise<PhotoTaken>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   stopCameraWarmUp(requestId: string): Promise<void>
@@ -785,7 +788,7 @@ function quiet<T>(promise: Promise<T>): Promise<T> {
 }
 
 NativeBluetoothSdkModule.takePhoto = async function (params: PhotoCaptureParams): Promise<PhotoTaken> {
-  const capture = NativeBluetoothSdkModule.capturePhoto(params)
+  const capture = NativeBluetoothSdkModule.capturePhoto({...params, preview: false})
   try {
     return await capture.photo()
   } finally {
@@ -793,10 +796,15 @@ NativeBluetoothSdkModule.takePhoto = async function (params: PhotoCaptureParams)
   }
 }
 
-NativeBluetoothSdkModule.capturePhoto = function (params: PhotoCaptureParams): PhotoCapture {
+/** Glasses from this `deferredPhotosVersion` on keep the full photo; the native SDKs decide the same way. */
+const DEFERRED_PHOTOS_VERSION = 2
+
+NativeBluetoothSdkModule.capturePhoto = function (params: CapturePhotoParams): PhotoCapture {
   const requestId =
     params.requestId?.trim() || `photo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-  const started = quiet(nativeCapturePhoto({...photoCaptureParamsForNative(params), requestId}))
+  const started = quiet(
+    nativeCapturePhoto({...photoCaptureParamsForNative(params), requestId, ...(params.preview ? {preview: true} : {})}),
+  )
   const stage = (name: "captured" | "preview" | "photo") =>
     quiet(started.then(() => nativePhotoCaptureStage(requestId, name)))
   const overBluetooth = () =>
@@ -812,7 +820,7 @@ NativeBluetoothSdkModule.capturePhoto = function (params: PhotoCaptureParams): P
   // Glasses that keep the full photo serve it by ID, over the glasses Wi-Fi link when it is up.
   const fetchPhoto = async (): Promise<PhotoTaken> => {
     const status = await NativeBluetoothSdkModule.getGlassesStatus().catch(() => null)
-    if ((status?.deferredPhotosVersion ?? 0) <= 0) return overBluetooth()
+    if ((status?.deferredPhotosVersion ?? 0) < DEFERRED_PHOTOS_VERSION) return overBluetooth()
     await stage("captured")
     const overWifi = await fetchGlassesFileOverWifi(requestId)
     return overWifi ? {requestId, fileUri: overWifi.uri, mimeType: "image/jpeg", size: overWifi.bytes} : overBluetooth()
@@ -821,18 +829,21 @@ NativeBluetoothSdkModule.capturePhoto = function (params: PhotoCaptureParams): P
   let captured: Promise<void> | undefined
   let preview: Promise<PhotoPreview> | undefined
   let photo: Promise<PhotoTaken> | undefined
-  return {
+  const capture: PhotoCapture = {
     requestId,
     get captured() {
       return (captured ??= quiet(stage("captured").then(() => undefined)))
     },
-    get preview() {
-      return (preview ??= stage("preview") as Promise<PhotoPreview>)
-    },
     photo: () => (photo ??= fetchPhoto()),
     release: () => started.then(() => nativeReleasePhotoCapture(requestId)),
   }
-}
+  // Without `preview: true` the glasses send none, and the capture has no preview.
+  if (!params.preview) return capture
+  return Object.defineProperty(capture, "preview", {
+    enumerable: true,
+    get: () => (preview ??= stage("preview") as Promise<PhotoPreview>),
+  }) as PhotoCaptureWithPreview
+} as BluetoothSdkInternalModule["capturePhoto"]
 
 const nativeWarmUpCamera = NativeBluetoothSdkModule.warmUpCamera.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {

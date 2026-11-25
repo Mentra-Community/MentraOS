@@ -1,13 +1,13 @@
 import React from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import BluetoothSdk, { type LinkState, type PhotoCapture } from '@mentra/engine/bluetooth-sdk';
+import BluetoothSdk, { type LinkState, type PhotoCaptureWithPreview } from '@mentra/engine/bluetooth-sdk';
 import { File } from 'expo-file-system';
 import { colors } from '../components/theme';
 import { jpegSize } from '../jpegSize';
 
 const BURST_SIZE = 5;
 
-type Shot = { capture: PhotoCapture; index: number; cameraMs?: number; previewMs?: number; previewUrl?: string; error?: string };
+type Shot = { capture: PhotoCaptureWithPreview; index: number; cameraMs?: number; previewMs?: number; previewUrl?: string; error?: string };
 /** `closed`: not held; `opening`: `link.openFast` pending; `up`/`down`: held, as `link.onChange` last said of the fast link. */
 type Link = 'closed' | 'opening' | LinkState['fast'];
 type Fetched = { uri: string; ms: number; bytes: number; link: 'up' | 'down' | 'changed'; width?: number; height?: number };
@@ -25,7 +25,7 @@ function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => void listeners.delete(listener);
 }
-function update(capture: PhotoCapture, patch: Partial<Shot>) {
+function update(capture: PhotoCaptureWithPreview, patch: Partial<Shot>) {
   setCard(({ shots }) => ({ shots: shots.map((shot) => (shot.capture === capture ? { ...shot, ...patch } : shot)) }));
 }
 const FETCHED_LINK = { up: 'fast link up (Wi-Fi)', down: 'fast link down (Bluetooth)', changed: 'fast link changed during the fetch' };
@@ -47,12 +47,12 @@ function photoSize(uri: string) {
 }
 
 /**
- * One capture: its full photo stays on the glasses (deferred delivery). Resolves once the camera is
+ * One capture with its preview: its full photo stays on the glasses (deferred delivery). Resolves once the camera is
  * free again; the preview comes on its own.
  */
 async function takeOne(): Promise<void> {
   const requestedAt = Date.now();
-  const capture = BluetoothSdk.capturePhoto({ sound: true });
+  const capture = BluetoothSdk.capturePhoto({ sound: true, preview: true });
   setCard(({ shots }) => ({ shots: [...shots, { capture, index: shots.length + 1 }] }));
   // A capture whose status a restart lost still gets its preview afterwards.
   void capture.preview.then(

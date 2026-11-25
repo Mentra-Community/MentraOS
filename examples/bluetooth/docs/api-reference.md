@@ -543,7 +543,7 @@ For local development, run `python3 local-demo-cloud/server.py` from the Starter
 
 ### Photos over Wi-Fi (React Native)
 
-To keep the photo on the phone and upload nothing, use `capturePhoto`: its preview comes first, and the full photo stays on the glasses until `photo()` asks for it. `photo()` and `takePhoto(options)` bring the full photo over the fast link (the glasses Wi-Fi) while it is up, whoever holds it, and over Bluetooth otherwise. `BluetoothSdk.link.state` says whether the glasses are connected (`glasses`) and the fast link is up (`fast`); an app that takes many photos can run a continuous capture (below), or hold the fast link itself for as long as it needs it:
+To keep the photo on the phone and upload nothing, use `capturePhoto`: with `preview: true` its preview comes first, and the full photo stays on the glasses until `photo()` asks for it. `photo()` and `takePhoto(options)` bring the full photo over the fast link (the glasses Wi-Fi) while it is up, whoever holds it, and over Bluetooth otherwise. `BluetoothSdk.link.state` says whether the glasses are connected (`glasses`) and the fast link is up (`fast`); an app that takes many photos can run a continuous capture (below), or hold the fast link itself for as long as it needs it:
 
 ```ts
 import BluetoothSdk, {type LinkState} from '@mentra/bluetooth-sdk';
@@ -565,7 +565,7 @@ The SDK picks the radio (Wi-Fi Direct on Android with glasses that support it, t
 ```ts
 const run = BluetoothSdk.captureContinuous({size: 'medium', sound: false, maxPending: 12});
 run.onPhoto((capture) => {
-  // a normal capture: captured, preview, photo(), release()
+  // a normal capture: captured, photo(), release(); preview too with preview: true
 });
 run.onState((state) => {
   // "capturing" | "paused"

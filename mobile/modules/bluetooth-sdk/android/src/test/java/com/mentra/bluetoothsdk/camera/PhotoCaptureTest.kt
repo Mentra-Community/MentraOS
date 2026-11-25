@@ -43,11 +43,21 @@ class PhotoCaptureTest {
 
     @Test
     fun `after a reconnect only what is still awaited is asked again`() {
-        val capture = PhotoCapture(PhotoRequest(requestId = "p1", size = PhotoSize.MEDIUM), deferred = true, glasses)
+        val capture = PhotoCapture(PhotoRequest(requestId = "p1", size = PhotoSize.MEDIUM, preview = true), deferred = true, glasses)
         capture.onStatus(PhotoStatusEvent(mapOf("requestId" to "p1", "status" to "captured")))
         capture.resume()
         capture.onPreview(PhotoPreview("data:image/jpeg;base64,AA==", 500, 375))
         capture.resume()
         assertThat(calls).containsExactly("preview")
+    }
+
+    @Test
+    fun `without a preview asked for there is none`(): Unit = runBlocking {
+        val capture = PhotoCapture(PhotoRequest(requestId = "p1", size = PhotoSize.MEDIUM), deferred = true, glasses)
+        capture.onStatus(PhotoStatusEvent(mapOf("requestId" to "p1", "status" to "captured")))
+        capture.resume()
+        assertThat(calls).isEmpty()
+        val error = runCatching { capture.preview() }.exceptionOrNull() as BluetoothSdkException
+        assertThat(error.code).isEqualTo("preview_not_requested")
     }
 }

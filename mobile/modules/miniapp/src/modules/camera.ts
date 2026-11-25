@@ -127,8 +127,6 @@ export interface PhotoCapture {
   readonly photoId: string
   /** Resolves once the glasses took the photo: the camera is free for the next one. */
   readonly captured: Promise<void>
-  /** A small preview, which comes for every photo before its full size. */
-  readonly preview: Promise<PhotoPreview>
   /**
    * The full photo, kept on the phone as {@link CameraModule.takePhoto}'s is. The first call asks
    * the glasses to send it; until then it waits on the glasses (deferred delivery), for 30 minutes
@@ -139,17 +137,35 @@ export interface PhotoCapture {
   release(): Promise<void>
 }
 
+/** A capture asked for with `preview: true` ({@link CaptureOptions.preview}). */
+export interface PhotoCaptureWithPreview extends PhotoCapture {
+  /**
+   * A small preview (at most 500 px), which comes over Bluetooth before the full photo. For a
+   * preview only, await it and then `release()` without calling `photo()`.
+   */
+  readonly preview: Promise<PhotoPreview>
+}
+
+/** The options of a photo in stages ({@link CameraModule.capture}). */
+export interface CaptureOptions extends TakePhotoOptions {
+  /**
+   * The glasses send a small preview right after the capture: `capture.preview`. Without it they
+   * send none and the capture has no `preview`, which leaves Bluetooth to the full photos.
+   */
+  preview?: boolean
+}
+
 /** A continuous capture is `capturing` photos on its own, or `paused` while they would pile up on the glasses. */
 export type ContinuousCaptureState = "capturing" | "paused"
 
-/** A run of {@link CameraModule.captureContinuous}. */
-export interface ContinuousCapture {
+/** A run of {@link CameraModule.captureContinuous}; its photos have a preview when the run asked for one. */
+export interface ContinuousCapture<C extends PhotoCapture = PhotoCapture> {
   readonly state: ContinuousCaptureState
   /** Each photo the run takes on its own; release it when done. */
-  onPhoto(handler: (capture: PhotoCapture) => void): () => void
+  onPhoto(handler: (capture: C) => void): () => void
   onState(handler: (state: ContinuousCaptureState) => void): () => void
   /** One more photo, with these options, in the run's turn even while it is paused. */
-  capture(options?: TakePhotoOptions): Promise<PhotoCapture>
+  capture(options?: TakePhotoOptions): Promise<C>
   /** Stop taking photos at once; resolves once the photos the run handed out are released. */
   stop(): Promise<void>
 }
@@ -280,17 +296,20 @@ export class CameraModule {
   }
 
   /**
-   * Take a photo in stages: `captured` when the camera is free again, `preview` for every photo,
-   * `photo()` for its full size, which stays on the glasses until first asked for, and `release()`
-   * when it isn't needed. Requires CAMERA permission declared in miniapp.json. Use it to take
+   * Take a photo in stages: `captured` when the camera is free again, `photo()` for its full size,
+   * which stays on the glasses until first asked for, and `release()` when it isn't needed. With
+   * `preview: true` the glasses also send a small preview, `capture.preview`, before the full photo;
+   * without it there is none. Requires CAMERA permission declared in miniapp.json. Use it to take
    * photos back to back and fetch only the ones you keep. Needs a Mentra App with photo captures
    * (a newer one than `takePhoto` needs).
    */
-  capture(options: TakePhotoOptions = {}): PhotoCapture {
+  capture(options: CaptureOptions & {preview: true}): PhotoCaptureWithPreview
+  capture(options?: CaptureOptions): PhotoCapture
+  capture(options: CaptureOptions = {}): PhotoCapture {
     const photoId = mintPhotoId()
     const timeout = options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined
     const started = quiet(this.session.sendRequest<void>({...this.photoRequest(options, "auto"), type: MiniappRequestType.PHOTO_CAPTURE, photoId}, timeout))
-    return this.captureOf(photoId, started, timeout)
+    return this.captureOf(photoId, started, options.preview === true, timeout)
   }
 
   /**
@@ -299,10 +318,14 @@ export class CameraModule {
    * is `capturing` while it takes photos on its own and `paused` while they would pile up on the
    * glasses, then goes on by itself; at most `maxPending` (default 12) of its photos stay on the
    * glasses unreleased. `run.capture(options)` takes one more in the run's turn, even while
-   * paused. `run.stop()` ends it, as the miniapp closing does. Requires CAMERA permission.
+   * paused. `run.stop()` ends it, as the miniapp closing does. `preview: true` gives each photo a
+   * preview, as {@link capture}'s. Requires CAMERA permission.
    */
-  captureContinuous(options: TakePhotoOptions & {maxPending?: number} = {}): ContinuousCapture {
+  captureContinuous(options: CaptureOptions & {preview: true; maxPending?: number}): ContinuousCapture<PhotoCaptureWithPreview>
+  captureContinuous(options?: CaptureOptions & {maxPending?: number}): ContinuousCapture
+  captureContinuous(options: CaptureOptions & {maxPending?: number} = {}): ContinuousCapture {
     const {maxPending, ...photoOptions} = options
+    const preview = photoOptions.preview === true
     const runId = mintPhotoId()
     const timeout = photoOptions.timeoutMs != null ? {timeoutMs: photoOptions.timeoutMs} : undefined
     const photoHandlers = new Set<(capture: PhotoCapture) => void>()
@@ -312,7 +335,7 @@ export class CameraModule {
     let announced = false
     const offPhoto = this.session.on("continuousPhoto", (event) => {
       if (event.runId !== runId) return
-      const capture = this.captureOf(event.photoId, Promise.resolve(), timeout)
+      const capture = this.captureOf(event.photoId, Promise.resolve(), preview, timeout)
       for (const handler of photoHandlers) handler(capture)
     })
     const offState = this.session.on("continuousState", (event) => {
@@ -356,7 +379,7 @@ export class CameraModule {
           ),
         )
         await taken
-        return this.captureOf(photoId, taken, timeout)
+        return this.captureOf(photoId, taken, preview, timeout)
       },
       stop: async () => {
         offPhoto()
@@ -369,24 +392,27 @@ export class CameraModule {
   }
 
   /** A capture's stages over the host's photo requests, once `started` says it exists there. */
-  private captureOf(photoId: string, started: Promise<void>, timeout?: {timeoutMs: number}): PhotoCapture {
+  private captureOf(photoId: string, started: Promise<void>, withPreview: boolean, timeout?: {timeoutMs: number}): PhotoCapture {
     const stage = <T>(name: "captured" | "preview" | "photo") =>
       quiet(started.then(() => this.session.sendRequest<T>({type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId, stage: name}, timeout)))
     // Each stage is asked for when first awaited, once.
     let captured: Promise<void> | undefined
     let preview: Promise<PhotoPreview> | undefined
     let photo: Promise<PhotoTaken> | undefined
-    return {
+    const capture: PhotoCapture = {
       photoId,
       get captured() {
         return (captured ??= stage<void>("captured"))
       },
-      get preview() {
-        return (preview ??= stage<PhotoPreview>("preview"))
-      },
       photo: () => (photo ??= stage<PhotoTaken>("photo")),
       release: () => started.then(() => this.session.sendRequest<void>({type: MiniappRequestType.PHOTO_RELEASE, photoId})),
     }
+    // Without `preview: true` the glasses send none, and the capture has no preview.
+    if (!withPreview) return capture
+    return Object.defineProperty(capture, "preview", {
+      enumerable: true,
+      get: () => (preview ??= stage<PhotoPreview>("preview")),
+    }) as PhotoCaptureWithPreview
   }
 
 
@@ -409,8 +435,9 @@ export class CameraModule {
   }
 
   /** The capture settings of a photo request, shared by both delivery paths. */
-  private photoRequest(options: TakePhotoOptions, size: PhotoSize) {
+  private photoRequest(options: CaptureOptions, size: PhotoSize) {
     return {
+      ...(options.preview === true ? {preview: true} : {}),
       type: MiniappRequestType.PHOTO,
       size: options.size ?? size,
       mode: options.mode ?? "photo",

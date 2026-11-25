@@ -828,6 +828,15 @@ export type PhotoCaptureParams = {
   ispAnalogGain?: string
 }
 
+/** One capture kept on the phone (`capturePhoto`): its settings, and whether it sends a preview. */
+export type CapturePhotoParams = PhotoCaptureParams & {
+  /**
+   * The glasses send a small preview (at most 500 px) right after the capture, over Bluetooth:
+   * `capture.preview`. Without it no preview is sent, and the capture has no `preview`.
+   */
+  preview?: boolean
+}
+
 /** A photo uploaded where `webhookUrl` says, by the glasses over Wi-Fi or by the phone over Bluetooth. */
 export type PhotoUploadParams = PhotoCaptureParams & {
   size: PhotoSize
@@ -851,8 +860,6 @@ export interface PhotoCapture {
   readonly requestId: string
   /** Resolves once the glasses wrote the photo: the camera takes the next one. */
   readonly captured: Promise<void>
-  /** The glasses' preview, which comes for every photo before its full size. */
-  readonly preview: Promise<PhotoPreview>
   /**
    * The full photo. The first call asks the glasses to send it; until then it waits on the
    * glasses (deferred delivery), for 30 minutes at most. It comes over the glasses Wi-Fi link
@@ -862,6 +869,12 @@ export interface PhotoCapture {
   photo(): Promise<PhotoTaken>
   /** The full photo isn't needed: the glasses delete it. Stages not reached yet reject. */
   release(): Promise<void>
+}
+
+/** A capture asked for with `preview: true`. */
+export interface PhotoCaptureWithPreview extends PhotoCapture {
+  /** The glasses' preview, which comes before the full photo. Ask for it, then `release()`, for a preview only. */
+  readonly preview: Promise<PhotoPreview>
 }
 
 export type WarmUpCameraParams = {
@@ -1696,9 +1709,10 @@ export interface BluetoothSdkPublicModule {
    * phone over Bluetooth. Resolves once it is there. A photo kept on the phone is `takePhoto`.
    */
   uploadPhoto(params: PhotoUploadParams): Promise<PhotoSuccessResponseEvent>
-  /** A photo kept on the phone, in stages: see {@link PhotoCapture}. */
-  capturePhoto(params: PhotoCaptureParams): PhotoCapture
-  /** A photo kept on the phone, whole: `capturePhoto(params).photo()`, then its release. */
+  /** A photo kept on the phone, in stages: see {@link PhotoCapture}. `preview: true` also sends its preview. */
+  capturePhoto(params: CapturePhotoParams & {preview: true}): PhotoCaptureWithPreview
+  capturePhoto(params: CapturePhotoParams): PhotoCapture
+  /** A photo kept on the phone, whole, with no preview: `capturePhoto(params).photo()`, then its release. */
   takePhoto(params: PhotoCaptureParams): Promise<PhotoTaken>
   /**
    * The phone's links to the glasses: `state` says whether the glasses are connected and the fast
@@ -1714,7 +1728,10 @@ export interface BluetoothSdkPublicModule {
    * `maxPending` (default 12) is how many of its photos may stay on the glasses unreleased.
    */
   captureContinuous(
-    options: PhotoCaptureParams & {maxPending?: number},
+    options: CapturePhotoParams & {preview: true; maxPending?: number},
+  ): import("./glasses-wifi/continuous").ContinuousCapture<PhotoCaptureWithPreview>
+  captureContinuous(
+    options: CapturePhotoParams & {maxPending?: number},
   ): import("./glasses-wifi/continuous").ContinuousCapture<PhotoCapture>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
@@ -1944,7 +1961,10 @@ export interface GlassesStatus {
   packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
-  /** Deferred photos (`capturePhoto` keeps the full photo on the glasses until asked); 0 without. */
+  /**
+   * Deferred photos (`capturePhoto` keeps the full photo on the glasses until asked); 0 without. From 2
+   * the glasses send a preview only when the capture asks for one; the SDK keeps photos deferred from 2.
+   */
   deferredPhotosVersion?: number
   bluetoothName: string
   serialNumber: string

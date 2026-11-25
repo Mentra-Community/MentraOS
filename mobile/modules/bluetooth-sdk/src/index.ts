@@ -7,8 +7,8 @@ import type {
   BluetoothSdkPublicModule,
   HoldCameraWarmParams,
   PhotoCaptureDefaults,
+  CapturePhotoParams,
   PhotoCapture,
-  PhotoCaptureParams,
   PublicBluetoothStatus,
   PublicGlassesStatus,
   VideoRecordingDefaults,
@@ -176,26 +176,18 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   capturePhoto: bindPublicMethod("capturePhoto"),
   takePhoto: bindPublicMethod("takePhoto"),
   link,
-  captureContinuous: (options: PhotoCaptureParams & {maxPending?: number}) =>
+  captureContinuous: ((options: CapturePhotoParams & {maxPending?: number}) =>
     runContinuousCapture(
-      (params: PhotoCaptureParams, released): PhotoCapture => {
+      (params: CapturePhotoParams, released): PhotoCapture => {
         const capture = PrivateBluetoothSdkModule.capturePhoto(params)
         // The run counts the photos still on the glasses: this one stops counting once released.
-        return {
-          requestId: capture.requestId,
-          get captured() {
-            return capture.captured
-          },
-          get preview() {
-            return capture.preview
-          },
-          photo: () => capture.photo(),
-          release: () => capture.release().finally(released),
-        }
+        return Object.create(capture, {
+          release: {value: () => capture.release().finally(released), enumerable: true},
+        }) as PhotoCapture
       },
       options,
       "app continuous capture",
-    ),
+    )) as BluetoothSdkPublicModule["captureContinuous"],
   warmUpCamera: bindPublicMethod("warmUpCamera"),
   stopCameraWarmUp: bindPublicMethod("stopCameraWarmUp"),
   // Renewals wait natively, so they keep running while Android has the app in the background.
@@ -336,8 +328,10 @@ export type {
   PhotoTransferMethod,
   PhotoResponseEvent,
   PhotoRequestedCaptureConfig,
+  CapturePhotoParams,
   PhotoCapture,
   PhotoCaptureParams,
+  PhotoCaptureWithPreview,
   PhotoPreview,
   PhotoTaken,
   PhotoUploadParams,

@@ -1223,9 +1223,9 @@ class MentraBluetoothSdk private constructor(
             }
         }
 
-    /** A photo kept on the phone, whole: [capturePhoto], its [PhotoCapture.photo], then its release. */
+    /** A photo kept on the phone, whole, with no preview: [capturePhoto], its [PhotoCapture.photo], then its release. */
     suspend fun takePhoto(request: PhotoRequest): PhotoResponseEvent {
-        val capture = capturePhoto(request)
+        val capture = capturePhoto(request.copy(preview = false))
         try {
             return capture.photo()
         } finally {
@@ -1245,10 +1245,11 @@ class MentraBluetoothSdk private constructor(
         // The glasses keep a photo 30 minutes; nothing arrives for an older capture.
         val cutoff = System.currentTimeMillis() - 30 * 60_000L
         photoCaptures.values.removeIf { it.done || it.createdAtMs < cutoff }
-        val capture = PhotoCapture(routed, getRawGlassesStatus().deferredPhotosVersion > 0, captureGlasses)
+        val deferred = getRawGlassesStatus().deferredPhotosVersion >= PhotoCapture.DEFERRED_PHOTOS_VERSION
+        val capture = PhotoCapture(routed, deferred, captureGlasses)
         photoCaptures[routed.requestId] = capture
         try {
-            deviceManager.capturePhoto(routed, getRawGlassesStatus().deferredPhotosVersion > 0)
+            deviceManager.capturePhoto(routed, deferred)
         } catch (e: Exception) {
             photoCaptures.remove(routed.requestId)
             throw e

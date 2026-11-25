@@ -22,6 +22,7 @@ final class PhotoRequestRoutingTests: XCTestCase {
         "zsl": false,
         "ispDigitalGain": 2,
         "ispAnalogGain": "4x",
+        "preview": true,
     ]
 
     private func assertSameCapture(_ routed: PhotoRequest, _ request: PhotoRequest, line: UInt = #line) {
@@ -41,11 +42,15 @@ final class PhotoRequestRoutingTests: XCTestCase {
         XCTAssertEqual(routed.zsl, request.zsl, line: line)
         XCTAssertEqual(routed.ispDigitalGain, request.ispDigitalGain, line: line)
         XCTAssertEqual(routed.ispAnalogGain, request.ispAnalogGain, line: line)
+        XCTAssertEqual(routed.preview, request.preview, line: line)
     }
 
     func testRoutingKeepsEveryField() throws {
         let request = try PhotoRequest.from(params: everyField)
         XCTAssertEqual(request.aeExposureDivisor, 4)
+        XCTAssertTrue(request.preview)
+        XCTAssertFalse(request.withPreview(false).preview)
+        XCTAssertFalse(try PhotoRequest.from(params: [:]).preview)
 
         let routed = request.routedForCapture()
         XCTAssertEqual(routed.requestId, "photo-1")

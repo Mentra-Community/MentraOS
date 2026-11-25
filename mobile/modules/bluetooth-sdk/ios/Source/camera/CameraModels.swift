@@ -292,6 +292,8 @@ public struct PhotoRequest {
     public let zsl: Bool?
     public let ispDigitalGain: Int?
     public let ispAnalogGain: String?
+    /// `capturePhoto` only: the glasses send a small preview after the capture (`PhotoCapture.preview()`).
+    public let preview: Bool
 
     public init(
         requestId: String? = nil,
@@ -312,7 +314,8 @@ public struct PhotoRequest {
         ispDigitalGain: Int? = nil,
         ispAnalogGain: String? = nil,
         mode: PhotoMode = .photo,
-        transferMethod: String = "auto"
+        transferMethod: String = "auto",
+        preview: Bool = false
     ) {
         self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
@@ -333,6 +336,7 @@ public struct PhotoRequest {
         self.ispAnalogGain = ispAnalogGain
         self.mode = mode
         self.transferMethod = transferMethod
+        self.preview = preview
     }
 
     public static func from(params: [String: Any]) throws -> PhotoRequest {
@@ -415,7 +419,8 @@ public struct PhotoRequest {
             ispDigitalGain: optionalInt("ispDigitalGain"),
             ispAnalogGain: params["ispAnalogGain"] as? String,
             mode: PhotoMode(normalizedRawValue: params["mode"] as? String),
-            transferMethod: transferMethod
+            transferMethod: transferMethod,
+            preview: params["preview"] as? Bool ?? false
         )
     }
 
@@ -450,6 +455,11 @@ public struct PhotoRequest {
         copy(requestId: requestId, exposureTimeNs: exposureTimeNs, iso: iso)
     }
 
+    /// The same request with or without a preview.
+    func withPreview(_ preview: Bool) -> PhotoRequest {
+        copy(requestId: requestId, exposureTimeNs: exposureTimeNs, iso: iso, preview: preview)
+    }
+
     /// The request as the glasses get it: a manual exposure must be finite and positive, and a
     /// manual ISO only applies with one. Every other field is kept.
     func routedForCapture() -> PhotoRequest {
@@ -459,7 +469,7 @@ public struct PhotoRequest {
     }
 
     /// The one place a request is copied field by field, so a new field can't be dropped on the way.
-    private func copy(requestId: String, exposureTimeNs: Double?, iso: Int?) -> PhotoRequest {
+    private func copy(requestId: String, exposureTimeNs: Double?, iso: Int?, preview: Bool? = nil) -> PhotoRequest {
         PhotoRequest(
             requestId: requestId,
             size: size,
@@ -479,7 +489,8 @@ public struct PhotoRequest {
             ispDigitalGain: ispDigitalGain,
             ispAnalogGain: ispAnalogGain,
             mode: mode,
-            transferMethod: transferMethod
+            transferMethod: transferMethod,
+            preview: preview ?? self.preview
         )
     }
 }

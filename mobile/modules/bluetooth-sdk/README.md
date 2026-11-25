@@ -728,18 +728,18 @@ console.log("photo delivered", photo.photoUrl ?? photo.uploadUrl, photo.fileSize
 To keep the photo on the phone and upload nothing, use `capturePhoto`. It returns at once with the capture's stages:
 
 ```ts
-const capture = BluetoothSdk.capturePhoto({sound: true}) // size: "auto"
+const capture = BluetoothSdk.capturePhoto({sound: true, preview: true}) // size: "auto"
 await capture.captured // the camera is free for the next photo
 const preview = await capture.preview // {url: "data:image/jpeg;base64,...", width, height}, at most 500 px
 const photo = await capture.photo() // {requestId, fileUri: "file:///.../photo_<id>.jpg", mimeType, size}
 await capture.release() // the full photo isn't needed (any more): the glasses delete it
 ```
 
-`takePhoto(options)` is `capturePhoto(options).photo()` followed by `release()`: the whole photo, and the glasses' copy deleted.
+`takePhoto(options)` is `capturePhoto(options).photo()` followed by `release()`: the whole photo, with no preview, and the glasses' copy deleted.
 
 `size` defaults to `"auto"`: the largest photo that arrives in about 2 seconds on the link it is sent over, which the glasses decide when they send it. Over Bluetooth that is 1280x960 at JPEG quality 60, whatever `compress` says; over the glasses Wi-Fi link, the full sensor as captured. `"low"`, `"medium"`, `"high"` and `"max"` are the same on every link. Glasses from before `auto` take it as `"medium"`.
 
-Every photo gets its preview first. The full photo waits on the glasses (deferred delivery) until the first `photo()` call asks for it, for 30 minutes at most; later calls return the same photo, and not calling `photo()` is how a photo is skipped. The file is in the app's cache folder and is yours to move or delete. It needs no internet connection. Any number of captures can be in flight: the glasses refuse one (`CAMERA_BUSY`) only while another is being taken, never because photos are being sent. After the glasses restart or reconnect, the SDK asks again for the previews and photos it still waits for. A preview that didn't arrive rejects `preview` with `PREVIEW_FAILED`; the full photo can still be asked for. Glasses without deferred photos (`deferredPhotosVersion` 0 in the glasses status) send the whole photo at once: `photo()` resolves with it, and it is also the preview.
+`preview: true` asks the glasses for a small preview (at most 500 px), sent over Bluetooth right after the capture and before any full photo; the capture then has `preview`. Without it the glasses send none and the capture has no `preview` (Kotlin's `preview()` and Swift's `preview()` fail with `preview_not_requested`), which leaves Bluetooth to the full photos: ask for a preview only when you show it before the full photo. For a preview only, await it and `release()` without calling `photo()`. The full photo waits on the glasses (deferred delivery) until the first `photo()` call asks for it, for 30 minutes at most; later calls return the same photo, and not calling `photo()` is how a photo is skipped. The file is in the app's cache folder and is yours to move or delete. It needs no internet connection. Any number of captures can be in flight: the glasses refuse one (`CAMERA_BUSY`) only while another is being taken, never because photos are being sent. After the glasses restart or reconnect, the SDK asks again for the previews and photos it still waits for. A preview that didn't arrive rejects `preview` with `PREVIEW_FAILED`; the full photo can still be asked for. Glasses without deferred photos (`deferredPhotosVersion` below 2 in the glasses status) send the whole photo at once: `photo()` resolves with it, and it is also the preview when one was asked for.
 
 ### Photos over Wi-Fi
 
@@ -788,7 +788,7 @@ gives the link back once the photos the run handed out are released:
 ```ts
 const run = BluetoothSdk.captureContinuous({size: "medium", sound: false, maxPending: 12})
 run.onPhoto((capture) => {
-  // a normal capture: captured, preview, photo(), release()
+  // a normal capture: captured, photo(), release(); preview too with preview: true
 })
 run.onState((state) => {
   // "capturing" | "paused"
