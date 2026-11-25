@@ -29,15 +29,15 @@ const mockSnapshot = {
   mtkUpdatedThisSession: false,
 }
 const mockPendingChecks: Array<(result: CheckResult) => void> = []
-const mockTimers: Array<() => void> = []
+const mockCheckForUpdates = jest.fn(
+  (_options: unknown) => new Promise<CheckResult>((resolve) => mockPendingChecks.push(resolve)),
+)
 
 jest.mock("@mentra/engine", () => ({
   SETTINGS: {default_wearable: {key: "default_wearable"}, super_mode: {key: "super_mode"}},
   useSetting: (key: string) => [key === "default_wearable" ? "Mentra Live" : false],
   getModelCapabilities: () => ({hasOta: true}),
   BgTimer: {
-    setTimeout: (callback: () => void) => mockTimers.push(callback),
-    clearTimeout: jest.fn(),
     setInterval: jest.fn(() => 1),
     clearInterval: jest.fn(),
   },
@@ -46,7 +46,7 @@ jest.mock("@mentra/engine", () => ({
       snapshot: () => mockSnapshot,
       onSnapshot: () => () => {},
       markMtkUpdatedThisSession: jest.fn(),
-      checkForUpdates: () => new Promise<CheckResult>((resolve) => mockPendingChecks.push(resolve)),
+      checkForUpdates: (options: unknown) => mockCheckForUpdates(options),
     },
   },
 }))
@@ -71,11 +71,9 @@ const upToDate: CheckResult = {
   isApkDowngrade: false,
 }
 
-/** Runs the 500 ms delayed checks that are due, and lets their results settle. */
-async function runDueChecks() {
-  await act(async () => {
-    mockTimers.splice(0).forEach((run) => run())
-  })
+/** Lets the checks that started settle. */
+async function settle() {
+  await act(async () => {})
 }
 
 async function resolveCheck(index: number, result: CheckResult) {
@@ -88,9 +86,14 @@ describe("OtaUpdateChecker on reconnect", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockPendingChecks.length = 0
-    mockTimers.length = 0
     jest.mocked(hasAlertHost).mockReturnValue(true)
     mockSnapshot.connected = true
+  })
+
+  it("asks the glasses for their complete versions as soon as they connect", async () => {
+    render(<OtaUpdateChecker />)
+    expect(mockCheckForUpdates).toHaveBeenCalledTimes(1)
+    expect(mockCheckForUpdates).toHaveBeenCalledWith(expect.objectContaining({refreshVersionInfo: true}))
   })
 
   it("offers the update once when the app remounts while a check is in flight", async () => {
@@ -98,13 +101,13 @@ describe("OtaUpdateChecker on reconnect", () => {
 
     // The glasses reconnect and the first checker starts its check...
     const first = render(<OtaUpdateChecker />)
-    await runDueChecks()
+    await settle()
     expect(mockPendingChecks).toHaveLength(1)
 
     // ...then Android recreates the activity: the root remounts on the live JS runtime.
     first.unmount()
     render(<OtaUpdateChecker />)
-    await runDueChecks()
+    await settle()
     expect(mockPendingChecks).toHaveLength(2)
 
     // The first checker's check finishes after it unmounted: nothing is shown for it.
@@ -124,7 +127,7 @@ describe("OtaUpdateChecker on reconnect", () => {
     const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => {})
 
     render(<OtaUpdateChecker />)
-    await runDueChecks()
+    await settle()
     await resolveCheck(0, besUpdate)
 
     expect(showAlert).not.toHaveBeenCalled()
@@ -136,7 +139,7 @@ describe("OtaUpdateChecker on reconnect", () => {
     // As in disconnect-reconnect-android, nightly 2026-11-11: the BES version came late, the check
     // assumed a BES update, and the offer stayed over Home after the next check found none.
     const view = render(<OtaUpdateChecker />)
-    await runDueChecks()
+    await settle()
     await resolveCheck(0, besUpdate)
     expect(showAlert).toHaveBeenCalledTimes(1)
     const [title, message] = jest.mocked(showAlert).mock.calls[0]!
@@ -145,7 +148,7 @@ describe("OtaUpdateChecker on reconnect", () => {
     view.rerender(<OtaUpdateChecker />)
     mockSnapshot.connected = true
     view.rerender(<OtaUpdateChecker />)
-    await runDueChecks()
+    await settle()
     await resolveCheck(1, upToDate)
 
     expect(dismissAlert).toHaveBeenCalledWith(title, message)
@@ -154,20 +157,20 @@ describe("OtaUpdateChecker on reconnect", () => {
 
   it("closes nothing when a check finds no update and it offered none", async () => {
     render(<OtaUpdateChecker />)
-    await runDueChecks()
+    await settle()
     await resolveCheck(0, upToDate)
     expect(dismissAlert).not.toHaveBeenCalled()
   })
 
   it("keeps its offer when the next check can't fetch the manifest", async () => {
     const view = render(<OtaUpdateChecker />)
-    await runDueChecks()
+    await settle()
     await resolveCheck(0, besUpdate)
     mockSnapshot.connected = false
     view.rerender(<OtaUpdateChecker />)
     mockSnapshot.connected = true
     view.rerender(<OtaUpdateChecker />)
-    await runDueChecks()
+    await settle()
     await resolveCheck(1, {...upToDate, hasCheckCompleted: false})
     expect(dismissAlert).not.toHaveBeenCalled()
   })

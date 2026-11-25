@@ -133,7 +133,7 @@ private final class PendingVideoRecordingRequest {
 @MainActor
 private final class PendingVersionInfoRequest {
     let pending: PendingResponse<VersionInfoResult>
-    let accumulator: VersionInfoResponseAccumulator
+    var accumulator: VersionInfoResponseAccumulator
     let requestId: String
     let startedAt = ProcessInfo.processInfo.systemUptime
 
@@ -301,6 +301,7 @@ public final class MentraBluetoothSDK {
     /// instead of throwing `request_in_flight` and refusing the next join.
     private var hotspotTail: Task<HotspotStatusEvent, Error>?
     private var pendingVersionInfo: PendingVersionInfoRequest?
+    private var versionInfoTask: Task<VersionInfoResult, Error>?
     private let besCrashReports = BesCrashReportWaiters()
     private static let besCrashReportedTimeoutMs = 10000
     private let wifiSessionCapabilities = WifiSessionCapabilities()
@@ -1556,13 +1557,25 @@ public final class MentraBluetoothSDK {
     }
 
     public func requestVersionInfo() async throws -> VersionInfoResult {
-        if let request = pendingVersionInfo {
-            logVersionInfoRequest(request, stage: "refused", extra: ["code": "request_in_flight"])
-            throw BluetoothSdkError(
-                code: "request_in_flight",
-                message: "A version info request is already waiting for a glasses response."
-            )
+        // The glasses answer one version request at a time, and every caller wants the same
+        // fresh report: join the request in flight rather than refuse it.
+        if let inFlight = versionInfoTask {
+            return try await inFlight.value
         }
+        let task = Task { @MainActor () async throws -> VersionInfoResult in
+            defer { self.versionInfoTask = nil }
+            return try await self.sendVersionInfoRequest()
+        }
+        versionInfoTask = task
+        // The caller that started the request can still cancel it.
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func sendVersionInfoRequest() async throws -> VersionInfoResult {
         let requestId = UUID().uuidString
         let pending = PendingResponse<VersionInfoResult>(operation: "version info request", onTimeout: requestTimeoutReporter)
         let request = PendingVersionInfoRequest(pending: pending, requestId: requestId)
@@ -2638,6 +2651,15 @@ public final class MentraBluetoothSDK {
         activeSession.onComplete(activeSession.latestResults)
     }
 
+    /// A glasses process that restarted never saw the pending version request, so its answer
+    /// can never come. Ask the new process under the same id, keeping the request's deadline.
+    private func askRestartedGlassesForPendingVersionInfo() {
+        guard let request = pendingVersionInfo else { return }
+        request.accumulator = VersionInfoResponseAccumulator(expectedRequestId: request.requestId)
+        logVersionInfoRequest(request, stage: "asked-restarted-glasses")
+        DeviceManager.shared.requestVersionInfo(requestId: request.requestId)
+    }
+
     private func handleVersionInfoForRequest(_ data: [String: Any]) {
         guard let request = pendingVersionInfo else { return }
         let outcome = request.accumulator.accept(data)
@@ -2748,6 +2770,7 @@ public final class MentraBluetoothSDK {
                 sessionId: data["sid"] as? String ?? "",
                 code: "wifi_session_changed"
             )
+            askRestartedGlassesForPendingVersionInfo()
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
         case "wifi_scan_result":
             let networks = (data["networks"] as? [[String: Any]])?.map(WifiScanResult.init(values:)) ?? []

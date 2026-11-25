@@ -204,8 +204,9 @@ class MentraBluetoothSdk private constructor(
 
     private class PendingVersionInfoRequest(
         val pending: PendingResponse<VersionInfoResult>,
-        val accumulator: VersionInfoResponseAccumulator,
+        val requestId: String,
     ) {
+        var accumulator = VersionInfoResponseAccumulator(requestId)
     }
 
     private data class PendingWifiScan(
@@ -1459,25 +1460,27 @@ class MentraBluetoothSdk private constructor(
     }
 
     suspend fun requestVersionInfo(): VersionInfoResult {
-        val requestId = UUID.randomUUID().toString()
-        val pending = PendingResponse<VersionInfoResult>("version info request")
+        // The glasses answer one version request at a time, and every caller wants the same
+        // fresh report: join the request in flight rather than refuse it.
+        val joined: Boolean
         val request =
-            PendingVersionInfoRequest(
-                pending = pending,
-                accumulator = VersionInfoResponseAccumulator(requestId),
-            )
-        synchronized(oneShotLock) {
-            if (pendingVersionInfo != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A version info request is already waiting for a glasses response.",
-                )
+            synchronized(oneShotLock) {
+                val inFlight = pendingVersionInfo
+                joined = inFlight != null
+                inFlight
+                    ?: PendingVersionInfoRequest(
+                        pending = PendingResponse("version info request"),
+                        requestId = UUID.randomUUID().toString(),
+                    ).also { pendingVersionInfo = it }
             }
-            pendingVersionInfo = request
-        }
+        if (joined) return request.pending.await()
         try {
-            deviceManager.requestVersionInfo(requestId)
-            return pending.await()
+            deviceManager.requestVersionInfo(request.requestId)
+            return request.pending.await()
+        } catch (error: BluetoothSdkException) {
+            // Joined callers share the outcome, the deadline included.
+            request.pending.reject(error)
+            throw error
         } finally {
             synchronized(oneShotLock) {
                 if (pendingVersionInfo === request) {
@@ -1901,6 +1904,20 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    /**
+     * A glasses process that restarted never saw the pending version request, so its answer
+     * can never come. Ask the new process under the same id, keeping the request's deadline.
+     */
+    private fun askRestartedGlassesForPendingVersionInfo() {
+        val requestId =
+            synchronized(oneShotLock) {
+                val request = pendingVersionInfo ?: return
+                request.accumulator = VersionInfoResponseAccumulator(request.requestId)
+                request.requestId
+            }
+        deviceManager.requestVersionInfo(requestId)
+    }
+
     private fun handleVersionInfoForRequest(data: Map<String, Any>) {
         synchronized(oneShotLock) {
             val request = pendingVersionInfo ?: return
@@ -1992,6 +2009,7 @@ class MentraBluetoothSdk private constructor(
                     data["sid"] as? String ?: "",
                     "wifi_session_changed",
                 )
+                askRestartedGlassesForPendingVersionInfo()
                 dispatchToListeners { it.onRawEvent(eventName, data) }
             }
             "wifi_scan_result" -> {
