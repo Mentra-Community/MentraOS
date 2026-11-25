@@ -1999,6 +1999,7 @@ struct ViewState {
             // controller can be nil here: during R1 pairing, disconnectController() runs just before this
             // call and clears it. Re-create it (as connectDevice does) so connectById is not a silent no-op.
             initController(pendingWearable)
+            searchingController = true
             controller?.connectById(name)
             return
         }
