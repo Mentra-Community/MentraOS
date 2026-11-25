@@ -1850,7 +1850,7 @@ class MentraLive: NSObject, SGCManager {
     private var wireHandshakeAttempts = 0
     /// Session generation in which the LAST outgoing v2 handshake was sent; a reply only
     /// activates v2 when it answers a handshake from the CURRENT epoch (see PendingMessage
-    /// .generation for the queue-side guard).
+    /// .wireEpoch for the queue-side guard).
     private var wireHandshakeSentGeneration = -1
     /// Bumped on every BLE session reset; scheduled handshake-retry callbacks capture it
     /// and no-op if the session changed, so a timer from a dead session can't poke a new one.
@@ -2830,23 +2830,25 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Command Queue
 
     class PendingMessage {
-        init(data: Data, id: String, retries: Int, trace: BleWriteTrace? = nil, generation: Int = 0) {
+        init(data: Data, id: String, retries: Int, trace: BleWriteTrace? = nil, wireEpoch: Int? = nil) {
             self.data = data
             self.id = id
             self.retries = retries
             self.trace = trace
-            self.generation = generation
+            self.wireEpoch = wireEpoch
         }
 
         let data: Data
         let retries: Int
         let id: String
         let trace: BleWriteTrace?
-        /// Wire-session generation at enqueue time; the drain loop drops entries from a
-        /// previous session so a stale write (worst case: an old handshake whose reply
-        /// would activate v2 pre-negotiation) can never cross a session boundary. This is
-        /// the deterministic guard if a consumer already dequeued a previous-session write.
-        let generation: Int
+        /// The wire epoch this write belongs to, or nil for a write the glasses accept in
+        /// any epoch. Only the v2 handshake is bound: sent into a later epoch, it would
+        /// switch the glasses to v2 out of step with the phone. Commands are not: the
+        /// glasses decode legacy and v2 frames whatever was negotiated, so a command queued
+        /// before a glasses_ready reset must still reach them, or whoever waits on its
+        /// answer waits forever. A BLE disconnect clears the whole queue.
+        let wireEpoch: Int?
     }
 
     struct OutgoingBleCommandTraceInfo {
@@ -2907,14 +2909,12 @@ class MentraLive: NSObject, SGCManager {
 
         var count: Int { commands.count }
 
-        /// Discards the run of writes from earlier wire-session generations at the head of
-        /// the queue in one pass and dequeues the first current one. Stale writes are never
-        /// sent, so they must not each cost a drain tick: a burst of epoch resets would
-        /// otherwise park every current write behind seconds of dead entries.
-        func dequeue(currentGeneration: Int) -> (command: PendingMessage?, staleIds: [String]) {
-            let firstCurrent = commands.firstIndex { $0.generation == currentGeneration } ?? commands.endIndex
-            let staleIds = commands[..<firstCurrent].map(\.id)
-            commands.removeSubrange(..<firstCurrent)
+        /// Discards every write bound to an earlier wire epoch in one pass and dequeues the
+        /// first remaining one, so stale writes never cost a drain tick each.
+        func dequeue(currentEpoch: Int) -> (command: PendingMessage?, staleIds: [String]) {
+            let isStale = { (command: PendingMessage) in command.wireEpoch.map { $0 != currentEpoch } ?? false }
+            let staleIds = commands.filter(isStale).map(\.id)
+            commands.removeAll(where: isStale)
             return (commands.isEmpty ? nil : commands.removeFirst(), staleIds)
         }
 
@@ -2939,10 +2939,10 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func dequeueCurrentGenerationWrite() -> PendingMessage? {
-        let next = commandQueue.dequeue(currentGeneration: wireSessionGeneration)
+        let next = commandQueue.dequeue(currentEpoch: wireSessionGeneration)
         if !next.staleIds.isEmpty {
             Bridge.log(
-                "LIVE: Dropping \(next.staleIds.count) stale queued write(s) from a previous session epoch " +
+                "LIVE: Dropping \(next.staleIds.count) queued handshake write(s) from a previous wire epoch " +
                     "(ids: \(next.staleIds.joined(separator: ", ")))"
             )
         }
@@ -3018,7 +3018,7 @@ class MentraLive: NSObject, SGCManager {
                 id: pendingMessage.id,
                 retries: pendingMessage.retries + 1,
                 trace: pendingMessage.trace,
-                generation: pendingMessage.generation
+                wireEpoch: pendingMessage.wireEpoch
             )
 
             // Push to front of queue for immediate retry
@@ -6121,14 +6121,17 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
+        enqueueWrite(data, id: id, trace: trace, wireEpoch: nil)
+    }
+
+    private func enqueueWrite(_ data: Data, id: String, trace: BleWriteTrace?, wireEpoch: Int?) {
         if let admission = wifiAdbAdmission {
             guard currentWifiAdbAdmission(admission) else { admission.refused = true; return }
             admission.queued += 1
         }
         let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
         // Insert synchronously on MainActor so fragments and dependent commands retain call order.
-        let generation = wireSessionGeneration
-        let queueSize = commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, generation: generation))
+        let queueSize = commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, wireEpoch: wireEpoch))
         if trace != nil, queueSize >= significantQueueSize {
             logBleChunkTrace("queued", trace, extra: [
                 "queueSizeAfterAdd": queueSize,
@@ -6356,7 +6359,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: Sending BLE wire v2 handshake")
         wireHandshakeQueued = true
         wireHandshakeSentGeneration = wireSessionGeneration
-        queueSend(packed, id: "-1")
+        enqueueWrite(packed, id: "-1", trace: nil, wireEpoch: wireSessionGeneration)
         // The handshake and its reply are fire-and-forget binary frames with no ACK
         // tracking; if either is lost, wireHandshakeQueued would block every future
         // attempt and the session would silently stay on the legacy string wire.

@@ -171,6 +171,7 @@ final class PendingResponse<T> {
     private let onTimeout: ((String) -> Void)?
     private var continuation: CheckedContinuation<T, Error>?
     private var timeoutTask: Task<Void, Never>?
+    private var timeoutMs: Int?
     private var result: Result<T, Error>?
     private var completed = false
 
@@ -200,6 +201,32 @@ final class PendingResponse<T> {
         continuation = nil
     }
 
+    /// Give the request its whole timeout again from now, for a request asked anew.
+    func restartTimeout() {
+        guard !completed, continuation != nil else { return }
+        armTimeout()
+    }
+
+    private func armTimeout() {
+        timeoutTask?.cancel()
+        guard let timeoutMs else { return }
+        timeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
+            } catch {
+                return
+            }
+            guard let self, !self.completed else { return }
+            self.onTimeout?(self.telemetryOperation)
+            self.reject(
+                BluetoothSdkError(
+                    code: "request_timeout",
+                    message: "\(self.operation) timed out waiting for glasses response."
+                )
+            )
+        }
+    }
+
     func wait(timeoutMs: Int? = 15000) async throws -> T {
         if Task.isCancelled {
             throw BluetoothSdkError(code: "request_cancelled", message: "\(operation) was cancelled.")
@@ -210,23 +237,8 @@ final class PendingResponse<T> {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 self.continuation = continuation
-                if let timeoutMs {
-                    timeoutTask = Task { @MainActor [weak self] in
-                        do {
-                            try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
-                        } catch {
-                            return
-                        }
-                        guard let self, !self.completed else { return }
-                        self.onTimeout?(self.telemetryOperation)
-                        self.reject(
-                            BluetoothSdkError(
-                                code: "request_timeout",
-                                message: "\(self.operation) timed out waiting for glasses response."
-                            )
-                        )
-                    }
-                }
+                self.timeoutMs = timeoutMs
+                armTimeout()
             }
         } onCancel: {
             Task { @MainActor [weak self] in
@@ -2652,10 +2664,12 @@ public final class MentraBluetoothSDK {
     }
 
     /// A glasses process that restarted never saw the pending version request, so its answer
-    /// can never come. Ask the new process under the same id, keeping the request's deadline.
+    /// can never come. Ask the new process under the same id, and give it the whole timeout:
+    /// the old process may have used most of it before restarting.
     private func askRestartedGlassesForPendingVersionInfo() {
         guard let request = pendingVersionInfo else { return }
         request.accumulator = VersionInfoResponseAccumulator(expectedRequestId: request.requestId)
+        request.pending.restartTimeout()
         logVersionInfoRequest(request, stage: "asked-restarted-glasses")
         DeviceManager.shared.requestVersionInfo(requestId: request.requestId)
     }

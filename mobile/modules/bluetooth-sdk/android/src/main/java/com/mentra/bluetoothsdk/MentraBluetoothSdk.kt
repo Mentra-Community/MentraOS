@@ -261,6 +261,9 @@ class MentraBluetoothSdk private constructor(
     ) {
         private val deferred = CompletableDeferred<T>()
 
+        // When the request was last asked anew; every waiter's timeout runs from then.
+        @Volatile private var restartedAtMs = Long.MIN_VALUE
+
         fun resolve(value: T) {
             deferred.complete(value)
         }
@@ -269,18 +272,29 @@ class MentraBluetoothSdk private constructor(
             deferred.completeExceptionally(error)
         }
 
+        /** Give every waiter its whole timeout again from now, for a request asked anew. */
+        fun restartTimeout() {
+            restartedAtMs = monotonicMs()
+        }
+
+        // Monotonic, so a clock change during a request can't move its deadline.
+        private fun monotonicMs() = System.nanoTime() / 1_000_000
+
         suspend fun await(timeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS): T {
-            // All response types are non-null, so a null from withTimeoutOrNull
-            // can only mean the deadline elapsed. A rejected deferred rethrows
-            // its error from await() and propagates out unchanged.
-            return withTimeoutOrNull(timeoutMs) { deferred.await() }
-                ?: run {
-                    analytics.recordUsage { requestTimedOut(telemetryOperation) }
-                    throw BluetoothSdkException(
-                        "request_timeout",
-                        "$operation timed out waiting for glasses response.",
-                    )
-                }
+            val startedAtMs = monotonicMs()
+            while (true) {
+                val remainingMs = maxOf(startedAtMs, restartedAtMs) + timeoutMs - monotonicMs()
+                if (remainingMs <= 0) break
+                // All response types are non-null, so a null from withTimeoutOrNull
+                // can only mean the deadline elapsed. A rejected deferred rethrows
+                // its error from await() and propagates out unchanged.
+                withTimeoutOrNull(remainingMs) { deferred.await() }?.let { return it }
+            }
+            analytics.recordUsage { requestTimedOut(telemetryOperation) }
+            throw BluetoothSdkException(
+                "request_timeout",
+                "$operation timed out waiting for glasses response.",
+            )
         }
 
     }
@@ -1478,7 +1492,7 @@ class MentraBluetoothSdk private constructor(
             deviceManager.requestVersionInfo(request.requestId)
             return request.pending.await()
         } catch (error: BluetoothSdkException) {
-            // Joined callers share the outcome, the deadline included.
+            // Joined callers share the outcome.
             request.pending.reject(error)
             throw error
         } finally {
@@ -1906,13 +1920,15 @@ class MentraBluetoothSdk private constructor(
 
     /**
      * A glasses process that restarted never saw the pending version request, so its answer
-     * can never come. Ask the new process under the same id, keeping the request's deadline.
+     * can never come. Ask the new process under the same id, and give it the whole timeout:
+     * the old process may have used most of it before restarting.
      */
     private fun askRestartedGlassesForPendingVersionInfo() {
         val requestId =
             synchronized(oneShotLock) {
                 val request = pendingVersionInfo ?: return
                 request.accumulator = VersionInfoResponseAccumulator(request.requestId)
+                request.pending.restartTimeout()
                 request.requestId
             }
         deviceManager.requestVersionInfo(requestId)
