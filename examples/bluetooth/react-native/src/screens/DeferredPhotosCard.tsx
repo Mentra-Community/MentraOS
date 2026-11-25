@@ -1,7 +1,9 @@
 import React from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import BluetoothSdk, { type LinkState, type PhotoCapture } from '@mentra/engine/bluetooth-sdk';
+import { File } from 'expo-file-system';
 import { colors } from '../components/theme';
+import { jpegSize } from '../jpegSize';
 
 const BURST_SIZE = 5;
 
@@ -29,6 +31,20 @@ function update(capture: PhotoCapture, patch: Partial<Shot>) {
 const FETCHED_LINK = { up: 'fast link up (Wi-Fi)', down: 'fast link down (Bluetooth)', changed: 'fast link changed during the fetch' };
 const seconds = (ms?: number) => (ms === undefined ? '…' : `${(ms / 1000).toFixed(1)} s`);
 const codeOf = (error: unknown) => (error as { code?: string }).code ?? String(error);
+
+/** A photo file's pixel size; its header is in the first 128 KB. */
+function photoSize(uri: string) {
+  try {
+    const file = new File(uri).open();
+    try {
+      return jpegSize(file.readBytes(Math.min(file.size ?? 0, 128 * 1024))) ?? {};
+    } finally {
+      file.close();
+    }
+  } catch {
+    return {};
+  }
+}
 
 /**
  * One capture: its full photo stays on the glasses (deferred delivery). Resolves once the camera is
@@ -94,9 +110,8 @@ async function fetchFirst() {
     const up = linkBefore === 'up' && card.link === 'up';
     const down = linkBefore !== 'up' && card.link !== 'up';
     const link = up ? 'up' : down ? 'down' : 'changed';
-    setCard({ fetched: { uri: photo.fileUri, ms: Date.now() - started, bytes: photo.size, link } });
-    // Its pixel size: size "auto" is decided by the link it came over.
-    Image.getSize(photo.fileUri, (width, height) => setCard(({ fetched }) => (fetched?.uri === photo.fileUri ? { fetched: { ...fetched, width, height } } : {})));
+    // Its pixel size, from the JPEG's header: size "auto" is decided by the link it came over.
+    setCard({ fetched: { uri: photo.fileUri, ms: Date.now() - started, bytes: photo.size, link, ...photoSize(photo.fileUri) } });
   } catch (error) {
     setCard({ message: `Fetch failed: ${codeOf(error)}` });
   } finally {
