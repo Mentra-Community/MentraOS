@@ -3,7 +3,7 @@ import "./bluetoothSdkTestMock"
 import type {RelayDependencies, RelayOptions} from "../ManagedWebRtcRelay"
 import type {StreamStartRequest} from "@mentra/bluetooth-sdk/internal"
 const {ManagedWebRtcRelay} = await import("../ManagedWebRtcRelay")
-import type {GlassesWifiBinding, GlassesWifiEvent, GlassesWifiHold} from "../GlassesWifi"
+import type {GlassesWifiBinding, GlassesWifiEvent, GlassesWifiHold} from "@mentra/bluetooth-sdk/glasses-wifi"
 
 function deferred<T>() {
   let resolve!: (value: T) => void

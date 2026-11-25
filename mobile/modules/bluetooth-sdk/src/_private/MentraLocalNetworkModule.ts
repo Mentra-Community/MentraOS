@@ -49,11 +49,33 @@ export type LocalNetworkDownloadProgress = {
 
 type LocalNetworkEvents = {
   downloadProgress: (event: LocalNetworkDownloadProgress) => void
+  /** Android: the joined network went away. */
   networkLost: (event: {ssid: string}) => void
+  /** iOS: the hotspot join has waited a few seconds for Local Network access. */
+  hotspotPermissionRequired: (event: {id: string; systemAnswer?: string}) => void
+  /** iOS: the phone left the joined hotspot. */
+  hotspotLost: (event: {id: string; reason?: string}) => void
 }
 
+/**
+ * The glasses Wi-Fi link's native side. Android: `connect`, `connectWifiDirect`, `disconnect` and
+ * network-bound `request`; iOS: `joinHotspot` and `leaveHotspot`. Both: `download`, `cancel`,
+ * `cacheDirectory` and `delay`.
+ */
 declare class MentraLocalNetworkNativeModule extends NativeModule<LocalNetworkEvents> {
   getNetworkDiagnostics(): NetworkDiagnostics
+  joinHotspot(
+    id: string,
+    ssid: string,
+    password: string,
+    gateway: string | null,
+    purpose: string,
+    frequency: number | null,
+  ): Promise<string | undefined>
+  leaveHotspot(id: string): Promise<void>
+  cacheDirectory(): string
+  /** Resolves after `ms`, also while the app is in the background. */
+  delay(ms: number): Promise<void>
   connect(
     ssid: string,
     password: string,

@@ -13,21 +13,7 @@ jest.mock("../../modules/engine/src/services/OtaArtifactDownloader", () => ({
 jest.mock("../../modules/engine/src/services/asg/localNetworkTransport", () => ({
   localNetworkErrorDetails: jest.fn(() => ({code: "ERR_HOTSPOT_JOIN", message: "Hotspot join timed out"})),
 }))
-// The glasses Wi-Fi service owns the hotspot and the join; OTA only holds the link it gives.
-jest.mock("../../modules/engine/src/services/GlassesWifi", () => {
-  class GlassesWifiError extends Error {
-    stage: "enable" | "join"
-    cause: Error & {code?: string}
-    code?: string
-    constructor(stage: "enable" | "join", cause: Error & {code?: string}) {
-      super(cause.message)
-      this.stage = stage
-      this.cause = cause
-      this.code = cause.code
-    }
-  }
-  return {GlassesWifiError, holdGlassesWifi: jest.fn()}
-})
+// The glasses Wi-Fi service (the Bluetooth SDK's, mocked in jest.setup) owns the hotspot and the join.
 jest.mock("../../modules/engine/src/services/HotspotGlassesIdentity", () => ({
   joinedGlassesIdentity: jest.fn(async () => "same_glasses"),
 }))
@@ -42,7 +28,7 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => ({
   },
 }))
 const downloader = jest.requireMock("../../modules/engine/src/services/OtaArtifactDownloader")
-const service = jest.requireMock("../../modules/engine/src/services/GlassesWifi")
+const service = jest.requireMock("@mentra/bluetooth-sdk/glasses-wifi")
 const identity = jest.requireMock("../../modules/engine/src/services/HotspotGlassesIdentity")
 const localNetworkMock = jest.requireMock("../../modules/engine/src/services/asg/localNetworkTransport")
 const server = jest.requireMock("@mentra/bluetooth-sdk/ota-transport").otaServer

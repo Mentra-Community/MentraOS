@@ -1,16 +1,19 @@
 import React from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import BluetoothSdk, { type PhotoCapture } from '@mentra/engine/bluetooth-sdk';
+import BluetoothSdk, { type LinkState, type PhotoCapture } from '@mentra/engine/bluetooth-sdk';
 import { colors } from '../components/theme';
 
 const BURST_SIZE = 5;
 
 type Shot = { capture: PhotoCapture; index: number; cameraMs?: number; previewMs?: number; previewUrl?: string; error?: string };
-type Card = { shots: Shot[]; busy: boolean; fetching: boolean; fetched?: { uri: string; ms: number; bytes: number; width?: number; height?: number }; message?: string };
+/** `closed`: not held; `opening`: `link.openFast` pending; `up`/`down`: held, as `link.onChange` last said of the fast link. */
+type Link = 'closed' | 'opening' | LinkState['fast'];
+type Fetched = { uri: string; ms: number; bytes: number; link: 'up' | 'down' | 'changed'; width?: number; height?: number };
+type Card = { shots: Shot[]; busy: boolean; fetching: boolean; fetched?: Fetched; message?: string; link: Link; linkError?: string };
 
-// Outside the component: the app leaves the camera screen when the glasses reconnect, and a burst
-// or fetch still in flight must land in the same list.
-let card: Card = { shots: [], busy: false, fetching: false };
+// Outside the component: the app leaves the camera screen when the glasses reconnect, and a burst,
+// fetch or held fast link must land in the same card.
+let card: Card = { shots: [], busy: false, fetching: false, link: 'closed' };
 const listeners = new Set<() => void>();
 function setCard(patch: Partial<Card> | ((current: Card) => Partial<Card>)) {
   card = { ...card, ...(typeof patch === 'function' ? patch(card) : patch) };
@@ -23,6 +26,7 @@ function subscribe(listener: () => void) {
 function update(capture: PhotoCapture, patch: Partial<Shot>) {
   setCard(({ shots }) => ({ shots: shots.map((shot) => (shot.capture === capture ? { ...shot, ...patch } : shot)) }));
 }
+const FETCHED_LINK = { up: 'fast link up (Wi-Fi)', down: 'fast link down (Bluetooth)', changed: 'fast link changed during the fetch' };
 const seconds = (ms?: number) => (ms === undefined ? '…' : `${(ms / 1000).toFixed(1)} s`);
 const codeOf = (error: unknown) => (error as { code?: string }).code ?? String(error);
 
@@ -55,16 +59,42 @@ async function takeBurst() {
   setCard({ busy: false });
 }
 
+let unsubscribeFastLink: (() => void) | null = null;
+
+/** Hold the glasses Wi-Fi link: full photos then come over Wi-Fi instead of Bluetooth. */
+async function openLink() {
+  // While held, the SDK says when the link drops (photos go over Bluetooth meanwhile) and comes back.
+  unsubscribeFastLink ??= BluetoothSdk.link.onChange((state) => {
+    setCard(({ link }) => (link === 'closed' || link === 'opening' ? {} : { link: state.fast }));
+  });
+  setCard({ link: 'opening', linkError: undefined });
+  try {
+    await BluetoothSdk.link.openFast();
+    setCard({ link: 'up' });
+  } catch (error) {
+    setCard({ link: 'closed', linkError: `Fast link did not come up: ${codeOf(error)}` });
+  }
+}
+
+async function closeLink() {
+  setCard({ link: 'closed', linkError: undefined });
+  await BluetoothSdk.link.closeFast();
+}
+
 /** The first shot's full photo; another shot can be taken while it crosses the link. */
 async function fetchFirst() {
   const first = card.shots.find((shot) => shot.previewUrl);
   if (!first) return;
   setCard({ fetching: true, message: undefined });
   const started = Date.now();
+  const linkBefore = card.link;
   try {
     const photo = await first.capture.photo();
-    const ms = Date.now() - started;
-    setCard({ fetched: { uri: photo.fileUri, ms, bytes: photo.size } });
+    // The result does not say which way it came: the SDK uses Wi-Fi while the fast link is up.
+    const up = linkBefore === 'up' && card.link === 'up';
+    const down = linkBefore !== 'up' && card.link !== 'up';
+    const link = up ? 'up' : down ? 'down' : 'changed';
+    setCard({ fetched: { uri: photo.fileUri, ms: Date.now() - started, bytes: photo.size, link } });
     // Its pixel size: size "auto" is decided by the link it came over.
     Image.getSize(photo.fileUri, (width, height) => setCard(({ fetched }) => (fetched?.uri === photo.fileUri ? { fetched: { ...fetched, width, height } } : {})));
   } catch (error) {
@@ -82,11 +112,11 @@ async function releaseAll() {
 /**
  * Deferred photos (`capturePhoto`, size `auto`): a burst whose previews come first while the full photos stay
  * on the glasses, a capture taken while a full photo is being sent, then one full photo fetched and
- * the rest released.
+ * the rest released. The fast link (`link.openFast`) makes the full photo come over Wi-Fi.
  */
 export function DeferredPhotosCard() {
   const [version, setVersion] = React.useState<number | null>(null);
-  const { shots, busy, fetching, fetched, message } = React.useSyncExternalStore(subscribe, () => card);
+  const { shots, busy, fetching, fetched, message, link, linkError } = React.useSyncExternalStore(subscribe, () => card);
 
   React.useEffect(() => {
     // The glasses' status has it once version_info arrived, shortly after they connect.
@@ -119,6 +149,13 @@ export function DeferredPhotosCard() {
     <View style={styles.card} testID="deferred-photos-card">
       <Text style={styles.note}>Deferred photos: previews first; the full photos stay on the glasses until fetched or released.</Text>
       <View style={styles.row}>
+        {link === 'closed'
+          ? button('Open fast link', () => void openLink(), false, 'fast-link-open')
+          : button('Close fast link', () => void closeLink(), link === 'opening', 'fast-link-close')}
+        <Text style={styles.summary} testID="fast-link-state">{`Fast link: ${link === 'closed' ? 'closed' : link === 'opening' ? 'opening…' : link}`}</Text>
+      </View>
+      {linkError ? <Text style={styles.note} testID="fast-link-error">{linkError}</Text> : null}
+      <View style={styles.row}>
         {button(`Take ${BURST_SIZE} photos`, takeBurst, busy || fetching, 'deferred-take-burst')}
         {button('Take one more', () => void takeOne(), busy, 'deferred-take-one')}
         {busy || fetching ? <ActivityIndicator color={colors.greenPrimary} /> : null}
@@ -142,7 +179,7 @@ export function DeferredPhotosCard() {
       </View>
       {fetched ? (
         <View testID="deferred-fetched">
-          <Text style={styles.summary}>{`Full photo fetched in ${seconds(fetched.ms)}, ${Math.round(fetched.bytes / 1024)} KB${fetched.width ? `, ${fetched.width} x ${fetched.height}` : ''}`}</Text>
+          <Text style={styles.summary}>{`Full photo fetched in ${seconds(fetched.ms)}, ${Math.round(fetched.bytes / 1024)} KB${fetched.width ? `, ${fetched.width} x ${fetched.height}` : ''} · ${FETCHED_LINK[fetched.link]}`}</Text>
           <Image source={{ uri: fetched.uri }} style={styles.photo} resizeMode="contain" />
         </View>
       ) : null}

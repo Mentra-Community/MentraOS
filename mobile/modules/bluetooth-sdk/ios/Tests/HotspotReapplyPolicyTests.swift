@@ -1,4 +1,4 @@
-@testable import GlassesMediaCore
+@testable import MentraBluetoothSDK
 import XCTest
 
 final class HotspotReapplyPolicyTests: XCTestCase {

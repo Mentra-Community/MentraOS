@@ -102,7 +102,7 @@ public final class LocalNetworkAccessRequest {
         timeoutDeadline = deadline
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.timeoutDeadline == deadline else { return }
-            self.finish(.failure(LocalMediaError("Local connection to the glasses timed out")))
+            self.finish(.failure(HotspotError("Local connection to the glasses timed out")))
         }
         timeoutWork = work
         scheduleTimeout(remainingConnectivityTime, work)

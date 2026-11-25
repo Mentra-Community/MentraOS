@@ -12,9 +12,11 @@ Pod::Spec.new do |s|
   s.swift_version = '5.9'
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
+  # The glasses hotspot join (GlassesHotspotNetwork) the relay reads.
+  s.dependency 'MentraBluetoothSDK'
   # Keep in sync with the iOS-only @livekit/react-native-webrtc podspec patch.
   s.dependency 'WebRTC-SDK', '144.7559.15'
-  s.frameworks = 'AVFoundation', 'CoreImage', 'CoreMedia', 'CoreVideo', 'CoreLocation', 'ImageIO', 'Network', 'NetworkExtension'
+  s.frameworks = 'AVFoundation', 'CoreImage', 'CoreMedia', 'CoreVideo', 'ImageIO', 'Network'
   s.source_files = '*.{swift,h,m,mm}', 'CoreKit/Sources/GlassesMediaCore/*.swift'
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
 end

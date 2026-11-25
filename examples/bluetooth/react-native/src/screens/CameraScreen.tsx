@@ -9,8 +9,6 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { DeferredPhotosCard } from './DeferredPhotosCard';
 import { colors } from '../components/theme';
 import {
-  galleryHotspotPasswordLabel,
-  galleryHotspotSsidLabel,
   isGlassesConnected,
   isGlassesWifiConnected,
 } from '../sdkFormat';
@@ -64,7 +62,6 @@ function photoSdkCall(
   compression: PhotoCompression,
   transferMethod: PhotoTransferMethod,
   useCloudServer: boolean,
-  saveOnGlasses: boolean,
   aeExposureDivisor: PhotoAeExposureDivisor | null,
   isoCap: PhotoIsoCap | null,
   noiseReduction: PhotoTuningFlag,
@@ -100,17 +97,6 @@ console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
         ispDigitalGain !== null ? `  ispDigitalGain: ${ispDigitalGain},` : null,
         ispAnalogGain !== null ? `  ispAnalogGain: "${ispAnalogGain}",` : null,
       ].filter((line): line is string => line !== null).join('\n');
-  if (saveOnGlasses) {
-    return `${prefix}const photo = await BluetoothSdk.uploadPhoto({
-  webhookUrl: null,
-  authToken: null,
-  save: true,
-${requestFields}
-})
-const gallery = await fetch(\`\${galleryBaseUrl}/api/gallery?limit=100\`).then(response => response.json());
-const savedPhoto = gallery.data.photos.find(item => item.request_id === photo.requestId);
-console.log("Photo saved on glasses", savedPhoto?.name)`;
-  }
   if (!useCloudServer) {
     return `${prefix}const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
 const photo = await BluetoothSdk.uploadPhoto({
@@ -149,8 +135,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const [videoDetailsExpanded, setVideoDetailsExpanded] = React.useState(false);
   const connected = isGlassesConnected(sdk.glasses);
   const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
-  const glassesWifiOff =
-    connected && !glassesWifiConnected && !sdk.photoGlassesStorageEnabled;
+  const glassesWifiOff = connected && !glassesWifiConnected;
   const videoActionBusy =
     sdk.activeAction === 'Start video recording' ||
     sdk.activeAction === 'Stop & upload video';
@@ -159,15 +144,8 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     !glassesWifiConnected ||
     videoActionBusy;
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
-  const waitingForGlassesPreview =
-    sdk.photoGlassesStorageEnabled &&
-    sdk.photoPreviewUrl === null &&
-    sdk.photoPreviewDetails?.state === 'saved';
-  const needsGlassesHotspotSetup =
-    connected && sdk.photoGlassesStorageEnabled && sdk.galleryServerReachable !== true;
   const photoControlsDisabled =
     !connected ||
-    needsGlassesHotspotSetup ||
     sdk.activeAction === 'Capture & upload' ||
     sdk.activeAction === 'Capture text photo';
   const photoStatusOverlay = photoStatusOverlayInfo(
@@ -182,8 +160,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const cloudSetupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
   const photoStateText = sdk.photoPreviewUrl
     ? 'preview ready'
-    : waitingForGlassesPreview
-      ? 'saved'
     : sdk.photoStatus
       ? photoStatusTitle(sdk.photoStatus, sdk.photoPreviewDetails)
       : 'ready';
@@ -199,7 +175,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         sdk.photoCompression,
         sdk.photoTransferMethod,
         sdk.photoCloudServerEnabled,
-        sdk.photoGlassesStorageEnabled,
         sdk.photoAeExposureDivisor,
         sdk.photoIsoCap,
         sdk.photoNoiseReduction,
@@ -288,16 +263,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                   <Text style={styles.previewOpenText}>Open</Text>
                 </Pressable>
               </>
-            ) : waitingForGlassesPreview ? (
-              <View style={styles.savedPreviewState}>
-                <View style={styles.savedPreviewIcon}>
-                  <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                    <Polyline points="20 6 9 17 4 12" />
-                  </Svg>
-                </View>
-                <Text style={styles.savedPreviewTitle}>Photo saved on glasses</Text>
-                <Text style={styles.savedPreviewText}>Downloading the saved photo preview.</Text>
-              </View>
             ) : (
               <>
                 <View style={styles.previewGlow} />
@@ -337,7 +302,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             ) : null}
           </LinearGradient>
         </View>
-        {needsGlassesHotspotSetup ? <SavedPhotoHotspotPanel sdk={sdk} /> : null}
         {bleFallbackWarning ? (
           <View style={styles.previewFallbackWarning}>
             <Text style={styles.previewFallbackWarningTitle}>Bluetooth fallback</Text>
@@ -356,10 +320,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <Text style={styles.captureText}>
               {!connected
                 ? 'Connect glasses first'
-                : needsGlassesHotspotSetup
-                  ? sdk.galleryServerReachable === null
-                    ? 'Preparing hotspot…'
-                    : 'Connect glasses hotspot'
                 : sdk.activeAction === 'Capture & upload' || sdk.activeAction === 'Capture text photo'
                   ? 'Capturing…'
                   : sdk.textMode
@@ -475,13 +435,9 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                 : sdk.photoPreviewUrl
                     ? sdk.photoCloudServerEnabled
                       ? 'Photo preview loaded from cloud server'
-                      : sdk.photoGlassesStorageEnabled
-                        ? 'Photo preview downloaded from glasses'
-                        : 'Photo preview loaded from phone receiver'
+                      : 'Photo preview loaded from phone receiver'
                     : sdk.photoCloudServerEnabled
                       ? 'Waiting for media upload'
-                      : sdk.photoGlassesStorageEnabled
-                        ? 'Photo will be saved on glasses'
                       : sdk.phonePhotoReceiverRunning
                         ? 'Phone receiver ready'
                         : 'Preparing phone receiver'}
@@ -544,16 +500,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                 value={sdk.photoCloudServerEnabled}
               />
             </View>
-            <View style={styles.cloudToggleRow}>
-              <Text style={styles.cloudToggleLabel}>Save and preview from glasses</Text>
-              <Switch
-                ios_backgroundColor="rgba(15,42,29,0.18)"
-                onValueChange={sdk.setPhotoGlassesStorageEnabled}
-                thumbColor="#fff"
-                trackColor={{ false: 'rgba(15,42,29,0.18)', true: colors.greenAccent }}
-                value={sdk.photoGlassesStorageEnabled}
-              />
-            </View>
         {sdk.photoCloudServerEnabled ? (
           <>
             <View style={styles.cardHead}>
@@ -576,10 +522,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             </View>
             {cloudSetupHint ? <Text style={styles.setupHint}>{cloudSetupHint}</Text> : null}
           </>
-        ) : sdk.photoGlassesStorageEnabled ? (
-          <Text style={styles.setupHint}>
-            Photos stay on the glasses. Capture unlocks when the gallery connection is ready.
-          </Text>
         ) : (
           <Text style={styles.setupHint}>
             The phone keeps a local upload receiver ready on this tab and previews JPEG photos when the glasses upload them.
@@ -962,44 +904,6 @@ type PhotoStatusExtras = {
   meteredPreview?: PhotoPreviewDetails['meteredPreview'];
   captureMetadata?: PhotoPreviewDetails['captureMetadata'];
 };
-
-function SavedPhotoHotspotPanel({sdk}: {sdk: BluetoothSdkExampleModel}) {
-  const hotspotLabel = galleryHotspotSsidLabel(sdk.glasses);
-  const password = galleryHotspotPasswordLabel(sdk.glasses);
-  const statusColor = sdk.galleryServerReachable === true
-    ? colors.greenAccent
-    : sdk.galleryServerReachable === false
-      ? colors.red
-      : colors.muted;
-
-  return (
-    <View style={styles.savedHotspotPanel}>
-      <View style={styles.savedHotspotHeader}>
-        <View style={styles.savedHotspotTextWrap}>
-          <Text style={styles.savedHotspotTitle}>Glasses hotspot</Text>
-          <Text style={styles.savedHotspotCredential}>Join {hotspotLabel}</Text>
-          <Text style={styles.savedHotspotCredential}>Password {password}</Text>
-        </View>
-        <View style={styles.savedHotspotActions}>
-          <SavedPhotoAction label="Retry" onPress={sdk.prepareGlassesPhotoPreview} />
-          <SavedPhotoAction label="Manual setup" onPress={sdk.openWifiSettings} />
-          <SavedPhotoAction label="Copy password" onPress={sdk.copyGalleryHotspotPassword} />
-        </View>
-      </View>
-      <Text numberOfLines={2} style={[styles.savedHotspotStatus, {color: statusColor}]}>
-        {sdk.galleryServerStatus}
-      </Text>
-    </View>
-  );
-}
-
-function SavedPhotoAction({label, onPress}: {label: string; onPress: () => void}) {
-  return (
-    <Pressable onPress={onPress} style={({pressed}) => [styles.savedHotspotAction, pressed && styles.copyChipPressed]}>
-      <Text style={styles.savedHotspotActionText}>{label}</Text>
-    </Pressable>
-  );
-}
 
 function photoStatusOverlayInfo(
   status: PhotoStatusEvent | null,
@@ -2200,19 +2104,6 @@ const styles = StyleSheet.create({
   previewMeta: { position: 'absolute', bottom: 14, right: 14, color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '500' },
   previewOpenBadge: { position: 'absolute', right: 12, bottom: 12, zIndex: 3, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.42)', borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)', paddingVertical: 7, paddingHorizontal: 11 },
   previewOpenText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  savedPreviewState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
-  savedPreviewIcon: { width: 42, height: 42, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)' },
-  savedPreviewTitle: { color: '#fff', fontSize: 15, fontWeight: '800', marginTop: 10 },
-  savedPreviewText: { color: 'rgba(255,255,255,0.82)', fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 3, textAlign: 'center' },
-  savedHotspotPanel: { marginTop: 10, marginHorizontal: 6, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)', backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 11, paddingHorizontal: 12, gap: 8 },
-  savedHotspotHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  savedHotspotTextWrap: { flex: 1, minWidth: 0 },
-  savedHotspotTitle: { color: colors.ink, fontSize: 13, fontWeight: '800' },
-  savedHotspotCredential: { color: colors.muted, fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 1 },
-  savedHotspotActions: { alignItems: 'stretch', gap: 5 },
-  savedHotspotAction: { minHeight: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.14)', paddingVertical: 6, paddingHorizontal: 10 },
-  savedHotspotActionText: { color: colors.greenDeep, fontSize: 11, fontWeight: '800' },
-  savedHotspotStatus: { fontSize: 11, fontWeight: '600', lineHeight: 15 },
   previewStatusOverlay: { position: 'absolute', left: 12, right: 12, bottom: 12, zIndex: 4, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', backgroundColor: 'rgba(8,24,16,0.74)', paddingVertical: 10, paddingHorizontal: 12 },
   previewStatusOverlayFailed: { backgroundColor: 'rgba(95,18,18,0.76)', borderColor: 'rgba(255,255,255,0.22)' },
   previewStatusLine: { flexDirection: 'row', alignItems: 'center', gap: 9 },

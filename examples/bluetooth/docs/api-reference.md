@@ -199,7 +199,7 @@ Public status is grouped the same way across platforms:
 
 | Field | Meaning |
 | --- | --- |
-| `glasses` | Connected-glasses runtime state. Includes connection/readiness, connected device identity, battery, firmware, Wi-Fi, hotspot, and signal metadata when connected. |
+| `glasses` | Connected-glasses runtime state. Includes connection/readiness, connected device identity, battery, firmware, Wi-Fi, hotspot (Android and iOS only), and signal metadata when connected. |
 | `sdk` | Phone-side SDK runtime state. Includes default device, gallery mode, microphone route, mic ranking, Wi-Fi scan results, scan activity, system mic availability, other Bluetooth audio status, and recent SDK log lines. |
 | `scan` | User-facing scan state. Includes whether a scan is active, whether controller scanning is active, and the stable-order discovered `Device[]` list. |
 
@@ -230,15 +230,16 @@ These are the supported React Native app developer entrypoints:
 | Default device | `getDefaultDevice`, `setDefaultDevice` |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget`, `unpair` |
 | Display | `displayText`, `clearDisplay`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
-| Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
-| Camera and gallery | `uploadPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
+| Wi-Fi | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork` |
+| Links and continuous capture | `link.state`, `link.onChange`, `link.openFast`, `link.closeFast`, `captureContinuous` |
+| Camera and gallery | `capturePhoto`, `takePhoto`, `uploadPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setPreferredMic`, `setVoiceActivityDetectionEnabled`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
 | LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
 
-React Native helper exports include `DeviceModels`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
+React Native helper exports include `DeviceModels`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, and `isConnectedWifiStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
 
-For React Native status UI, use `useMentraBluetooth()` from `@mentra/bluetooth-sdk/react`. It returns `mentra.glasses`, `mentra.sdk`, and `mentra.scan` for connection, battery, Wi-Fi, hotspot, scan, and SDK runtime state.
+For React Native status UI, use `useMentraBluetooth()` from `@mentra/bluetooth-sdk/react`. It returns `mentra.glasses`, `mentra.sdk`, and `mentra.scan` for connection, battery, Wi-Fi, scan, and SDK runtime state. It has no hotspot state: the React Native SDK runs the glasses Wi-Fi link itself.
 
 ### Version Fields
 
@@ -540,6 +541,39 @@ Your webhook should accept multipart form data with a `photo` file and `requestI
 
 For local development, run `python3 local-demo-cloud/server.py` from the Starter Kit root and use the printed LAN `/upload` URL. Do not use `localhost`.
 
+### Photos over Wi-Fi (React Native)
+
+To keep the photo on the phone and upload nothing, use `capturePhoto`: its preview comes first, and the full photo stays on the glasses until `photo()` asks for it. `photo()` and `takePhoto(options)` bring the full photo over the fast link (the glasses Wi-Fi) while it is up, whoever holds it, and over Bluetooth otherwise. `BluetoothSdk.link.state` says whether the glasses are connected (`glasses`) and the fast link is up (`fast`); an app that takes many photos can run a continuous capture (below), or hold the fast link itself for as long as it needs it:
+
+```ts
+import BluetoothSdk, {type LinkState} from '@mentra/bluetooth-sdk';
+
+await BluetoothSdk.link.openFast(); // resolves once the fast link is up
+const stop = BluetoothSdk.link.onChange((state: LinkState) => {
+  console.log(`fast link ${state.fast}`); // "down" while it is lost, "up" when it is back
+});
+const capture = BluetoothSdk.capturePhoto({size: 'medium', sound: true});
+const photo = await capture.photo(); // over Wi-Fi while the fast link is up
+await BluetoothSdk.link.closeFast();
+stop();
+```
+
+The SDK picks the radio (Wi-Fi Direct on Android with glasses that support it, the glasses' hotspot otherwise) and shares the one link with its other users; it goes down once nobody holds it. Both calls are idempotent. `openFast()` rejects if the link can't come up; photos keep going over Bluetooth. While it is held, the SDK brings the link back after the glasses restart. On an iPhone, joining the glasses' hotspot takes the phone's Wi-Fi while it is held, so hold it only while you take photos. The React Native example's Camera tab shows it in its Deferred photos card.
+
+`captureContinuous(options)` takes photos back to back for as long as the run lasts, built on `link`: while the run is on, the SDK holds the fast link for it, so its photos come over Wi-Fi. Photos are taken one at a time; the next starts once the camera took the previous one. Each is a capture like `capturePhoto`'s, handed to `onPhoto`; release each when done. The run takes photos on its own while it is `capturing` and fewer than `maxPending` (default 12) of its photos are still on the glasses unreleased. It is `paused` while only Bluetooth is left, since photos would pile up on the glasses, and goes on by itself once the fast link is back. `run.capture(options)` takes one more photo in the run's turn, even while paused. `stop()` stops taking photos at once, and resolves and gives the link back once the photos the run handed out are released:
+
+```ts
+const run = BluetoothSdk.captureContinuous({size: 'medium', sound: false, maxPending: 12});
+run.onPhoto((capture) => {
+  // a normal capture: captured, preview, photo(), release()
+});
+run.onState((state) => {
+  // "capturing" | "paused"
+});
+const one = await run.capture({sound: true}); // one more photo in the run's turn, even while paused
+await run.stop();
+```
+
 ## Camera Video Recording
 
 Use video recording when your app needs a clip instead of a still image. Start recording with optional per-recording settings, then stop recording with an optional webhook URL. `maxRecordingTimeMinutes` is an auto-stop guard; `0` or an omitted value records until your app stops recording or the glasses interrupt it. Pass the webhook URL and auth token at stop time so upload credentials can be fresh when the recording ends.
@@ -707,8 +741,9 @@ React Native:
 const networks = await BluetoothSdk.requestWifiScan();
 const wifiStatus = await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret');
 const forgetStatus = await BluetoothSdk.forgetWifiNetwork('Office WiFi');
-const hotspotStatus = await BluetoothSdk.setHotspotState(true);
 ```
+
+The React Native SDK has no hotspot calls: it runs the glasses Wi-Fi link itself, and your app never sees its network name, password or address. Hold it with the fast link while you take photos (see [Photos over Wi-Fi](#photos-over-wi-fi-react-native)).
 
 ## Version, Maintenance, And Diagnostics
 
@@ -814,8 +849,6 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `battery_status` | `BatteryStatusEvent` | Battery update from glasses. |
 | `local_transcription` | `LocalTranscriptionEvent` | SDK local transcription text update. |
 | `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. |
-| `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
-| `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
 | `photo_response` | `PhotoResponseEvent` | Terminal photo request success or failure event. `uploadPhoto(...)` resolves after capture and webhook delivery finish, and rejects on glasses, phone-relay, send, or timeout failure. |
 | `video_recording_status` | `VideoRecordingStatusEvent` | Video recording start/stop succeeds or fails, or a status query reports whether the glasses are recording. `startVideoRecording(...)` resolves from `recording_started`; `stopVideoRecording(...)` resolves from `recording_stopped` unless a webhook upload was requested, in which case it waits for upload success. |
 | `media_success` / `media_error` | `MediaUploadEvent` | Raw glasses media upload completion events. Video webhook stops use these events to resolve or reject the `stopVideoRecording(...)` promise after recording has stopped. |
@@ -846,7 +879,7 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | Discovered device | `Device` | `Device` | `Device` | Scan result containing typed model, name, platform address/identifier, optional RSSI, and stable id. RSSI may be undefined at first discovery. Do not parse `id`; use the typed fields. |
 | Connection state | `GlassesConnectionState` | `GlassesConnectionState` | `GlassesConnectionStatus` | Link-layer state: disconnected, scanning, connecting, bonding, or connected. React Native uses a discriminated union where `fullyBooted` only exists on the connected state. |
 | Full runtime state | `MentraBluetoothState` | `MentraBluetoothState` | `useMentraBluetooth()` | Grouped app-facing state with `glasses`, `sdk`, and `scan`. |
-| Glasses runtime state | `GlassesRuntimeState` | `GlassesRuntimeState` | `useMentraBluetooth().glasses` | Connected device snapshot: connection/readiness, model, firmware, battery, Wi-Fi, hotspot, and signal metadata when connected. |
+| Glasses runtime state | `GlassesRuntimeState` | `GlassesRuntimeState` | `useMentraBluetooth().glasses` | Connected device snapshot: connection/readiness, model, firmware, battery, Wi-Fi, hotspot (Android and iOS only), and signal metadata when connected. |
 | Phone SDK runtime state | `PhoneSdkRuntimeState` | `PhoneSdkRuntimeState` | `useMentraBluetooth().sdk` | Default device, gallery mode, microphone route, Wi-Fi scan results, scan activity, system mic availability, other Bluetooth audio status, and logs. |
 | Scan state | `BluetoothScanState` | `BluetoothScanState` | `useMentraBluetooth().scan` | Stable-order discovered devices and active scan state. |
 | SDK error | `BluetoothException` / `BluetoothError` | `BluetoothError` | rejected promise or `log`/typed event | Permission, connection, unsupported-capability, command, or native failure. |

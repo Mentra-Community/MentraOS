@@ -1,11 +1,28 @@
 const packageJson = require("../../../package.json")
 const {
+  applyBluetoothSdkEntitlements,
   applyBluetoothSdkInfoPlist,
   INFO_SDK_VERSION,
   INFO_ANALYTICS_ENVIRONMENT,
 } = require("../withIos")
 
 describe("Bluetooth SDK iOS config", () => {
+  it("adds the fast link's entitlements beside the app's own", () => {
+    expect(applyBluetoothSdkEntitlements({"keychain-access-groups": ["group"]})).toEqual({
+      "keychain-access-groups": ["group"],
+      "com.apple.developer.networking.HotspotConfiguration": true,
+      "com.apple.developer.networking.wifi-info": true,
+    })
+  })
+
+  it("explains Local Network access unless the app already does", () => {
+    expect(applyBluetoothSdkInfoPlist({}, undefined).NSLocalNetworkUsageDescription).toBeTruthy()
+    expect(
+      applyBluetoothSdkInfoPlist({NSLocalNetworkUsageDescription: "The app's own words"}, undefined)
+        .NSLocalNetworkUsageDescription,
+    ).toBe("The app's own words")
+  })
+
   it("stamps the package version into Info.plist for workspace builds", () => {
     const infoPlist = applyBluetoothSdkInfoPlist({}, undefined)
 

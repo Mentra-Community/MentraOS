@@ -1,19 +1,13 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import {otaLocalNetwork, type OtaLocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/ota-transport"
-import {glassesHotspot} from "@mentra/glasses-media"
+import {glassesWifiLink} from "@mentra/bluetooth-sdk/glasses-wifi"
 import {Buffer} from "buffer"
-import {Platform} from "react-native"
 
 type DownloadOptions = Parameters<typeof RNFS.downloadFile>[0]
 type DownloadHandle = ReturnType<typeof RNFS.downloadFile>
 
-let connectionGeneration = 0
-let scopedConnectionActive = false
 let nextJobId = 1_000_000
 const nativeJobs = new Map<number, string>()
 const cancelledNativeJobs = new Set<number>()
-// iOS joins through the shared native owner that also serves Mentra Call and the relay.
-let iosHotspotOwner: {caller: symbol; nativeId: string} | null = null
 
 export type LocalNetworkErrorDetails = {
   code?: string | number
@@ -94,14 +88,6 @@ export function localNetworkErrorDetails(error: unknown): LocalNetworkErrorDetai
   }
 }
 
-export function shouldUseScopedLocalNetwork(os: string, moduleAvailable: boolean): boolean {
-  return os === "android" && moduleAvailable
-}
-
-function supportsScopedConnection(): boolean {
-  return shouldUseScopedLocalNetwork(Platform.OS, otaLocalNetwork.isAvailable())
-}
-
 function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
   if (!headers) return {}
   if (headers instanceof Headers) {
@@ -119,113 +105,17 @@ function requestId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`
 }
 
+/**
+ * Requests to the glasses over the glasses Wi-Fi link, which the Bluetooth SDK's glasses Wi-Fi
+ * service brings up: on Android they go over its joined `Network`, else the system's route.
+ */
 export const localNetworkTransport = {
-  supportsScopedConnection: (): boolean => supportsScopedConnection(),
-  isScopedConnectionActive: (): boolean => scopedConnectionActive,
-
-  async connect(
-    caller: symbol,
-    ssid: string,
-    password: string,
-    options?: {
-      assertCurrent?: () => void
-      gateway?: string
-      /** The hotspot's channel in MHz, when the glasses report it: a Mac then scans only that channel. */
-      frequency?: number
-      purpose?: "outgoing-client" | "incoming-server"
-      /** iOS: the join has waited a few seconds for Local Network access, which may have been denied. */
-      onPermissionRequired?: (systemAnswer: string) => void
-    },
-  ): Promise<string | undefined> {
-    const isIos = Platform.OS === "ios"
-    if (isIos && iosHotspotOwner) throw new Error("Previous hotspot session has not been released")
-    const generation = ++connectionGeneration
-    const assertCurrent = () => {
-      if (generation !== connectionGeneration) throw new Error("Local network connection was superseded")
-      options?.assertCurrent?.()
-    }
-    assertCurrent()
-    scopedConnectionActive = false
-    nativeJobs.clear()
-    if (isIos) {
-      // The native join asks iOS again when its scan misses the hotspot and resolves only
-      // with the phone's verified address on it.
-      const owner = requestId("ios_hotspot")
-      iosHotspotOwner = {caller, nativeId: owner}
-      const permission = glassesHotspot.onPermissionRequired((id, systemAnswer) => {
-        if (id === owner) options?.onPermissionRequired?.(systemAnswer)
-      })
-      try {
-        const address = await glassesHotspot.join(
-          owner,
-          ssid,
-          password,
-          options?.gateway,
-          options?.purpose ?? "outgoing-client",
-          options?.frequency,
-        )
-        assertCurrent()
-        return address
-      } catch (error) {
-        try {
-          await glassesHotspot.leave(owner)
-        } catch (cleanupError) {
-          console.warn("[LocalNetworkTransport] hotspot cleanup failed", localNetworkErrorDetails(cleanupError))
-          throw error
-        }
-        if (iosHotspotOwner?.nativeId === owner) iosHotspotOwner = null
-        throw error
-      } finally {
-        permission.remove()
-      }
-    }
-    if (!supportsScopedConnection()) throw new Error("The glasses hotspot cannot be joined on this platform")
-    const result = await otaLocalNetwork.connect(ssid, password, options?.purpose === "incoming-server")
-    scopedConnectionActive = true
-    return result.localAddress
-  },
-
-  /** Android: whether the phone and the connected glasses can use the Wi-Fi Direct link now. */
-  wifiDirectAvailable: (): boolean => supportsScopedConnection() && otaLocalNetwork.wifiDirectAvailable(),
-
-  /**
-   * Join the glasses' Wi-Fi Direct group; the native join asks the glasses for it over Bluetooth.
-   * Requests then go over it like over the hotspot.
-   */
-  async connectWifiDirect(purpose: "outgoing-client" | "incoming-server"): Promise<{
-    ssid: string
-    localAddress?: string
-    gateway?: string
-  }> {
-    connectionGeneration += 1
-    scopedConnectionActive = false
-    nativeJobs.clear()
-    const result = await otaLocalNetwork.connectWifiDirect(purpose === "incoming-server")
-    scopedConnectionActive = true
-    return result
-  },
-
-  async disconnect(caller: symbol): Promise<void> {
-    if (iosHotspotOwner && iosHotspotOwner.caller !== caller) return
-    connectionGeneration += 1
-    if (iosHotspotOwner) {
-      const owner = iosHotspotOwner.nativeId
-      await glassesHotspot.leave(owner)
-      if (iosHotspotOwner?.nativeId === owner) iosHotspotOwner = null
-    }
-    if (supportsScopedConnection()) {
-      await otaLocalNetwork.disconnect()
-    }
-    scopedConnectionActive = false
-    nativeJobs.clear()
-  },
-
   async fetch(url: string | URL | Request, init?: RequestInit, timeoutMs = 30_000): Promise<Response> {
-    if (!scopedConnectionActive || !otaLocalNetwork.isAvailable() || typeof url !== "string") {
+    if (!glassesWifiLink.isScoped() || typeof url !== "string") {
       return globalThis.fetch(url, init)
     }
 
-    const nativeModule = otaLocalNetwork
+    const nativeModule = glassesWifiLink
     const id = requestId("request")
     const signal = init?.signal
     const cancel = () => void nativeModule.cancel(id)
@@ -251,13 +141,13 @@ export const localNetworkTransport = {
   },
 
   downloadFile(options: DownloadOptions): DownloadHandle {
-    if (!scopedConnectionActive || !otaLocalNetwork.isAvailable()) return RNFS.downloadFile(options)
+    if (!glassesWifiLink.isScoped()) return RNFS.downloadFile(options)
 
     const jobId = nextJobId++
     const id = requestId("download")
     let began = false
     nativeJobs.set(jobId, id)
-    const subscription = otaLocalNetwork.onDownloadProgress((event: OtaLocalNetworkDownloadProgress) => {
+    const subscription = glassesWifiLink.onDownloadProgress((event) => {
       if (event.requestId !== id) return
       if (!began) {
         began = true
@@ -275,7 +165,7 @@ export const localNetworkTransport = {
       })
     })
 
-    const promise = otaLocalNetwork
+    const promise = glassesWifiLink
       .download(
         id,
         options.fromUrl,
@@ -306,34 +196,19 @@ export const localNetworkTransport = {
       .finally(() => {
         nativeJobs.delete(jobId)
         cancelledNativeJobs.delete(jobId)
-        subscription.remove()
+        subscription()
       })
 
     return {jobId, promise} as DownloadHandle
   },
 
-  /** The phone left the glasses network without being asked to. */
-  onLost(listener: () => void): () => void {
-    const android = otaLocalNetwork.onNetworkLost(listener)
-    const ios = Platform.OS === "ios" ? glassesHotspot.onLost(listener) : undefined
-    return () => {
-      android.remove()
-      ios?.remove()
-    }
-  },
-
   stopDownload(jobId: number): void {
     const nativeId = nativeJobs.get(jobId)
-    if (nativeId && otaLocalNetwork.isAvailable()) {
+    if (nativeId) {
       cancelledNativeJobs.add(jobId)
-      void otaLocalNetwork.cancel(nativeId)
+      void glassesWifiLink.cancel(nativeId)
       return
     }
     RNFS.stopDownload(jobId)
   },
 }
-
-otaLocalNetwork.onNetworkLost(() => {
-  scopedConnectionActive = false
-  nativeJobs.clear()
-})

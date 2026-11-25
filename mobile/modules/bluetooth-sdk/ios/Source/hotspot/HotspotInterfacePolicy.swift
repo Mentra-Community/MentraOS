@@ -134,8 +134,8 @@ public enum HotspotInterfacePolicy {
     {
         let bindings = Set(snapshot.addresses.compactMap { row -> HotspotInterfaceBinding? in
             guard let index = eligibleIndex(row.name), snapshot.links[row.name] == index,
-                  row.isUp, LocalMediaPolicy.isPrivate(row.ipv4) else { return nil }
-            if let gateway, !LocalMediaPolicy.isHotspotClientAddress(row.ipv4, gateway: gateway) { return nil }
+                  row.isUp, HotspotAddressPolicy.isPrivate(row.ipv4) else { return nil }
+            if let gateway, !HotspotAddressPolicy.isHotspotClientAddress(row.ipv4, gateway: gateway) { return nil }
             return HotspotInterfaceBinding(interface: row.name, index: index, address: row.ipv4)
         })
         return bindings.count == 1 ? bindings.first : nil

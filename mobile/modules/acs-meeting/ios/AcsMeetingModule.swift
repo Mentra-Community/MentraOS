@@ -7,6 +7,7 @@ import ExpoModulesCore
 import Foundation
 import GlassesMedia
 import ImageIO
+import MentraBluetoothSDK
 
 public class AcsMeetingModule: Module {
     private var session: AcsMeetingSession?

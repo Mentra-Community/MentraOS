@@ -10,7 +10,7 @@ The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android,
 - Connect to a discovered `Device` or an app-restored default device.
 - Read typed lifecycle state through the public surface for your platform.
 - Subscribe to typed hardware events.
-- Send camera, stream, audio, Wi-Fi, hotspot, LED, and settings commands for Mentra Live.
+- Send camera, stream, audio, Wi-Fi, hotspot (Android and iOS), LED, and settings commands for Mentra Live, and hold the glasses Wi-Fi link for photos (React Native).
 
 ## Packages And Imports
 
@@ -89,7 +89,7 @@ features are used:
 | `bluetooth_sdk_stream_started` | When a `startStream` call settles. Carries `success`, `error_code`, `protocol` (`rtmp`, `srt`, `whip`, or `unknown`, from the URL scheme only), requested video settings, `capture_audio`, `glasses_network`, and `latency_ms`. |
 | `bluetooth_sdk_stream_ended` | When that stream ends. Carries `protocol`, `duration_ms`, `end_state`, `stopped_by_app`, `reconnect_attempts`, `error_code`, and the last reported bitrate, frame rate, dropped frames, and temperature when the stream reported statistics. |
 | `bluetooth_sdk_mic_session` | When the active microphone turns off or changes. Carries `duration_ms`, `mic_source`, and `local_transcription`. |
-| `bluetooth_sdk_wifi_setup`, `bluetooth_sdk_hotspot_started` | When `sendWifiCredentials` or `setHotspotState(true)` settles. Carry `success`, `error_code`, and `latency_ms`. |
+| `bluetooth_sdk_wifi_setup`, `bluetooth_sdk_hotspot_started` | When `sendWifiCredentials` settles, or when the glasses hotspot was asked to start. Carry `success`, `error_code`, and `latency_ms`. |
 | `bluetooth_sdk_ota_finished` | When a glasses software update completes or fails. Carries `success`, the failed step and error, `total_steps`, `duration_ms`, and the glasses versions the update started from. |
 | `bluetooth_sdk_request_failed` | When a glasses command times out (`error_code=request_timeout`), with the command as `operation`. At most 100 per SDK start. |
 
@@ -471,7 +471,7 @@ Public status is grouped the same way across platforms:
 
 | Field | Meaning |
 | --- | --- |
-| `glasses` | Connected-glasses runtime state. Includes connection/readiness, connected device identity, battery, firmware, Wi-Fi, hotspot, and signal metadata when connected. |
+| `glasses` | Connected-glasses runtime state. Includes connection/readiness, connected device identity, battery, firmware, Wi-Fi, hotspot (Android and iOS), and signal metadata when connected. |
 | `sdk` | Phone-side SDK runtime state. Includes default device, gallery mode, microphone route, mic ranking, Wi-Fi scan results, scan activity, system mic availability, other Bluetooth audio status, and recent SDK log lines. |
 | `scan` | User-facing scan state. Includes whether a scan is active, whether controller scanning is active, and the stable-order discovered `Device[]` list. |
 
@@ -554,15 +554,16 @@ These are the supported React Native app developer entrypoints:
 | Default device | `getDefaultDevice`, `setDefaultDevice` |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget`, `unpair` |
 | Display | `displayText`, `clearDisplay`, `setDashboardContent`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
-| Wi-Fi and hotspot | `requestWifiScan`, `getSavedWifiNetworks`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
-| Camera and gallery | `uploadPhoto`, `warmUpCamera`, `stopCameraWarmUp`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults` (deprecated), `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `setCameraFovOverride`, `releaseCameraFovOverride`, `startVideoRecording`, `stopVideoRecording`, `queryVideoRecordingStatus` |
+| Wi-Fi | `requestWifiScan`, `getSavedWifiNetworks`, `sendWifiCredentials`, `forgetWifiNetwork` |
+| Links and continuous capture | `link.state`, `link.onChange`, `link.openFast`, `link.closeFast`, `captureContinuous` (see [Photos over Wi-Fi](#photos-over-wi-fi)) |
+| Camera and gallery | `capturePhoto`, `takePhoto`, `uploadPhoto`, `warmUpCamera`, `stopCameraWarmUp`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults` (deprecated), `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `setCameraFovOverride`, `releaseCameraFovOverride`, `startVideoRecording`, `stopVideoRecording`, `queryVideoRecordingStatus` |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setVoiceActivityDetectionEnabled`, `setLoudnessGateEnabled`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
 | LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate` |
 
-React Native helper exports include `DeviceModels`, `WifiForgetResult`, `WifiForgetOutcome`, `SavedWifiNetworksResult`, `SavedWifiNetworksOutcome`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
+React Native helper exports include `DeviceModels`, `WifiForgetResult`, `WifiForgetOutcome`, `SavedWifiNetworksResult`, `SavedWifiNetworksOutcome`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, and `isConnectedWifiStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
 
-For React Native status UI, use `useMentraBluetooth()` from `@mentra/bluetooth-sdk/react`. It returns `mentra.glasses`, `mentra.sdk`, and `mentra.scan` for connection, battery, Wi-Fi, hotspot, scan, and SDK runtime state.
+For React Native status UI, use `useMentraBluetooth()` from `@mentra/bluetooth-sdk/react`. It returns `mentra.glasses`, `mentra.sdk`, and `mentra.scan` for connection, battery, Wi-Fi, scan, and SDK runtime state. It has no hotspot state: the SDK runs the glasses Wi-Fi link itself, and an app never sees its network name, password or address.
 
 Important defaults:
 
@@ -580,6 +581,39 @@ Important defaults:
 - `setCameraFov({fov, roiPosition})` clamps `fov` to 62-118 degrees and accepts `roiPosition` as `"center"`, `"bottom"`, or `"top"`. You can also call `setCameraFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. On Mentra Live this persists the setting, restarts the camera, and resolves with `CameraFovResult` only after the ASG client reports the setting was applied to camera hardware after the restart cooldown. The promise rejects if the glasses report an error, persist the setting without hardware application, or time out. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 - `startStream` optional `video` and `audio` configs are omitted unless supplied, so the connected glasses use their model defaults. Stream video input fields are `width`, `height`, `bitrate`, and `fps`; stream status reports the resolved effective frame rate as `resolvedConfig.video.fps`. The SDK sends stream keep-alives automatically and reports timeout/error state through `stream_status`.
 - Photo capture, video recording, and streaming always enable the camera light as a privacy indicator.
+
+### Photos over Wi-Fi
+
+`capturePhoto(options)` returns at once; its preview comes first, and its full photo stays on the glasses until `photo()` asks for it. `photo()` and `takePhoto(options)` bring the full photo over the fast link (the glasses Wi-Fi) while it is up, whoever holds it, and over Bluetooth otherwise. `BluetoothSdk.link` shows both links, and an app that takes photos its own way can hold the fast link for as long as it needs it:
+
+```ts
+import BluetoothSdk, {type LinkState} from "@mentra/bluetooth-sdk"
+
+console.log(BluetoothSdk.link.state) // {glasses: "connected" | "disconnected", fast: "up" | "down"}
+await BluetoothSdk.link.openFast() // resolves once the fast link is up
+const stop = BluetoothSdk.link.onChange((state: LinkState) => {
+  console.log(`glasses ${state.glasses}, fast link ${state.fast}`) // fast "down" while it is lost, "up" when it is back
+})
+await BluetoothSdk.link.closeFast()
+stop()
+```
+
+`state.glasses` says whether the glasses are connected over Bluetooth; `state.fast` whether the fast link is up. The SDK picks the radio (Wi-Fi Direct on Android with glasses that support it, the glasses' hotspot otherwise) and shares the one link with its other users: `closeFast()` gives your hold back, and the link goes down once nobody else holds it. Both calls are idempotent. `openFast()` rejects if the link can't come up; photos keep going over Bluetooth. While it is held, the SDK brings the link back after the glasses restart. On an iPhone, joining the glasses' hotspot takes the phone's Wi-Fi while it is held, so hold it only while you take photos.
+
+`captureContinuous(options)` takes photos back to back for as long as the run lasts, built on `link`: while the run is on, the SDK holds the fast link for it, so its photos come over Wi-Fi. Photos are taken one at a time; the next starts once the camera took the previous one. Each is a capture like `capturePhoto`'s, handed to `onPhoto`; release each when done. The run takes photos on its own while it is `capturing` and fewer than `maxPending` (default 12) of its photos are still on the glasses unreleased. It is `paused` while only Bluetooth is left, since photos would pile up on the glasses, and goes on by itself once the fast link is back. `run.capture(options)` takes one more photo in the run's turn, even while paused. `stop()` stops taking photos at once, and resolves and gives the link back once the photos the run handed out are released:
+
+```ts
+const run = BluetoothSdk.captureContinuous({size: "medium", sound: false, maxPending: 12})
+run.onPhoto((capture) => {
+  // a normal capture: captured, preview, photo(), release()
+})
+run.onState((state) => {
+  // "capturing" | "paused"
+})
+const one = await run.capture({sound: true}) // one more photo in the run's turn, even while paused
+await run.stop()
+```
+
 - The SDK sends `set_system_time` once shortly after each glasses connection becomes ready, after the initial command burst has drained. The guard resets on disconnect, so reconnecting synchronizes again. There is no periodic clock correction during a long-lived connection; compare `requestVersionInfo().systemTimeMs` with the phone clock if your app needs to monitor later skew.
 
 ## Head-Up Dashboard Content
@@ -635,7 +669,9 @@ React Native exposes the narrowest return types for clear branching after `await
 | `getSavedWifiNetworks()`                                 | `SavedWifiNetworksResult`. `outcome: "confirmed"` includes exact saved SSIDs from a reliable enumeration backend. `outcome: "unsupported"` includes `networks: []` on K900 and legacy firmware. Whitespace is preserved so a returned SSID can be passed back to `forgetWifiNetwork`. Capability-unknown calls wait for `version_info_1`; negotiation and response share one 15-second deadline. Only protocol version 1 is supported.                                                                                                                                                                                                                                                                                                                                                                                                                       | Capability-negotiation timeout, request timeout, session reset/disconnect, send failure, or another saved-list request in flight. Glasses-reported `unsupported` and `failed` are typed results, not transport exceptions.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `sendWifiCredentials(ssid, password)` | `WifiStatusChangeEvent` whose state is `connected` for the requested SSID. Success typically resolves within a few seconds. | Glasses-reported provisioning failure, with the reason as the error code: `wrong_password` (typically ~7s), `connect_timeout` (~12s, network unreachable or join never completed), or `connected_to_other_network` (the glasses ended up on a different SSID than requested). Also request timeout, send failure, or another Wi-Fi status command in flight. Routine `disconnected` events during association do **not** reject — the glasses briefly report disconnected while switching networks. Glasses running older software never send failure reasons; failed attempts there surface as request timeouts. |
 | `forgetWifiNetwork(ssid)`                                | `WifiForgetResult` with `outcome` of `confirmed`, `dispatched`, `not_found`, `unsupported`, `failed`, or `legacy_unverified`. Capability-unknown calls wait for `version_info_1`; negotiation and response share one 15-second deadline. A discovery timeout never selects legacy. Modern results are correlated by request ID, glasses session ID, protocol version, and exact requested SSID; `wifi_status_change` cannot settle them. K900 returns `dispatched`, meaning its asynchronous SystemUI broadcast was queued, not that removal was verified. `connected` is an optional diagnostic snapshot and is omitted, rather than fabricated as `false`, if ASG cannot read link state. Legacy firmware returns `legacy_unverified` immediately after accepted native dispatch, without a fabricated link snapshot. Transport correlation remains internal. This return type intentionally replaces the previous `WifiStatusChangeEvent`. | Empty SSID, capability-negotiation timeout, request timeout, session reset/disconnect, send failure, or another Wi-Fi status command in flight. Glasses-reported semantic failures are typed results.                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `setHotspotState(enabled)` | `HotspotStatusChangeEvent` matching the requested enabled/disabled state. | `hotspot_error`, timeout, send failure, or another hotspot command in flight. |
+| `setHotspotState(enabled)` (Android and iOS) | `HotspotStatusChangeEvent` matching the requested enabled/disabled state. | `hotspot_error`, timeout, send failure, or another hotspot command in flight. |
+| `link.openFast()` (React Native) | Nothing, once the fast link (the glasses Wi-Fi) is up; at once if your app already holds it and it is up. | The link can't come up; photos keep going over Bluetooth. |
+| `link.closeFast()` (React Native) | Nothing, once your hold is given back; the link goes down when nobody else holds it. | Idempotent: closing a link your app doesn't hold does nothing. |
 | `requestVersionInfo()` | `VersionInfoResult` from the ASG `version_info` response. | Timeout, send failure, or another version query in flight. |
 | Gallery capture settings | `SettingsAckSuccessEvent` with a non-failure status such as `applied` or `ready`; the SDK local settings store updates only after this ASG ack resolves. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; or send failure. |
 | `setCameraFov(...)` | `CameraFovResult` with `fov`, `roiPosition`, `requestId`, and `timestamp` after the ASG client reports the setting was applied to camera hardware after the restart cooldown; the SDK local FOV setting updates only after this result resolves. | Glasses-side FOV/settings error, persist-only/no hardware-application ack, timeout, or send failure. |
@@ -676,8 +712,8 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 | --- | --- |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `disconnect`, `forget` |
 | Display | `displayText`, `clearDisplay`, `setDashboardContent`, `showDashboard`, dashboard position, and head-up angle |
-| Wi-Fi and hotspot | `requestWifiScan`, `getSavedWifiNetworks`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
-| Camera | `uploadPhoto`, gallery mode, photo capture defaults, video recording defaults, camera field of view |
+| Wi-Fi and hotspot | `requestWifiScan`, `getSavedWifiNetworks`, `sendWifiCredentials`, `forgetWifiNetwork`; `setHotspotState` on Android and iOS; `link.openFast` / `link.closeFast` in React Native |
+| Camera | `capturePhoto`, `takePhoto`, `uploadPhoto`, gallery mode, photo capture defaults, video recording defaults, camera field of view |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, Voice Activity Detection setting and events, audio callbacks, local transcription, media volume |
 | Settings | Gallery mode, camera options, microphone route, Wi-Fi, hotspot, and OTA |
@@ -810,8 +846,8 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `wifi_forget_result`              | `WifiForgetResultEvent`             | Discriminated raw result union. `mode: "modern"` is session-correlated and carries semantic `outcome`; K900 `outcome: "dispatched"` does not prove the asynchronous vendor receiver removed the credential. `mode: "legacy"` preserves an older frame's `dispatched` boolean without inventing missing correlation fields. In either mode, optional `connected` is omitted when the wire frame has no diagnostic link snapshot. Delivery is at least once; raw listeners should deduplicate modern retries by `(requestId, sid)`. Promise APIs ignore duplicates after the first matching terminal result. |
 | `saved_wifi_networks`             | `SavedWifiNetworksEvent`            | Session-correlated saved-SSID result from a backend that advertised support. Delivery is at least once; raw listeners should deduplicate retries by `requestId` and `sid`. Promise APIs ignore duplicates after the first matching terminal result.                                                                                                                                                                                                                                                                                                                                                                        |
 | `version_info`                    | `VersionInfoEvent`                  | Glasses version metadata response. `version_info_1` can include `wifiForgetResultVersion` and `savedWifiNetworksVersion`; absent/0 means unsupported for that glasses session. Also returned by `requestVersionInfo()`.                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
-| `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
+| `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. Android and iOS only; React Native apps use `link.onChange`. |
+| `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. Android and iOS only. |
 | `photo_response` | `PhotoResponseEvent` | Terminal photo result. Success means capture and webhook delivery completed; error means the glasses or phone rejected/failed the request. `uploadPhoto(...)` resolves with the success case and rejects on the error case; progress follows through `photo_status`. |
 | `photo_status` | `PhotoStatusEvent` | Photo capture progress changes. May include `resolvedConfig`, `requestedCaptureConfig`, `meteredPreview`, or `captureMetadata` depending on status. |
 | `camera_status` | `CameraStatusEvent` | Camera warm-up lifecycle. `warmUpCamera(...)` resolves on `ready`, rejects on `error`, and listeners can observe `warming` and `stopped` progress. `stopped` is emitted after `ready` when the lease expires or the camera closes; pending warm-ups receive `error` instead if teardown happens before `ready`. |

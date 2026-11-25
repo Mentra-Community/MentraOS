@@ -1,9 +1,5 @@
 // Native library. Media stays in native code; publishers consume decoded frames and PCM.
 
-// Load only when this transport is requested. Importing the package does not
-// start a native session or require Expo's application entry point.
-const native = () => require("expo-modules-core").requireNativeModule("MentraGlassesMediaRelay")
-
 // Native relay, ingest, SoftAP and ACS traces go to the console, which bug reports upload.
 // The module survives Fast Refresh, so a reload replaces the previous subscription.
 const logSubscriptionKey = Symbol.for("mentra.glasses-media.native-log-console")
@@ -19,14 +15,3 @@ export function installNativeLogConsole() {
     console.log("[native:glasses-media]", credential.test(message) ? "[REDACTED]" : message.slice(0, 16_384))
   })
 }
-
-export const glassesHotspot = Object.freeze({
-  join: (id, ssid, password, gateway, purpose = "outgoing-client", frequency) =>
-    native().joinLocalHotspot(id, ssid, password, gateway ?? null, purpose, frequency ?? null),
-  leave: (id) => native().leaveLocalHotspot(id),
-  onPermissionRequired: (listener) =>
-    native().addListener("onLocalHotspotPermissionRequired", (event) =>
-      listener(event.id, event.systemAnswer ?? "unknown"),
-    ),
-  onLost: (listener) => native().addListener("onLocalHotspotLost", (event) => listener(event.id, event.reason)),
-})

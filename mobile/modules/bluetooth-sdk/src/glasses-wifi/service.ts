@@ -1,16 +1,23 @@
-import BluetoothSdk, {isEnabledHotspotStatus, type HotspotStatus} from "@mentra/bluetooth-sdk"
-
-import {useGlassesStore} from "../stores/glasses"
-import {BgTimer} from "../utils/timers"
-import {isGlassesConnected, isGlassesReady} from "./GlassesReadiness"
-import {localNetworkTransport} from "./asg/localNetworkTransport"
+// The service is the one sender of hotspot commands; apps never see them.
+// eslint-disable-next-line no-restricted-imports
+import PrivateBluetoothSdkModule from "../_private/BluetoothSdkModule"
+import {
+  isConnectedGlassesConnectionStatus,
+  isEnabledHotspotStatus,
+  isReadyGlassesConnectionStatus,
+  type GlassesConnectionStatus,
+  type HotspotStatus,
+} from "../BluetoothSdk.types"
+import {glassesConnection, onGlassesConnection, watchGlassesConnection} from "./connection"
+import * as native from "./native"
 
 /**
  * The glasses Wi-Fi service: the one owner of the phone-to-glasses Wi-Fi link.
  *
- * Gallery sync, hotspot OTA, Mentra Call and the managed relay hold the link here and use the
- * binding it gives them; none of them sends a hotspot command or joins a network itself. The link
- * is shared: the first holder brings it up (the glasses' hotspot, then the phone's one native
+ * Photo fetches, gallery sync, hotspot OTA, Mentra Call, the managed relay and every fast link
+ * hold the link here and use the binding it gives them; none of them sends a hotspot command or
+ * joins a network itself. The link is shared: the first holder brings it up (Wi-Fi Direct on
+ * Android with glasses that advertise it, else the glasses' hotspot, then the phone's one native
  * join), later holders get the same binding, and the last release takes it down.
  *
  * When the link goes down (the phone leaves the network, the glasses turn the AP off, restart, or
@@ -38,7 +45,7 @@ export type GlassesWifiHoldOptions = {
   /** Who holds it, for logs. */
   consumer: string
   /** "incoming-server" when the glasses connect to the phone (OTA, video); it adds the VPN check. */
-  purpose?: "outgoing-client" | "incoming-server"
+  purpose?: native.JoinPurpose
   /** Aborting it while the link comes up gives the hold back. */
   signal?: AbortSignal
   /** Runs once the glasses report the network and before the first join, e.g. an explanation. */
@@ -81,28 +88,53 @@ export const RESTORE_DEADLINE_MS = 3 * 60_000
 export const LATE_ENABLE_WINDOW_MS = 60_000
 
 const SESSION_REFRESH_CODES = new Set(["wifi_session_restarted", "wifi_session_changed"])
-const owner = Symbol("glasses-wifi")
 
 type Holder = {options: GlassesWifiHoldOptions; listeners: Set<(event: GlassesWifiEvent) => void>}
+type Link = "hotspot" | "wifi_direct"
 
 const holders = new Set<Holder>()
 let binding: GlassesWifiBinding | null = null
 let bringingUp: Promise<GlassesWifiBinding> | null = null
 let takingDown: Promise<void> | null = null
-type Link = "hotspot" | "wifi_direct"
 /** The radio of the link up or coming up. */
-let link: Link | null = null
+let linkType: Link | null = null
 let lostAt: number | null = null
 /** Why the link ended, while it stays down; ready() rejects with it. */
 let endedReason: string | null = null
 let releasedAt = Number.NEGATIVE_INFINITY
 let commands: Promise<unknown> = Promise.resolve()
 let watching: (() => void) | null = null
-let restoreTimer: number | null = null
-let deadlineTimer: number | null = null
+let cancelRestore: (() => void) | null = null
+let cancelDeadline: (() => void) | null = null
+const upListeners = new Set<(up: boolean) => void>()
+let reclaiming: {remove(): void} | null = null
 
-const sleep = (ms: number) => new Promise<void>((resolve) => BgTimer.setTimeout(resolve, ms))
+/** The link's binding; whoever listens hears it go up and down. */
+function setBinding(next: GlassesWifiBinding | null): void {
+  const changed = (binding === null) !== (next === null)
+  binding = next
+  if (!changed) return
+  for (const listener of upListeners) {
+    try {
+      listener(next !== null)
+    } catch (error) {
+      console.warn("[GlassesWifi] A link listener failed", error)
+    }
+  }
+}
+
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** Run `callback` after `ms`, also in the background; the returned function cancels it. */
+function after(ms: number, callback: () => void): () => void {
+  let cancelled = false
+  void native.delay(ms).then(() => {
+    if (!cancelled) callback()
+  })
+  return () => {
+    cancelled = true
+  }
+}
 
 /**
  * One hotspot command at a time, re-sent once when a restarting ASG dropped it. ASG answers a
@@ -111,12 +143,12 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 function setHotspot(enabled: boolean): Promise<HotspotStatus> {
   const send = async () => {
     try {
-      return await BluetoothSdk.setHotspotState(enabled)
+      return await PrivateBluetoothSdkModule.setHotspotState(enabled)
     } catch (error) {
       const code = (error as {code?: string} | null)?.code
       if (!code || !SESSION_REFRESH_CODES.has(code)) throw error
-      await sleep(500)
-      return await BluetoothSdk.setHotspotState(enabled)
+      await native.delay(500)
+      return await PrivateBluetoothSdkModule.setHotspotState(enabled)
     }
   }
   const run = commands.then(send, send)
@@ -129,7 +161,8 @@ export async function holdGlassesWifi(options: GlassesWifiHoldOptions): Promise<
   const holder: Holder = {options, listeners: new Set()}
   if (takingDown) await takingDown
   holders.add(holder)
-  watch()
+  watchLateHotspots()
+  await watch()
   // A cancelled hold settles at once, whatever the link is doing; giving it back stops the
   // bring-up when nobody else wants the link (the join waits on the person answering a prompt).
   let abort = () => {}
@@ -165,7 +198,7 @@ export async function holdGlassesWifi(options: GlassesWifiHoldOptions): Promise<
       return new Promise((resolve, reject) => {
         const done = () => {
           holder.listeners.delete(listener)
-          signal?.removeEventListener("abort", abort)
+          signal?.removeEventListener("abort", onAbort)
         }
         const listener = (event: GlassesWifiEvent) => {
           if (event.type === "lost") return
@@ -173,12 +206,12 @@ export async function holdGlassesWifi(options: GlassesWifiHoldOptions): Promise<
           if (event.type === "restored") resolve(event.binding)
           else reject(new Error(event.reason))
         }
-        const abort = () => {
+        const onAbort = () => {
           done()
           reject(new Error("Glasses Wi-Fi wait cancelled"))
         }
         holder.listeners.add(listener)
-        signal?.addEventListener("abort", abort, {once: true})
+        signal?.addEventListener("abort", onAbort, {once: true})
       })
     },
     release() {
@@ -193,17 +226,20 @@ export async function holdGlassesWifi(options: GlassesWifiHoldOptions): Promise<
  * on Android with glasses that advertise `wifi_direct_version`, the hotspot otherwise.
  */
 function chooseLink(): Link {
-  return localNetworkTransport.wifiDirectAvailable() ? "wifi_direct" : "hotspot"
+  return native.wifiDirectAvailable() ? "wifi_direct" : "hotspot"
 }
+
+const purpose = (): native.JoinPurpose =>
+  [...holders].some((holder) => holder.options.purpose === "incoming-server") ? "incoming-server" : "outgoing-client"
 
 function bringUp(first: Holder | null): Promise<GlassesWifiBinding> {
   const attempt = (async () => {
     const report = (line: string) => first?.options.report?.(line)
-    link = chooseLink()
-    console.log(`[GlassesWifi] Bringing up the ${link} link`)
-    const joined = link === "wifi_direct" ? await joinWifiDirect(report) : await joinHotspot(first, report)
+    linkType = chooseLink()
+    console.log(`[GlassesWifi] Bringing up the ${linkType} link`)
+    const joined = linkType === "wifi_direct" ? await joinWifiDirect(report) : await joinHotspot(first, report)
     const wasLost = lostAt !== null
-    binding = joined
+    setBinding(joined)
     lostAt = null
     endedReason = null
     if (wasLost) notify({type: "restored", binding: joined})
@@ -232,12 +268,9 @@ async function joinHotspot(first: Holder | null, report: (line: string) => void)
 /** The native join asks the glasses for their group over Bluetooth and joins it, with no prompt. */
 async function joinWifiDirect(report: (line: string) => void): Promise<GlassesWifiBinding> {
   assertWanted()
-  const incoming = [...holders].some((holder) => holder.options.purpose === "incoming-server")
-  const joined = await localNetworkTransport
-    .connectWifiDirect(incoming ? "incoming-server" : "outgoing-client")
-    .catch((error) => {
-      throw new GlassesWifiError("join", error)
-    })
+  const joined = await native.joinWifiDirect(purpose()).catch((error) => {
+    throw new GlassesWifiError("join", error)
+  })
   if (!joined.gateway) throw new GlassesWifiError("join", new Error("The glasses reported no group address"))
   report(`Joined the glasses' Wi-Fi Direct group ${joined.ssid}`)
   // A group has no password the consumers need: the phone joined it with the one the glasses sent.
@@ -255,14 +288,14 @@ async function enableHotspot(report: (line: string) => void) {
     // A start racing the previous stop reports disabled: turn it off and start again once.
     report("Glasses hotspot did not start; turning it off and trying again")
     await setHotspot(false).catch(() => undefined)
-    await sleep(1_000)
+    await native.delay(1_000)
     status = await setHotspot(true)
   }
   if (!isEnabledHotspotStatus(status) || !status.password) {
     throw new Error(`The glasses hotspot did not start (state=${status.state})`)
   }
   report(`Glasses report hotspot ${status.ssid} enabled`)
-  await sleep(BROADCAST_WAIT_MS)
+  await native.delay(BROADCAST_WAIT_MS)
   return status
 }
 
@@ -320,23 +353,27 @@ async function join(
   first: Holder | null,
 ): Promise<GlassesWifiBinding> {
   assertWanted()
-  const incoming = [...holders].some((holder) => holder.options.purpose === "incoming-server")
-  const joining = localNetworkTransport.connect(owner, status.ssid, status.password, {
+  const joining = native.joinHotspot(status.ssid, status.password, {
     gateway: status.localIp,
     frequency: status.frequency,
-    purpose: incoming ? "incoming-server" : "outgoing-client",
+    purpose: purpose(),
     onPermissionRequired: (answer) => first?.options.onPermissionRequired?.(answer),
   })
   // The join has no time limit, so a person can take their time with the phone's prompt. Keep
   // the AP up meanwhile: a repeated enable restarts the glasses' idle clock.
-  const keepAlive = BgTimer.setInterval(() => {
-    setHotspot(true).then(
-      (current) => {
-        if (current.state !== "enabled") void localNetworkTransport.disconnect(owner).catch(() => undefined)
-      },
-      (error) => console.warn("[GlassesWifi] Keeping the hotspot up during the join failed", error),
-    )
-  }, JOIN_KEEPALIVE_MS)
+  let keepAlive = () => {}
+  const scheduleKeepAlive = () => {
+    keepAlive = after(JOIN_KEEPALIVE_MS, () => {
+      setHotspot(true).then(
+        (current) => {
+          if (current.state !== "enabled") void native.leave().catch(() => undefined)
+        },
+        (error) => console.warn("[GlassesWifi] Keeping the hotspot up during the join failed", error),
+      )
+      scheduleKeepAlive()
+    })
+  }
+  scheduleKeepAlive()
   try {
     const phoneIpv4 = await joining
     return {
@@ -347,7 +384,7 @@ async function join(
       frequency: status.frequency,
     }
   } finally {
-    BgTimer.clearInterval(keepAlive)
+    keepAlive()
   }
 }
 
@@ -364,27 +401,25 @@ async function release(holder: Holder): Promise<void> {
 async function takeDown(): Promise<void> {
   unwatch()
   if (bringingUp) {
-    void localNetworkTransport.disconnect(owner).catch(() => undefined)
+    void native.leave().catch(() => undefined)
     await bringingUp.catch(() => undefined)
   }
-  binding = null
+  setBinding(null)
   lostAt = null
   endedReason = null
-  await localNetworkTransport
-    .disconnect(owner)
-    .catch((error) => console.warn("[GlassesWifi] Leaving the glasses network failed", error))
+  await native.leave().catch((error) => console.warn("[GlassesWifi] Leaving the glasses network failed", error))
   releasedAt = Date.now()
   // Leaving the Wi-Fi Direct group above also told the glasses to remove it.
-  const down = link
-  link = null
+  const down = linkType
+  linkType = null
   if (down === "wifi_direct") return
-  // Glasses away now get their AP turned off on return, by reclaimLateHotspot, or by their idle stop.
-  if (!isGlassesConnected(useGlassesStore.getState().connection)) return
+  // Glasses away now get their AP turned off on return, by the late-hotspot watch, or by their idle stop.
+  if (!isConnectedGlassesConnectionStatus(glassesConnection())) return
   for (let attempt = 1; attempt <= 2; attempt++) {
     const status = await setHotspot(false).catch(() => null)
     if (status?.state === "disabled") return
     // A just-replaced ASG can drop the first command while its command path settles.
-    await sleep(500)
+    await native.delay(500)
   }
   console.warn("[GlassesWifi] The glasses did not confirm their hotspot is off")
 }
@@ -404,26 +439,26 @@ function notify(event: GlassesWifiEvent): void {
 function lose(reason: string): void {
   if (!binding || holders.size === 0) return
   console.warn(`[GlassesWifi] The link went down: ${reason}`)
-  binding = null
+  setBinding(null)
   lostAt = Date.now()
-  void localNetworkTransport.disconnect(owner).catch(() => undefined)
+  void native.leave().catch(() => undefined)
   notify({type: "lost", reason})
   scheduleRestore()
   // Glasses that never come back still end the link at the deadline.
-  if (deadlineTimer !== null) BgTimer.clearTimeout(deadlineTimer)
-  deadlineTimer = BgTimer.setTimeout(() => {
-    deadlineTimer = null
+  cancelDeadline?.()
+  cancelDeadline = after(RESTORE_DEADLINE_MS + 1, () => {
+    cancelDeadline = null
     void restore()
-  }, RESTORE_DEADLINE_MS + 1)
+  })
 }
 
 /** Ask for the link again once the glasses are ready, until it is back or the deadline passes. */
 function scheduleRestore(delayMs = 0): void {
-  if (restoreTimer !== null) BgTimer.clearTimeout(restoreTimer)
-  restoreTimer = BgTimer.setTimeout(() => {
-    restoreTimer = null
+  cancelRestore?.()
+  cancelRestore = after(delayMs, () => {
+    cancelRestore = null
     void restore()
-  }, delayMs)
+  })
 }
 
 async function restore(): Promise<void> {
@@ -434,7 +469,7 @@ async function restore(): Promise<void> {
     notify({type: "ended", reason: endedReason})
     return
   }
-  if (!isGlassesReady(useGlassesStore.getState().connection)) return // the store watch calls again
+  if (!isReadyGlassesConnectionStatus(glassesConnection())) return // the connection watch calls again
   try {
     await bringUp(null)
   } catch (error) {
@@ -443,36 +478,36 @@ async function restore(): Promise<void> {
   }
 }
 
-function watch(): void {
+async function watch(): Promise<void> {
   if (watching) return
-  const unsubscribeStore = useGlassesStore.subscribe(
-    (state) => state.connection,
-    (connection) => {
-      if (!isGlassesConnected(connection)) {
-        // A join still waiting cannot finish without the glasses: end it, as a loss does.
-        if (bringingUp) void localNetworkTransport.disconnect(owner).catch(() => undefined)
-        lose("the glasses left Bluetooth")
-      } else if (lostAt !== null && isGlassesReady(connection)) scheduleRestore()
-    },
-  )
-  const networkLost = localNetworkTransport.onLost(() => lose("the phone left the glasses network"))
-  const hotspot = BluetoothSdk.addListener("hotspot_status_change", (event) => {
-    if (link === "hotspot" && event.state !== "enabled" && !bringingUp) lose("the glasses turned their hotspot off")
+  const unsubscribeStatus = onGlassesConnection(onConnection)
+  const networkLost = native.onLost(() => lose("the phone left the glasses network"))
+  const hotspot = PrivateBluetoothSdkModule.addListener("hotspot_status_change", (event) => {
+    if (linkType === "hotspot" && event.state !== "enabled" && !bringingUp) lose("the glasses turned their hotspot off")
   })
   watching = () => {
-    unsubscribeStore()
+    unsubscribeStatus()
     networkLost()
     hotspot.remove()
   }
+  await watchGlassesConnection()
+}
+
+function onConnection(next: GlassesConnectionStatus): void {
+  if (!isConnectedGlassesConnectionStatus(next)) {
+    // A join still waiting cannot finish without the glasses: end it, as a loss does.
+    if (bringingUp) void native.leave().catch(() => undefined)
+    lose("the glasses left Bluetooth")
+  } else if (lostAt !== null && isReadyGlassesConnectionStatus(next)) scheduleRestore()
 }
 
 function unwatch(): void {
   watching?.()
   watching = null
-  if (restoreTimer !== null) BgTimer.clearTimeout(restoreTimer)
-  restoreTimer = null
-  if (deadlineTimer !== null) BgTimer.clearTimeout(deadlineTimer)
-  deadlineTimer = null
+  cancelRestore?.()
+  cancelRestore = null
+  cancelDeadline?.()
+  cancelDeadline = null
 }
 
 /**
@@ -486,18 +521,34 @@ export async function holdGlassesWifiIfUp(consumer: string): Promise<GlassesWifi
 }
 
 /** Whether anyone holds the link now. */
-export function glassesWifiHeld(): boolean {
+function held(): boolean {
   return holders.size > 0 || takingDown !== null
 }
 
 /**
  * Turn off a hotspot that came up with no holder soon after the last release: a hotspot command
  * can wait in the BLE queue past its caller and reach the glasses after the release (OS-2133).
- * An AP the glasses start on their own, long after any phone use, is left alone.
+ * An AP the glasses start on their own, long after any phone use, is left alone. Watched from the
+ * first hold on, since only a release opens the window.
  */
-export async function reclaimLateHotspot(): Promise<boolean> {
-  if (glassesWifiHeld() || Date.now() - releasedAt >= LATE_ENABLE_WINDOW_MS) return false
-  console.warn("[GlassesWifi] An enabled hotspot has no holder after a release; turning it off")
-  await setHotspot(false)
-  return true
+function watchLateHotspots(): void {
+  if (reclaiming) return
+  reclaiming = PrivateBluetoothSdkModule.addListener("hotspot_status_change", (event) => {
+    if (event.state !== "enabled" || held() || Date.now() - releasedAt >= LATE_ENABLE_WINDOW_MS) return
+    console.warn("[GlassesWifi] An enabled hotspot has no holder after a release; turning it off")
+    void setHotspot(false).catch((error) => console.warn("[GlassesWifi] Could not turn off the late hotspot", error))
+  })
+}
+
+/** Whether the glasses Wi-Fi link is up now, for whoever holds it. */
+export function glassesWifiUp(): boolean {
+  return binding !== null
+}
+
+/** Hear the glasses Wi-Fi link go up and down, whoever holds it. */
+export function onGlassesWifiUp(listener: (up: boolean) => void): () => void {
+  upListeners.add(listener)
+  return () => {
+    upListeners.delete(listener)
+  }
 }

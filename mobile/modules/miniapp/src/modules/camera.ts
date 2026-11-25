@@ -139,8 +139,20 @@ export interface PhotoCapture {
   release(): Promise<void>
 }
 
-/** The glasses Wi-Fi link held with {@link CameraModule.openFastLink}: up, or down (photos go over Bluetooth). */
-export type FastLinkState = "up" | "down"
+/** A continuous capture is `capturing` photos on its own, or `paused` while they would pile up on the glasses. */
+export type ContinuousCaptureState = "capturing" | "paused"
+
+/** A run of {@link CameraModule.captureContinuous}. */
+export interface ContinuousCapture {
+  readonly state: ContinuousCaptureState
+  /** Each photo the run takes on its own; release it when done. */
+  onPhoto(handler: (capture: PhotoCapture) => void): () => void
+  onState(handler: (state: ContinuousCaptureState) => void): () => void
+  /** One more photo, with these options, in the run's turn even while it is paused. */
+  capture(options?: TakePhotoOptions): Promise<PhotoCapture>
+  /** Stop taking photos at once; resolves once the photos the run handed out are released. */
+  stop(): Promise<void>
+}
 
 /** What {@link CameraModule.takeCloudPhoto} resolves to: a photo uploaded to Mentra's cloud. */
 export interface CloudPhotoTaken {
@@ -271,9 +283,89 @@ export class CameraModule {
    * (a newer one than `takePhoto` needs).
    */
   capture(options: TakePhotoOptions = {}): PhotoCapture {
-    const photoId = `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+    const photoId = mintPhotoId()
     const timeout = options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined
     const started = quiet(this.session.sendRequest<void>({...this.photoRequest(options, "auto"), type: MiniappRequestType.PHOTO_CAPTURE, photoId}, timeout))
+    return this.captureOf(photoId, started, timeout)
+  }
+
+  /**
+   * Photos back to back, for a miniapp that takes many (documenting a site, a walk-through). Each
+   * photo is a capture like {@link capture}'s, handed to `onPhoto`; release each when done. The run
+   * is `capturing` while it takes photos on its own and `paused` while they would pile up on the
+   * glasses, then goes on by itself; at most `maxPending` (default 12) of its photos stay on the
+   * glasses unreleased. `run.capture(options)` takes one more in the run's turn, even while
+   * paused. `run.stop()` ends it, as the miniapp closing does. Requires CAMERA permission.
+   */
+  captureContinuous(options: TakePhotoOptions & {maxPending?: number} = {}): ContinuousCapture {
+    const {maxPending, ...photoOptions} = options
+    const runId = mintPhotoId()
+    const timeout = photoOptions.timeoutMs != null ? {timeoutMs: photoOptions.timeoutMs} : undefined
+    const photoHandlers = new Set<(capture: PhotoCapture) => void>()
+    const stateHandlers = new Set<(state: ContinuousCaptureState) => void>()
+    let state: ContinuousCaptureState = "paused"
+    // The run's first state is heard once known, even when it is the starting "paused".
+    let announced = false
+    const offPhoto = this.session.on("continuousPhoto", (event) => {
+      if (event.runId !== runId) return
+      const capture = this.captureOf(event.photoId, Promise.resolve(), timeout)
+      for (const handler of photoHandlers) handler(capture)
+    })
+    const offState = this.session.on("continuousState", (event) => {
+      if (event.runId !== runId || (event.state === state && announced)) return
+      state = event.state
+      announced = true
+      for (const handler of stateHandlers) handler(event.state)
+    })
+    const started = quiet(
+      this.session.sendRequest<void>({
+        ...this.photoRequest(photoOptions, "auto"),
+        type: MiniappRequestType.CAMERA_CONTINUOUS_START,
+        runId,
+        ...(maxPending != null ? {maxPending} : {}),
+      }),
+    )
+    return {
+      get state() {
+        return state
+      },
+      onPhoto(handler) {
+        photoHandlers.add(handler)
+        return () => {
+          photoHandlers.delete(handler)
+        }
+      },
+      onState(handler) {
+        stateHandlers.add(handler)
+        return () => {
+          stateHandlers.delete(handler)
+        }
+      },
+      capture: async (extra: TakePhotoOptions = {}) => {
+        await started
+        const photoId = mintPhotoId()
+        // The run takes it in its turn, after the photo the camera is taking now.
+        const taken = quiet(
+          this.session.sendRequest<void>(
+            {...this.photoRequest({...photoOptions, ...extra}, "auto"), type: MiniappRequestType.CAMERA_CONTINUOUS_CAPTURE, runId, photoId},
+            {timeoutMs: 60_000},
+          ),
+        )
+        await taken
+        return this.captureOf(photoId, taken, timeout)
+      },
+      stop: async () => {
+        offPhoto()
+        offState()
+        await started.catch(() => undefined)
+        // The host answers once the run's photos are released, which can take a while on Bluetooth.
+        await this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_CONTINUOUS_STOP, runId}, {timeoutMs: 180_000})
+      },
+    }
+  }
+
+  /** A capture's stages over the host's photo requests, once `started` says it exists there. */
+  private captureOf(photoId: string, started: Promise<void>, timeout?: {timeoutMs: number}): PhotoCapture {
     const stage = <T>(name: "captured" | "preview" | "photo") =>
       quiet(started.then(() => this.session.sendRequest<T>({type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId, stage: name}, timeout)))
     // Each stage is asked for when first awaited, once.
@@ -293,25 +385,6 @@ export class CameraModule {
     }
   }
 
-  /**
-   * Hold the glasses Wi-Fi link, so photos and previews travel over it instead of Bluetooth, until
-   * {@link closeFastLink} or the miniapp closes. The phone picks the radio (Wi-Fi Direct or the
-   * glasses' hotspot) and shares the one link with its other users. Resolves once the link is up;
-   * rejects if it can't come up, and photos keep going over Bluetooth. Requires CAMERA permission.
-   */
-  async openFastLink(): Promise<void> {
-    await this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_FAST_LINK_OPEN}, {timeoutMs: 90_000})
-  }
-
-  /** Give the link back; it goes down once nobody else holds it. Idempotent. */
-  async closeFastLink(): Promise<void> {
-    await this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_FAST_LINK_CLOSE})
-  }
-
-  /** The held link went down (photos go over Bluetooth meanwhile) or came back. */
-  onFastLinkChange(handler: (state: FastLinkState) => void): () => void {
-    return this.session.on("fastLink", handler)
-  }
 
   /**
    * Take a photo and upload it to Mentra's cloud, resolving to a short-lived signed URL.
@@ -417,4 +490,8 @@ export class CameraModule {
       uploadAuthToken: options.uploadAuthToken,
     })
   }
+}
+
+function mintPhotoId(): string {
+  return `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
 }

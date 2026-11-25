@@ -16,6 +16,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * MentraOS-internal transport for glasses-local traffic without process network binding. The
@@ -30,6 +31,7 @@ class MentraLocalNetworkModule : Module() {
 
     private val lock = Any()
     private val executor = Executors.newCachedThreadPool()
+    private val delays = Executors.newSingleThreadScheduledExecutor()
     // Joins block, so they run one at a time off the JS thread. Disconnect does not queue
     // behind them: releasing the network ends a join in progress at once.
     private val joins = Executors.newSingleThreadExecutor()
@@ -41,6 +43,14 @@ class MentraLocalNetworkModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("MentraLocalNetwork")
         Events("downloadProgress", "networkLost")
+
+        /** Where the glasses Wi-Fi service saves files it fetches, such as deferred photos. */
+        Function("cacheDirectory") { appContext.reactContext?.cacheDir?.absolutePath ?: "" }
+
+        /** The service's timers: JS timers pause while the app is in the background. */
+        AsyncFunction("delay") { ms: Long, promise: Promise ->
+            delays.schedule({ promise.resolve(null) }, ms.coerceAtLeast(0), TimeUnit.MILLISECONDS)
+        }
 
         Function("getNetworkDiagnostics") {
             val manager = connectivityManager()

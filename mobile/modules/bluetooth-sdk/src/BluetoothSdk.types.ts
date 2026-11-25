@@ -855,7 +855,9 @@ export interface PhotoCapture {
   readonly preview: Promise<PhotoPreview>
   /**
    * The full photo. The first call asks the glasses to send it; until then it waits on the
-   * glasses (deferred delivery), for 30 minutes at most. Later calls return the same photo.
+   * glasses (deferred delivery), for 30 minutes at most. It comes over the glasses Wi-Fi link
+   * when that link is up (`link.openFast()`), else over Bluetooth.
+   * Later calls return the same photo.
    */
   photo(): Promise<PhotoTaken>
   /** The full photo isn't needed: the glasses delete it. Stages not reached yet reject. */
@@ -1478,10 +1480,17 @@ export interface NativePhoneNotification {
   action: 0
 }
 
+/** The glasses Wi-Fi link is the SDK's own (`link.openFast`): apps don't see its hotspot. */
 export type PublicGlassesStatus = Omit<
   GlassesStatus,
-  "otaUpdateAvailable" | "otaProgress" | "otaInProgress" | "otaVersionUrl"
+  "otaUpdateAvailable" | "otaProgress" | "otaInProgress" | "otaVersionUrl" | "hotspot"
 >
+
+/** A glasses status as apps see it: without the glasses Wi-Fi link's hotspot credentials. */
+export function publicGlassesStatus<T extends Partial<GlassesStatus>>(status: T): Omit<T, "hotspot"> {
+  const {hotspot: _hotspot, ...rest} = status
+  return rest
+}
 
 export type PublicBluetoothStatus = Pick<
   BluetoothStatus,
@@ -1518,8 +1527,6 @@ export type BluetoothSdkEventMap = {
   wifi_scan_result: WifiScanResultEvent
   wifi_forget_result: WifiForgetResultEvent
   saved_wifi_networks: SavedWifiNetworksEvent
-  hotspot_status_change: HotspotStatusChangeEvent
-  hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
   camera_status: CameraStatusEvent
@@ -1627,7 +1634,6 @@ export interface BluetoothSdkPublicModule {
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   /** Forget a saved network and return its correlated semantic outcome. */
   forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
-  setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Set the glasses clock from the phone after an OTA clock-skew failure. */
   setSystemTime(timestampMs: number): Promise<void>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
@@ -1684,6 +1690,22 @@ export interface BluetoothSdkPublicModule {
   capturePhoto(params: PhotoCaptureParams): PhotoCapture
   /** A photo kept on the phone, whole: `capturePhoto(params).photo()`, then its release. */
   takePhoto(params: PhotoCaptureParams): Promise<PhotoTaken>
+  /**
+   * The phone's links to the glasses: `state` says whether the glasses are connected and the fast
+   * link (the glasses Wi-Fi) is up, `onChange` hears them change, and `openFast` / `closeFast`
+   * hold and give back the fast link, which photos travel over while it is up.
+   */
+  readonly link: import("./glasses-wifi/link").GlassesLink
+  /**
+   * Photos back to back, for a run that takes many (documenting a site, a walk-through): see
+   * {@link import("./glasses-wifi/continuous").ContinuousCapture}. Each photo is a capture like
+   * `capturePhoto`'s. While the run is on, the SDK holds the fast link for it, so full photos come
+   * over Wi-Fi; the run is `paused` while only Bluetooth is left, and `stop()` gives the link back.
+   * `maxPending` (default 12) is how many of its photos may stay on the glasses unreleased.
+   */
+  captureContinuous(
+    options: PhotoCaptureParams & {maxPending?: number},
+  ): import("./glasses-wifi/continuous").ContinuousCapture<PhotoCapture>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
   stopCameraWarmUp(requestId: string): Promise<void>

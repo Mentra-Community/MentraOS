@@ -1,6 +1,6 @@
+import type {HotspotStatus} from "@mentra/bluetooth-sdk/glasses-wifi"
 import type {
   GlassesConnectionStatus,
-  HotspotStatus,
   OtaProgress,
   OtaStatus,
   OtaUpdateInfo,
@@ -33,6 +33,8 @@ export type LivePairingState = NonNullable<PublicGlassesStatus["pairingState"]>
 export type GlassesAudioSetup = NonNullable<PublicGlassesStatus["audioSetup"]>
 
 type EngineGlassesStatus = PublicGlassesStatus & {
+  /** The glasses Wi-Fi link's hotspot, as the glasses report it; the Bluetooth SDK's service owns it. */
+  hotspot: HotspotStatus
   otaUpdateAvailable: OtaUpdateInfo | null
   otaProgress: OtaProgress | null
   otaInProgress: boolean

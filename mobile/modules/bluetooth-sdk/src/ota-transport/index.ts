@@ -13,36 +13,6 @@ export type {
 
 export type OtaTransportSubscription = {remove(): void}
 
-export type OtaLocalNetworkConnection = {
-  connected: boolean
-  ssid: string
-  localAddress?: string
-  /** The glasses' address on the joined network. */
-  gateway?: string
-}
-
-export type OtaLocalNetworkLostEvent = {ssid: string}
-
-export type OtaLocalNetworkResponse = {
-  status: number
-  headers: Record<string, string>
-  bodyBase64: string
-}
-
-export type OtaLocalNetworkDownloadResult = {
-  statusCode: number
-  bytesWritten: number
-  headers: Record<string, string>
-}
-
-export type OtaLocalNetworkDownloadProgress = {
-  requestId: string
-  bytesWritten: number
-  contentLength: number
-  statusCode?: number
-  headers?: Record<string, string>
-}
-
 export type OtaArtifactDownloadProgress = {
   destination: string
   bytesWritten: number
@@ -57,65 +27,13 @@ export type OtaServerResult = {
 }
 
 /**
- * Scoped networking for traffic that must stay on a Mentra Live hotspot while
- * the phone's default route remains on cellular or another Wi-Fi network.
- *
- * The module is optional because iOS joins through glasses-media's hotspot owner instead.
+ * The phone's network as OTA sees it. The glasses Wi-Fi link, and every request over it, is the
+ * Bluetooth SDK's glasses Wi-Fi service's own.
  */
 export const otaLocalNetwork = Object.freeze({
   isAvailable: (): boolean => MentraLocalNetwork != null,
   /** Synchronous local observation; no network I/O, route changes or network identities. */
-  getNetworkDiagnostics: (): NetworkDiagnostics | null => MentraLocalNetwork?.getNetworkDiagnostics() ?? null,
-  /** `incoming`: the glasses will connect to a server on this phone (OTA), not only the reverse. */
-  connect: async (ssid: string, password: string, incoming = true): Promise<OtaLocalNetworkConnection> => {
-    if (!MentraLocalNetwork) throw new Error("Scoped local networking is not available in this native build")
-    return MentraLocalNetwork.connect(ssid, password, incoming)
-  },
-  /** The glasses' Wi-Fi Direct group instead of their hotspot; the native join asks them for it. */
-  connectWifiDirect: async (incoming = true): Promise<OtaLocalNetworkConnection> => {
-    if (!MentraLocalNetwork) throw new Error("Scoped local networking is not available in this native build")
-    return MentraLocalNetwork.connectWifiDirect(incoming)
-  },
-  /** Whether this phone and the connected glasses can use Wi-Fi Direct now: Android only. */
-  wifiDirectAvailable: (): boolean => MentraLocalNetwork?.wifiDirectAvailable?.() === true,
-  request: async (
-    requestId: string,
-    url: string,
-    method: string,
-    headers: Record<string, string>,
-    body: string | null,
-    timeoutMs: number,
-  ): Promise<OtaLocalNetworkResponse> => {
-    if (!MentraLocalNetwork) throw new Error("Scoped local networking is not available in this native build")
-    return MentraLocalNetwork.request(requestId, url, method, headers, body, timeoutMs)
-  },
-  download: async (
-    requestId: string,
-    url: string,
-    destination: string,
-    headers: Record<string, string>,
-    connectionTimeoutMs: number,
-    readTimeoutMs: number,
-  ): Promise<OtaLocalNetworkDownloadResult> => {
-    if (!MentraLocalNetwork) throw new Error("Scoped local networking is not available in this native build")
-    return MentraLocalNetwork.download(requestId, url, destination, headers, connectionTimeoutMs, readTimeoutMs)
-  },
-  cancel: async (requestId: string): Promise<void> => {
-    if (!MentraLocalNetwork) return
-    await MentraLocalNetwork.cancel(requestId)
-  },
-  disconnect: async (): Promise<void> => {
-    if (!MentraLocalNetwork) return
-    await MentraLocalNetwork.disconnect()
-  },
-  onDownloadProgress: (listener: (event: OtaLocalNetworkDownloadProgress) => void): OtaTransportSubscription => {
-    if (!MentraLocalNetwork) return {remove() {}}
-    return MentraLocalNetwork.addListener("downloadProgress", listener)
-  },
-  onNetworkLost: (listener: (event: OtaLocalNetworkLostEvent) => void): OtaTransportSubscription => {
-    if (!MentraLocalNetwork) return {remove() {}}
-    return MentraLocalNetwork.addListener("networkLost", listener)
-  },
+  getNetworkDiagnostics: (): NetworkDiagnostics | null => MentraLocalNetwork?.getNetworkDiagnostics?.() ?? null,
 })
 
 /** Native HTTP server and artifact downloader used by the Engine OTA coordinator. */

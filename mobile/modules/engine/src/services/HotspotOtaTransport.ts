@@ -19,7 +19,7 @@ import {
 } from "./OtaArtifactDownloader"
 import {useGlassesStore} from "../stores/glasses"
 import {usableSerial} from "./fleet/glassesIdentity"
-import {GlassesWifiError, holdGlassesWifi, type GlassesWifiHold} from "./GlassesWifi"
+import {GlassesWifiError, holdGlassesWifi, type GlassesWifiHold} from "@mentra/bluetooth-sdk/glasses-wifi"
 import {joinedGlassesIdentity} from "./HotspotGlassesIdentity"
 import {hotspotStartErrorCode} from "./OtaErrorMapping"
 import {

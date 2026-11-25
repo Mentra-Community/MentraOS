@@ -6,171 +6,15 @@ jest.mock("@dr.pogodin/react-native-fs", () => ({
   stopDownload: jest.fn(),
 }))
 
-jest.mock("@mentra/glasses-media", () => ({
-  glassesHotspot: {
-    join: jest.fn(async () => "192.168.43.2"),
-    leave: jest.fn(async () => {}),
-    onPermissionRequired: jest.fn(() => ({remove: jest.fn()})),
-  },
-}))
-
+import {localNetworkErrorDetails, localNetworkTransport} from "../../../modules/engine/src/services/asg/localNetworkTransport"
 import {
-  localNetworkErrorDetails,
-  localNetworkTransport,
-  shouldUseScopedLocalNetwork,
-} from "../../../modules/engine/src/services/asg/localNetworkTransport"
-import {Platform} from "react-native"
-import {emitLocalNetworkEvent, mentraLocalNetworkMock as mockNativeModule} from "../../test-utils/mockBluetoothSdk"
-const networkOwner = Symbol("transport-test")
-const otherOwner = Symbol("other-test")
-const mockIosHotspot = jest.requireMock("@mentra/glasses-media").glassesHotspot as {
-  join: jest.Mock
-  leave: jest.Mock
-  onPermissionRequired: jest.Mock
-}
+  emitLocalNetworkEvent,
+  glassesWifiMock,
+  mentraLocalNetworkMock as mockNativeModule,
+} from "../../test-utils/mockBluetoothSdk"
 
-describe("iOS hotspot ownership", () => {
-  beforeEach(async () => {
-    mockIosHotspot.leave.mockResolvedValue(undefined)
-    await localNetworkTransport.disconnect(networkOwner)
-    jest.clearAllMocks()
-    Platform.OS = "ios"
-  })
-  afterEach(async () => {
-    mockIosHotspot.leave.mockResolvedValue(undefined)
-    await localNetworkTransport.disconnect(networkOwner)
-    Platform.OS = "android"
-  })
-
-  it("returns the verified address from the shared native join", async () => {
-    await expect(
-      localNetworkTransport.connect(networkOwner, "glasses", "private", {gateway: "192.168.43.1"}),
-    ).resolves.toBe("192.168.43.2")
-    expect(mockIosHotspot.join).toHaveBeenCalledWith(
-      expect.any(String),
-      "glasses",
-      "private",
-      "192.168.43.1",
-      "outgoing-client",
-      undefined,
-    )
-  })
-
-  it("reports a Local Network wait for its own join only, until the join settles", async () => {
-    const remove = jest.fn()
-    let emit!: (id: string, systemAnswer: string) => void
-    mockIosHotspot.onPermissionRequired.mockImplementationOnce(
-      (listener: (id: string, systemAnswer: string) => void) => {
-        emit = listener
-        return {remove}
-      },
-    )
-    let finish!: (address: string) => void
-    mockIosHotspot.join.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    )
-    const onPermissionRequired = jest.fn()
-    const joining = localNetworkTransport.connect(networkOwner, "glasses", "private", {onPermissionRequired})
-    const id = mockIosHotspot.join.mock.calls[0][0] as string
-    emit("another join", "denied")
-    expect(onPermissionRequired).not.toHaveBeenCalled()
-    emit(id, "unsatisfiedReason=localNetworkDenied for 5s")
-    expect(onPermissionRequired).toHaveBeenCalledWith("unsatisfiedReason=localNetworkDenied for 5s")
-    expect(remove).not.toHaveBeenCalled()
-    finish("192.168.43.2")
-    await joining
-    expect(remove).toHaveBeenCalledTimes(1)
-  })
-
-  it("joins for an incoming OTA server while retaining exclusive network ownership", async () => {
-    await expect(
-      localNetworkTransport.connect(networkOwner, "glasses", "private", {
-        gateway: "192.168.43.1",
-        frequency: 5180,
-        purpose: "incoming-server",
-      }),
-    ).resolves.toBe("192.168.43.2")
-    expect(mockIosHotspot.join).toHaveBeenCalledWith(
-      expect.any(String),
-      "glasses",
-      "private",
-      "192.168.43.1",
-      "incoming-server",
-      5180,
-    )
-    await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
-    await localNetworkTransport.disconnect(otherOwner)
-    expect(mockIosHotspot.leave).not.toHaveBeenCalled()
-    await localNetworkTransport.disconnect(networkOwner)
-    expect(mockIosHotspot.leave).toHaveBeenCalledTimes(1)
-  })
-
-  it("rejects overlap without invalidating the admitted connection", async () => {
-    let finish!: (address: string) => void
-    mockIosHotspot.join.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    )
-    const first = localNetworkTransport.connect(networkOwner, "glasses", "private")
-    await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
-    finish("192.168.43.2")
-    await expect(first).resolves.toBe("192.168.43.2")
-    expect(mockIosHotspot.join).toHaveBeenCalledTimes(1)
-  })
-
-  it("retains custody until late native completion has been released", async () => {
-    let finish!: (address: string) => void
-    let released!: () => void
-    mockIosHotspot.join.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        }),
-    )
-    mockIosHotspot.leave.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          released = resolve
-        }),
-    )
-    const connection = localNetworkTransport.connect(networkOwner, "glasses", "private")
-    const failure = expect(connection).rejects.toThrow("superseded")
-    const leaving = localNetworkTransport.disconnect(networkOwner)
-    await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
-    finish("192.168.43.2")
-    released()
-    await leaving
-    await failure
-  })
-
-  it("preserves the original association error when cleanup also fails", async () => {
-    const original = new Error("association refused")
-    mockIosHotspot.join.mockRejectedValueOnce(original)
-    mockIosHotspot.leave.mockRejectedValueOnce(new Error("cleanup refused"))
-    await expect(localNetworkTransport.connect(networkOwner, "glasses", "private")).rejects.toBe(original)
-    await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
-    await localNetworkTransport.disconnect(networkOwner)
-    await expect(localNetworkTransport.connect(networkOwner, "glasses", "private")).resolves.toBe("192.168.43.2")
-  })
-
-  it.each([
-    [Symbol("ota"), Symbol("gallery")],
-    [Symbol("gallery"), Symbol("ota")],
-  ])("does not let a refused caller release the admitted caller", async (admitted, refused) => {
-    await localNetworkTransport.connect(admitted, "glasses", "private")
-    await expect(localNetworkTransport.connect(refused, "glasses", "private")).rejects.toThrow("not been released")
-    await localNetworkTransport.disconnect(refused)
-    expect(mockIosHotspot.leave).not.toHaveBeenCalled()
-    await expect(localNetworkTransport.connect(refused, "glasses", "private")).rejects.toThrow("not been released")
-    await localNetworkTransport.disconnect(admitted)
-    expect(mockIosHotspot.leave).toHaveBeenCalledTimes(1)
-  })
-})
+/** Whether the Bluetooth SDK's glasses Wi-Fi link has a scoped Android network up. */
+const scoped = (up: boolean) => glassesWifiMock.glassesWifiLink.isScoped.mockReturnValue(up)
 
 describe("localNetworkErrorDetails", () => {
   it("recovers exact owned legacy Expo causes without exposing arbitrary native text", () => {
@@ -224,50 +68,21 @@ describe("localNetworkErrorDetails", () => {
 })
 
 describe("localNetworkTransport", () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     jest.clearAllMocks()
-    await localNetworkTransport.disconnect(networkOwner)
+    scoped(true)
   })
 
-  it("uses the scoped native connection on supported Android phones", async () => {
-    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
-
-    expect(mockNativeModule.connect).toHaveBeenCalledWith("AndroidShare_test", "password", false)
-    expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
-  })
-
-  it("tells the native join when the glasses will connect to this phone", async () => {
-    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password", {purpose: "incoming-server"})
-
-    expect(mockNativeModule.connect).toHaveBeenCalledWith("AndroidShare_test", "password", true)
-  })
-
-  it("records an acquired Android network before the caller checks a replaced OTA owner", async () => {
-    let resolve!: (value: {connected: boolean; ssid: string; localAddress: string}) => void
-    mockNativeModule.connect.mockImplementationOnce(
-      () =>
-        new Promise((r) => {
-          resolve = r
-        }),
-    )
-    let current = true
-    const connecting = localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password", {
-      assertCurrent: () => {
-        if (!current) throw new Error("OTA owner changed")
-      },
-    })
-    current = false
-    resolve({connected: true, ssid: "AndroidShare_test", localAddress: "192.168.43.2"})
-    await expect(connecting).resolves.toBe("192.168.43.2")
-    expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
-    await localNetworkTransport.disconnect(networkOwner)
-    expect(mockNativeModule.disconnect).toHaveBeenCalled()
-    expect(localNetworkTransport.isScopedConnectionActive()).toBe(false)
+  it("uses the system route while the link has no scoped network", async () => {
+    scoped(false)
+    const fetch = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"))
+    await localNetworkTransport.fetch("http://192.168.43.1:8089/api/health")
+    expect(mockNativeModule.request).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalled()
+    fetch.mockRestore()
   })
 
   it("routes glasses HTTP through the captured WiFi network", async () => {
-    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
-
     const response = await localNetworkTransport.fetch("http://192.168.43.1:8089/api/health")
 
     expect(mockNativeModule.request).toHaveBeenCalled()
@@ -275,8 +90,6 @@ describe("localNetworkTransport", () => {
   })
 
   it("forwards caller-specific timeouts to scoped HTTP requests", async () => {
-    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
-
     await localNetworkTransport.fetch("http://192.168.43.1:8089/api/v3/hash", undefined, 10 * 60 * 1000)
 
     expect(mockNativeModule.request).toHaveBeenCalledWith(
@@ -289,27 +102,8 @@ describe("localNetworkTransport", () => {
     )
   })
 
-  it("releases the scoped connection during cleanup", async () => {
-    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
-    await localNetworkTransport.disconnect(networkOwner)
-
-    expect(mockNativeModule.disconnect).toHaveBeenCalled()
-    expect(localNetworkTransport.isScopedConnectionActive()).toBe(false)
-  })
-
-  it("reports failed native release and retains the active connection for later cleanup", async () => {
-    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
-    const failure = new Error("Native network release failed")
-    mockNativeModule.disconnect.mockRejectedValueOnce(failure)
-    await expect(localNetworkTransport.disconnect(networkOwner)).rejects.toBe(failure)
-    expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
-    await localNetworkTransport.disconnect(networkOwner)
-    expect(localNetworkTransport.isScopedConnectionActive()).toBe(false)
-  })
-
   it("cancels a native request when its AbortSignal fires", async () => {
     mockNativeModule.request.mockImplementationOnce(() => new Promise(() => {}))
-    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
     const controller = new AbortController()
 
     void localNetworkTransport.fetch("http://192.168.43.1:8089/api/sync", {signal: controller.signal})
@@ -327,7 +121,6 @@ describe("localNetworkTransport", () => {
           rejectDownload = reject
         }),
     )
-    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
 
     const handle = localNetworkTransport.downloadFile({
       fromUrl: "http://192.168.43.1:8089/api/download?file=video.mp4",
@@ -352,7 +145,6 @@ describe("localNetworkTransport", () => {
           resolveDownload = resolve
         }),
     )
-    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
     const begin = jest.fn()
 
     const handle = localNetworkTransport.downloadFile({
@@ -379,9 +171,4 @@ describe("localNetworkTransport", () => {
     await expect(handle.promise).resolves.toMatchObject({statusCode: 206, bytesWritten: 4})
   })
 
-  it("uses scoped transport only on Android when the native module is available", () => {
-    expect(shouldUseScopedLocalNetwork("android", true)).toBe(true)
-    expect(shouldUseScopedLocalNetwork("android", false)).toBe(false)
-    expect(shouldUseScopedLocalNetwork("ios", true)).toBe(false)
-  })
 })

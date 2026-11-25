@@ -21,7 +21,7 @@ const setFleetInventorySource = step("inventory.set")
 const fleetDesiredStateClient = {fetch: async () => ({})}
 const registryInventorySource = {list: () => null, subscribe: () => () => {}}
 
-mock.module("@mentra/glasses-media", () => ({installNativeLogConsole: () => {}, glassesHotspot: {}}))
+mock.module("@mentra/glasses-media", () => ({installNativeLogConsole: () => {}}))
 mock.module("../runtime/bootstrap", () => ({
   configure: step("configure"),
   getConfigValues: () => ({runtimeRealtimeSession: false}),

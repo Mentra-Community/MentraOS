@@ -103,13 +103,6 @@ export function startDeviceEventRouter(): void {
       // of hitting the previous network's stale glasses IP.
       asgCameraApi.setServer(localIp || "localhost", 8089)
       GlobalEventEmitter.emit("hotspot_status_change", {enabled, ssid, password, local_ip: localIp})
-      if (enabled) {
-        // Loaded on use: the glasses Wi-Fi service reaches React Native, which the router does not.
-        const {reclaimLateHotspot} = require("./GlassesWifi") as typeof import("./GlassesWifi")
-        void reclaimLateHotspot().catch((error) =>
-          console.warn("[GlassesWifi] Could not turn off the late hotspot", error),
-        )
-      }
     }),
   )
   subs.push(

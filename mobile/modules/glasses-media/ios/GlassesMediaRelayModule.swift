@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import Foundation
+import MentraBluetoothSDK
 import OSLog
 
 private let permissionLog = Logger(subsystem: "com.mentra.mentra", category: "Permission")
@@ -7,12 +8,12 @@ private let permissionLog = Logger(subsystem: "com.mentra.mentra", category: "Pe
 public final class GlassesMediaRelayModule: Module {
     private let queue = DispatchQueue(label: "com.mentra.glassesmedia.relay")
     private var session: ManagedRelaySession?
+    /// The glasses network the Bluetooth SDK's `MentraLocalNetwork` module joined; the relay only reads it.
     private let localHotspot = GlassesHotspotNetwork.shared
-    private var localHotspotOwner: String?
 
     public func definition() -> ModuleDefinition {
         Name("MentraGlassesMediaRelay")
-        Events("onRelayState", "onLocalHotspotPermissionRequired", "onLocalHotspotLost", "onNativeLog")
+        Events("onRelayState", "onNativeLog")
 
         OnCreate {
             MediaLog.sink = { [weak self] message in self?.sendEvent("onNativeLog", ["message": message]) }
@@ -21,49 +22,6 @@ public final class GlassesMediaRelayModule: Module {
         // The app's `[Permission]` lines, readable in the unified log: NSLog and the JS console are not.
         Function("logPermission") { (line: String) in
             permissionLog.notice("\(line, privacy: .public)")
-        }
-
-        AsyncFunction("joinLocalHotspot") { (id: String, ssid: String, password: String, gateway: String?, purpose: String, frequency: Int?, promise: Promise) in
-            self.queue.async {
-                guard self.localHotspotOwner == nil else {
-                    promise.reject(LocalMediaError("Previous hotspot session has not been released")); return
-                }
-                guard let accessPurpose = HotspotAccessPurpose(rawValue: purpose) else {
-                    promise.reject(LocalMediaError("Invalid hotspot access purpose")); return
-                }
-                self.localHotspotOwner = id
-                // The join waits while Local Network access is pending or denied; the caller explains it.
-                self.localHotspot.onPermissionRequired = { [weak self] systemAnswer in
-                    self?.sendEvent("onLocalHotspotPermissionRequired", ["id": id, "systemAnswer": systemAnswer])
-                }
-                self.localHotspot.onLost = { [weak self] reason in
-                    self?.sendEvent("onLocalHotspotLost", ["id": id, "reason": reason])
-                }
-                self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway, frequency: frequency, purpose: accessPurpose) { result in
-                    switch result {
-                    case let .success(address): promise.resolve(address)
-                    case let .failure(error):
-                        let failure = HotspotJoinFailure(error)
-                        promise.reject(Exception(name: "HotspotJoinFailure", description: failure.message, code: failure.code))
-                    }
-                }
-            }
-        }
-
-        AsyncFunction("leaveLocalHotspot") { (id: String, promise: Promise) in
-            self.queue.async {
-                guard self.localHotspotOwner == id else { promise.resolve(nil); return }
-                self.localHotspot.leave { result in
-                    self.queue.async {
-                        switch result {
-                        case .success:
-                            if self.localHotspotOwner == id { self.localHotspotOwner = nil }
-                            promise.resolve(nil)
-                        case let .failure(error): promise.reject(error)
-                        }
-                    }
-                }
-            }
         }
 
         AsyncFunction("prepare") { (options: [String: Any], promise: Promise) in
@@ -135,7 +93,6 @@ public final class GlassesMediaRelayModule: Module {
                 self.session?.stop { result in
                     if case .success = result { self.session = nil }
                 }
-                self.localHotspot.leave { _ in }
             }
         }
     }

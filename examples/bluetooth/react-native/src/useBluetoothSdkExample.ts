@@ -1,8 +1,7 @@
 import {createAudioPlayer, setAudioModeAsync, type AudioPlayer} from 'expo-audio';
 import {File, Paths} from 'expo-file-system';
 import {useEffect, useRef, useState} from 'react';
-import {Clipboard, Linking, PermissionsAndroid, Platform} from 'react-native';
-import WifiManager from 'react-native-wifi-reborn';
+import {Linking, PermissionsAndroid, Platform} from 'react-native';
 import BluetoothSdk, {
   DeviceModels,
   type AudioConnectedEvent,
@@ -49,11 +48,7 @@ import MentraVideoStreamReceiver, {
   type VideoStreamReceiverStatusEvent,
 } from '@mentra/react-native-video-stream-receiver';
 import {
-  galleryHotspotPasswordLabel,
-  galleryHotspotSsidLabel,
-  galleryServerUrl,
   connectedWifiStatus,
-  enabledHotspotStatus,
   isDisconnectedStatus,
   isGlassesConnected,
   isGlassesWifiConnected,
@@ -242,7 +237,7 @@ export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'low' | 'medium' | 'high' | 'max';
 export type PhotoCompression = NonNullable<PhotoUploadParams['compress']>;
 export type PhotoTransferMethod = 'auto' | 'direct' | 'ble';
-export type PhotoDestination = 'phone' | 'cloud' | 'glasses';
+export type PhotoDestination = 'phone' | 'cloud';
 export type PhotoAeExposureDivisor = 2 | 3 | 5;
 export type PhotoIsoCap = 400 | 800 | 1600;
 export type PhotoIspDigitalGain = 0 | 1 | 2 | 4;
@@ -345,10 +340,7 @@ export type BluetoothSdkExampleState = {
   touchGestureDefaults: TouchGestureDefaults;
   touchGesturePending: TouchGesture | null;
   setTouchGestureDefaultBehaviorEnabled: (gesture: TouchGesture, enabled: boolean) => Promise<void>;
-  galleryServerReachable: boolean | null;
-  galleryServerStatus: string;
   glasses: GlassesRuntimeState;
-  hotspotEnabled: boolean;
   /** Optimistic local toggle — glasses do not report Wi-Fi ADB status. */
   wifiAdbEnabled: boolean;
   lastAction: string;
@@ -373,7 +365,6 @@ export type BluetoothSdkExampleState = {
   phonePhotoUploadUrl: string | null;
   photoCompression: PhotoCompression;
   photoCloudServerEnabled: boolean;
-  photoGlassesStorageEnabled: boolean;
   photoAeExposureDivisor: PhotoAeExposureDivisor | null;
   photoIsoCap: PhotoIsoCap | null;
   photoNoiseReduction: PhotoTuningFlag;
@@ -429,13 +420,8 @@ export type BluetoothSdkExampleActions = {
   disconnect: () => Promise<void>;
   displayHello: () => Promise<void>;
   forgetCurrentWifiNetwork: () => Promise<void>;
-  copyGalleryHotspotPassword: () => Promise<void>;
-  copyGalleryServerUrl: () => Promise<void>;
   openBluetoothSettings: () => Promise<void>;
-  openGalleryServer: () => Promise<void>;
   openPhotoPreview: () => Promise<void>;
-  openWifiSettings: () => Promise<void>;
-  prepareGlassesPhotoPreview: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
   selectDiscoveredDevice: (device: Device) => void;
@@ -447,7 +433,6 @@ export type BluetoothSdkExampleActions = {
   setGalleryModeEnabled: (enabled: boolean) => Promise<void>;
   setPhotoCompression: (compression: PhotoCompression) => void;
   setPhotoCloudServerEnabled: (enabled: boolean) => Promise<void>;
-  setPhotoGlassesStorageEnabled: (enabled: boolean) => Promise<void>;
   setPhotoAeExposureDivisor: (divisor: PhotoAeExposureDivisor | null) => void;
   setPhotoIsoCap: (isoCap: PhotoIsoCap | null) => void;
   setPhotoNoiseReduction: (value: PhotoTuningFlag) => void;
@@ -475,7 +460,6 @@ export type BluetoothSdkExampleActions = {
   startScan: () => Promise<void>;
   unpair: () => Promise<void>;
   testWebhook: () => Promise<void>;
-  toggleHotspot: () => Promise<void>;
   setWifiAdbState: (enabled: boolean) => Promise<void>;
   toggleMic: () => Promise<void>;
   toggleVideoRecording: () => Promise<void>;
@@ -486,8 +470,6 @@ export type BluetoothSdkExampleModel = BluetoothSdkExampleState & BluetoothSdkEx
 
 const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
-const GLASSES_PHOTO_POLL_ATTEMPTS = 120;
-const GLASSES_GALLERY_FAILURE_THRESHOLD = 3;
 const VIDEO_POLL_ATTEMPTS = 180;
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
 export const PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE =
@@ -534,7 +516,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   );
   const [photoDestination, setPhotoDestination] = useState<PhotoDestination>('phone');
   const photoCloudServerEnabled = photoDestination === 'cloud';
-  const photoGlassesStorageEnabled = photoDestination === 'glasses';
   const [phonePhotoReceiverRunning, setPhonePhotoReceiverRunning] = useState(false);
   const [phonePhotoUploadUrl, setPhonePhotoUploadUrl] = useState<string | null>(null);
   const [cameraStatus, setCameraStatus] = useState('Camera: ready to capture to phone');
@@ -613,10 +594,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       ? IOS_AUDIO_ROUTE_HINT
       : 'Audio output: waiting for Bluetooth audio status',
   );
-  const [galleryServerReachable, setGalleryServerReachable] = useState<boolean | null>(null);
-  const [galleryServerStatus, setGalleryServerStatus] = useState(
-    'Gallery server: enable hotspot to check',
-  );
   const [touchGestureDefaults, setTouchGestureDefaults] = useState(initialTouchGestureDefaults);
   const [touchGesturePending, setTouchGesturePending] = useState<TouchGesture | null>(null);
   const touchGesturePendingRef = useRef<TouchGesture | null>(null);
@@ -631,14 +608,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const pollGenerationRef = useRef(0);
   const videoPollGenerationRef = useRef(0);
   const photoDestinationRef = useRef<PhotoDestination>('phone');
-  const photoDestinationBeforeGlassesRef = useRef<Exclude<PhotoDestination, 'glasses'>>('phone');
-  const galleryConnectionGenerationRef = useRef(0);
   /** BLE session generation — advances only on glasses disconnect/reconnect. */
   const glassesConnectionGenerationRef = useRef(0);
-  const galleryConnectionPromiseRef = useRef<Promise<void> | null>(null);
-  const galleryServerReachableRef = useRef<boolean | null>(null);
-  const galleryBaseUrlRef = useRef<string | null>(null);
-  const galleryHotspotSsidRef = useRef<string | null>(null);
   const barcodeScanningEnabledRef = useRef(false);
   const textModeRef = useRef(false);
   const cameraWarmUpFailureLoggedRef = useRef(false);
@@ -698,14 +669,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const phone = bluetooth.sdk;
   const scanActive = bluetooth.scan.active;
   const galleryModeEnabled = phone.galleryMode.enabled;
-  const hotspotEnabled = enabledHotspotStatus(glasses) !== null;
   const [wifiAdbEnabled, setWifiAdbEnabled] = useState(false);
   const selectedDiscoveredDevice = bluetooth.scan.selectedDevice;
   const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
   activeTabRef.current = activeTab;
   galleryModeEnabledRef.current = galleryModeEnabled;
   glassesConnectedRef.current = glassesConnected;
-  galleryServerReachableRef.current = galleryServerReachable;
 
   // Optimistic Wi-Fi ADB UI only — reset on disconnect. Do not key off the full
   // connectedDeviceKey: late-arriving identity fields (serial/model) rewrite that
@@ -823,30 +792,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           }
         }
         addEvent('STORE', `Wi-Fi ${payload.state === 'connected' ? payload.ssid : payload.state}`);
-      }),
-      BluetoothSdk.addListener('hotspot_status_change', (payload) => {
-        galleryBaseUrlRef.current = payload.state === 'enabled'
-          ? `http://${payload.localIp}:8089`
-          : null;
-        galleryHotspotSsidRef.current = payload.state === 'enabled' ? payload.ssid : null;
-        setGalleryServerReachable((current) =>
-          payload.state === 'enabled'
-            ? current
-            : photoDestinationRef.current === 'glasses'
-              ? false
-              : null,
-        );
-        setGalleryServerStatus(
-          payload.state === 'enabled'
-            ? `Gallery server: http://${payload.localIp}:8089`
-            : 'Gallery server: hotspot off',
-        );
-        addEvent('STORE', `hotspot ${summarizeMap(payload)}`);
-      }),
-      BluetoothSdk.addListener('hotspot_error', (payload) => {
-        setGalleryServerReachable(false);
-        setGalleryServerStatus('Gallery server: hotspot error');
-        addEvent('TX', `hotspot error ${summarizeMap(payload)}`);
       }),
       MentraPhotoReceiver.addListener('photoUpload', handleDirectPhotoUpload),
       MentraPhotoReceiver.addListener('receiverStatus', handlePhotoReceiverStatus),
@@ -1005,9 +950,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   useEffect(() => {
     if (glassesConnected) {
       if (bluetooth.scan.diagnostic) bluetooth.scan.clear();
-      if (!wasConnectedRef.current && photoDestinationRef.current === 'glasses') {
-        void prepareGlassesPhotoPreviewAction();
-      }
       wasConnectedRef.current = true;
       return;
     }
@@ -1324,13 +1266,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Camera and Bluetooth permissions are required for photos.');
       }
       barcodeScanRequestIdsRef.current.clear();
-      if (photoDestinationRef.current === 'glasses') {
-        if (galleryServerReachableRef.current !== true) {
-          throw new Error('Connect to the glasses hotspot before capturing.');
-        }
-        await captureToGlassesStorage(captureOptions);
-        return;
-      }
       // Without glasses Wi-Fi the photo is delivered over the Bluetooth
       // transfer path instead of the network upload.
       if (photoDestinationRef.current === 'phone') {
@@ -1560,64 +1495,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
       throw error;
     }
-  }
-
-  async function captureToGlassesStorage(options: PhotoCaptureOptions) {
-    const requestedAt = Date.now();
-    const requestId = `photo-${requestedAt}`;
-    activePhotoRequestIdRef.current = requestId;
-    registerPhotoCaptureOptions(requestId, options);
-    pollGenerationRef.current += 1;
-    const generation = pollGenerationRef.current;
-
-    setPhotoPreviewUrl(null);
-    setPhotoPreviewDetails(null);
-    markPhotoRequestStarted(requestId, 'Glasses gallery', requestedAt);
-    resetBarcodeScan();
-    setCameraStatus(`Camera: saving photo on glasses (${requestId})`);
-
-    let response: PhotoSuccessResponseEvent;
-    try {
-      response = await BluetoothSdk.uploadPhoto({
-        requestId,
-        webhookUrl: null,
-        authToken: null,
-        save: true,
-        ...buildPhotoRequestFields(options.textMode),
-      });
-    } catch (error) {
-      if (activePhotoRequestIdRef.current === requestId) {
-        activePhotoRequestIdRef.current = null;
-      }
-      barcodeScanRequestIdsRef.current.delete(requestId);
-      markPhotoRequestFailed(requestId, 'GLASSES_PHOTO_FAILED', formatError(error));
-      throw error;
-    }
-    handlePhotoResponse(response);
-    setCameraStatus('Camera: photo saved on glasses; loading preview');
-    setPhotoPreviewDetails((current) =>
-      current
-        ? {...current, state: 'saved'}
-        : {requestId, source: 'Glasses gallery', state: 'saved'},
-    );
-    void downloadGlassesPhotoPreview(requestId, generation).catch((error) => {
-      if (
-        activePhotoRequestIdRef.current !== requestId ||
-        pollGenerationRef.current !== generation
-      ) {
-        return;
-      }
-      activePhotoRequestIdRef.current = null;
-      const message = formatError(error);
-      setCameraStatus(`Camera: ${message}`);
-      setPhotoPreviewDetails((current) => ({
-        ...current,
-        error: message,
-        requestId,
-        source: 'Glasses gallery',
-        state: 'saved',
-      }));
-    });
   }
 
   async function testWebhook() {
@@ -2118,11 +1995,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     const previewUrl = response.photoUrl;
     const destination = photoDestinationRef.current;
     const source: PhotoPreviewDetails['source'] =
-      destination === 'cloud'
-        ? 'Cloud server'
-        : destination === 'glasses'
-          ? 'Glasses gallery'
-          : 'Phone receiver';
+      destination === 'cloud' ? 'Cloud server' : 'Phone receiver';
     const responsePhoneTimestamp = Date.now();
     const responseDeviceTimestamp = response.timestamp ?? responsePhoneTimestamp;
     if (previewUrl) {
@@ -2135,9 +2008,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         ? 'Camera: loaded photo preview'
         : destination === 'cloud'
           ? 'Camera: photo delivered to cloud webhook'
-          : destination === 'glasses'
-            ? 'Camera: photo saved on glasses; loading preview'
-            : 'Camera: photo delivered to phone receiver',
+          : 'Camera: photo delivered to phone receiver',
     );
     setPhotoPreviewDetails((current) => ({
       ...current,
@@ -2161,116 +2032,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       scanPreviewBarcodeForRequest(response.requestId, previewUrl);
     }
     addEvent('LIVE', `photo response ${response.requestId}`);
-  }
-
-  async function downloadGlassesPhotoPreview(
-    requestId: string,
-    generation: number,
-  ) {
-    const baseUrl = galleryBaseUrlRef.current ?? galleryServerUrl(glasses, hotspotEnabled);
-    if (!baseUrl || galleryServerReachableRef.current !== true) {
-      throw new Error('The glasses hotspot is not ready for preview downloads.');
-    }
-    const galleryGeneration = galleryConnectionGenerationRef.current;
-
-    const localFile = new File(Paths.cache, `mentra-gallery-${requestId}.jpg`);
-    setGalleryServerStatus(`Gallery server: finding ${requestId}`);
-    let consecutiveFailures = 0;
-
-    for (let attempt = 0; attempt < GLASSES_PHOTO_POLL_ATTEMPTS; attempt += 1) {
-      if (
-        activePhotoRequestIdRef.current !== requestId ||
-        pollGenerationRef.current !== generation ||
-        galleryConnectionGenerationRef.current !== galleryGeneration
-      ) {
-        return;
-      }
-      try {
-        const galleryResponse = await fetchWithTimeout(
-          cacheBustedUrl(`${baseUrl}/api/gallery?limit=100`),
-          {cache: 'no-store', headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'}},
-          3000,
-        );
-        if (galleryConnectionGenerationRef.current !== galleryGeneration) return;
-        if (!galleryResponse.ok) {
-          throw new Error(`Gallery server returned HTTP ${galleryResponse.status}.`);
-        }
-        const gallery = (await galleryResponse.json()) as {
-          data?: {
-            photos?: Array<{
-              mime_type?: string;
-              name?: string;
-              request_id?: string;
-              size?: number;
-              url?: string;
-            }>;
-          };
-        };
-        if (galleryConnectionGenerationRef.current !== galleryGeneration) return;
-        const photo = gallery.data?.photos?.find((item) => item.request_id === requestId);
-        consecutiveFailures = 0;
-        setGalleryServerReachable(true);
-        if (!photo?.name) {
-          setGalleryServerStatus(`Gallery server: connected; finding ${requestId}`);
-          await delay(1000);
-          continue;
-        }
-        const fileName = photo.name;
-        const remoteUrl = new URL(photo.url ?? '/api/photo', baseUrl);
-        if (!photo.url) {
-          remoteUrl.searchParams.set('file', fileName);
-        }
-        const downloaded = await File.downloadFileAsync(remoteUrl.toString(), localFile, {idempotent: true});
-        if (galleryConnectionGenerationRef.current !== galleryGeneration) return;
-        const deliveredAt = Date.now();
-        setPhotoPreviewUrl(downloaded.uri);
-        setPhotoStatus(null);
-        setPhotoPreviewDetails((current) => ({
-          ...current,
-          byteCount: photo.size ?? (downloaded.size || current?.byteCount),
-          contentType: photo.mime_type ?? downloaded.type ?? current?.contentType ?? 'image/jpeg',
-          fileName,
-          previewUrl: remoteUrl.toString(),
-          requestId,
-          source: 'Glasses gallery',
-          state: 'preview',
-          timestamp: current?.timestamp ?? deliveredAt,
-        }));
-        setGalleryServerReachable(true);
-        setGalleryServerStatus(`Gallery server: downloaded ${fileName}`);
-        setCameraStatus('Camera: loaded photo preview from glasses');
-        activePhotoRequestIdRef.current = null;
-        void updatePhotoPreviewMetadata(downloaded.uri);
-        scanPreviewBarcodeForRequest(requestId, downloaded.uri);
-        addEvent('LIVE', `glasses photo downloaded ${fileName}`);
-        return;
-      } catch (error) {
-        if (galleryConnectionGenerationRef.current !== galleryGeneration) return;
-        consecutiveFailures += 1;
-        const transportUnavailable =
-          consecutiveFailures >= GLASSES_GALLERY_FAILURE_THRESHOLD;
-        if (attempt === 0 || attempt % 10 === 9) {
-          setGalleryServerStatus(
-            transportUnavailable
-              ? `Gallery server: ${formatError(error)}`
-              : `Gallery server: connected; waiting for ${requestId}.`,
-          );
-          setCameraStatus(
-            transportUnavailable
-              ? 'Camera: reconnect to the glasses hotspot to load the saved photo'
-              : 'Camera: photo saved on glasses; waiting for preview',
-          );
-          addEvent('LIVE', `waiting for glasses photo ${requestId}: ${formatError(error)}`);
-        }
-        if (transportUnavailable) {
-          setGalleryServerReachable(false);
-        }
-      }
-      await delay(1000);
-    }
-    throw new Error(
-      `Photo was saved on the glasses, but the preview could not be downloaded from ${baseUrl}.`,
-    );
   }
 
   async function pollPhotoPreview(
@@ -2668,11 +2429,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   async function setPhotoCloudServerEnabledAction(enabled: boolean) {
     await runAction(enabled ? 'Use photo cloud server' : 'Capture photos to phone', async () => {
-      if (photoDestinationRef.current === 'glasses') {
-        await disableGlassesPhotoPreviewConnection();
-      }
       const destination: PhotoDestination = enabled ? 'cloud' : 'phone';
-      photoDestinationBeforeGlassesRef.current = destination;
       photoDestinationRef.current = destination;
       setPhotoDestination(destination);
       activePhotoRequestIdRef.current = null;
@@ -2687,153 +2444,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       }
       setCameraStatus('Camera: ready to capture to phone');
     });
-  }
-
-  async function setPhotoGlassesStorageEnabledAction(enabled: boolean) {
-    const restoredDestination = photoDestinationBeforeGlassesRef.current;
-    await runAction(
-      enabled
-        ? 'Save photos on glasses'
-        : restoredDestination === 'cloud'
-          ? 'Restore photo cloud server'
-          : 'Capture photos to phone',
-      async () => {
-        if (enabled && photoDestinationRef.current !== 'glasses') {
-          photoDestinationBeforeGlassesRef.current = photoDestinationRef.current;
-        }
-        const destination: PhotoDestination = enabled
-          ? 'glasses'
-          : photoDestinationBeforeGlassesRef.current;
-        photoDestinationRef.current = destination;
-        setPhotoDestination(destination);
-        activePhotoRequestIdRef.current = null;
-        barcodeScanRequestIdsRef.current.clear();
-        clearPhotoUploadTimeout();
-        setPhotoStatus(null);
-        pollGenerationRef.current += 1;
-        if (!enabled) {
-          await disableGlassesPhotoPreviewConnection();
-          setCameraStatus(
-            destination === 'cloud'
-              ? 'Camera: enter the cloud media upload URL'
-              : 'Camera: ready to capture to phone',
-          );
-          return;
-        }
-        await stopPhonePhotoReceiver().catch(() => undefined);
-        if (!glassesConnected) {
-          setCameraStatus('Camera: connect glasses to save photos on them');
-          return;
-        }
-        await prepareGlassesPhotoPreviewConnection();
-      },
-    );
-  }
-
-  async function prepareGlassesPhotoPreviewAction() {
-    await runAction('Connect to glasses hotspot', () => prepareGlassesPhotoPreviewConnection(true));
-  }
-
-  async function disableGlassesPhotoPreviewConnection() {
-    galleryConnectionGenerationRef.current += 1;
-    galleryConnectionPromiseRef.current = null;
-    const hotspotSsid = galleryHotspotSsidRef.current ?? galleryHotspotSsidLabel(glasses);
-    galleryBaseUrlRef.current = null;
-    galleryHotspotSsidRef.current = null;
-    setGalleryServerReachable(null);
-    setGalleryServerStatus('Gallery server: hotspot off');
-    await disconnectGlassesHotspotWifi(hotspotSsid).catch((error) => {
-      addEvent('LIVE', `hotspot Wi-Fi disconnect: ${formatError(error)}`);
-    });
-    if (hotspotEnabled) {
-      const status = await BluetoothSdk.setHotspotState(false);
-      addEvent('LIVE', `hotspot ${status.state}`);
-    }
-  }
-
-  async function prepareGlassesPhotoPreviewConnection(restart = false) {
-    if (restart) {
-      galleryConnectionGenerationRef.current += 1;
-      const staleConnection = galleryConnectionPromiseRef.current;
-      galleryConnectionPromiseRef.current = null;
-      const hotspotSsid = galleryHotspotSsidRef.current;
-      if (hotspotSsid) {
-        await disconnectGlassesHotspotWifi(hotspotSsid).catch((error) => {
-          addEvent('LIVE', `hotspot retry cleanup: ${formatError(error)}`);
-        });
-      }
-      void staleConnection?.catch(() => undefined);
-      addEvent('LIVE', 'restarting glasses hotspot connection');
-    }
-    if (galleryConnectionPromiseRef.current) {
-      return galleryConnectionPromiseRef.current;
-    }
-    const generation = ++galleryConnectionGenerationRef.current;
-    const connection = (async () => {
-      requireConnected('prepare saved-photo previews');
-      setGalleryServerReachable(null);
-      setGalleryServerStatus('Gallery server: starting glasses hotspot');
-      setCameraStatus('Camera: preparing glasses hotspot');
-
-      const currentHotspot = enabledHotspotStatus(glasses);
-      const hotspot = currentHotspot ?? await BluetoothSdk.setHotspotState(true);
-      if (hotspot.state !== 'enabled') {
-        throw new Error('The glasses hotspot did not turn on.');
-      }
-      if (generation !== galleryConnectionGenerationRef.current) return;
-
-      const baseUrl = `http://${hotspot.localIp}:8089`;
-      galleryBaseUrlRef.current = baseUrl;
-      galleryHotspotSsidRef.current = hotspot.ssid;
-      const alreadyReady = await waitForGalleryServer(baseUrl, 3, 400);
-      if (generation !== galleryConnectionGenerationRef.current) return;
-      if (alreadyReady) {
-        markGalleryServerReady(baseUrl);
-        return;
-      }
-
-      setGalleryServerStatus(`Gallery server: connecting to ${hotspot.ssid}`);
-      setCameraStatus(`Camera: connecting to ${hotspot.ssid}`);
-      let connectionError: unknown = null;
-      try {
-        await WifiManager.connectToProtectedSSID(
-          hotspot.ssid,
-          hotspot.password,
-          false,
-          false,
-        );
-      } catch (error) {
-        connectionError = error;
-      }
-      if (generation !== galleryConnectionGenerationRef.current) return;
-
-      const ready = await waitForGalleryServer(baseUrl, 20, 500);
-      if (generation !== galleryConnectionGenerationRef.current) return;
-      if (ready) {
-        markGalleryServerReady(baseUrl);
-        return;
-      }
-      const reason = connectionError ? ` ${formatError(connectionError)}` : '';
-      setGalleryServerReachable(false);
-      setGalleryServerStatus(`Gallery server: connection required for ${hotspot.ssid}`);
-      setCameraStatus('Camera: connect to the glasses hotspot to enable capture');
-      throw new Error(`Could not reach the glasses gallery.${reason}`);
-    })();
-    galleryConnectionPromiseRef.current = connection;
-    try {
-      await connection;
-    } finally {
-      if (galleryConnectionPromiseRef.current === connection) {
-        galleryConnectionPromiseRef.current = null;
-      }
-    }
-  }
-
-  function markGalleryServerReady(baseUrl: string) {
-    setGalleryServerReachable(true);
-    setGalleryServerStatus(`Gallery server: ready at ${baseUrl}`);
-    setCameraStatus('Camera: ready to save and preview from glasses');
-    addEvent('LIVE', `gallery server ready ${baseUrl}`);
   }
 
   async function setStreamCloudServerEnabledAction(enabled: boolean) {
@@ -3153,15 +2763,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
-  async function toggleHotspot() {
-    await runAction(hotspotEnabled ? 'Disable hotspot' : 'Enable hotspot', async () => {
-      requireConnected('toggle hotspot');
-      const next = !hotspotEnabled;
-      const status = await BluetoothSdk.setHotspotState(next);
-      addEvent('LIVE', `hotspot ${status.state}`);
-    });
-  }
-
   async function setWifiAdbState(enabled: boolean) {
     await runAction(enabled ? 'Enable Wi-Fi ADB' : 'Disable Wi-Fi ADB', async () => {
       requireConnected('toggle Wi-Fi ADB');
@@ -3194,60 +2795,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw error instanceof Error ? error : new Error(message);
       }
       // Ignore completions from a prior BLE session after disconnect/reconnect.
-      // Do not use galleryConnectionGeneration — hotspot/gallery flows bump that while BLE stays up.
       if (requestGeneration !== glassesConnectionGenerationRef.current) {
         return;
       }
       setWifiAdbEnabled(enabled);
       addEvent('LIVE', `Wi-Fi ADB ${enabled ? 'enabled' : 'disabled'}`);
-    });
-  }
-
-  async function openGalleryServer() {
-    await runAction('Open gallery server', async () => {
-      const baseUrl = requireGalleryServerUrl(glasses, hotspotEnabled);
-      setGalleryServerReachable(null);
-      setGalleryServerStatus(`Gallery server: checking ${baseUrl}`);
-      const result = await checkGalleryServerReachability(baseUrl, glasses);
-      setGalleryServerReachable(result.reachable);
-      setGalleryServerStatus(result.status);
-      addEvent(result.eventTag, result.eventText);
-      if (result.reachable) {
-        await Linking.openURL(baseUrl);
-      }
-    });
-  }
-
-  async function copyGalleryServerUrl() {
-    await runAction('Copy gallery URL', async () => {
-      const baseUrl = requireGalleryServerUrl(glasses, hotspotEnabled);
-      Clipboard.setString(baseUrl);
-      setGalleryServerStatus(`Gallery server: copied ${baseUrl}`);
-    });
-  }
-
-  async function copyGalleryHotspotPassword() {
-    await runAction('Copy hotspot password', async () => {
-      const password = galleryHotspotPasswordLabel(glasses);
-      Clipboard.setString(password);
-      setGalleryServerStatus(`Hotspot password copied: ${password}`);
-    });
-  }
-
-  async function openWifiSettings() {
-    await runAction('Open Wi-Fi settings', async () => {
-      if (Platform.OS === 'android') {
-        const androidLinking = Linking as typeof Linking & {
-          sendIntent?: (action: string) => Promise<void>;
-        };
-        if (androidLinking.sendIntent) {
-          await androidLinking.sendIntent('android.settings.WIFI_SETTINGS');
-          return;
-        }
-      }
-      const ssid = galleryHotspotSsidLabel(glasses);
-      setGalleryServerStatus(`Join ${ssid} from system Wi-Fi settings, then tap Retry.`);
-      addEvent('LIVE', `Join ${ssid} from system Wi-Fi settings, then tap Retry.`);
     });
   }
 
@@ -3604,17 +3156,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setStreamPreviewReady(false);
     setStreamStartedAt(null);
     setStreamStatus(status);
-    setGalleryServerReachable(null);
-    setGalleryServerStatus('Gallery server: connect glasses first');
-    galleryConnectionGenerationRef.current += 1;
     glassesConnectionGenerationRef.current += 1;
-    galleryConnectionPromiseRef.current = null;
-    const hotspotSsid = galleryHotspotSsidRef.current;
-    galleryBaseUrlRef.current = null;
-    galleryHotspotSsidRef.current = null;
-    if (hotspotSsid) {
-      void disconnectGlassesHotspotWifi(hotspotSsid).catch(() => undefined);
-    }
     settleWifiConnectAttempt();
     setWifiConnectError(null);
     setMicRecording(false);
@@ -3694,8 +3236,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     clearDisplay,
     connect,
     connectDevice,
-    copyGalleryHotspotPassword,
-    copyGalleryServerUrl,
     disconnect,
     defaultDevice,
     directStreamReceiverRunning,
@@ -3708,11 +3248,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     touchGestureDefaults,
     touchGesturePending,
     setTouchGestureDefaultBehaviorEnabled: setTouchGestureDefaultBehaviorEnabledAction,
-    galleryServerReachable,
-    galleryServerStatus,
     glasses,
     glassesConnectionGeneration: glassesConnectionGenerationRef.current,
-    hotspotEnabled,
     lastAction,
     lastMicBytes,
     lastMicDurationSeconds,
@@ -3725,10 +3262,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     micPlaying,
     micRecording,
     openBluetoothSettings,
-    openGalleryServer,
     openPhotoPreview,
-    openWifiSettings,
-    prepareGlassesPhotoPreview: prepareGlassesPhotoPreviewAction,
     applyCameraSettings,
     pcmBytes,
     pcmFrames,
@@ -3738,7 +3272,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     phonePhotoUploadUrl,
     photoCompression,
     photoCloudServerEnabled,
-    photoGlassesStorageEnabled,
     photoAeExposureDivisor,
     photoIsoCap,
     photoNoiseReduction,
@@ -3776,7 +3309,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setGalleryModeEnabled: setGalleryModeEnabledAction,
     setPhotoCompression: setPhotoCompressionAction,
     setPhotoCloudServerEnabled: setPhotoCloudServerEnabledAction,
-    setPhotoGlassesStorageEnabled: setPhotoGlassesStorageEnabledAction,
     setPhotoAeExposureDivisor: setPhotoAeExposureDivisorAction,
     setPhotoIsoCap: setPhotoIsoCapAction,
     setPhotoNoiseReduction: setPhotoNoiseReductionAction,
@@ -3814,7 +3346,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     streamStatus,
     streamUrl,
     testWebhook,
-    toggleHotspot,
     setWifiAdbState,
     toggleMic,
     toggleVideoRecording,
@@ -4350,84 +3881,7 @@ function currentPhotoSource(destination: PhotoDestination): PhotoPreviewDetails[
   if (destination === 'cloud') {
     return 'Cloud server';
   }
-  if (destination === 'glasses') {
-    return 'Glasses gallery';
-  }
   return 'Phone receiver';
-}
-
-function requireGalleryServerUrl(status: GlassesRuntimeState, fallbackEnabled: boolean) {
-  const baseUrl = galleryServerUrl(status, fallbackEnabled);
-  if (!baseUrl) {
-    throw new Error('Enable the glasses hotspot first.');
-  }
-  return baseUrl;
-}
-
-async function checkGalleryServerReachability(
-  baseUrl: string,
-  status: GlassesRuntimeState,
-) {
-  try {
-    const response = await fetch(cacheBustedUrl(`${baseUrl}/api/status`), {
-      cache: 'no-store',
-      headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
-    });
-    const body = await response.text();
-    if (response.ok) {
-      const totalPhotos = /"total_photos"\s*:\s*(\d+)/.exec(body)?.[1];
-      return {
-        reachable: true,
-        status: totalPhotos
-          ? `Gallery server: reachable · ${totalPhotos} items`
-          : 'Gallery server: reachable',
-        eventTag: 'LIVE' as const,
-        eventText: `gallery server reachable ${baseUrl}`,
-      };
-    }
-    return {
-      reachable: false,
-      status: `Gallery server: HTTP ${response.status}`,
-      eventTag: 'TX' as const,
-      eventText: `gallery server HTTP ${response.status}`,
-    };
-  } catch (error) {
-    return {
-      reachable: false,
-      status: `Gallery server: not reachable. Join ${galleryHotspotSsidLabel(status)} and retry.`,
-      eventTag: 'TX' as const,
-      eventText: `gallery server unreachable: ${formatError(error)}`,
-    };
-  }
-}
-
-async function waitForGalleryServer(baseUrl: string, attempts: number, delayMs: number) {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const response = await fetchWithTimeout(
-        cacheBustedUrl(`${baseUrl}/api/health`),
-        {cache: 'no-store', headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'}},
-        1000,
-      );
-      if (response.status > 0) {
-        return true;
-      }
-    } catch {
-      // The hotspot can take a few seconds to become routable after the OS joins it.
-    }
-    if (attempt < attempts - 1) {
-      await delay(delayMs);
-    }
-  }
-  return false;
-}
-
-async function disconnectGlassesHotspotWifi(ssid: string) {
-  if (Platform.OS === 'ios') {
-    await WifiManager.disconnectFromSSID(ssid);
-    return;
-  }
-  await WifiManager.disconnect();
 }
 
 function androidRuntimePermissions() {

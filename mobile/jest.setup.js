@@ -37,16 +37,22 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => {
 })
 
 jest.mock("@mentra/bluetooth-sdk/internal", () => {
-  const {bluetoothSdkMock, mentraLocalNetworkMock} = require("./src/test-utils/mockBluetoothSdk")
+  const {bluetoothSdkMock, glassesWifiMock, mentraLocalNetworkMock} = require("./src/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
     default: bluetoothSdkMock,
     ...bluetoothSdkMock,
+    ...glassesWifiMock,
     MentraLocalNetwork: mentraLocalNetworkMock,
     BLUETOOTH_SDK_VERSION: "0.0.0-test",
     sdkPinnedOtaManifestUrl: () =>
       "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json",
   }
+})
+
+jest.mock("@mentra/bluetooth-sdk/glasses-wifi", () => {
+  const {glassesWifiMock} = require("./src/test-utils/mockBluetoothSdk")
+  return {__esModule: true, ...glassesWifiMock}
 })
 
 jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
@@ -55,13 +61,6 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
     otaLocalNetwork: {
       isAvailable: () => true,
       getNetworkDiagnostics: mentraLocalNetworkMock.getNetworkDiagnostics,
-      connect: mentraLocalNetworkMock.connect,
-      request: mentraLocalNetworkMock.request,
-      download: mentraLocalNetworkMock.download,
-      cancel: mentraLocalNetworkMock.cancel,
-      disconnect: mentraLocalNetworkMock.disconnect,
-      onDownloadProgress: (listener) => mentraLocalNetworkMock.addListener("downloadProgress", listener),
-      onNetworkLost: (listener) => mentraLocalNetworkMock.addListener("networkLost", listener),
     },
     otaServer: {
       start: jest.fn(() =>

@@ -1,15 +1,15 @@
-@testable import GlassesMediaCore
+@testable import MentraBluetoothSDK
 import XCTest
 
 final class HotspotJoinFailureTests: XCTestCase {
     func testOwnedFailurePreservesCauseAndDistinctCancellation() {
-        let failure = HotspotJoinFailure(LocalMediaError("Mac Wi-Fi scan failed (com.apple.wifi, -3905)"))
+        let failure = HotspotJoinFailure(HotspotError("Mac Wi-Fi scan failed (com.apple.wifi, -3905)"))
         XCTAssertEqual(failure.code, "ERR_HOTSPOT_JOIN")
         XCTAssertEqual(failure.message, "Mac Wi-Fi scan failed (com.apple.wifi, -3905)")
         let cancelled = HotspotJoinFailure(CancellationError())
         XCTAssertEqual(cancelled.code, "ERR_HOTSPOT_CANCELLED")
         XCTAssertEqual(cancelled.message, "Hotspot join cancelled")
-        let leave = HotspotJoinFailure(LocalMediaError("Hotspot join cancelled"))
+        let leave = HotspotJoinFailure(HotspotError("Hotspot join cancelled"))
         XCTAssertEqual(leave.code, "ERR_HOTSPOT_CANCELLED")
         XCTAssertEqual(leave.message, "Hotspot join cancelled")
     }
@@ -31,7 +31,7 @@ final class HotspotJoinFailureTests: XCTestCase {
     }
 
     func testOwnedMessagesAreBoundedAndSingleLine() {
-        let failure = HotspotJoinFailure(LocalMediaError("\n\t" + String(repeating: "a", count: 600)))
+        let failure = HotspotJoinFailure(HotspotError("\n\t" + String(repeating: "a", count: 600)))
         XCTAssertEqual(failure.message, String(repeating: "a", count: 512))
     }
 }

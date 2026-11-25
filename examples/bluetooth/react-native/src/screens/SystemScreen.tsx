@@ -18,10 +18,6 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import {
   connectedWifiStatus,
-  galleryHotspotPasswordLabel,
-  galleryHotspotSsidLabel,
-  galleryServerUrl,
-  hotspotLabel,
   isGlassesConnected,
   wifiLabel,
   wifiSubLabel,
@@ -40,8 +36,6 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const networks = (sdk.phone.wifiScanResults ?? []).filter(
     (network) => !connected || !currentWifi || network.ssid !== currentWifi.ssid,
   );
-  const galleryUrl = galleryServerUrl(sdk.glasses, sdk.hotspotEnabled);
-  const galleryHotspotPassword = galleryUrl ? galleryHotspotPasswordLabel(sdk.glasses) : null;
   const inputChips = recentInputChips(sdk.events);
   const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
@@ -160,75 +154,6 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         ) : null}
       </LinearGradient>
 
-      {/* Hotspot */}
-      <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.hotspotCard}>
-        <View style={styles.tileHead}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={styles.iconTileSm}>
-              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.greenInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <Circle cx={12} cy={12} r={2} />
-                <Path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.48" />
-              </Svg>
-            </View>
-            <View>
-              <Text style={styles.tileTitle}>Hotspot</Text>
-              <Text style={[styles.tileSub, { color: sdk.hotspotEnabled ? colors.greenAccent : colors.muted }]}>
-                {connected ? hotspotLabel(sdk.glasses, sdk.hotspotEnabled) : 'connect glasses to toggle'}
-              </Text>
-            </View>
-          </View>
-          <Pressable
-            disabled={!connected}
-            hitSlop={10}
-            onPress={sdk.toggleHotspot}
-            style={[
-              styles.toggleOn,
-              { borderColor: sdk.hotspotEnabled ? 'rgba(52,199,89,0.72)' : 'rgba(15,42,29,0.18)' },
-              !connected && styles.disabled,
-            ]}>
-            <View style={[styles.toggleKnob, !sdk.hotspotEnabled && { backgroundColor: colors.mutedSoft, alignSelf: 'flex-start' }]} />
-          </Pressable>
-        </View>
-        <View style={styles.hotspotDivider} />
-        <View style={styles.hotspotGalleryRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.hotspotGalleryTitle}>Gallery server</Text>
-            <Text style={[styles.hotspotGalleryUrl, { color: galleryUrl ? colors.greenAccent : colors.muted }]}>
-              {galleryUrl ?? 'Enable hotspot to expose local gallery access'}
-            </Text>
-            {galleryHotspotPassword ? (
-              <Text style={styles.hotspotGalleryHint}>
-                Join {galleryHotspotSsidLabel(sdk.glasses)} · password {galleryHotspotPassword}
-              </Text>
-            ) : null}
-          </View>
-          <View style={styles.hotspotActions}>
-            <View style={styles.hotspotActionRow}>
-              <HotspotActionChip enabled={galleryUrl !== null} label="Open" onPress={sdk.openGalleryServer} />
-              <HotspotActionChip enabled={galleryUrl !== null} label="Wi-Fi" onPress={sdk.openWifiSettings} />
-            </View>
-            <View style={styles.hotspotActionRow}>
-              <HotspotActionChip enabled={galleryUrl !== null} label="Copy URL" onPress={sdk.copyGalleryServerUrl} />
-              <HotspotActionChip enabled={galleryHotspotPassword !== null} label="Copy pwd" onPress={sdk.copyGalleryHotspotPassword} />
-            </View>
-          </View>
-        </View>
-        <Text
-          style={[
-            styles.hotspotStatus,
-            {
-              color:
-                sdk.galleryServerReachable === true
-                  ? colors.greenAccent
-                  : sdk.galleryServerReachable === false
-                    ? colors.red
-                    : colors.muted,
-            },
-          ]}>
-          {sdk.galleryServerStatus}
-        </Text>
-      </LinearGradient>
-
       {/* Wi-Fi ADB (Mentra Live debug) */}
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.wifiAdbCard}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -255,7 +180,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           </View>
         </View>
         <View style={styles.wifiAdbActions}>
-          <HotspotActionChip
+          <ActionChip
             enabled={
               connected &&
               sdk.activeAction !== 'Enable Wi-Fi ADB' &&
@@ -266,7 +191,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
               void sdk.setWifiAdbState(true);
             }}
           />
-          <HotspotActionChip
+          <ActionChip
             enabled={
               connected &&
               sdk.activeAction !== 'Enable Wi-Fi ADB' &&
@@ -278,7 +203,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             }}
           />
         </View>
-        <Text style={[styles.hotspotStatus, { color: colors.muted }]}>
+        <Text style={[styles.cardNote, { color: colors.muted }]}>
           Mentra Live only · watch Console for TX/LIVE lines if nothing changes
         </Text>
       </LinearGradient>
@@ -553,10 +478,10 @@ function GalleryModeChip({ active, disabled, label, onPress }: { active: boolean
   );
 }
 
-function HotspotActionChip({ enabled, label, onPress }: { enabled: boolean; label: string; onPress: () => void }) {
+function ActionChip({ enabled, label, onPress }: { enabled: boolean; label: string; onPress: () => void }) {
   return (
-    <Pressable disabled={!enabled} onPress={onPress} style={[styles.hotspotActionChip, !enabled && styles.hotspotActionChipDisabled]}>
-      <Text style={[styles.hotspotActionText, !enabled && styles.hotspotActionTextDisabled]}>{label}</Text>
+    <Pressable disabled={!enabled} onPress={onPress} style={[styles.actionChip, !enabled && styles.actionChipDisabled]}>
+      <Text style={[styles.actionText, !enabled && styles.actionTextDisabled]}>{label}</Text>
     </Pressable>
   );
 }
@@ -763,25 +688,15 @@ const styles = StyleSheet.create({
   wifiExpandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderTopWidth: 1, borderTopColor: 'rgba(15,42,29,0.06)', paddingTop: 12, paddingBottom: 2 },
   wifiExpandText: { color: colors.greenInk, fontSize: 12, fontWeight: '700' },
   tileCard: { flex: 1, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
-  hotspotCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   wifiAdbCard: { marginHorizontal: 16, marginTop: 8, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   wifiAdbActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  hotspotDivider: { height: 1, backgroundColor: 'rgba(15,42,29,0.05)' },
-  hotspotGalleryRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
-  hotspotGalleryTitle: { color: colors.ink, fontSize: 13, fontWeight: '700' },
-  hotspotGalleryUrl: { fontSize: 11, fontWeight: '600', lineHeight: 15 },
-  hotspotGalleryHint: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15, marginTop: 2 },
-  hotspotActions: { alignItems: 'flex-end', gap: 6 },
-  hotspotActionRow: { flexDirection: 'row', gap: 6 },
-  hotspotActionChip: { minHeight: 40, minWidth: 72, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 11, borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.14)' },
-  hotspotActionChipDisabled: { backgroundColor: 'rgba(15,42,29,0.04)' },
-  hotspotActionText: { color: colors.greenDeep, fontSize: 12, fontWeight: '700' },
-  hotspotActionTextDisabled: { color: colors.muted },
-  hotspotStatus: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
+  actionChip: { minHeight: 40, minWidth: 72, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 11, borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.14)' },
+  actionChipDisabled: { backgroundColor: 'rgba(15,42,29,0.04)' },
+  actionText: { color: colors.greenDeep, fontSize: 12, fontWeight: '700' },
+  actionTextDisabled: { color: colors.muted },
+  cardNote: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
   micCard: { marginHorizontal: 16, marginTop: 8, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   tileHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  toggleOn: { width: 38, height: 22, borderRadius: 999, backgroundColor: '#fff', borderWidth: 1.2, paddingHorizontal: 2, alignItems: 'flex-end', justifyContent: 'center' },
-  toggleKnob: { width: 18, height: 18, borderRadius: 999, backgroundColor: colors.greenAccent },
   micControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   micControlButton: { width: 44, height: 44, borderRadius: 999, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F2A1D', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 1 },
   micControlButtonActive: { backgroundColor: colors.greenInk },

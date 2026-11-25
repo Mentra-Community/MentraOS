@@ -59,7 +59,7 @@ Object.assign(cloudClientService, {startManagedPhoto, awaitManagedPhotoReady})
 // isGlassesConnected. Mock both (the real store transitively drags
 // react-native, which bun can't parse); the store state is mutable so each
 // test can flip the connection.
-let glassesState: {connection: {state: string}; capabilities?: {hasCamera?: boolean}; deferredPhotosVersion?: number} = {
+let glassesState: {connection: {state: string}; capabilities?: {hasCamera?: boolean}} = {
   connection: {state: "connected"},
 }
 mock.module("../../stores/glasses", () => ({
@@ -367,17 +367,6 @@ describe("PhonePhotoCoordinator", () => {
       expect(capturePhotoNative).toHaveBeenCalledTimes(3)
       expect(new Set(captures.map((capture) => capture.photoId)).size).toBe(3)
       expect(previews[0]).toEqual({url: "data:image/jpeg;base64,AAAA", width: 500, height: 375})
-    })
-
-    test("glasses that keep the photo give it over the glasses file fetch, which falls back to Bluetooth", async () => {
-      glassesState = {connection: {state: "connected"}, deferredPhotosVersion: 1}
-      const fetchFile = mock(async (_fileId: string, _overBluetooth: () => Promise<string>) => "file:///cache/wifi.jpg")
-      const coord = new PhonePhotoCoordinator(undefined, undefined, undefined, fetchFile)
-      const capture = coord.capturePhoto("com.a", {}, "p9")
-      expect(await capture.photo()).toEqual({fileUri: "file:///cache/wifi.jpg", mimeType: "image/jpeg", size: -1, requestId: "p9"})
-      expect(fetchFile.mock.calls[0]![0]).toBe("p9")
-      const bluetooth = new PhonePhotoCoordinator(undefined, undefined, undefined, (_id, overBluetooth) => overBluetooth())
-      expect((await bluetooth.capturePhoto("com.a", {}).photo()).fileUri).toBe("file:///cache/ble.jpg")
     })
 
     test("a miniapp reaches only its own captures, and its own are released when it closes", async () => {

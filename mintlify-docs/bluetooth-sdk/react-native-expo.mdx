@@ -175,7 +175,7 @@ plumbing while keeping the root SDK available for direct commands:
 | --- | --- |
 | `useMentraBluetooth` | You want one React session object for status, scan, connect/disconnect, default-device state, and gallery mode. |
 | `useBluetoothScan` | You want a focused scan picker without the full connection/session helper. |
-| `useBluetoothEvent` | You want React-managed subscription cleanup for hardware events such as button presses, touch, battery, Wi-Fi, hotspot, photo, stream, speaking, or microphone events. |
+| `useBluetoothEvent` | You want React-managed subscription cleanup for hardware events such as button presses, touch, battery, Wi-Fi, photo, stream, speaking, or microphone events. |
 
 ```tsx
 import {Button, Text, View} from 'react-native';
@@ -261,7 +261,7 @@ type GlassesConnectionStatus =
 
 Use `mentra.glasses.connection.state` for link-layer progress. `fullyBooted` only exists when `state === 'connected'`.
 
-Use `useMentraBluetooth()` as the React status API for connection, battery, Wi-Fi, hotspot, scan, and SDK runtime state. `setGalleryModeEnabled(...)` resolves with the ASG `SettingsAckSuccessEvent` and rejects failure statuses, `mentra.sdk.galleryMode.enabled` reflects the acknowledged gallery-mode setting, and `mentra.sdk.galleryMode.applying` is true while that ASG response is in flight.
+Use `useMentraBluetooth()` as the React status API for connection, battery, Wi-Fi, scan, and SDK runtime state. `setGalleryModeEnabled(...)` resolves with the ASG `SettingsAckSuccessEvent` and rejects failure statuses, `mentra.sdk.galleryMode.enabled` reflects the acknowledged gallery-mode setting, and `mentra.sdk.galleryMode.applying` is true while that ASG response is in flight.
 
 ## Default Device
 

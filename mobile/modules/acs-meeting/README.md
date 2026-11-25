@@ -1044,6 +1044,8 @@ the separate profile rollback and takes effect on the next join.
 
 swift test --package-path mobile/modules/acs-meeting/ios/PolicyKit
 swift test --package-path mobile/modules/glasses-media/ios/CoreKit
+# The iOS hotspot join and its policies
+swift test --package-path mobile/modules/bluetooth-sdk
 ```
 
 These are plain JVM tests with no Robolectric, which constrains what can be tested: ACS SDK
@@ -1063,7 +1065,7 @@ counter race that caused the false conservation failures.
 Same contract, fewer knobs. `AcsMeetingModule.swift` exposes the same Expo surface;
 `WhepVideoSource` and `LocalWhipIngestSource.swift` deliver `CVPixelBuffer`;
 `AcsFrameSender.swift` sends on the virtual stream behind a `VideoSendGate` with a simple fps
-throttle. `GlassesHotspotNetwork` uses the same persistent `NEHotspotConfiguration` join as
+throttle. `GlassesHotspotNetwork`, in the Bluetooth SDK, uses the same persistent `NEHotspotConfiguration` join as
 gallery transfers, verifies the joined SSID and the address of the one interface Network framework
 reports as Wi-Fi (never a fixed `en0`), and waits for DHCP against the gateway the glasses
 advertised before resolving. Join and SoftAP rebind use that same verified interface and address. Audio policy logic is shared through the

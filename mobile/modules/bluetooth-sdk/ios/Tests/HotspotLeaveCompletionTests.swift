@@ -1,4 +1,4 @@
-@testable import GlassesMediaCore
+@testable import MentraBluetoothSDK
 import XCTest
 
 final class HotspotLeaveCompletionTests: XCTestCase {
@@ -22,7 +22,7 @@ final class HotspotLeaveCompletionTests: XCTestCase {
         let leave = HotspotLeaveCompletion { released = true }
         var receivedFailure = false
         leave.append { if case .failure = $0 { receivedFailure = true } }
-        leave.complete(.failure(LocalMediaError("Current association is unknown")))
+        leave.complete(.failure(HotspotError("Current association is unknown")))
         XCTAssertTrue(receivedFailure)
         XCTAssertFalse(released)
     }

@@ -2,7 +2,7 @@ import {execSync} from "child_process"
 import fs from "fs"
 import path from "path"
 
-import {IOSConfig, type ConfigPlugin, withDangerousMod, withInfoPlist, withPodfile} from "expo/config-plugins"
+import {IOSConfig, type ConfigPlugin, withDangerousMod, withEntitlementsPlist, withInfoPlist, withPodfile} from "expo/config-plugins"
 
 import {type BluetoothSdkPluginProps} from "./index"
 import {resolveAnalyticsProps} from "./analyticsProps"
@@ -16,6 +16,12 @@ const STALE_INFO_POSTHOG_API_KEY = "MentraBluetoothSdkPostHogApiKey"
 const STALE_INFO_POSTHOG_HOST = "MentraBluetoothSdkPostHogHost"
 /** Lets iOS complete the SDK's pending reconnect, and deliver BLE events, while the app is suspended. */
 export const IOS_BLUETOOTH_BACKGROUND_MODE = "bluetooth-central"
+/** The fast link joins the glasses' hotspot and verifies the phone's address on it. */
+export const IOS_FAST_LINK_ENTITLEMENTS = [
+  "com.apple.developer.networking.HotspotConfiguration",
+  "com.apple.developer.networking.wifi-info",
+] as const
+const LOCAL_NETWORK_DESCRIPTION = "Photos come from your glasses over their Wi-Fi."
 
 const ensureBluetoothSdkExpoAdapterPodEnv = (podfile: string): string => {
   if (podfile.includes(BLUETOOTH_SDK_EXPO_ADAPTER_ENV)) {
@@ -82,6 +88,8 @@ export function applyBluetoothSdkInfoPlist(
   delete infoPlist[STALE_INFO_POSTHOG_HOST]
 
   infoPlist[INFO_SDK_VERSION] = sdkVersion
+  // The fast link reaches the glasses on the local network; an app's own wording wins.
+  infoPlist.NSLocalNetworkUsageDescription ??= LOCAL_NETWORK_DESCRIPTION
 
   // Merge, never replace: apps may also declare audio, location or other modes.
   const declaredModes = infoPlist.UIBackgroundModes
@@ -109,12 +117,22 @@ function withBluetoothSdkInfoPlist(config: any, props: BluetoothSdkPluginProps |
   })
 }
 
+/** The entitlements the fast link needs, beside whatever else the app declares. */
+export function applyBluetoothSdkEntitlements<T extends Record<string, unknown>>(entitlements: T): T {
+  for (const key of IOS_FAST_LINK_ENTITLEMENTS) (entitlements as Record<string, unknown>)[key] = true
+  return entitlements
+}
+
 export const withIosConfiguration: ConfigPlugin<BluetoothSdkPluginProps> = (config, props) => {
   config = withPodfile(config, (config) => {
     config.modResults.contents = ensureBluetoothSdkExpoAdapterPodEnv(config.modResults.contents)
     return config
   })
   config = withBluetoothSdkInfoPlist(config, props)
+  config = withEntitlementsPlist(config, (config) => {
+    config.modResults = applyBluetoothSdkEntitlements(config.modResults)
+    return config
+  })
 
   if (props?.node) {
     config = withXcodeEnvLocal(config)

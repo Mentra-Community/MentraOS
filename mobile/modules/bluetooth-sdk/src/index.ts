@@ -1,15 +1,23 @@
 import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 import PrivateBluetoothSdkModule from "./_private/BluetoothSdkModule"
+import {publicGlassesStatus} from "./BluetoothSdk.types"
 import type {
   BluetoothSdkEventListener,
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
   PhotoCaptureDefaults,
+  PhotoCapture,
+  PhotoCaptureParams,
   PublicBluetoothStatus,
   PublicGlassesStatus,
   VideoRecordingDefaults,
 } from "./BluetoothSdk.types"
 import {getReleaseChangelogs} from "./changelogs"
+import {runContinuousCapture} from "./glasses-wifi/continuous"
+import {createLink} from "./glasses-wifi/link"
+
+/** The app's own links to the glasses, and its hold on the fast link. */
+const link = createLink("app fast link")
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "native_notification_status",
@@ -32,8 +40,6 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "wifi_scan_result",
   "wifi_forget_result",
   "saved_wifi_networks",
-  "hotspot_status_change",
-  "hotspot_error",
   "photo_response",
   "photo_status",
   "camera_status",
@@ -100,10 +106,10 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   configureNativeNotifications: bindPublicMethod("configureNativeNotifications"),
   getNativeNotificationStatus: bindPublicMethod("getNativeNotificationStatus"),
   addListener,
-  getGlassesStatus: bindPublicMethod("getGlassesStatus"),
+  getGlassesStatus: async () => publicGlassesStatus(await PrivateBluetoothSdkModule.getGlassesStatus()),
   getBluetoothStatus: bindPublicMethod("getBluetoothStatus"),
   subscribeGlassesStatus: (listener: (changed: Partial<PublicGlassesStatus>) => void) =>
-    PrivateBluetoothSdkModule.onGlassesStatus(listener),
+    PrivateBluetoothSdkModule.onGlassesStatus((changed) => listener(publicGlassesStatus(changed))),
   subscribeBluetoothStatus: (listener: (changed: Partial<PublicBluetoothStatus>) => void) =>
     PrivateBluetoothSdkModule.onBluetoothStatus(listener),
   getDefaultDevice: bindPublicMethod("getDefaultDevice"),
@@ -130,7 +136,6 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   getSavedWifiNetworks: bindPublicMethod("getSavedWifiNetworks"),
   sendWifiCredentials: bindPublicMethod("sendWifiCredentials"),
   forgetWifiNetwork: bindPublicMethod("forgetWifiNetwork"),
-  setHotspotState: bindPublicMethod("setHotspotState"),
   setSystemTime: bindPublicMethod("setSystemTime"),
   setWifiAdbState: bindPublicMethod("setWifiAdbState"),
   setGalleryServerEnabled: bindPublicMethod("setGalleryServerEnabled"),
@@ -167,6 +172,27 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   uploadPhoto: bindPublicMethod("uploadPhoto"),
   capturePhoto: bindPublicMethod("capturePhoto"),
   takePhoto: bindPublicMethod("takePhoto"),
+  link,
+  captureContinuous: (options: PhotoCaptureParams & {maxPending?: number}) =>
+    runContinuousCapture(
+      (params: PhotoCaptureParams, released): PhotoCapture => {
+        const capture = PrivateBluetoothSdkModule.capturePhoto(params)
+        // The run counts the photos still on the glasses: this one stops counting once released.
+        return {
+          requestId: capture.requestId,
+          get captured() {
+            return capture.captured
+          },
+          get preview() {
+            return capture.preview
+          },
+          photo: () => capture.photo(),
+          release: () => capture.release().finally(released),
+        }
+      },
+      options,
+      "app continuous capture",
+    ),
   warmUpCamera: bindPublicMethod("warmUpCamera"),
   stopCameraWarmUp: bindPublicMethod("stopCameraWarmUp"),
   startVideoRecording: bindPublicMethod("startVideoRecording"),
@@ -210,6 +236,9 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
 
 export default BluetoothSdk
 
+export type {GlassesLink, LinkState} from "./glasses-wifi/link"
+export type {ContinuousCapture, ContinuousState} from "./glasses-wifi/continuous"
+
 export {
   CAMERA_FOV_DEFAULT,
   CAMERA_FOV_MAX,
@@ -218,7 +247,6 @@ export {
   isBusyGlassesConnectionStatus,
   isConnectedGlassesConnectionStatus,
   isConnectedWifiStatus,
-  isEnabledHotspotStatus,
   isReadyGlassesConnectionStatus,
 } from "./BluetoothSdk.types"
 
@@ -252,16 +280,12 @@ export type {
   ConnectedWifiStatus,
   Device,
   DeviceModel,
-  EnabledHotspotStatus,
   GalleryStatusEvent,
   GlassesConnectionStatus,
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
   GlassesNotReadyEvent,
   HeadUpEvent,
-  HotspotErrorEvent,
-  HotspotStatus,
-  HotspotStatusChangeEvent,
   GlassesSessionChangedEvent,
   KeepAliveAckEvent,
   LocalTranscriptionEvent,

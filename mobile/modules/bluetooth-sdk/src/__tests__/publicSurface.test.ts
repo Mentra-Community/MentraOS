@@ -30,4 +30,12 @@ describe("public SDK surface", () => {
     expect(indexSource).toMatch(/"bes_crash_detected"/)
     expect(indexSource).toMatch(/\bBesCrashDetectedEvent,/)
   })
+
+  it("offers the glasses links only as link, with no hotspot commands or events", () => {
+    expect(indexSource).not.toContain("setHotspotState")
+    expect(indexSource).not.toMatch(/"hotspot_status_change"|"hotspot_error"|HotspotStatus/)
+    expect(indexSource).toMatch(/^  link,$/m)
+    expect(indexSource).toMatch(/\bGlassesLink, LinkState\b/)
+    expect(indexSource).not.toMatch(/FastLink/)
+  })
 })

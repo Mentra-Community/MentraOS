@@ -21,7 +21,7 @@
  */
 
 import {softapTrace, softapTraceFailure, beginSoftapTrace, resetSoftapTrace} from "../utils/softapTrace"
-import type {GlassesWifiHold} from "./GlassesWifi"
+import type {GlassesWifiHold} from "@mentra/bluetooth-sdk/glasses-wifi"
 import {PhotoPauseController} from "./PhotoPauseController"
 
 /** Steps in order. Also the teardown order, reversed. */

@@ -1,6 +1,6 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {holdGlassesWifi, type GlassesWifiHold} from "@mentra/bluetooth-sdk/glasses-wifi"
 import type {StreamStartRequest, StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
-import type {GlassesWifiHold} from "./GlassesWifi"
 import {pcmToBase64} from "../utils/pcmToBase64"
 
 export interface RelayOptions {
@@ -346,7 +346,6 @@ export function createManagedWebRtcRelay(
   const native = requireNativeModule<NativeRelay>("MentraGlassesMediaRelay")
   const {Platform} = require("react-native") as typeof import("react-native")
   const {default: micSessionManager} = require("./MicSessionManager") as typeof import("./MicSessionManager")
-  const {holdGlassesWifi} = require("./GlassesWifi") as typeof import("./GlassesWifi")
   return new ManagedWebRtcRelay(options, onStatus, onFailure, {
     native,
     holdWifi: (signal) => holdGlassesWifi({consumer: "managed-relay", purpose: "incoming-server", signal}),

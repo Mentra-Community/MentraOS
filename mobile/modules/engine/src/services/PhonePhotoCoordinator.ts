@@ -38,7 +38,6 @@ import type {
   PhotoSize,
   PhotoTransferMethod,
 } from "@mentra/bluetooth-sdk/internal"
-import type {fetchGlassesFile} from "./GlassesFiles"
 import {cloudClientService} from "./CloudClientService"
 import {fleetEvents} from "./fleet/fleetEvents"
 import {isGlassesConnected} from "./GlassesReadiness"
@@ -262,9 +261,6 @@ export class PhonePhotoCoordinator {
     private readonly streamFrames: StreamFrameSource = nativeStreamFrames,
     private readonly uploadStreamFrame: StreamFrameUpload = putStreamFrame,
     private readonly saveStreamFrame: StreamFrameSave = saveStreamFrameFile,
-    // Loaded on use: the glasses Wi-Fi service reaches native modules a capture never needs.
-    private readonly fetchFile: typeof fetchGlassesFile = (fileId, overBluetooth) =>
-      (require("./GlassesFiles") as typeof import("./GlassesFiles")).fetchGlassesFile(fileId, overBluetooth),
   ) {}
 
   /** The relayed stream's next frame, or null when no stream passes through this phone. */
@@ -498,10 +494,18 @@ export class PhonePhotoCoordinator {
    * be in flight; the glasses refuse a capture only while another is being taken (`CAMERA_BUSY`).
    * The full photo comes over the glasses Wi-Fi link when it is up, else over Bluetooth.
    */
-  capturePhoto(packageName: string, opts: PhotoOpts, photoId = mintLocalRequestId()): PhoneCapture {
+  capturePhoto(
+    packageName: string,
+    opts: PhotoOpts,
+    photoId = mintLocalRequestId(),
+    /** Called once the capture is released, by the miniapp or by its closing. */
+    onReleased?: () => void,
+  ): PhoneCapture {
     const owned = this.captures.get(packageName) ?? new Map<string, PhoneCapture>()
     this.captures.set(packageName, owned)
-    const forget = () => owned.delete(photoId)
+    const forget = () => {
+      if (owned.delete(photoId)) onReleased?.()
+    }
     const capture = this.startCapture(packageName, opts, photoId, forget)
     owned.set(photoId, capture)
     return capture
@@ -572,16 +576,9 @@ export class PhonePhotoCoordinator {
       },
       photo: () =>
         (photo ??= stage(
-          async (c) => {
-            const overBluetooth = () =>
-              c.photo().then((p) => ({fileUri: p.fileUri, mimeType: p.mimeType, size: p.size, requestId: photoId}))
-            // Older glasses push the whole photo; only glasses that keep it serve it by ID.
-            if ((useGlassesStore.getState().deferredPhotosVersion ?? 0) <= 0) return overBluetooth()
-            await c.captured
-            let viaBluetooth: Promise<LocalPhotoTaken> | undefined
-            const fileUri = await this.fetchFile(photoId, () => (viaBluetooth = overBluetooth()).then((p) => p.fileUri))
-            return viaBluetooth ? viaBluetooth : {fileUri, mimeType: "image/jpeg", size: -1, requestId: photoId}
-          },
+          // The Bluetooth SDK fetches it over the glasses Wi-Fi link when that is up.
+          (c) =>
+            c.photo().then((p) => ({fileUri: p.fileUri, mimeType: p.mimeType, size: p.size, requestId: photoId})),
           (f) => this.saveStreamFramePhoto(photoId, f),
         )),
       release: async () => {

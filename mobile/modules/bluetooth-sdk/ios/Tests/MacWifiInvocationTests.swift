@@ -1,4 +1,4 @@
-@testable import GlassesMediaCore
+@testable import MentraBluetoothSDK
 import ObjectiveC
 import XCTest
 

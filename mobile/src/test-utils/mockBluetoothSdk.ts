@@ -52,6 +52,44 @@ export const mentraLocalNetworkMock = {
   ),
 }
 
+/** The Bluetooth SDK's glasses Wi-Fi service, from `@mentra/bluetooth-sdk/internal`. */
+class GlassesWifiError extends Error {
+  readonly code?: string
+  constructor(
+    readonly stage: "enable" | "join",
+    readonly cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause))
+    this.name = "GlassesWifiError"
+    const code = (cause as {code?: unknown} | null)?.code
+    if (typeof code === "string") this.code = code
+  }
+}
+export const glassesWifiMock = {
+  GlassesWifiError,
+  holdGlassesWifi: jest.fn(),
+  holdGlassesWifiIfUp: jest.fn(async () => null),
+  glassesWifiLink: {
+    isScoped: jest.fn(() => false),
+    request: (...args: unknown[]) => (mentraLocalNetworkMock.request as (...a: unknown[]) => unknown)(...args),
+    download: (...args: unknown[]) => (mentraLocalNetworkMock.download as (...a: unknown[]) => unknown)(...args),
+    cancel: (...args: unknown[]) => (mentraLocalNetworkMock.cancel as (...a: unknown[]) => unknown)(...args),
+    onDownloadProgress: (listener: Listener) => {
+      const subscription = mentraLocalNetworkMock.addListener("downloadProgress", listener)
+      return () => subscription.remove()
+    },
+  },
+  runContinuousCapture: jest.fn(() => ({
+    state: "paused",
+    onPhoto: jest.fn(() => () => {}),
+    onState: jest.fn(() => () => {}),
+    capture: jest.fn(async () => {
+      throw new Error("runContinuousCapture is not stubbed in this test")
+    }),
+    stop: jest.fn(async () => {}),
+  })),
+}
+
 export const bluetoothSdkMock = {
   configureNativeNotifications: jest.fn(() => Promise.resolve()),
   getNativeNotificationStatus: jest.fn(() => Promise.resolve({supported: false, state: "unavailable"})),

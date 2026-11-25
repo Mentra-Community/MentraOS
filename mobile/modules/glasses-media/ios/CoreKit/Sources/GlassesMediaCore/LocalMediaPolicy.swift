@@ -31,22 +31,6 @@ public enum LocalMediaPolicy {
             (bytes[0] == 192 && bytes[1] == 168)
     }
 
-    /// SSID association can finish before DHCP replaces the previous Wi-Fi address.
-    /// Accept only a client address on the /24 advertised by the glasses over BLE.
-    public static func isHotspotClientAddress(_ address: String, gateway: String) -> Bool {
-        guard isPrivate(gateway), sameSubnet(address, gateway), address != gateway,
-              let bytes = ipv4(address) else { return false }
-        return bytes[3] > 0 && bytes[3] < 255
-    }
-
-    /// A Mac may join through its host network controls. Reuse that connection only
-    /// after both its SSID and DHCP address match the hotspot advertised over BLE.
-    public static func canReuseHotspot(requestedSSID: String, currentSSID: String?, address: String?, gateway: String?) -> Bool {
-        guard !requestedSSID.isEmpty, requestedSSID == currentSSID,
-              let address, let gateway else { return false }
-        return isHotspotClientAddress(address, gateway: gateway)
-    }
-
     /// Keep only concrete host candidates on the local link. Never rewrite a cellular socket's
     /// advertised address: a candidate must already belong to the interface it claims.
     public static func localSdp(_ sdp: String, address: String, answer: Bool) throws -> String {

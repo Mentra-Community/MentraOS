@@ -1,3 +1,6 @@
+// NEHotspotConfiguration exists only on iOS (an iOS app on a Mac included).
+// swiftformat:options --ifdef no-indent
+#if os(iOS)
 import Darwin
 import Foundation
 import Network
@@ -5,7 +8,7 @@ import NetworkExtension
 
 /// Shared hotspot association owner. Only local glasses traffic uses Wi-Fi.
 public final class GlassesHotspotNetwork {
-    private let queue = DispatchQueue(label: "com.mentra.glassesmedia.hotspot")
+    private let queue = DispatchQueue(label: "com.mentra.bluetoothsdk.hotspot")
     private var ssid: String?
     /// The verified Wi-Fi interface and DHCP address. Every later check uses this exact pair.
     private var binding: HotspotInterfaceBinding?
@@ -30,7 +33,7 @@ public final class GlassesHotspotNetwork {
         binding?.address
     }
 
-    private let macWorker = DispatchQueue(label: "com.mentra.glassesmedia.mac-wifi")
+    private let macWorker = DispatchQueue(label: "com.mentra.bluetoothsdk.mac-wifi")
     private var macAssociation: MacHotspotAssociation?
     private var macAuthorization: MacHotspotAuthorization?
     private var macCleanupContinuation: MacHotspotCleanupContinuation?
@@ -41,8 +44,9 @@ public final class GlassesHotspotNetwork {
     public var onPermissionRequired: ((String) -> Void)?
     public init() { _ = Self.startupCleanup }
 
-    /// The process's one glasses network: the glasses Wi-Fi service joins it, and Mentra Call
-    /// and the managed relay read its verified address instead of joining themselves.
+    /// The process's one glasses network: the glasses Wi-Fi service joins it through the
+    /// `MentraLocalNetwork` module, and Mentra Call and the managed relay read its verified
+    /// address instead of joining themselves.
     public static let shared = GlassesHotspotNetwork()
 
     /// iOS keeps every applied configuration and joins it again by itself whenever that hotspot is up.
@@ -61,15 +65,15 @@ public final class GlassesHotspotNetwork {
     public func join(ssid: String, passphrase: String, gateway: String? = nil, frequency: Int? = nil, purpose: HotspotAccessPurpose = .outgoingClient,
                      completion: @escaping (Result<String, Error>) -> Void) {
         queue.async {
-            guard self.ssid == nil, !self.applying else { completion(.failure(LocalMediaError("Previous hotspot session has not finished cleaning up"))); return }
-            if let gateway, !LocalMediaPolicy.isPrivate(gateway) {
-                completion(.failure(LocalMediaError("The glasses reported an invalid hotspot gateway"))); return
+            guard self.ssid == nil, !self.applying else { completion(.failure(HotspotError("Previous hotspot session has not finished cleaning up"))); return }
+            if let gateway, !HotspotAddressPolicy.isPrivate(gateway) {
+                completion(.failure(HotspotError("The glasses reported an invalid hotspot gateway"))); return
             }
             if ProcessInfo.processInfo.isiOSAppOnMac, gateway == nil {
-                completion(.failure(LocalMediaError("The glasses did not report their hotspot gateway"))); return
+                completion(.failure(HotspotError("The glasses did not report their hotspot gateway"))); return
             }
             guard let token = HotspotNetworkOwnership.shared.acquire() else {
-                completion(.failure(LocalMediaError("The glasses hotspot is already in use"))); return
+                completion(.failure(HotspotError("The glasses hotspot is already in use"))); return
             }
             self.ownershipToken = token
             self.generation += 1
@@ -119,11 +123,11 @@ public final class GlassesHotspotNetwork {
             let now = ProcessInfo.processInfo.systemUptime
             if self.promptSince != nil { self.joinDeadline = max(self.joinDeadline, now + 1) }
             if now < self.joinDeadline { self.scheduleJoinDeadline(ssid: ssid, generation: gen); return }
-            MediaLog.log("HOTSPOT_JOIN timed_out prompt_pending=\(self.promptSince != nil)")
+            Bridge.log("HOTSPOT_JOIN timed_out prompt_pending=\(self.promptSince != nil)")
             self.cancelled = true
             self.macAssociation?.cancel()
             self.macAuthorization?.cancelPending()
-            self.finishJoin(.failure(LocalMediaError("Hotspot join timed out")))
+            self.finishJoin(.failure(HotspotError("Hotspot join timed out")))
             // apply() cannot be cancelled. Retain the reservation until its callback and remove the
             // late configuration before another call is permitted to acquire the network.
             if self.ownsConfiguration { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }
@@ -143,7 +147,7 @@ public final class GlassesHotspotNetwork {
                 }
             }
             self.leaveCompletion?.append(completion)
-            self.finishJoin(.failure(LocalMediaError("Hotspot join cancelled")))
+            self.finishJoin(.failure(HotspotError("Hotspot join cancelled")))
             if let ssid = self.ssid, self.ownsConfiguration { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }
             if !self.applying { self.finishLeave() }
         }
@@ -263,7 +267,7 @@ public final class GlassesHotspotNetwork {
                 case let .success(name):
                     let index = Int(if_nametoindex(name))
                     guard index > 0 else {
-                        self.finishJoin(.failure(LocalMediaError("Mac Wi-Fi interface disappeared during association")))
+                        self.finishJoin(.failure(HotspotError("Mac Wi-Fi interface disappeared during association")))
                         self.finishLeave(); return
                     }
                     self.wifiIdentity.observe([HotspotInterfaceReport(name: name, index: index, isWifi: true)])
@@ -294,7 +298,7 @@ public final class GlassesHotspotNetwork {
                         self.waitForMacAddress(ssid: ssid, association: association, generation: gen, remaining: remaining - 1)
                     }
                 } else {
-                    self.finishJoin(.failure(LocalMediaError("Mac Wi-Fi has no verified glasses hotspot address")))
+                    self.finishJoin(.failure(HotspotError("Mac Wi-Fi has no verified glasses hotspot address")))
                     self.finishLeave()
                 }
             }
@@ -308,7 +312,7 @@ public final class GlassesHotspotNetwork {
         ownsConfiguration = true
         applies += 1
         promptSince = ProcessInfo.processInfo.systemUptime
-        MediaLog.log("HOTSPOT_JOIN apply_start attempt=\(self.applies) ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
+        Bridge.log("HOTSPOT_JOIN apply_start attempt=\(self.applies) ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
         NEHotspotConfigurationManager.shared.apply(config) { error in
             self.queue.async {
                 guard gen == self.generation else { return }
@@ -317,7 +321,7 @@ public final class GlassesHotspotNetwork {
                     let now = ProcessInfo.processInfo.systemUptime
                     self.promptSince = nil
                     self.joinDeadline = max(self.joinDeadline, now + Self.afterAnswer)
-                    MediaLog.log("HOTSPOT_JOIN apply_answered after_s=\(Int(now - asked))")
+                    Bridge.log("HOTSPOT_JOIN apply_answered after_s=\(Int(now - asked))")
                 }
                 if self.cancelled { self.finishLeave(); return }
                 if let error {
@@ -327,11 +331,11 @@ public final class GlassesHotspotNetwork {
                     if !alreadyAssociated {
                         // Error identifiers are useful without credentials or full userInfo.
                         let underlying = nativeError.userInfo[NSUnderlyingErrorKey] as? NSError
-                        MediaLog.log("HOTSPOT_JOIN apply_failed domain=\(nativeError.domain) code=\(nativeError.code) underlying_domain=\(underlying?.domain ?? "none") underlying_code=\(underlying.map { String($0.code) } ?? "none")")
+                        Bridge.log("HOTSPOT_JOIN apply_failed domain=\(nativeError.domain) code=\(nativeError.code) underlying_domain=\(underlying?.domain ?? "none") underlying_code=\(underlying.map { String($0.code) } ?? "none")")
                         self.finishJoin(.failure(error)); self.finishLeave(); return
                     }
                 }
-                MediaLog.log("HOTSPOT_JOIN apply_accepted")
+                Bridge.log("HOTSPOT_JOIN apply_accepted")
                 self.waitForAddress(ssid: ssid, passphrase: passphrase, generation: gen, remaining: remaining, pollsSinceApply: 0)
             }
         }
@@ -349,7 +353,7 @@ public final class GlassesHotspotNetwork {
                 } else if remaining > 0, network?.ssid != ssid,
                           self.reapplyPolicy.shouldReapply(applies: self.applies, pollsSinceApply: pollsSinceApply) {
                     // iOS reports the request applied even when its one scan missed the hotspot.
-                    MediaLog.log("HOTSPOT_JOIN reapply after_polls=\(pollsSinceApply)")
+                    Bridge.log("HOTSPOT_JOIN reapply after_polls=\(pollsSinceApply)")
                     self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen, remaining: remaining)
                 } else if remaining > 0 {
                     self.queue.asyncAfter(deadline: .now() + 0.5) {
@@ -357,7 +361,7 @@ public final class GlassesHotspotNetwork {
                     }
                 } else {
                     let association = network == nil ? "unavailable" : (network?.ssid == ssid ? "matched" : "different")
-                    self.finishJoin(.failure(LocalMediaError("Glasses hotspot has no verified Wi-Fi address (SSID=\(association), \(self.wifiDiagnostic()))")))
+                    self.finishJoin(.failure(HotspotError("Glasses hotspot has no verified Wi-Fi address (SSID=\(association), \(self.wifiDiagnostic()))")))
                     self.finishLeave()
                 }
             }
@@ -412,7 +416,7 @@ public final class GlassesHotspotNetwork {
         let evidence = wifiIdentity.trusted[selected.interface] == selected.index ? "wifi_report" : "hotspot_client"
         wifiIdentity.adopt(selected)
         binding = selected
-        MediaLog.log("HOTSPOT_JOIN address_verified interface=\(selected.interface) evidence=\(evidence)")
+        Bridge.log("HOTSPOT_JOIN address_verified interface=\(selected.interface) evidence=\(evidence)")
     }
 
     /// Interface names and their IPv4 addresses only; never credentials or SSIDs.
@@ -420,7 +424,7 @@ public final class GlassesHotspotNetwork {
         let snapshot = observeInterfaces()
         let wifi = Set(wifiIdentity.trusted.keys)
         let addresses = snapshot.addresses.filter { wifi.contains($0.name) }.map { "\($0.name)=\($0.ipv4)" }
-        let other = snapshot.addresses.filter { !wifi.contains($0.name) && LocalMediaPolicy.isPrivate($0.ipv4) }
+        let other = snapshot.addresses.filter { !wifi.contains($0.name) && HotspotAddressPolicy.isPrivate($0.ipv4) }
             .map { "\($0.name)\(snapshot.ethernetLinks.contains($0.name) ? "" : "(non-ethernet)")=\($0.ipv4)" }
         return "Wi-Fi interfaces=\(wifi.isEmpty ? "none" : wifi.sorted().joined(separator: ",")), " +
             "Wi-Fi IPv4=\(addresses.isEmpty ? "none" : addresses.sorted().joined(separator: ",")), " +
@@ -444,13 +448,13 @@ public final class GlassesHotspotNetwork {
         localAccess = request
         request.start(onPermissionRequired: { [weak self] systemAnswer in
             guard let self, gen == generation, !cancelled else { return }
-            MediaLog.log("GLASSES-MEDIA local_network_permission=waiting \(systemAnswer)")
+            Bridge.log("GLASSES-MEDIA local_network_permission=waiting \(systemAnswer)")
             onPermissionRequired?(systemAnswer)
         }) { [weak self] result in
             guard let self, gen == generation, !cancelled else { return }
             switch result {
             case .success:
-                MediaLog.log("GLASSES-MEDIA local_network_permission=ready")
+                Bridge.log("GLASSES-MEDIA local_network_permission=ready")
                 finishJoin(.success(address))
             case let .failure(error):
                 finishJoin(.failure(error))
@@ -479,7 +483,7 @@ public final class GlassesHotspotNetwork {
                 self.queue.async {
                     switch result {
                     case let .success(report):
-                        if report.restore != .notNeeded { MediaLog.log("HOTSPOT_LEAVE mac_wifi \(report.summary)") }
+                        if report.restore != .notNeeded { Bridge.log("HOTSPOT_LEAVE mac_wifi \(report.summary)") }
                         self.macAssociation = nil
                         self.completeLeave()
                     case let .failure(error):
@@ -556,3 +560,4 @@ public final class GlassesHotspotNetwork {
         return HotspotInterfaceSnapshot(links: links, addresses: rows, ethernetLinks: ethernetLinks)
     }
 }
+#endif

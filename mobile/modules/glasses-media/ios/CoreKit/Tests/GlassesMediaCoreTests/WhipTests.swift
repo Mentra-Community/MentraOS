@@ -60,32 +60,6 @@ final class WhipTests: XCTestCase {
         }
     }
 
-    func testHotspotAddressWaitsForDhcpAfterSsidAssociation() {
-        // The reported incident associated the glasses SSID while en0 still had the home-router IP.
-        let addresses = ["192.168.1.10", "169.254.1.10", "192.168.43.142"]
-        XCTAssertEqual(addresses.filter { LocalMediaPolicy.isHotspotClientAddress($0, gateway: "192.168.43.1") }, ["192.168.43.142"])
-        XCTAssertTrue(LocalMediaPolicy.isHotspotClientAddress("10.5.6.8", gateway: "10.5.6.1"))
-        for address in ["192.168.43.1", "192.168.43.0", "192.168.43.255", "192.168.43.256", "host.local"] {
-            XCTAssertFalse(LocalMediaPolicy.isHotspotClientAddress(address, gateway: "192.168.43.1"), address)
-        }
-        XCTAssertFalse(LocalMediaPolicy.isHotspotClientAddress("8.8.8.2", gateway: "8.8.8.1"))
-    }
-
-    func testReusingHotspotRequiresExactSsidAndReportedGateway() {
-        XCTAssertTrue(LocalMediaPolicy.canReuseHotspot(requestedSSID: "glasses", currentSSID: "glasses", address: "192.168.43.2", gateway: "192.168.43.1"))
-        for current in [nil, "", "home", "Glasses"] as [String?] {
-            XCTAssertFalse(LocalMediaPolicy.canReuseHotspot(requestedSSID: "glasses", currentSSID: current, address: "192.168.43.2", gateway: "192.168.43.1"))
-        }
-        XCTAssertFalse(LocalMediaPolicy.canReuseHotspot(requestedSSID: "", currentSSID: "", address: "192.168.43.2", gateway: "192.168.43.1"))
-        XCTAssertFalse(LocalMediaPolicy.canReuseHotspot(requestedSSID: "glasses", currentSSID: "glasses", address: "192.168.43.2", gateway: nil))
-    }
-
-    func testReusingHotspotRejectsStaleDhcpAndNonClientAddresses() {
-        for address in [nil, "192.168.1.2", "192.168.43.0", "192.168.43.1", "192.168.43.255", "host.local"] as [String?] {
-            XCTAssertFalse(LocalMediaPolicy.canReuseHotspot(requestedSSID: "glasses", currentSSID: "glasses", address: address, gateway: "192.168.43.1"))
-        }
-    }
-
     func testListenerLifecycleAndSinglePublisher() async throws {
         let server = WhipIngestServer(negotiate: { _, reply in reply(.success("answer")) }, terminate: {}, publisherFailed: { false })
         let url = try await start(server)

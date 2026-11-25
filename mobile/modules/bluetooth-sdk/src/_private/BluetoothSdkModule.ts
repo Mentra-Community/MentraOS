@@ -65,6 +65,7 @@ import {
   WifiSearchResult,
   WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
+import {fetchGlassesFileOverWifi} from "../glasses-wifi/files"
 import {warmUpCameraParamsForNative} from "./cameraRequestPayload"
 import {photoCaptureParamsForNative, photoUploadParamsForNative} from "./photoRequestPayload"
 import {streamRequestParamsForNative} from "./streamRequestPayload"
@@ -798,6 +799,24 @@ NativeBluetoothSdkModule.capturePhoto = function (params: PhotoCaptureParams): P
   const started = quiet(nativeCapturePhoto({...photoCaptureParamsForNative(params), requestId}))
   const stage = (name: "captured" | "preview" | "photo") =>
     quiet(started.then(() => nativePhotoCaptureStage(requestId, name)))
+  const overBluetooth = () =>
+    stage("photo").then((value): PhotoTaken => {
+      const response = value as PhotoSuccessResponseEvent
+      return {
+        requestId,
+        fileUri: response.photoUrl ?? "",
+        mimeType: response.contentType || "image/jpeg",
+        size: response.fileSizeBytes ?? -1,
+      }
+    })
+  // Glasses that keep the full photo serve it by ID, over the glasses Wi-Fi link when it is up.
+  const fetchPhoto = async (): Promise<PhotoTaken> => {
+    const status = await NativeBluetoothSdkModule.getGlassesStatus().catch(() => null)
+    if ((status?.deferredPhotosVersion ?? 0) <= 0) return overBluetooth()
+    await stage("captured")
+    const overWifi = await fetchGlassesFileOverWifi(requestId)
+    return overWifi ? {requestId, fileUri: overWifi.uri, mimeType: "image/jpeg", size: overWifi.bytes} : overBluetooth()
+  }
   // Each stage is asked for when first awaited, once.
   let captured: Promise<void> | undefined
   let preview: Promise<PhotoPreview> | undefined
@@ -810,16 +829,7 @@ NativeBluetoothSdkModule.capturePhoto = function (params: PhotoCaptureParams): P
     get preview() {
       return (preview ??= stage("preview") as Promise<PhotoPreview>)
     },
-    photo: () =>
-      (photo ??= stage("photo").then((value) => {
-        const response = value as PhotoSuccessResponseEvent
-        return {
-          requestId,
-          fileUri: response.photoUrl ?? "",
-          mimeType: response.contentType || "image/jpeg",
-          size: response.fileSizeBytes ?? -1,
-        }
-      })),
+    photo: () => (photo ??= fetchPhoto()),
     release: () => started.then(() => nativeReleasePhotoCapture(requestId)),
   }
 }

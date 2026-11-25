@@ -1,7 +1,7 @@
 {
   "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["BluetoothSdkModule", "MentraPhotoReceiverModule", "MentraOtaServerModule"]
+    "modules": ["BluetoothSdkModule", "MentraPhotoReceiverModule", "MentraOtaServerModule", "MentraLocalNetworkModule"]
   },
   "android": {
     "modules": [

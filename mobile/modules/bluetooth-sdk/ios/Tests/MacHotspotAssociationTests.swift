@@ -1,4 +1,4 @@
-@testable import GlassesMediaCore
+@testable import MentraBluetoothSDK
 import XCTest
 
 final class MacHotspotAssociationTests: XCTestCase {
@@ -30,7 +30,7 @@ final class MacHotspotAssociationTests: XCTestCase {
         }
 
         func currentSSID() throws -> String? {
-            if unreadable { throw LocalMediaError("Location authorization was revoked") }
+            if unreadable { throw HotspotError("Location authorization was revoked") }
             if ssid == nil, let afterLeave {
                 polls += 1
                 if polls > pendingAutoJoinPolls { ssid = afterLeave; self.afterLeave = nil }
@@ -153,7 +153,7 @@ final class MacHotspotAssociationTests: XCTestCase {
     }
 
     func testForgetFailureIsReportedButHomeIsStillRestored() throws {
-        let wifi = Wifi(); wifi.forgetError = LocalMediaError("denied")
+        let wifi = Wifi(); wifi.forgetError = HotspotError("denied")
         let (join, _) = joinFromHome(wifi)
         _ = try join.associate(ssid: "glasses", password: "private")
         wifi.afterLeave = "home"

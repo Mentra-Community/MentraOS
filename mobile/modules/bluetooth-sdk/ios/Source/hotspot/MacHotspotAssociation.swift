@@ -78,7 +78,7 @@ final class MacHotspotAssociation {
         }
         try checkCurrent()
         guard try readSSID(interface) == ssid else {
-            throw LocalMediaError("Mac Wi-Fi did not associate with the requested glasses hotspot")
+            throw HotspotError("Mac Wi-Fi did not associate with the requested glasses hotspot")
         }
         return try interface.name()
     }
@@ -101,7 +101,7 @@ final class MacHotspotAssociation {
             if try readSSID(interface) == joinedSSID {
                 interface.disassociate()
                 guard try readSSID(interface) != joinedSSID else {
-                    throw LocalMediaError("Mac Wi-Fi has not released the glasses hotspot")
+                    throw HotspotError("Mac Wi-Fi has not released the glasses hotspot")
                 }
                 report.disassociated = true
             }
@@ -200,7 +200,7 @@ final class MacHotspotAssociation {
     private func checkDiscoveryCurrent() throws {
         try checkCurrent()
         guard now() < deadline else {
-            throw LocalMediaError("The requested glasses hotspot was not found by Mac Wi-Fi before the hotspot join timed out")
+            throw HotspotError("The requested glasses hotspot was not found by Mac Wi-Fi before the hotspot join timed out")
         }
     }
 
@@ -305,7 +305,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
         self.authorizationFacts = authorizationFacts ?? MacHotspotAuthorizationFacts()
         self.authorization = authorization
         guard let bundle = Bundle(path: "/System/Library/Frameworks/CoreWLAN.framework") else {
-            throw LocalMediaError("Mac Wi-Fi framework is unavailable")
+            throw HotspotError("Mac Wi-Fi framework is unavailable")
         }
         do { try bundle.loadAndReturnError() }
         catch { throw Self.failure("framework loading", error as NSError) }
@@ -314,11 +314,11 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
               let client = clientClass.perform(NSSelectorFromString("sharedWiFiClient"))?.takeUnretainedValue() as? NSObject,
               client.responds(to: NSSelectorFromString("interface")),
               let interface = client.perform(NSSelectorFromString("interface"))?.takeUnretainedValue() as? NSObject
-        else { throw LocalMediaError("Mac Wi-Fi interface is unavailable") }
+        else { throw HotspotError("Mac Wi-Fi interface is unavailable") }
         for method in ["interfaceName", "ssidData", "supportedWLANChannels", "scanForNetworksWithChannels:ssid:bssid:error:",
                        "associateToNetwork:password:error:", "disassociate"] {
             guard interface.responds(to: NSSelectorFromString(method)) else {
-                throw LocalMediaError("Mac Wi-Fi interface does not support hotspot association")
+                throw HotspotError("Mac Wi-Fi interface does not support hotspot association")
             }
         }
         self.interface = interface
@@ -328,7 +328,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
 
     func name() throws -> String {
         guard let name = interface.perform(NSSelectorFromString("interfaceName"))?.takeUnretainedValue() as? String,
-              !name.isEmpty else { throw LocalMediaError("Mac Wi-Fi interface has no identity") }
+              !name.isEmpty else { throw HotspotError("Mac Wi-Fi interface has no identity") }
         return name
     }
 
@@ -387,7 +387,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
     /// remove one without an administrator's authorization. CWWiFiClient's forget call needs none.
     func forget(ssid: String) throws {
         let selector = NSSelectorFromString("forgetWiFiProfileWithSSID:event:error:")
-        guard client.responds(to: selector) else { throw LocalMediaError("Mac Wi-Fi cannot forget networks") }
+        guard client.responds(to: selector) else { throw HotspotError("Mac Wi-Fi cannot forget networks") }
         let invoke = unsafeBitCast(client.method(for: selector), to: MacWifiInvocation.Forget.self)
         var error: NSError?
         guard invoke(client, selector, NSData(data: Data(ssid.utf8)), 0, &error) else { throw Self.failure("forget", error) }
@@ -395,7 +395,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
 
     func setPower(_ on: Bool) throws {
         let selector = NSSelectorFromString("setPower:error:")
-        guard interface.responds(to: selector) else { throw LocalMediaError("Mac Wi-Fi cannot change power") }
+        guard interface.responds(to: selector) else { throw HotspotError("Mac Wi-Fi cannot change power") }
         let invoke = unsafeBitCast(interface.method(for: selector), to: MacWifiInvocation.SetPower.self)
         var error: NSError?
         guard invoke(interface, selector, on, &error) else { throw Self.failure("power", error) }
@@ -410,6 +410,6 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
     private static func failure(_ operation: String, _ error: NSError?) -> Error {
         let domain = error?.domain ?? "unavailable"
         let safeDomain = domain.range(of: "^[A-Za-z0-9_.-]{1,128}$", options: .regularExpression) == nil ? "unavailable" : domain
-        return LocalMediaError("Mac Wi-Fi \(operation) failed (\(safeDomain), \(error?.code ?? -1))")
+        return HotspotError("Mac Wi-Fi \(operation) failed (\(safeDomain), \(error?.code ?? -1))")
     }
 }

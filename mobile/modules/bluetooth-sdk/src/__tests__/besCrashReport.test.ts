@@ -6,6 +6,7 @@ const mockNative: Record<string, jest.Mock | undefined> = {}
 jest.mock("expo", () => ({
   NativeModule: class {},
   requireNativeModule: () => mockNative,
+  requireOptionalNativeModule: () => null,
 }))
 
 function resetNative(): void {

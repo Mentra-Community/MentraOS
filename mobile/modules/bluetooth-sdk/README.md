@@ -257,8 +257,8 @@ Each usage occurrence below is one event, sent when it happens:
 - `bluetooth_sdk_mic_session`: the active microphone turned off or changed.
   Carries `duration_ms`, `mic_source`, and `local_transcription`.
 - `bluetooth_sdk_wifi_setup` / `bluetooth_sdk_hotspot_started`:
-  `sendWifiCredentials` or `setHotspotState(true)` settled, with `success`,
-  `error_code`, and `latency_ms`.
+  `sendWifiCredentials` settled, or the glasses hotspot was asked to start,
+  with `success`, `error_code`, and `latency_ms`.
 - `bluetooth_sdk_ota_finished`: a glasses software update completed or failed,
   with the failed step and error, `total_steps`, `duration_ms`, and the
   glasses versions it started from.
@@ -416,7 +416,7 @@ pass a `defaultDeviceStorage` adapter to `useMentraBluetooth` if you want a
 default device to survive app restarts.
 
 Use `useMentraBluetooth()` as the React status API for connection, battery,
-Wi-Fi, hotspot, scan, and SDK runtime state.
+Wi-Fi, scan, and SDK runtime state.
 
 The React hook exposes `glasses.connection` as a discriminated union:
 
@@ -541,9 +541,6 @@ console.log(wifiStatus.state)
 const forgetResult = await BluetoothSdk.forgetWifiNetwork("Office WiFi")
 console.log(forgetResult.outcome)
 
-const hotspotStatus = await BluetoothSdk.setHotspotState(true)
-console.log(hotspotStatus.state)
-
 await BluetoothSdk.setWifiAdbState(true) // Mentra Live Wi-Fi ADB (wireless debugging)
 
 const galleryAck = await BluetoothSdk.setGalleryModeEnabled(true)
@@ -620,8 +617,8 @@ Disabling restores normal hotspot-only behavior: the server rebinds to an active
 
 Both the native SDK and ASG client need this command; older glasses firmware times out without claiming success. The client app must have local-network access and permit cleartext HTTP to the local device under its platform/MDM policy.
 
-WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
-`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` returns a semantic `WifiForgetResult`, `getSavedWifiNetworks()` returns a semantic `SavedWifiNetworksResult`, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` waits for all chunks declared by the correlated response's `chunkCount`, `chunkIndex`, and `final` metadata. Legacy single-message responses complete immediately. Factory ASG27 declares build 27 in `version_info_1` and completes on its final `version_info_2` carrying the OTA URL; other legacy chunked responses complete on `version_info_3` after `version_info_1`. Missing final chunks time out rather than returning partial data after a quiet period.
+WiFi and version-info commands resolve from the ASG response path, not local dispatch:
+`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` returns a semantic `WifiForgetResult`, `getSavedWifiNetworks()` returns a semantic `SavedWifiNetworksResult`, and `requestVersionInfo()` waits for all chunks declared by the correlated response's `chunkCount`, `chunkIndex`, and `final` metadata. Legacy single-message responses complete immediately. Factory ASG27 declares build 27 in `version_info_1` and completes on its final `version_info_2` carrying the OTA URL; other legacy chunked responses complete on `version_info_3` after `version_info_1`. Missing final chunks time out rather than returning partial data after a quiet period.
 
 Current Mentra Live builds advertise `wifiForgetResultVersion` and `savedWifiNetworksVersion` in `version_info_1`. Native queues calls while those capabilities are unknown, sharing one 15-second deadline for negotiation and response. A discovery timeout rejects and never guesses that the glasses are legacy. Only version 1 is supported: modern commands carry `protocolVersion: 1`, a nonempty request ID, and the glasses process session ID; legacy forget commands omit all three fields. Unknown or malformed versions fail closed. Correlated results must match the complete tuple and (for forget) exact SSID; unrelated `wifi_status` events never settle a modern request. Session changes and disconnects reject pending WiFi work instead of allowing stale responses to cross sessions.
 
@@ -744,6 +741,62 @@ await capture.release() // the full photo isn't needed (any more): the glasses d
 
 Every photo gets its preview first. The full photo waits on the glasses (deferred delivery) until the first `photo()` call asks for it, for 30 minutes at most; later calls return the same photo, and not calling `photo()` is how a photo is skipped. The file is in the app's cache folder and is yours to move or delete. It needs no internet connection. Any number of captures can be in flight: the glasses refuse one (`CAMERA_BUSY`) only while another is being taken, never because photos are being sent. After the glasses restart or reconnect, the SDK asks again for the previews and photos it still waits for. A preview that didn't arrive rejects `preview` with `PREVIEW_FAILED`; the full photo can still be asked for. Glasses without deferred photos (`deferredPhotosVersion` 0 in the glasses status) send the whole photo at once: `photo()` resolves with it, and it is also the preview.
 
+### Photos over Wi-Fi
+
+Full photos travel over the fast link (the glasses Wi-Fi) while it is up,
+whoever holds it, and over Bluetooth otherwise: `capture.photo()` and
+`takePhoto` pick the way by themselves. `BluetoothSdk.link` shows both links,
+and an app that takes many photos can run a continuous capture (below), or hold
+the fast link itself for as long as it needs it:
+
+```ts
+import BluetoothSdk, {type LinkState} from "@mentra/bluetooth-sdk"
+
+console.log(BluetoothSdk.link.state) // {glasses: "connected" | "disconnected", fast: "up" | "down"}
+await BluetoothSdk.link.openFast() // resolves once the fast link is up
+const stop = BluetoothSdk.link.onChange((state: LinkState) => {
+  console.log(`glasses ${state.glasses}, fast link ${state.fast}`)
+})
+await BluetoothSdk.link.closeFast()
+stop()
+```
+
+`state.glasses` says whether the glasses are connected over Bluetooth;
+`state.fast` whether the fast link is up. The SDK picks the radio (Wi-Fi Direct
+on Android with glasses that support it, the glasses' hotspot otherwise) and
+shares the one link with its other users: `closeFast()` gives your hold back,
+and the link goes down once nobody else holds it. Both calls are idempotent.
+`openFast()` rejects if the link can't come up; photos keep going over
+Bluetooth. While it is held, the SDK brings the link back after the glasses
+restart, and `onChange` reports fast `"down"` meanwhile (photos go over
+Bluetooth) and `"up"` when it is back. Your app never sees a network name,
+password or address. On an iPhone, joining the glasses' hotspot takes the
+phone's Wi-Fi while it is held, so hold it only while you take photos.
+
+`captureContinuous(options)` takes photos back to back for as long as the run
+lasts, built on `link`: while the run is on, the SDK holds the fast link for it,
+so its photos come over Wi-Fi. Photos are taken one at a time; the next starts
+once the camera took the previous one. Each is a capture like `capturePhoto`'s,
+handed to `onPhoto`; release each when done. The run takes photos on its own
+while it is `capturing` and fewer than `maxPending` (default 12) of its photos
+are still on the glasses unreleased. It is `paused` while only Bluetooth is
+left, since photos would pile up on the glasses, and goes on by itself once the
+fast link is back. `run.capture(options)` takes one more photo in the run's
+turn, even while paused. `stop()` stops taking photos at once, and resolves and
+gives the link back once the photos the run handed out are released:
+
+```ts
+const run = BluetoothSdk.captureContinuous({size: "medium", sound: false, maxPending: 12})
+run.onPhoto((capture) => {
+  // a normal capture: captured, preview, photo(), release()
+})
+run.onState((state) => {
+  // "capturing" | "paused"
+})
+const one = await run.capture({sound: true}) // one more photo in the run's turn, even while paused
+await run.stop()
+```
+
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 
 To own and explicitly release a warm camera, pass a request ID to `warmUpCamera({requestId, ...})`, then call `stopCameraWarmUp(requestId)` when the foreground UI closes. Warm holds default to 15 seconds and are capped at 5 minutes. Stopping while the camera is opening rejects the pending warm-up with `camera_warm_up_cancelled`; stopping after `ready` emits `stopped`. Compatible ready leases share the camera and expire independently.
@@ -799,7 +852,7 @@ export function HardwareEventLogger() {
 
 For non-React modules, `BluetoothSdk.addListener(...)` is the low-level subscription API. Keep the returned subscription and call `remove()` when the listener is no longer needed.
 
-Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `pair_failure`, `pairing_info`, `entering_pairing_mode`, `pairing_mode_ended`, `pairing_state_changed`, `audio_connected`, `audio_disconnected`, and `log`. `owner_replaced` remains in the type map and is never emitted.
+Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `pair_failure`, `pairing_info`, `entering_pairing_mode`, `pairing_mode_ended`, `pairing_state_changed`, `audio_connected`, `audio_disconnected`, and `log`. `owner_replaced` remains in the type map and is never emitted.
 
 ### Claiming touchpad gestures
 
@@ -832,7 +885,7 @@ and invalid gesture names reject. Older firmware cannot suppress these actions
 and will time out; do not treat that timeout as success. A release containing this
 SDK API alone does not update BES firmware.
 
-Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
+Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
 
 React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, `touch_event` includes `gestureName`, `wifi_scan_result` includes `networks` and `scanComplete`, `version_info` matches the `requestVersionInfo()` result shape, `photo_response` success includes `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, and `fileSizeBytes`, and `gallery_status` includes `hasContent`, `cameraBusy`, and optional `cameraBusyReason`. `photo_status` reports intermediate photo states such as `accepted`, `queued`, `configuring`, `capturing`, `captured`, `compressing`, `ble_fallback_compression`, `uploading`, `ready_for_transfer`, `transferring`, and `failed`; the `configuring` event includes `resolvedConfig` with the effective JPEG dimensions, quality, requested size, transfer method, compression, and manual exposure fields when present. The `capturing` event may include `requestedCaptureConfig` and `meteredPreview`; the `captured` event may include `captureMetadata` with the HAL-applied exposure, ISO, frame duration, and AE state. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
 
@@ -936,7 +989,7 @@ secrets, not in the repository.
 
 ## Starter Example App
 
-The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) includes starter example apps for Android, iOS, and React Native / Expo. The React Native starter demonstrates scan/connect, display, camera photo upload, RTMP/SRT/WebRTC streaming, Wi-Fi/hotspot, microphone PCM, RGB LED, gallery mode, and console event inspection.
+The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) includes starter example apps for Android, iOS, and React Native / Expo. The React Native starter demonstrates scan/connect, display, camera photo upload, RTMP/SRT/WebRTC streaming, Wi-Fi, deferred photos over the fast link, microphone PCM, RGB LED, gallery mode, and console event inspection.
 
 BLE JPEG photo compression supports `none` (Q95), `low` (Q88), `medium` (Q78), and `high` (Q60) on updated glasses firmware. Omitted compression defaults to `none`. Values are sent unchanged and invalid values are rejected. Pixel limits are controlled separately by `size`.
 

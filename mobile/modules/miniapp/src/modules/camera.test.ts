@@ -252,35 +252,41 @@ describe("CameraModule.capture", () => {
   })
 })
 
-describe("CameraModule fast link", () => {
-  test("openFastLink holds the glasses Wi-Fi link and waits for it to come up; closeFastLink gives it back", async () => {
-    const {session, requestCalls, requestOptions} = mockSession(undefined)
-    const camera = new CameraModule(session)
-    await camera.openFastLink()
-    await camera.closeFastLink()
-    expect(requestCalls).toEqual([
-      {type: MiniappRequestType.CAMERA_FAST_LINK_OPEN},
-      {type: MiniappRequestType.CAMERA_FAST_LINK_CLOSE},
-    ])
-    // Joining a hotspot can take longer than an ordinary request.
-    expect(requestOptions[0]).toEqual({timeoutMs: 90_000})
-  })
-
-  test("onFastLinkChange hears the link go down and come back", () => {
-    const heard: string[] = []
-    let listener: ((state: string) => void) | undefined
+describe("CameraModule continuous capture", () => {
+  test("starts a run, hands out its photos as captures, follows its state, and stops it", async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const listeners = new Map<string, (event: Record<string, unknown>) => void>()
     const session = {
-      on: (event: string, handler: (state: string) => void) => {
-        expect(event).toBe("fastLink")
-        listener = handler
-        return () => (listener = undefined)
+      _hasManifestPermission: () => true,
+      sendRequest: (payload: Record<string, unknown>) => {
+        requests.push(payload)
+        return Promise.resolve(undefined)
+      },
+      on: (event: string, handler: (event: Record<string, unknown>) => void) => {
+        listeners.set(event, handler)
+        return () => listeners.delete(event)
       },
     } as unknown as MiniappSession
-    const off = new CameraModule(session).onFastLinkChange((state) => heard.push(state))
-    listener?.("down")
-    listener?.("up")
-    off()
-    expect(heard).toEqual(["down", "up"])
-    expect(listener).toBeUndefined()
+    const run = new CameraModule(session).captureContinuous({size: "medium", sound: false, maxPending: 4})
+    const start = requests[0]
+    expect(start).toMatchObject({type: MiniappRequestType.CAMERA_CONTINUOUS_START, maxPending: 4})
+    const runId = start.runId as string
+    const photos: string[] = []
+    const states: string[] = []
+    run.onPhoto((capture) => photos.push(capture.photoId))
+    run.onState((state) => states.push(state))
+    // The first state is heard even when it is the starting "paused".
+    listeners.get("continuousState")?.({runId, state: "paused"})
+    listeners.get("continuousState")?.({runId, state: "capturing"})
+    listeners.get("continuousPhoto")?.({runId, photoId: "p1"})
+    listeners.get("continuousPhoto")?.({runId: "another run", photoId: "p2"})
+    expect(photos).toEqual(["p1"])
+    expect(states).toEqual(["paused", "capturing"])
+    expect(run.state).toBe("capturing")
+    const asked = await run.capture({sound: true})
+    expect(requests.at(-1)).toMatchObject({type: MiniappRequestType.CAMERA_CONTINUOUS_CAPTURE, runId, photoId: asked.photoId})
+    await run.stop()
+    expect(requests.at(-1)).toEqual({type: MiniappRequestType.CAMERA_CONTINUOUS_STOP, runId})
+    expect(listeners.size).toBe(0)
   })
 })

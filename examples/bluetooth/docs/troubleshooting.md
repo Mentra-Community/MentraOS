@@ -76,7 +76,7 @@ If the error also lists a Push Notifications capability, that entitlement is not
 ## Connected But No Events
 
 - Subscribe before connecting.
-- In React Native, render `useMentraBluetooth()` state for connection, battery, Wi-Fi, hotspot, scan, and SDK state. In native Android/iOS apps, log the native status snapshots.
+- In React Native, render `useMentraBluetooth()` state for connection, battery, Wi-Fi, scan, and SDK state. In native Android/iOS apps, log the native status snapshots.
 - Confirm the hardware feature is available on the connected model.
 - Watch SDK log callbacks for native diagnostics.
 

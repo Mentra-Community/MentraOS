@@ -19,6 +19,8 @@ Pod::Spec.new do |s|
   s.dependency 'AzureCommunicationCommon', '~> 1.1'
   # Pin to the same WebRTC-SDK the Mentra App already links via LiveKit.
   s.dependency 'GlassesMedia'
+  # The glasses hotspot join (GlassesHotspotNetwork) the call reads.
+  s.dependency 'MentraBluetoothSDK'
   s.frameworks = 'AVFoundation', 'AudioToolbox', 'CoreMedia', 'CoreVideo', 'UIKit'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

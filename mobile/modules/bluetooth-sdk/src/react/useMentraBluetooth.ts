@@ -13,7 +13,6 @@ import type {
   Device,
   DeviceModel,
   GlassesConnectionStatus,
-  HotspotStatus,
   PublicBluetoothStatus,
   PublicGlassesStatus,
   MicMode,
@@ -76,7 +75,6 @@ export type GlassesRuntimeState =
       connection: Extract<GlassesConnectionStatus, {state: "connected"}>
       device: ConnectedGlassesInfo
       firmware: FirmwareInfo
-      hotspot: HotspotStatus
       ready: boolean
       signal: SignalState
       voiceActivityDetectionEnabled: boolean
@@ -223,7 +221,6 @@ function runtimeGlassesState(status: Partial<PublicGlassesStatus>): GlassesRunti
     connection,
     device: connectedGlassesInfo(status),
     firmware: firmwareInfo(status),
-    hotspot: status.hotspot ?? {state: "disabled"},
     ready: isReadyGlassesConnectionStatus(connection),
     signal: {
       strengthDbm: numberValue((status as Record<string, unknown>).signalStrength),

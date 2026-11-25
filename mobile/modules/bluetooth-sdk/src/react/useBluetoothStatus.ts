@@ -5,11 +5,10 @@ import {
   createDisconnectedGlassesStatus,
   isConnectedGlassesConnectionStatus,
   isReadyGlassesConnectionStatus,
+  publicGlassesStatus,
 } from "../BluetoothSdk.types"
 import type {
   BatteryStatusEvent,
-  HotspotStatus,
-  HotspotStatusChangeEvent,
   PublicBluetoothStatus,
   PublicGlassesStatus,
   WifiStatus,
@@ -40,23 +39,11 @@ function wifiStatusFromEvent(event: WifiStatusChangeEvent): WifiStatus {
   }
 }
 
-function hotspotStatusFromEvent(event: HotspotStatusChangeEvent): HotspotStatus {
-  if (event.state === "enabled") {
-    return {
-      state: "enabled",
-      ssid: event.ssid,
-      password: event.password,
-      localIp: event.localIp,
-      ...(event.frequency ? {frequency: event.frequency} : {}),
-    }
-  }
-  return {state: event.state}
-}
-
 function mergeGlassesStatus(
   current: Partial<PublicGlassesStatus>,
-  changed: Partial<PublicGlassesStatus>,
+  update: Partial<PublicGlassesStatus>,
 ): Partial<PublicGlassesStatus> {
+  const changed = publicGlassesStatus(update)
   if (changed.connection?.state === "disconnected") {
     return {...createDisconnectedGlassesStatus(), ...changed}
   }
@@ -84,7 +71,7 @@ export function useBluetoothStatus(options: UseBluetoothStatusOptions = {}): Blu
         BluetoothSdk.getGlassesStatus(),
         BluetoothSdk.getBluetoothStatus(),
       ])
-      setGlassesStatus(nextGlassesStatus)
+      setGlassesStatus(publicGlassesStatus(nextGlassesStatus))
       setBluetoothStatus(nextBluetoothStatus)
       setError(null)
     } catch (nextError) {
@@ -113,7 +100,7 @@ export function useBluetoothStatus(options: UseBluetoothStatusOptions = {}): Blu
         if (!mounted) {
           return
         }
-        setGlassesStatus(nextGlassesStatus)
+        setGlassesStatus(publicGlassesStatus(nextGlassesStatus))
         setBluetoothStatus(nextBluetoothStatus)
         setError(null)
       } catch (nextError) {
@@ -147,12 +134,6 @@ export function useBluetoothStatus(options: UseBluetoothStatusOptions = {}): Blu
     const wifiSubscription = BluetoothSdk.addListener("wifi_status_change", (event) => {
       setGlassesStatus((current) => ({...current, wifi: wifiStatusFromEvent(event)}))
     })
-    const hotspotSubscription = BluetoothSdk.addListener("hotspot_status_change", (event) => {
-      setGlassesStatus((current) => ({...current, hotspot: hotspotStatusFromEvent(event)}))
-    })
-    const hotspotErrorSubscription = BluetoothSdk.addListener("hotspot_error", () => {
-      setGlassesStatus((current) => ({...current, hotspot: {state: "disabled"}}))
-    })
 
     return () => {
       mounted = false
@@ -160,8 +141,6 @@ export function useBluetoothStatus(options: UseBluetoothStatusOptions = {}): Blu
       removeBluetooth()
       batterySubscription.remove()
       wifiSubscription.remove()
-      hotspotSubscription.remove()
-      hotspotErrorSubscription.remove()
     }
   }, [enabled])
 

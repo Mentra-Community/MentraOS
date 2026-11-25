@@ -44,16 +44,6 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => {
   }
 })
 
-jest.mock("@mentra/glasses-media", () => ({
-  glassesHotspot: {
-    join: jest.fn(async () => "192.168.43.2"),
-    leave: jest.fn(async () => {}),
-    onPermissionRequired: jest.fn(() => ({remove: () => {}})),
-  },
-}))
-
-// The glasses Wi-Fi service owns the hotspot and the join; gallery only holds the link it gives.
-jest.mock("../../../modules/engine/src/services/GlassesWifi", () => ({holdGlassesWifi: jest.fn()}))
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
   getFSInfo: jest.fn(() => Promise.resolve({freeSpace: 1024 * 1024 * 1024})),
@@ -197,7 +187,7 @@ const BINDING = {
   gateway: HOTSPOT_INFO.ip,
   phoneIpv4: "192.168.43.2",
 }
-const mockHoldGlassesWifi = jest.requireMock("../../../modules/engine/src/services/GlassesWifi")
+const mockHoldGlassesWifi = jest.requireMock("@mentra/bluetooth-sdk/glasses-wifi")
   .holdGlassesWifi as jest.Mock
 
 /** The hold the glasses Wi-Fi service hands out; a test can drop the link under it. */

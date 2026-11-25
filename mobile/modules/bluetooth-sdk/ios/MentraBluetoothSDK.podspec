@@ -38,10 +38,10 @@ Pod::Spec.new do |s|
   }
 
   # iOS frameworks required by Bluetooth SDK
-  ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics', 'ImageIO']
-  ios_frameworks << 'Network' if include_expo_adapter
+  # Network, NetworkExtension and CoreLocation: the glasses hotspot join (Source/hotspot).
+  ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics', 'ImageIO', 'Network', 'NetworkExtension', 'CoreLocation']
   s.ios.frameworks = ios_frameworks
-  s.osx.frameworks = ['AVFoundation', 'CoreBluetooth', 'CoreAudio', 'AudioToolbox', 'ImageIO', 'JavaScriptCore', 'Network']
+  s.osx.frameworks = ['AVFoundation', 'CoreBluetooth', 'CoreAudio', 'AudioToolbox', 'ImageIO', 'JavaScriptCore', 'Network', 'CoreLocation']
 
   # System libraries required by MentraOS
   s.ios.libraries = 'bz2', 'z'
@@ -76,7 +76,8 @@ Pod::Spec.new do |s|
     "LocalIPv4.swift",
     "LocalOtaServer.swift",
     "BackgroundOtaArtifactDownloader.swift",
-    "MentraOtaServerModule.swift"
+    "MentraOtaServerModule.swift",
+    "MentraLocalNetworkModule.swift"
   ]
   native_source_files.concat(adapter_source_files) if include_expo_adapter
   s.ios.source_files = native_source_files

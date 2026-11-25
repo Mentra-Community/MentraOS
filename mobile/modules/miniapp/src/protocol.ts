@@ -223,10 +223,12 @@ export enum MiniappRequestType {
   PHOTO_CAPTURE_STAGE = "miniapp_photo_capture_stage",
   /** A capture's full photo isn't needed: `{photoId}`; the glasses delete it. */
   PHOTO_RELEASE = "miniapp_photo_release",
-  /** Hold the glasses Wi-Fi link for this miniapp (`camera.openFastLink`); answers once it is up. */
-  CAMERA_FAST_LINK_OPEN = "miniapp_camera_fast_link_open",
-  /** Give the glasses Wi-Fi link back (`camera.closeFastLink`). */
-  CAMERA_FAST_LINK_CLOSE = "miniapp_camera_fast_link_close",
+  /** Start a continuous capture (`camera.captureContinuous`): `{runId, ...photo options, maxPending?}`. */
+  CAMERA_CONTINUOUS_START = "miniapp_camera_continuous_start",
+  /** One photo in a continuous capture's turn (`run.capture`): `{runId, photoId, ...photo options}`. */
+  CAMERA_CONTINUOUS_CAPTURE = "miniapp_camera_continuous_capture",
+  /** Stop a continuous capture (`run.stop`): `{runId}`. */
+  CAMERA_CONTINUOUS_STOP = "miniapp_camera_continuous_stop",
   VIDEO_RECORDING_START = "miniapp_video_recording_start",
   VIDEO_RECORDING_STOP = "miniapp_video_recording_stop",
   STREAM_START = "miniapp_stream_start",
@@ -380,11 +382,10 @@ export enum MiniappResponseType {
    */
   STREAM_PREVIEW_STATUS = "miniapp_stream_preview_status",
 
-  /**
-   * Push: the Wi-Fi link this miniapp holds (`camera.openFastLink`) went down or came back.
-   * Carries {state: "up" | "down"}. While it is down, photos travel over Bluetooth.
-   */
-  CAMERA_FAST_LINK = "miniapp_camera_fast_link",
+  /** Push: a photo a continuous capture took on its own, `{runId, photoId}`; its stages are a capture's. */
+  CAMERA_CONTINUOUS_PHOTO = "miniapp_camera_continuous_photo",
+  /** Push: a continuous capture is `capturing` or `paused` (photos would pile up on the glasses): `{runId, state}`. */
+  CAMERA_CONTINUOUS_STATE = "miniapp_camera_continuous_state",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK

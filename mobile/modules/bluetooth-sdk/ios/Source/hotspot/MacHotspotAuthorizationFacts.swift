@@ -41,11 +41,11 @@ final class MacHotspotAuthorizationFacts {
     }
 
     /// Only enums and this process's identity cross the existing bounded error bridge.
-    func failure(_ message: String, raw: Int32, getter: Getter, foreground: Foreground) -> LocalMediaError {
+    func failure(_ message: String, raw: Int32, getter: Getter, foreground: Foreground) -> HotspotError {
         lock.lock(); defer { lock.unlock() }
         let instanceRaw = instance.map { String($0.raw) } ?? "unknown"
         let instanceGetter = instance?.getter.rawValue ?? "unknown"
         let instanceForeground = instance?.foreground.rawValue ?? "unknown"
-        return LocalMediaError("\(message) [location raw=\(raw) getter=\(getter.rawValue) foreground=\(foreground.rawValue) instanceRaw=\(instanceRaw) instanceGetter=\(instanceGetter) instanceForeground=\(instanceForeground) initialCallbackObserved=\(initialCallbackObserved) pid=\(pid) bundle=\(bundleID)]")
+        return HotspotError("\(message) [location raw=\(raw) getter=\(getter.rawValue) foreground=\(foreground.rawValue) instanceRaw=\(instanceRaw) instanceGetter=\(instanceGetter) instanceForeground=\(instanceForeground) initialCallbackObserved=\(initialCallbackObserved) pid=\(pid) bundle=\(bundleID)]")
     }
 }

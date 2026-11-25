@@ -6,10 +6,10 @@ public struct HotspotJoinFailure {
     public let message: String
 
     public init(_ error: Error) {
-        if error is CancellationError || (error as? LocalMediaError)?.message == "Hotspot join cancelled" {
+        if error is CancellationError || (error as? HotspotError)?.message == "Hotspot join cancelled" {
             code = "ERR_HOTSPOT_CANCELLED"
             message = "Hotspot join cancelled"
-        } else if let local = error as? LocalMediaError {
+        } else if let local = error as? HotspotError {
             code = "ERR_HOTSPOT_JOIN"
             // These messages are authored by the owned hotspot implementation, not NSError.
             message = String(local.message.filter { !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }.prefix(512))

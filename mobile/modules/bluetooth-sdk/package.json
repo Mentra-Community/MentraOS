@@ -37,6 +37,11 @@
       "types": "./build/ota-transport/index.d.ts",
       "default": "./build/ota-transport/index.js"
     },
+    "./glasses-wifi": {
+      "react-native": "./src/glasses-wifi/index.ts",
+      "types": "./build/glasses-wifi/index.d.ts",
+      "default": "./build/glasses-wifi/index.js"
+    },
     "./debug": {
       "react-native": "./src/debug.ts",
       "types": "./build/debug.d.ts",

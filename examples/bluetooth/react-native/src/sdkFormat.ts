@@ -1,4 +1,4 @@
-import type {Device, HotspotStatus, WifiStatus} from '@mentra/engine/bluetooth-sdk';
+import type {Device, WifiStatus} from '@mentra/engine/bluetooth-sdk';
 import type {GlassesRuntimeState, PhoneSdkRuntimeState} from '@mentra/engine/bluetooth-sdk/react';
 
 export function connectionLabel(glasses: GlassesRuntimeState) {
@@ -15,14 +15,6 @@ export function isGlassesWifiConnected(glasses: GlassesRuntimeState) {
 
 export function connectedWifiStatus(glasses: GlassesRuntimeState): Extract<WifiStatus, {state: 'connected'}> | null {
   return glasses.connected && glasses.wifi.state === 'connected' ? glasses.wifi : null;
-}
-
-export function enabledHotspotStatus(glasses: GlassesRuntimeState): Extract<HotspotStatus, {state: 'enabled'}> | null {
-  return glasses.connected && glasses.hotspot.state === 'enabled' ? glasses.hotspot : null;
-}
-
-export function isHotspotEnabled(glasses: GlassesRuntimeState, fallbackEnabled: boolean) {
-  return glasses.connected ? glasses.hotspot.state === 'enabled' : fallbackEnabled;
 }
 
 export function isDisconnectedStatus(glasses: GlassesRuntimeState) {
@@ -94,40 +86,6 @@ export function wifiSubLabel(glasses: GlassesRuntimeState) {
     return glasses.wifi.localIp ?? 'connected';
   }
   return 'not connected';
-}
-
-export function hotspotLabel(glasses: GlassesRuntimeState, fallbackEnabled: boolean) {
-  const hotspot = enabledHotspotStatus(glasses);
-  if (hotspot) {
-    return hotspot.localIp ? `${hotspot.ssid} · ${hotspot.localIp}` : hotspot.ssid;
-  }
-  if (!isHotspotEnabled(glasses, fallbackEnabled)) {
-    return 'disabled';
-  }
-  return 'waiting for SSID';
-}
-
-const MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = '00001111';
-
-export function galleryServerUrl(glasses: GlassesRuntimeState, fallbackEnabled: boolean) {
-  const hotspot = enabledHotspotStatus(glasses);
-  if (hotspot) {
-    return `http://${hotspot.localIp}:8089`;
-  }
-  if (!isHotspotEnabled(glasses, fallbackEnabled)) {
-    return null;
-  }
-  return 'http://192.168.43.1:8089';
-}
-
-export function galleryHotspotSsidLabel(glasses: GlassesRuntimeState) {
-  const hotspot = enabledHotspotStatus(glasses);
-  return hotspot ? `Wi-Fi ${hotspot.ssid}` : 'the glasses hotspot';
-}
-
-export function galleryHotspotPasswordLabel(glasses: GlassesRuntimeState) {
-  const hotspot = enabledHotspotStatus(glasses);
-  return hotspot?.password || MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD;
 }
 
 export function firmwareLabel(glasses: GlassesRuntimeState) {

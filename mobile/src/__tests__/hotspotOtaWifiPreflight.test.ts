@@ -27,20 +27,6 @@ jest.mock("../../modules/engine/src/services/HotspotGlassesIdentity", () => ({
   joinedGlassesIdentity: jest.fn(async () => "same_glasses"),
 }))
 const binding = {ssid: "A", password: "password", gateway: "192.168.43.1", phoneIpv4: "192.168.43.2"}
-jest.mock("../../modules/engine/src/services/GlassesWifi", () => {
-  class GlassesWifiError extends Error {
-    stage: "enable" | "join"
-    cause: Error & {code?: string}
-    code?: string
-    constructor(stage: "enable" | "join", cause: Error & {code?: string}) {
-      super(cause.message)
-      this.stage = stage
-      this.cause = cause
-      this.code = cause.code
-    }
-  }
-  return {GlassesWifiError, holdGlassesWifi: jest.fn()}
-})
 jest.mock("@mentra/bluetooth-sdk/ota-transport", () => ({
   otaServer: {
     start: jest.fn(async () => ({
@@ -56,7 +42,7 @@ const wifi = jest.requireMock("react-native-wifi-reborn").default as {isEnabled:
 const netInfo = jest.requireMock("@react-native-community/netinfo").default as {fetch: jest.Mock}
 const wifiInternet = {type: "wifi", isConnected: true, isInternetReachable: true}
 const downloader = jest.requireMock("../../modules/engine/src/services/OtaArtifactDownloader")
-const service = jest.requireMock("../../modules/engine/src/services/GlassesWifi")
+const service = jest.requireMock("@mentra/bluetooth-sdk/glasses-wifi")
 const check = {manifestBody: "{}"} as OtaCheckCurrentGlassesResult
 let platform = "android"
 

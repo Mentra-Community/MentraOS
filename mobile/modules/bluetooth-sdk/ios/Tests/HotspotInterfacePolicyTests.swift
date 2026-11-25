@@ -1,4 +1,4 @@
-@testable import GlassesMediaCore
+@testable import MentraBluetoothSDK
 import XCTest
 
 final class HotspotInterfacePolicyTests: XCTestCase {
@@ -280,9 +280,9 @@ final class HotspotInterfacePolicyTests: XCTestCase {
 
     func testSelectedAddressStillRequiresExactSsidForReuse() {
         let binding = select([ethernet, wifi], macReports)
-        XCTAssertTrue(LocalMediaPolicy.canReuseHotspot(requestedSSID: "glasses", currentSSID: "glasses", address: binding?.address, gateway: gateway))
+        XCTAssertTrue(HotspotAddressPolicy.canReuseHotspot(requestedSSID: "glasses", currentSSID: "glasses", address: binding?.address, gateway: gateway))
         for current in [nil, "", "home", "Glasses"] as [String?] {
-            XCTAssertFalse(LocalMediaPolicy.canReuseHotspot(requestedSSID: "glasses", currentSSID: current, address: binding?.address, gateway: gateway))
+            XCTAssertFalse(HotspotAddressPolicy.canReuseHotspot(requestedSSID: "glasses", currentSSID: current, address: binding?.address, gateway: gateway))
         }
     }
 

@@ -13,7 +13,42 @@ import {mock} from "bun:test"
  */
 export const bluetoothSdk: Record<string, unknown> = {}
 
+/** The SDK's glasses Wi-Fi service: suites that hold the link inject their own. */
+class GlassesWifiError extends Error {
+  constructor(
+    readonly stage: "enable" | "join",
+    readonly cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause))
+  }
+}
+const glassesWifi = {
+  GlassesWifiError,
+  holdGlassesWifi: async () => {
+    throw new Error("holdGlassesWifi is not stubbed in this suite")
+  },
+  holdGlassesWifiIfUp: async () => null,
+  glassesWifiLink: {
+    isScoped: () => false,
+    request: async () => ({status: 200, headers: {}, bodyBase64: ""}),
+    download: async () => ({statusCode: 200, bytesWritten: 0, headers: {}}),
+    cancel: async () => {},
+    onDownloadProgress: () => () => {},
+  },
+  runContinuousCapture: () => ({
+    state: "paused",
+    onPhoto: () => () => {},
+    onState: () => () => {},
+    capture: async () => {
+      throw new Error("runContinuousCapture is not stubbed in this suite")
+    },
+    stop: async () => {},
+  }),
+}
+
 mock.module("@mentra/bluetooth-sdk/internal", () => ({
   __esModule: true,
   default: bluetoothSdk,
+  ...glassesWifi,
 }))
+mock.module("@mentra/bluetooth-sdk/glasses-wifi", () => glassesWifi)

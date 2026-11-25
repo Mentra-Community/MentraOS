@@ -2,6 +2,15 @@
 
 Public API changes in `@mentra/bluetooth-sdk`, for apps upgrading from an earlier release.
 
+## `3.5.0`: `link` replaces the hotspot API (React Native)
+
+- The SDK owns the glasses Wi-Fi link (the fast link): it picks the radio (Wi-Fi Direct on Android with glasses that support it, the glasses' hotspot otherwise), joins it, shares it with the SDK's other users and brings it back after the glasses restart.
+- Removed from `@mentra/bluetooth-sdk`: `setHotspotState`, the `hotspot_status_change` and `hotspot_error` events, `isEnabledHotspotStatus`, the `HotspotStatus`, `EnabledHotspotStatus`, `HotspotStatusChangeEvent` and `HotspotErrorEvent` types, and `hotspot` in the glasses status. Apps no longer join the glasses' network themselves.
+- Use `BluetoothSdk.link`: `link.state` is `{glasses: "connected" | "disconnected", fast: "up" | "down"}`, `link.onChange(handler)` hears it change, and `link.openFast()` / `link.closeFast()` hold and give back the fast link. While it is up, `capturePhoto(o).photo()` and `takePhoto` fetch the full photo over it; otherwise over Bluetooth.
+- New: `BluetoothSdk.captureContinuous(options)` takes photos back to back (`onPhoto`, `onState` `"capturing" | "paused"`, `capture()`, `stop()`), holding the fast link while the run is on and pausing while only Bluetooth is left or `maxPending` (default 12) photos are still on the glasses.
+- `@mentra/bluetooth-sdk/ota-transport`'s `otaLocalNetwork` keeps only `isAvailable` and `getNetworkDiagnostics`: joining the glasses' network (`connect`, `connectWifiDirect`, `wifiDirectAvailable`, `disconnect`, `onNetworkLost`) and requests over it (`request`, `download`, `cancel`, `onDownloadProgress`) belong to the SDK's glasses Wi-Fi service.
+- The Kotlin and Swift SDKs are unchanged.
+
 ## `3.4.0`: `unpair()` replaces `clearDefaultDevice()`
 
 - `clearDefaultDevice()` is removed, in TypeScript, Kotlin and Swift. It forgot the saved default device but left the phone bonded with the glasses, so the next pairing skipped pairing mode.
