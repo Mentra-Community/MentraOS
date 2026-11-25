@@ -759,9 +759,12 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
 
 public struct PhotoResponseEvent: CustomStringConvertible {
     public let response: PhotoResponse
+    /// A full photo kept on the phone (`PhotoCapture.photo()`): its small copy, made on the phone.
+    public var thumbnail: PhotoThumbnail?
 
-    public init(response: PhotoResponse) {
+    public init(response: PhotoResponse, thumbnail: PhotoThumbnail? = nil) {
         self.response = response
+        self.thumbnail = thumbnail
     }
 
     public init(values: [String: Any]) {
@@ -775,6 +778,7 @@ public struct PhotoResponseEvent: CustomStringConvertible {
     public var values: [String: Any] {
         var values = response.values
         values["type"] = "photo_response"
+        if let thumbnail { values["thumbnail"] = thumbnail.values }
         return values
     }
 

@@ -110,6 +110,27 @@ export interface PhotoTaken {
   size: number
   /** When the phone deletes the photo, as a Unix time in milliseconds: 30 minutes after capture. */
   expiresAt: number
+  /**
+   * A small copy of the photo, made on the phone: a JPEG at most 512 px on its long side, upright,
+   * about 20 to 40 KB. Show it in lists and timelines instead of the full photo, which a screen
+   * decodes to tens of megabytes. It is deleted with the photo; absent if the photo couldn't be read.
+   */
+  thumbnail?: PhotoThumbnail
+}
+
+/**
+ * A photo's thumbnail ({@link PhotoTaken.thumbnail}): one of the miniapp's own files like the photo,
+ * read with `session.blob` under `key` and shown on the screen from `url`, until the photo is deleted.
+ * Unlike {@link PhotoPreview}, it exists once the full photo is on the phone.
+ */
+export interface PhotoThumbnail {
+  /** The thumbnail's key in `session.blob`. To keep it past the photo, store a copy under a key of your own. */
+  key: string
+  /** A URL the miniapp's own screen can load, as {@link PhotoTaken.url}. Absent for a miniapp with no screen. */
+  url?: string
+  width: number
+  height: number
+  mimeType: string
 }
 
 /** A photo's preview: the glasses' at most 500 px JPEG, as a `data:image/jpeg;base64,` URL. */

@@ -31,6 +31,13 @@ const PHOTO: PhotoTaken = {
   mimeType: "image/jpeg",
   size: 1234,
   expiresAt: 1_800_000_000_000,
+  thumbnail: {
+    key: "photo/p1abc/thumbnail",
+    url: "miniapp://com.example.app/.mentra/files/mywpiww1-def.jpg",
+    width: 512,
+    height: 384,
+    mimeType: "image/jpeg",
+  },
 }
 
 describe("CameraModule", () => {

@@ -642,6 +642,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await MainActor.run { self.photoCaptures.removeValue(forKey: requestId)?.release() }
         }
 
+        // A photo file on the phone (from the glasses Wi-Fi link, or a stream frame): its thumbnail beside it.
+        AsyncFunction("makePhotoThumbnail") { (fileUri: String) -> [String: Any]? in
+            PhotoThumbnails.make(fileUri)?.values
+        }
+
         // MARK: - OTA Commands
 
         Function("setOtaVersionUrl") { (otaVersionUrl: String) in

@@ -7,6 +7,7 @@ import ImageIO
 /// first call asks the glasses to send it, and until then it waits on the glasses ("deferred
 /// delivery"). `release()`: the full photo isn't needed, and the glasses delete it. Glasses without
 /// deferred photos send the whole photo at once; it is then also the preview, if one was asked for.
+/// The full photo comes with its `PhotoResponseEvent.thumbnail`, made on the phone.
 @MainActor
 public final class PhotoCapture {
     struct Glasses {
@@ -20,6 +21,8 @@ public final class PhotoCapture {
     let createdAt = Date()
     private let deferred: Bool
     private let glasses: Glasses
+    private let makeThumbnail: @Sendable (String) -> PhotoThumbnail?
+    private var thumbnail: Task<PhotoThumbnail?, Never>?
     private let capturedStage = PendingResponse<Void>(operation: "photo capture")
     private let previewStage = PendingResponse<PhotoPreview>(operation: "photo preview")
     private let photoStage = PendingResponse<PhotoResponseEvent>(operation: "photo")
@@ -31,10 +34,16 @@ public final class PhotoCapture {
     // Capture, preview ACK and retries, then the send queue's wait behind other photos.
     private static let stageTimeoutMs = 110_000
 
-    init(request: PhotoRequest, deferred: Bool, glasses: Glasses) {
+    init(
+        request: PhotoRequest,
+        deferred: Bool,
+        glasses: Glasses,
+        makeThumbnail: @escaping @Sendable (String) -> PhotoThumbnail? = PhotoThumbnails.make
+    ) {
         self.request = request
         self.deferred = deferred
         self.glasses = glasses
+        self.makeThumbnail = makeThumbnail
         photoAsked = !deferred
         if !request.preview {
             previewStage.reject(BluetoothSdkError(
@@ -54,13 +63,23 @@ public final class PhotoCapture {
         try await previewStage.wait(timeoutMs: Self.stageTimeoutMs)
     }
 
-    /// The full photo; `photoUrl` is a `file://` URL in the app's cache folder, the caller's to move.
+    /// The full photo; `photoUrl` is a `file://` URL in the app's cache folder, the caller's to move,
+    /// and `thumbnail` its small copy beside it (nil if the photo couldn't be read), also the caller's.
     public func photo() async throws -> PhotoResponseEvent {
         if !photoAsked {
             photoAsked = true
             glasses.fetch(request, false)
         }
-        return try await photoStage.wait(timeoutMs: Self.stageTimeoutMs)
+        var event = try await photoStage.wait(timeoutMs: Self.stageTimeoutMs)
+        guard case let .success(_, _, photoUrl, _, _, _, _) = event.response, let photoUrl, !photoUrl.isEmpty
+        else { return event }
+        // Made once, off the main actor, when the photo is first asked for: later calls get the same one.
+        if thumbnail == nil {
+            let make = makeThumbnail
+            thumbnail = Task.detached(priority: .userInitiated) { make(photoUrl) }
+        }
+        event.thumbnail = await thumbnail?.value
+        return event
     }
 
     /// The full photo isn't needed: the glasses delete it. Stages not reached yet fail.

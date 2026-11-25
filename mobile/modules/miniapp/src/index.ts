@@ -122,6 +122,7 @@ export type {
   PhotoCapture,
   PhotoCaptureWithPreview,
   PhotoPreview,
+  PhotoThumbnail,
   PhotoSize,
   PhotoTaken,
   SetCameraFovOptions,

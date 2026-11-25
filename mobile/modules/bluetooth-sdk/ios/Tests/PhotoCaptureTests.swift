@@ -51,4 +51,41 @@ final class PhotoCaptureTests: XCTestCase {
             XCTFail("unexpected \(error)")
         }
     }
+
+    func testTheFullPhotoComesWithItsThumbnailMadeOnce() async throws {
+        let made = ThumbnailCalls()
+        let capture = PhotoCapture(
+            request: PhotoRequest(requestId: "p1", size: .medium, sound: true, preview: false),
+            deferred: true,
+            glasses: PhotoCapture.Glasses(fetch: { _, _ in }, release: { _ in }, forget: { _ in }),
+            makeThumbnail: { url in
+                made.append(url)
+                return PhotoThumbnail(url: "file:///cache/photo.thumb.jpg", width: 512, height: 384, size: 30000)
+            }
+        )
+        capture.onStatus(PhotoStatusEvent(values: ["requestId": "p1", "status": "captured"]))
+        capture.onResponse(PhotoResponseEvent(values: [
+            "requestId": "p1", "state": "success", "photoUrl": "file:///cache/photo.jpg", "timestamp": 1,
+        ]))
+        let photo = try await capture.photo()
+        XCTAssertEqual(photo.thumbnail?.url, "file:///cache/photo.thumb.jpg")
+        let values = try XCTUnwrap(photo.values["thumbnail"] as? [String: Any])
+        XCTAssertEqual(values["fileUri"] as? String, "file:///cache/photo.thumb.jpg")
+        XCTAssertEqual(values["width"] as? Int, 512)
+        XCTAssertEqual(values["height"] as? Int, 384)
+        _ = try await capture.photo()
+        XCTAssertEqual(made.urls, ["file:///cache/photo.jpg"])
+    }
+}
+
+private final class ThumbnailCalls: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [String] = []
+    var urls: [String] {
+        lock.withLock { calls }
+    }
+
+    func append(_ url: String) {
+        lock.withLock { calls.append(url) }
+    }
 }

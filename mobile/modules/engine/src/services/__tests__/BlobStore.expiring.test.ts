@@ -225,4 +225,66 @@ describe("expiring blobs", () => {
       "mentraos_blobmeta/core.mu_2.p/com.other.app/photo/fresh",
     ])
   })
+
+  describe("a photo's thumbnail, stored with it", () => {
+    const withThumbnail = (key: string) => {
+      const photo = take(key)
+      const thumbnail = store.storeExpiringCompanion(pkg, key, `${key}/thumbnail`, nativePhoto(30), "image/jpeg")!
+      return {photo, thumbnail}
+    }
+
+    it("expires with the photo", () => {
+      const {photo, thumbnail} = withThumbnail("photo/p1")
+      expect(thumbnail).toMatchObject({key: "photo/p1/thumbnail", bytes: 30, expiresAt: photo.expiresAt})
+      now += EXPIRING_BLOB_TTL_MS
+      expect(get("photo/p1/thumbnail")).toBeNull()
+      expect(onDisk(thumbnail.uri)).toBe(false)
+    })
+
+    it("is deleted with the photo", () => {
+      const {thumbnail} = withThumbnail("photo/p1")
+      store.handleDelete(pkg, {key: "photo/p1"})
+      expect(list()).toEqual([])
+      expect(onDisk(thumbnail.uri)).toBe(false)
+    })
+
+    it("is deleted with a photo replaced under the same key", () => {
+      const {thumbnail} = withThumbnail("photo/p1")
+      take("photo/p1")
+      expect(list()).toEqual(["photo/p1"])
+      expect(onDisk(thumbnail.uri)).toBe(false)
+    })
+
+    it("doesn't count among an app's newest photos, and goes when its photo is trimmed", () => {
+      const first = withThumbnail("photo/p0")
+      for (let i = 1; i < EXPIRING_BLOB_MAX_COUNT; i++) {
+        now += 1000
+        withThumbnail(`photo/p${i}`)
+      }
+      // Twenty photos, each with its thumbnail: all kept.
+      expect(list()).toHaveLength(EXPIRING_BLOB_MAX_COUNT * 2)
+      now += 1000
+      take("photo/new")
+      expect(get("photo/p0")).toBeNull()
+      expect(get("photo/p0/thumbnail")).toBeNull()
+      expect(onDisk(first.thumbnail.uri)).toBe(false)
+      expect(get("photo/p1/thumbnail")).not.toBeNull()
+    })
+
+    it("is not kept for a photo that is gone, and its file is deleted", () => {
+      const source = nativePhoto(30)
+      expect(store.storeExpiringCompanion(pkg, "photo/none", "photo/none/thumbnail", source, "image/jpeg")).toBeNull()
+      expect(onDisk(source)).toBe(false)
+      expect(list()).toEqual([])
+    })
+
+    it("a blob the miniapp later stores under the thumbnail's key is its own, and stays", () => {
+      withThumbnail("photo/p1")
+      store.handleCreate(pkg, {key: "photo/p1/thumbnail", mimeType: "image/jpeg"})
+      store.handleWrite(pkg, {key: "photo/p1/thumbnail", base64: Buffer.alloc(10, 7).toString("base64")})
+      store.handleCommit(pkg, {key: "photo/p1/thumbnail"})
+      store.handleDelete(pkg, {key: "photo/p1"})
+      expect(list()).toEqual(["photo/p1/thumbnail"])
+    })
+  })
 })

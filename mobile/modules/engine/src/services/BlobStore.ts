@@ -100,6 +100,10 @@ interface StoredBlobMeta {
   meta?: Record<string, string | number | boolean>
   /** Set on an expiring blob: when the host deletes it. Such a blob is outside the quota. */
   expiresAt?: number
+  /** Set on an expiring blob stored with another (a photo's thumbnail): that blob's key. It goes with it. */
+  companionOf?: string
+  /** The keys of the blobs stored with this one ({@link companionOf}). */
+  companions?: string[]
 }
 
 interface ActiveUpload {
@@ -339,6 +343,8 @@ export class BlobStore {
       this.deleteFileQuiet(packageName, prior.fileName)
       if (!prior.expiresAt) this.bumpUsage(packageName, -(prior.bytes || 0))
     }
+    // What went with the blob it replaces goes too.
+    if (prior) this.dropCompanions(packageName, prior)
     const finalFile = this.fileFor(packageName, fileName)
     const bytes = finalFile.size ?? 0
     const now = Date.now()
@@ -381,6 +387,26 @@ export class BlobStore {
     return meta
   }
 
+  /**
+   * Store a file that goes with the expiring blob under `ownerKey` (a photo's thumbnail) as the
+   * expiring blob for `key`: it expires with it, is deleted with it, and doesn't count toward the
+   * newest-few limits. Null, with the file deleted, when that blob is gone.
+   */
+  storeExpiringCompanion(packageName: string, ownerKey: string, key: string, sourceUri: string, mimeType: string) {
+    const owner = this.readMeta(packageName, ownerKey)
+    if (!owner?.expiresAt) {
+      this.discardFile(sourceUri)
+      return null
+    }
+    const fileName = this.makeId()
+    new File(sourceUri).move(this.fileFor(packageName, fileName))
+    const meta = this.commitFile(packageName, key, fileName, mimeType, undefined, undefined, owner.expiresAt)
+    const stored = this.readMeta(packageName, key)
+    if (stored) this.writeMeta(packageName, {...stored, companionOf: ownerKey})
+    this.writeMeta(packageName, {...owner, companions: [...new Set([...(owner.companions ?? []), key])]})
+    return meta
+  }
+
   /** Delete a host-produced file that could not be stored. */
   discardFile(uri: string): void {
     try {
@@ -393,8 +419,9 @@ export class BlobStore {
 
   /** Keep an app's newest expiring blobs within the count and size limits. */
   private trimExpiring(packageName: string): void {
+    // A companion goes with its blob, and doesn't count on its own.
     const expiring = this.allMeta(packageName)
-      .filter((m) => m.expiresAt)
+      .filter((m) => m.expiresAt && !m.companionOf)
       .sort((a, b) => b.createdAt - a.createdAt)
     let count = 0
     let bytes = 0
@@ -955,6 +982,16 @@ export class BlobStore {
     this.deleteFileQuiet(packageName, meta.fileName)
     mmkvStorage.remove(this.metaKey(packageName, meta.key))
     if (!meta.expiresAt) this.bumpUsage(packageName, -(meta.bytes || 0))
+    this.dropCompanions(packageName, meta)
+  }
+
+  /** Drop the blobs stored with `meta`; one the miniapp has since replaced under that key is its own. */
+  private dropCompanions(packageName: string, meta: StoredBlobMeta): void {
+    for (const key of meta.companions ?? []) {
+      const r = mmkvStorage.load<StoredBlobMeta>(this.metaKey(packageName, key))
+      const companion = r.is_ok() ? r.value : null
+      if (companion?.companionOf === meta.key) this.dropMeta(packageName, companion)
+    }
   }
 
   private deleteFileQuiet(packageName: string, fileName: string): void {

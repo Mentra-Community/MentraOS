@@ -30,7 +30,22 @@ class PhotoError extends Error {
   }
 }
 
-function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; photoPauseHeld?: boolean} = {}) {
+const THUMBNAIL = {
+  fileUri: "file:///cache/mentra_local_photos/photo_1.thumb.jpg",
+  width: 512,
+  height: 384,
+  mimeType: "image/jpeg",
+}
+
+function fixture(
+  opts: {
+    storeFails?: boolean
+    thumbnailStoreFails?: boolean
+    screenOrigin?: string | null
+    photoPauseHeld?: boolean
+    thumbnail?: boolean
+  } = {},
+) {
   const takePhoto = mock(async () => ({
     photoUrl: "https://r2.test/p.jpg",
     mimeType: "image/jpeg",
@@ -42,6 +57,7 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
     mimeType: "image/jpeg",
     size: 61234,
     requestId: "p1abc",
+    ...(opts.thumbnail ? {thumbnail: THUMBNAIL} : {}),
   }))
   const storeExpiringFile = mock((_pkg: string, key: string, _uri: string, mimeType: string) => {
     if (opts.storeFails) throw new Error("disk full")
@@ -53,6 +69,18 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
       uri: "file:///documents/mentra_blobs/core.mu_1.p/com.mentra.camera/mywpiww0-abc.jpg",
     }
   })
+  const storeExpiringCompanion = mock(
+    (_pkg: string, _ownerKey: string, key: string, _uri: string, mimeType: string) => {
+      if (opts.thumbnailStoreFails) throw new Error("disk full")
+      return {
+        key,
+        mimeType,
+        bytes: 30000,
+        expiresAt: 1_800_000_000_000,
+        uri: "file:///documents/mentra_blobs/core.mu_1.p/com.mentra.camera/mywpiww1-def.jpg",
+      }
+    },
+  )
   const released = mock(async () => {})
   const capturePhoto = mock((_pkg: string, _opts: unknown, _photoId?: string) => ({}))
   const capture = mock((_pkg: string, photoId: string) => ({
@@ -79,6 +107,7 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
     "EXPIRING_BLOB_TTL_MS",
     "miniappFileUrl",
     "acsMeetingService",
+    "LOG_TAG",
     `${compiled}; return Host`,
   )(
     {takePhoto, takeLocalPhoto, capturePhoto, capture},
@@ -91,15 +120,28 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
     30 * 60 * 1000,
     miniappFileUrl,
     {photoPauseHeld: () => opts.photoPauseHeld === true},
+    "LOCAL_MINIAPP",
   )
   const host = new Host()
   const results: Array<{ok: boolean; data?: unknown; error?: {code?: string; stage?: string; photoId?: string}}> = []
   host.connectedApps = new Map([[PACKAGE, {installedManifest: {permissions: [{type: "CAMERA"}]}}]])
-  host.blobStore = {storeExpiringFile, discardFile}
+  host.blobStore = {storeExpiringFile, storeExpiringCompanion, discardFile}
   host.sendResult = (_pkg: string, _requestId: string | undefined, ok: boolean, data?: unknown, error?: never) => {
     results.push({ok, data, error})
   }
-  return {host, results, takePhoto, takeLocalPhoto, capturePhoto, capture, released, storeExpiringFile, discardFile, miniappFileUrl}
+  return {
+    host,
+    results,
+    takePhoto,
+    takeLocalPhoto,
+    capturePhoto,
+    capture,
+    released,
+    storeExpiringFile,
+    storeExpiringCompanion,
+    discardFile,
+    miniappFileUrl,
+  }
 }
 
 describe("handlePhoto with local delivery", () => {
@@ -158,6 +200,53 @@ describe("handlePhoto with local delivery", () => {
     expect("url" in data).toBe(false)
   })
 
+  test("the photo's thumbnail is stored with it and handed out beside it", async () => {
+    const f = fixture({thumbnail: true})
+    await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
+    expect(f.storeExpiringCompanion).toHaveBeenCalledWith(
+      PACKAGE,
+      "photo/p1abc",
+      "photo/p1abc/thumbnail",
+      THUMBNAIL.fileUri,
+      "image/jpeg",
+    )
+    expect(f.results[0]).toMatchObject({
+      ok: true,
+      data: {
+        key: "photo/p1abc",
+        thumbnail: {
+          key: "photo/p1abc/thumbnail",
+          url: "miniapp://com.mentra.camera/.mentra/files/mywpiww1-def.jpg",
+          width: 512,
+          height: 384,
+          mimeType: "image/jpeg",
+        },
+      },
+    })
+  })
+
+  test("a photo with no thumbnail has none", async () => {
+    const f = fixture()
+    await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
+    expect(f.storeExpiringCompanion).not.toHaveBeenCalled()
+    expect("thumbnail" in (f.results[0]!.data as Record<string, unknown>)).toBe(false)
+  })
+
+  test("a thumbnail that can't be stored is deleted, and the photo still goes", async () => {
+    const f = fixture({thumbnail: true, thumbnailStoreFails: true})
+    const warn = mock(() => {})
+    const original = console.warn
+    console.warn = warn
+    try {
+      await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
+    } finally {
+      console.warn = original
+    }
+    expect(f.discardFile).toHaveBeenCalledWith(THUMBNAIL.fileUri)
+    expect(f.results[0]).toMatchObject({ok: true, data: {key: "photo/p1abc"}})
+    expect("thumbnail" in (f.results[0]!.data as Record<string, unknown>)).toBe(false)
+  })
+
   test("a request that doesn't ask keeps the managed cloud photo", async () => {
     const f = fixture()
     await f.host.handlePhoto(PACKAGE, {size: "low"}, "req-1")
@@ -166,9 +255,10 @@ describe("handlePhoto with local delivery", () => {
   })
 
   test("a photo that can't be stored fails the request and doesn't stay in the cache folder", async () => {
-    const f = fixture({storeFails: true})
+    const f = fixture({storeFails: true, thumbnail: true})
     await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
     expect(f.discardFile).toHaveBeenCalledWith("file:///cache/mentra_local_photos/photo_1.jpg")
+    expect(f.discardFile).toHaveBeenCalledWith(THUMBNAIL.fileUri)
     expect(f.results[0]).toMatchObject({ok: false, error: {code: "PHOTO_STORE_FAILED", stage: "save"}})
   })
 })

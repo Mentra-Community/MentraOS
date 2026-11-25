@@ -43,6 +43,7 @@ import {
   PhotoCaptureWithPreview,
   PhotoPreview,
   PhotoTaken,
+  PhotoThumbnail,
   PhotoUploadParams,
   PhotoSuccessResponseEvent,
   PublicBluetoothStatus,
@@ -221,6 +222,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   capturePhoto(params: CapturePhotoParams & {preview: true}): PhotoCaptureWithPreview
   capturePhoto(params: CapturePhotoParams): PhotoCapture
   takePhoto(params: PhotoCaptureParams): Promise<PhotoTaken>
+  makePhotoThumbnail(fileUri: string): Promise<PhotoThumbnail | null>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   stopCameraWarmUp(requestId: string): Promise<void>
 
@@ -780,6 +782,40 @@ const nativePhotoCaptureStage = bindNativeMethod<(requestId: string, stage: stri
   "photoCaptureStage",
 )
 const nativeReleasePhotoCapture = bindNativeMethod<(requestId: string) => Promise<void>>(nativeModule, "releasePhotoCapture")
+const nativeMakePhotoThumbnail = bindNativeMethod<(fileUri: string) => Promise<Record<string, unknown> | null>>(
+  nativeModule,
+  "makePhotoThumbnail",
+)
+
+/** A thumbnail as the native SDKs give it, or undefined when there is none. */
+export function photoThumbnailOf(value: unknown): PhotoThumbnail | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const t = value as Record<string, unknown>
+  if (typeof t.fileUri !== "string" || !t.fileUri || typeof t.width !== "number" || typeof t.height !== "number") {
+    return undefined
+  }
+  return {
+    fileUri: t.fileUri,
+    width: t.width,
+    height: t.height,
+    mimeType: typeof t.mimeType === "string" ? t.mimeType : "image/jpeg",
+    size: typeof t.size === "number" ? t.size : -1,
+  }
+}
+
+NativeBluetoothSdkModule.makePhotoThumbnail = async function (fileUri: string): Promise<PhotoThumbnail | null> {
+  return photoThumbnailOf(await nativeMakePhotoThumbnail(fileUri)) ?? null
+}
+
+/** A photo's thumbnail; a photo still counts without one. */
+async function thumbnailFor(fileUri: string): Promise<PhotoThumbnail | undefined> {
+  try {
+    return (await NativeBluetoothSdkModule.makePhotoThumbnail(fileUri)) ?? undefined
+  } catch (err) {
+    console.warn(`[BluetoothSdk] No thumbnail for ${fileUri}:`, err)
+    return undefined
+  }
+}
 
 /** Each stage is a promise the caller may never await: none of them is an unhandled rejection. */
 function quiet<T>(promise: Promise<T>): Promise<T> {
@@ -809,12 +845,15 @@ NativeBluetoothSdkModule.capturePhoto = function (params: CapturePhotoParams): P
     quiet(started.then(() => nativePhotoCaptureStage(requestId, name)))
   const overBluetooth = () =>
     stage("photo").then((value): PhotoTaken => {
-      const response = value as PhotoSuccessResponseEvent
+      const response = value as PhotoSuccessResponseEvent & {thumbnail?: unknown}
+      // The native capture makes the thumbnail when the photo arrives.
+      const thumbnail = photoThumbnailOf(response.thumbnail)
       return {
         requestId,
         fileUri: response.photoUrl ?? "",
         mimeType: response.contentType || "image/jpeg",
         size: response.fileSizeBytes ?? -1,
+        ...(thumbnail ? {thumbnail} : {}),
       }
     })
   // Glasses that keep the full photo serve it by ID, over the glasses Wi-Fi link when it is up.
@@ -823,7 +862,15 @@ NativeBluetoothSdkModule.capturePhoto = function (params: CapturePhotoParams): P
     if ((status?.deferredPhotosVersion ?? 0) < DEFERRED_PHOTOS_VERSION) return overBluetooth()
     await stage("captured")
     const overWifi = await fetchGlassesFileOverWifi(requestId)
-    return overWifi ? {requestId, fileUri: overWifi.uri, mimeType: "image/jpeg", size: overWifi.bytes} : overBluetooth()
+    if (!overWifi) return overBluetooth()
+    const thumbnail = await thumbnailFor(overWifi.uri)
+    return {
+      requestId,
+      fileUri: overWifi.uri,
+      mimeType: "image/jpeg",
+      size: overWifi.bytes,
+      ...(thumbnail ? {thumbnail} : {}),
+    }
   }
   // Each stage is asked for when first awaited, once.
   let captured: Promise<void> | undefined

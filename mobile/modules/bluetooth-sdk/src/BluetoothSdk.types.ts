@@ -849,8 +849,25 @@ export type PhotoUploadParams = PhotoCaptureParams & {
 /** A photo's preview: the glasses' at most 500 px JPEG, as a `data:image/jpeg;base64,` URL. */
 export type PhotoPreview = {url: string; width?: number; height?: number}
 
-/** A full photo kept on the phone: a JPEG in the app's cache folder, the caller's to move or delete. */
-export type PhotoTaken = {requestId: string; fileUri: string; mimeType: string; size: number}
+/**
+ * A photo's thumbnail, made on the phone from the full photo without decoding it whole: a JPEG at
+ * most 512 px on its long side, upright, beside the photo in the app's cache folder, the caller's
+ * to move or delete like the photo. Unlike {@link PhotoPreview}, it exists only once the full photo
+ * is on the phone.
+ */
+export type PhotoThumbnail = {fileUri: string; width: number; height: number; mimeType: string; size: number}
+
+/**
+ * A full photo kept on the phone: a JPEG in the app's cache folder, the caller's to move or delete,
+ * with its `thumbnail` beside it (absent if the photo couldn't be read as an image).
+ */
+export type PhotoTaken = {
+  requestId: string
+  fileUri: string
+  mimeType: string
+  size: number
+  thumbnail?: PhotoThumbnail
+}
 
 /**
  * One photo kept on the phone, in stages. Any number can be in flight: the glasses refuse a capture
@@ -1714,6 +1731,11 @@ export interface BluetoothSdkPublicModule {
   capturePhoto(params: CapturePhotoParams): PhotoCapture
   /** A photo kept on the phone, whole, with no preview: `capturePhoto(params).photo()`, then its release. */
   takePhoto(params: PhotoCaptureParams): Promise<PhotoTaken>
+  /**
+   * A thumbnail of the photo file at `fileUri` (a `file://` URI on the phone), beside it: what
+   * `PhotoTaken.thumbnail` is, for a photo from elsewhere. Null when the file isn't a readable image.
+   */
+  makePhotoThumbnail(fileUri: string): Promise<PhotoThumbnail | null>
   /**
    * The phone's links to the glasses: `state` says whether the glasses are connected and the fast
    * link (the glasses Wi-Fi) is up, `onChange` hears them change, and `openFast` / `closeFast`

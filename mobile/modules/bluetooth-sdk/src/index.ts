@@ -175,6 +175,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   uploadPhoto: bindPublicMethod("uploadPhoto"),
   capturePhoto: bindPublicMethod("capturePhoto"),
   takePhoto: bindPublicMethod("takePhoto"),
+  makePhotoThumbnail: bindPublicMethod("makePhotoThumbnail"),
   link,
   captureContinuous: ((options: CapturePhotoParams & {maxPending?: number}) =>
     runContinuousCapture(
@@ -334,6 +335,7 @@ export type {
   PhotoCaptureWithPreview,
   PhotoPreview,
   PhotoTaken,
+  PhotoThumbnail,
   PhotoUploadParams,
   PhotoSize,
   PhotoStatusEvent,

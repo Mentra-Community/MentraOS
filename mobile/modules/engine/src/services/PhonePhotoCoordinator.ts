@@ -38,6 +38,7 @@ import type {
   PhotoCaptureWithPreview as BluetoothPhotoCaptureWithPreview,
   PhotoPreview,
   PhotoSize,
+  PhotoThumbnail,
   PhotoTransferMethod,
 } from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"
@@ -104,12 +105,24 @@ export interface PhotoTaken {
   requestId: string
 }
 
-/** A photo kept on the phone. The file is in the app's cache folder and is the caller's to move. */
+/** A photo's thumbnail, made natively on the phone (the Bluetooth SDK's PhotoThumbnail). */
+export interface LocalPhotoThumbnail {
+  fileUri: string
+  width: number
+  height: number
+  mimeType: string
+}
+
+/**
+ * A photo kept on the phone. The file is in the app's cache folder and is the caller's to move, as
+ * is its thumbnail beside it (absent when the photo couldn't be read as an image).
+ */
 export interface LocalPhotoTaken {
   fileUri: string
   mimeType: string
   size: number
   requestId: string
+  thumbnail?: LocalPhotoThumbnail
 }
 
 /**
@@ -209,6 +222,11 @@ const saveStreamFrameFile: StreamFrameSave = (requestId, jpeg) => {
 }
 
 let bleRequestCounter = 0
+
+/** The Bluetooth SDK's thumbnail as a local photo carries it. */
+function thumbnailOf(t: PhotoThumbnail): LocalPhotoThumbnail {
+  return {fileUri: t.fileUri, width: t.width, height: t.height, mimeType: t.mimeType}
+}
 
 /** A stage the caller may never await is not an unhandled rejection. */
 function quiet<T>(promise: Promise<T>): Promise<T> {
@@ -564,8 +582,10 @@ export class PhonePhotoCoordinator {
             preview: opts.preview === true,
           }),
     )
-    const stage = <T>(fromGlasses: (c: BluetoothPhotoCapture) => Promise<T>, fromFrame: (f: StreamFrame) => T) =>
-      quiet(Promise.all([started, glasses]).then(([frame, c]) => (c ? fromGlasses(c) : fromFrame(frame!))))
+    const stage = <T>(
+      fromGlasses: (c: BluetoothPhotoCapture) => Promise<T>,
+      fromFrame: (f: StreamFrame) => T | Promise<T>,
+    ) => quiet(Promise.all([started, glasses]).then(([frame, c]) => (c ? fromGlasses(c) : fromFrame(frame!))))
     const captured = stage(
       (c) => c.captured,
       () => undefined,
@@ -590,7 +610,13 @@ export class PhonePhotoCoordinator {
         (photo ??= stage(
           // The Bluetooth SDK fetches it over the glasses Wi-Fi link when that is up.
           (c) =>
-            c.photo().then((p) => ({fileUri: p.fileUri, mimeType: p.mimeType, size: p.size, requestId: photoId})),
+            c.photo().then((p) => ({
+              fileUri: p.fileUri,
+              mimeType: p.mimeType,
+              size: p.size,
+              requestId: photoId,
+              ...(p.thumbnail ? {thumbnail: thumbnailOf(p.thumbnail)} : {}),
+            })),
           (f) => this.saveStreamFramePhoto(photoId, f),
         )),
       release: async () => {
@@ -600,13 +626,25 @@ export class PhonePhotoCoordinator {
     }
   }
 
-  /** A frame taken from the stream, saved as this photo's file. */
-  private saveStreamFramePhoto(requestId: string, frame: StreamFrame): LocalPhotoTaken {
+  /** A frame taken from the stream, saved as this photo's file, with its thumbnail as a glasses photo has. */
+  private async saveStreamFramePhoto(requestId: string, frame: StreamFrame): Promise<LocalPhotoTaken> {
+    let fileUri: string
     try {
-      return {fileUri: this.saveStreamFrame(requestId, Buffer.from(frame.base64, "base64")), mimeType: "image/jpeg", size: frame.bytes, requestId}
+      fileUri = this.saveStreamFrame(requestId, Buffer.from(frame.base64, "base64"))
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
       throw new PhotoError("LOCAL_PHOTO_UNAVAILABLE", `Could not save the photo taken from the stream: ${detail}`, "save")
+    }
+    const thumbnail = await BluetoothSdk.makePhotoThumbnail(fileUri).catch((err: unknown) => {
+      console.warn(`[PhonePhotoCoordinator] No thumbnail for stream photo ${requestId}:`, err)
+      return null
+    })
+    return {
+      fileUri,
+      mimeType: "image/jpeg",
+      size: frame.bytes,
+      requestId,
+      ...(thumbnail ? {thumbnail: thumbnailOf(thumbnail)} : {}),
     }
   }
 

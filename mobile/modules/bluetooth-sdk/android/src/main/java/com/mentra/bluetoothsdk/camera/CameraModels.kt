@@ -496,11 +496,14 @@ data class PhotoPreview(val url: String, val width: Int?, val height: Int?) {
 
 data class PhotoResponseEvent(
     val response: PhotoResponse,
+    /** A full photo kept on the phone ([PhotoCapture.photo]): its small copy, made on the phone. */
+    val thumbnail: PhotoThumbnail? = null,
 ) {
     constructor(values: Map<String, Any>) : this(PhotoResponse.fromMap(values))
 
     val requestId: String get() = response.requestId
-    val values: Map<String, Any> get() = response.toEventMap()
+    val values: Map<String, Any>
+        get() = response.toEventMap().let { map -> thumbnail?.let { map + ("thumbnail" to it.values) } ?: map }
 }
 
 data class PhotoStatusEvent(

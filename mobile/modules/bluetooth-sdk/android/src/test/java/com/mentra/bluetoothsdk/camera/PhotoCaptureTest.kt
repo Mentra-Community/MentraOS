@@ -60,4 +60,39 @@ class PhotoCaptureTest {
         val error = runCatching { capture.preview() }.exceptionOrNull() as BluetoothSdkException
         assertThat(error.code).isEqualTo("preview_not_requested")
     }
+
+    @Test
+    fun `the full photo comes with its thumbnail, made once`(): Unit = runBlocking {
+        val made = mutableListOf<String>()
+        val capture =
+            PhotoCapture(PhotoRequest(requestId = "p1", size = PhotoSize.MEDIUM), deferred = true, glasses) { url ->
+                made += url
+                PhotoThumbnail("file:///cache/photo.thumb.jpg", 512, 384, size = 30_000)
+            }
+        capture.onStatus(PhotoStatusEvent(mapOf("requestId" to "p1", "status" to "captured")))
+        capture.onResponse(saved("p1"))
+        val photo = capture.photo()
+        assertThat(photo.thumbnail?.url).isEqualTo("file:///cache/photo.thumb.jpg")
+        assertThat(photo.values["thumbnail"])
+            .isEqualTo(
+                mapOf(
+                    "fileUri" to "file:///cache/photo.thumb.jpg",
+                    "width" to 512,
+                    "height" to 384,
+                    "mimeType" to "image/jpeg",
+                    "size" to 30_000L,
+                ),
+            )
+        assertThat(capture.photo()).isSameAs(photo)
+        assertThat(made).containsExactly("file:///cache/photo.jpg")
+    }
+
+    @Test
+    fun `a photo that can't be read has no thumbnail`(): Unit = runBlocking {
+        val capture = PhotoCapture(PhotoRequest(requestId = "p1", size = PhotoSize.MEDIUM), deferred = true, glasses) { null }
+        capture.onStatus(PhotoStatusEvent(mapOf("requestId" to "p1", "status" to "captured")))
+        capture.onResponse(saved("p1"))
+        assertThat(capture.photo().thumbnail).isNull()
+        assertThat(capture.photo().values).doesNotContainKey("thumbnail")
+    }
 }

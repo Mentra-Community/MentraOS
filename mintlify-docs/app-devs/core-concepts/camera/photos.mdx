@@ -50,6 +50,7 @@ const photo = await session.camera.takePhoto({ size: "high", sound: false });
 // photo.mimeType   – e.g. "image/jpeg"
 // photo.size       – bytes
 // photo.expiresAt  – when the phone deletes it (Unix ms), 30 minutes after capture
+// photo.thumbnail  – a small copy: { key, url, width, height, mimeType }
 ```
 
 The default `size`, `"auto"`, is the largest photo that arrives in about 2 seconds on the link it
@@ -77,6 +78,28 @@ The result is a `PhotoTaken`:
 | `mimeType` | `string` | MIME type of the image, e.g. `"image/jpeg"`. |
 | `size` | `number` | Image size in bytes. |
 | `expiresAt` | `number` | When the phone deletes the photo, as a Unix time in milliseconds. |
+| `thumbnail` | `PhotoThumbnail \| undefined` | A small copy of the photo, made on the phone (below). Absent if the photo couldn't be read as an image. |
+
+### Thumbnails
+
+A full photo decodes to tens of megabytes on a screen, so a list or timeline of photos should
+show their thumbnails. The phone makes one for every photo as it arrives: a JPEG at most 512 px on
+its long side, upright, about 20 to 40 KB. It is one of your miniapp's own files like the photo,
+under its own `key` in `session.blob`, and it is deleted with the photo.
+
+```tsx
+<img src={photo.thumbnail?.url ?? photo.url} width={photo.thumbnail?.width} loading="lazy" />
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `key` | `string` | The thumbnail's key in `session.blob`. To keep it past the photo, store a copy under a key of your own. |
+| `url` | `string \| undefined` | A URL your miniapp's own screen can load until the photo is deleted. |
+| `width`, `height` | `number` | Its size in pixels. |
+| `mimeType` | `string` | `"image/jpeg"`. |
+
+A thumbnail exists once the full photo is on the phone. To show something sooner, ask the
+glasses for a preview (`preview: true`, below), which comes over Bluetooth before the full photo.
 
 ## Take photos in stages
 

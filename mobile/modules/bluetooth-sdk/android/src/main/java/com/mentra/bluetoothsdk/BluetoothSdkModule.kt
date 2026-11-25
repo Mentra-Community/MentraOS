@@ -814,6 +814,11 @@ class BluetoothSdkModule : Module() {
             photoCaptures.remove(requestId)?.release()
         }
 
+        // A photo file on the phone (from the glasses Wi-Fi link, or a stream frame): its thumbnail beside it.
+        SdkCoroutineFunction("makePhotoThumbnail") { fileUri: String ->
+            withContext(Dispatchers.IO) { PhotoThumbnails.make(fileUri)?.values }
+        }
+
         // MARK: - OTA Commands
 
         SdkFunction("setOtaVersionUrl") { otaVersionUrl: String ->

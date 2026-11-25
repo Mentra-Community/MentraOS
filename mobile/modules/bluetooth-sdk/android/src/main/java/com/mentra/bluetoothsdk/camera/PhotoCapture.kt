@@ -4,6 +4,10 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -13,11 +17,13 @@ import kotlinx.coroutines.withTimeoutOrNull
  * call asks the glasses to send it, and until then it waits on the glasses ("deferred delivery").
  * [release]: the full photo isn't needed, and the glasses delete it. Glasses without deferred
  * photos send the whole photo at once; it is then also the preview, if one was asked for.
+ * The full photo comes with its [PhotoResponseEvent.thumbnail], made on the phone.
  */
 class PhotoCapture internal constructor(
     val request: PhotoRequest,
     private val deferred: Boolean,
     private val glasses: Glasses,
+    private val makeThumbnail: (String) -> PhotoThumbnail? = PhotoThumbnails::make,
 ) {
     internal interface Glasses {
         fun fetch(request: PhotoRequest, preview: Boolean)
@@ -33,6 +39,8 @@ class PhotoCapture internal constructor(
     private val previewStage = CompletableDeferred<PhotoPreview>()
     private val photoStage = CompletableDeferred<PhotoResponseEvent>()
     private val photoAsked = AtomicBoolean(!deferred)
+    private val thumbnailLock = Mutex()
+    private var withThumbnail: PhotoResponseEvent? = null
 
     init {
         if (!request.preview) {
@@ -48,10 +56,21 @@ class PhotoCapture internal constructor(
     /** The preview, if the request asked for one; else it fails with `preview_not_requested`. */
     suspend fun preview(): PhotoPreview = await(previewStage, STAGE_TIMEOUT_MS, "preview")
 
-    /** The full photo; `photoUrl` is a `file://` URI in the app's cache folder, the caller's to move. */
+    /**
+     * The full photo; `photoUrl` is a `file://` URI in the app's cache folder, the caller's to move,
+     * and `thumbnail` its small copy beside it (null if the photo couldn't be read), also the caller's.
+     */
     suspend fun photo(): PhotoResponseEvent {
         if (photoAsked.compareAndSet(false, true)) glasses.fetch(request, preview = false)
-        return await(photoStage, STAGE_TIMEOUT_MS, "photo")
+        val event = await(photoStage, STAGE_TIMEOUT_MS, "photo")
+        // Made once, when the photo is first asked for: later calls return the same one.
+        return thumbnailLock.withLock {
+            withThumbnail ?: run {
+                val photoUrl = (event.response as? PhotoResponse.Success)?.photoUrl
+                val thumbnail = photoUrl?.takeIf { it.isNotBlank() }?.let { withContext(Dispatchers.IO) { makeThumbnail(it) } }
+                event.copy(thumbnail = thumbnail).also { withThumbnail = it }
+            }
+        }
     }
 
     /** The full photo isn't needed: the glasses delete it. Stages not reached yet fail. */

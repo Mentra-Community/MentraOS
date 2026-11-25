@@ -132,11 +132,13 @@ To keep the photo on the phone and upload nothing, use `capturePhoto`. With `pre
 const capture = BluetoothSdk.capturePhoto({size: 'medium', sound: true, preview: true});
 await capture.captured;                 // the camera is free for the next photo
 const preview = await capture.preview;  // {url: "data:image/jpeg;base64,...", width, height}
-const photo = await capture.photo();    // {requestId, fileUri, mimeType, size}
+const photo = await capture.photo();    // {requestId, fileUri, mimeType, size, thumbnail}
 await capture.release();                // or skip photo(): the glasses delete it
 ```
 
 `takePhoto(options)` is `capturePhoto(options).photo()` followed by `release()`, with no preview. For a preview only, await `preview` and `release()` without calling `photo()`.
+
+Each full photo comes with a `thumbnail` made on the phone as it arrives: `{fileUri, width, height, mimeType, size}`, a JPEG at most 512 px on its long side with the EXIF orientation applied, beside the photo in the app's cache folder. Like the photo, it is yours to move or delete. Show thumbnails in lists instead of full photos, which decode to tens of megabytes. `BluetoothSdk.makePhotoThumbnail(fileUri)` makes one for a photo file from elsewhere. On Android and iOS, `PhotoCapture.photo()` returns a `PhotoResponseEvent` whose `thumbnail` is the same, made with `ImageDecoder` and `CGImageSourceCreateThumbnailAtIndex`, which never decode the full photo.
 
 ### Photos over Wi-Fi
 

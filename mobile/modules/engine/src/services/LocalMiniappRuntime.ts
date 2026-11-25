@@ -54,7 +54,14 @@ import {MiniappSystemActions} from "./MiniappSystemActions"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {fleetEvents} from "./fleet/fleetEvents"
-import {PhotoError, phonePhotoCoordinator, type LocalPhotoTaken, type PhoneCapture, type PhotoOpts} from "./PhonePhotoCoordinator"
+import {
+  PhotoError,
+  phonePhotoCoordinator,
+  type LocalPhotoTaken,
+  type LocalPhotoThumbnail,
+  type PhoneCapture,
+  type PhotoOpts,
+} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
@@ -200,6 +207,26 @@ export interface InstalledMiniappManifest {
 }
 
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
+
+/** A photo's thumbnail as the miniapp gets it (the Miniapp SDK's PhotoThumbnail). */
+interface MiniappPhotoThumbnail {
+  key: string
+  url?: string
+  width: number
+  height: number
+  mimeType: string
+}
+
+/** A photo as the miniapp gets it (the Miniapp SDK's PhotoTaken). */
+interface MiniappPhotoTaken {
+  requestId: string
+  key: string
+  url?: string
+  mimeType: string
+  size: number
+  expiresAt: number
+  thumbnail?: MiniappPhotoThumbnail
+}
 
 interface ConnectedMiniapp {
   /** Transcription listeners, each with the source (cloud or on-device) it gets text from. */
@@ -3879,18 +3906,15 @@ class LocalMiniappRuntime {
    * Take a photo that stays on the phone and hand it to the miniapp as an expiring blob:
    * it reads the bytes with `session.blob` under `key` until `expiresAt`, and its screen shows it from `url`.
    */
-  private async takeLocalPhoto(
-    packageName: string,
-    opts: PhotoOpts,
-  ): Promise<{requestId: string; key: string; url?: string; mimeType: string; size: number; expiresAt: number}> {
+  private async takeLocalPhoto(packageName: string, opts: PhotoOpts): Promise<MiniappPhotoTaken> {
     return this.keepPhotoForMiniapp(packageName, await phonePhotoCoordinator.takeLocalPhoto(packageName, opts))
   }
 
-  /** Hand a photo file on the phone to the miniapp as an expiring blob (see takeLocalPhoto). */
-  private async keepPhotoForMiniapp(
-    packageName: string,
-    photo: LocalPhotoTaken,
-  ): Promise<{requestId: string; key: string; url?: string; mimeType: string; size: number; expiresAt: number}> {
+  /**
+   * Hand a photo file on the phone to the miniapp as an expiring blob (see takeLocalPhoto), and its
+   * thumbnail as another under `photo/<id>/thumbnail`, which expires and is deleted with the photo.
+   */
+  private async keepPhotoForMiniapp(packageName: string, photo: LocalPhotoTaken): Promise<MiniappPhotoTaken> {
     try {
       const blob = this.blobStore.storeExpiringFile(
         packageName,
@@ -3899,7 +3923,8 @@ class LocalMiniappRuntime {
         photo.mimeType,
       )
       // The screen's own origin serves the file.
-      const url = miniappFileUrl(packageName, blob.uri.slice(blob.uri.lastIndexOf("/") + 1))
+      const url = this.screenUrlOf(packageName, blob.uri)
+      const thumbnail = photo.thumbnail && this.keepThumbnailForMiniapp(packageName, blob.key, photo.thumbnail)
       return {
         requestId: photo.requestId,
         key: blob.key,
@@ -3907,16 +3932,53 @@ class LocalMiniappRuntime {
         mimeType: blob.mimeType,
         size: blob.bytes,
         expiresAt: blob.expiresAt ?? Date.now() + EXPIRING_BLOB_TTL_MS,
+        ...(thumbnail ? {thumbnail} : {}),
       }
     } catch (err) {
       // The photo was taken but can't reach the miniapp; don't leave it in the cache folder.
       this.blobStore.discardFile(photo.fileUri)
+      if (photo.thumbnail) this.blobStore.discardFile(photo.thumbnail.fileUri)
       throw new PhotoError(
         "PHOTO_STORE_FAILED",
         `Could not store the photo for the miniapp: ${err instanceof Error ? err.message : String(err)}`,
         "save",
       )
     }
+  }
+
+  /** A photo's thumbnail stored with it; without one (it couldn't be stored) the photo still goes. */
+  private keepThumbnailForMiniapp(
+    packageName: string,
+    photoKey: string,
+    thumbnail: LocalPhotoThumbnail,
+  ): MiniappPhotoThumbnail | undefined {
+    try {
+      const blob = this.blobStore.storeExpiringCompanion(
+        packageName,
+        photoKey,
+        `${photoKey}/thumbnail`,
+        thumbnail.fileUri,
+        thumbnail.mimeType,
+      )
+      if (!blob) return undefined
+      const url = this.screenUrlOf(packageName, blob.uri)
+      return {
+        key: blob.key,
+        ...(url ? {url} : {}),
+        width: thumbnail.width,
+        height: thumbnail.height,
+        mimeType: blob.mimeType,
+      }
+    } catch (err) {
+      console.warn(`${LOG_TAG}: could not store the thumbnail of ${photoKey} for ${packageName}`, err)
+      this.blobStore.discardFile(thumbnail.fileUri)
+      return undefined
+    }
+  }
+
+  /** The URL the miniapp's screen loads one of its blob files from, if it has a screen. */
+  private screenUrlOf(packageName: string, blobUri: string): string | undefined {
+    return miniappFileUrl(packageName, blobUri.slice(blobUri.lastIndexOf("/") + 1)) ?? undefined
   }
 
   /** The manifest's CAMERA permission, or an error answer naming the operation. */

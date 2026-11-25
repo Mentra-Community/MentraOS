@@ -362,6 +362,63 @@ describe("PhonePhotoCoordinator", () => {
       expect(nativeReleases).toEqual([result.requestId])
     })
 
+    test("the photo's thumbnail comes with it", async () => {
+      const thumbnail = {
+        fileUri: "file:///cache/ble.thumb.jpg",
+        width: 512,
+        height: 384,
+        mimeType: "image/jpeg",
+        size: 30000,
+      }
+      capturePhotoNative.mockImplementation((params: unknown) => {
+        const capture = goodCapture(params)
+        return {...capture, photo: async () => ({...(await capture.photo()), thumbnail})}
+      })
+      const result = await new PhonePhotoCoordinator().takeLocalPhoto("com.a", {size: "low"})
+      expect(result.thumbnail).toEqual({
+        fileUri: "file:///cache/ble.thumb.jpg",
+        width: 512,
+        height: 384,
+        mimeType: "image/jpeg",
+      })
+    })
+
+    test("a photo from a relayed stream gets its thumbnail made on the phone", async () => {
+      const frame = {base64: Buffer.from("jpeg").toString("base64"), width: 1280, height: 720, bytes: 4}
+      const makePhotoThumbnail = mock(async (fileUri: string) => ({
+        fileUri: fileUri.replace(".jpg", ".thumb.jpg"),
+        width: 512,
+        height: 288,
+        mimeType: "image/jpeg",
+        size: 20000,
+      }))
+      Object.assign(bluetoothSdk, {makePhotoThumbnail})
+      const coord = new PhonePhotoCoordinator(
+        {isLive: () => true, grab: async () => frame},
+        async () => {},
+        (requestId) => `file:///cache/stream-${requestId}.jpg`,
+      )
+      const result = await coord.takeLocalPhoto("com.a", {size: "low"})
+      expect(capturePhotoNative).not.toHaveBeenCalled()
+      expect(makePhotoThumbnail).toHaveBeenCalledWith(result.fileUri)
+      expect(result.thumbnail).toEqual({
+        fileUri: result.fileUri.replace(".jpg", ".thumb.jpg"),
+        width: 512,
+        height: 288,
+        mimeType: "image/jpeg",
+      })
+
+      // A thumbnail that can't be made leaves the photo without one.
+      makePhotoThumbnail.mockImplementation(async () => {
+        throw new Error("decode failed")
+      })
+      const warn = spyOn(console, "warn").mockImplementation(() => {})
+      const plain = await coord.takeLocalPhoto("com.a", {size: "low"})
+      warn.mockRestore()
+      expect(plain.fileUri).toStartWith("file:///cache/stream-")
+      expect("thumbnail" in plain).toBe(false)
+    })
+
     test("reports the photo to Fleet under its own ID", async () => {
       const stages: string[] = []
       const stop = fleetEvents.subscribe({photo: (event) => stages.push(`${event.stage}:${event.operationId}`)})
