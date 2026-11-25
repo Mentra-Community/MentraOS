@@ -118,6 +118,7 @@ export type {
   FastLinkState,
   PhotoCapture,
   PhotoPreview,
+  PhotoSize,
   PhotoTaken,
   SetCameraFovOptions,
   StartVideoRecordingOptions,

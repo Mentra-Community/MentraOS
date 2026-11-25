@@ -60,6 +60,13 @@ final class PhotoRequestRoutingTests: XCTestCase {
         assertSameCapture(renamed, request)
     }
 
+    func testSizeDefaultsToAutoAndKeepsANamedSize() throws {
+        XCTAssertEqual(PhotoRequest(sound: true).size, .auto)
+        XCTAssertEqual(try PhotoRequest.from(params: [:]).size, .auto)
+        XCTAssertEqual(try PhotoRequest.from(params: ["size": "auto"]).size, .auto)
+        XCTAssertEqual(try PhotoRequest.from(params: ["size": "high"]).size, .high)
+    }
+
     func testRoutingDropsAnIsoWithoutAManualExposure() {
         let auto = PhotoRequest(size: .medium, sound: true, exposureTimeNs: nil, iso: 400).routedForCapture()
         XCTAssertNil(auto.exposureTimeNs)

@@ -62,13 +62,13 @@ function normalizePhotoSize(value: unknown): PhotoSize {
     case "full":
       return "max"
     default:
-      return (["low", "medium", "high", "max"] as const).includes(value as PhotoSize) ? (value as PhotoSize) : "medium"
+      return (["auto", "low", "medium", "high", "max"] as const).includes(value as PhotoSize) ? (value as PhotoSize) : "medium"
   }
 }
 
 export interface PhotoOpts {
   /** Legacy cloud size names are normalized before the native take_photo command. */
-  size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
+  size?: PhotoSize | "small" | "large" | "full"
   mode?: "photo" | "text"
   /** Select direct-only, phone-relayed BLE, or the default Wi-Fi/BLE fallback policy. */
   transferMethod?: PhotoTransferMethod
@@ -616,7 +616,7 @@ export class PhonePhotoCoordinator {
   async warmUpCamera(
     packageName: string,
     opts: {
-      size?: "low" | "medium" | "high" | "max"
+      size?: PhotoOpts["size"]
       mode?: "photo" | "text"
       exposureTimeNs?: number
       durationMs?: number

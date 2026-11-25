@@ -53,13 +53,16 @@ const photo = await session.camera.takePhoto({ size: "high", sound: false });
 // photo.expiresAt  – when the phone deletes it (Unix ms), 30 minutes after capture
 ```
 
-A larger `size` takes longer to arrive: Bluetooth carries the whole photo.
+The default `size`, `"auto"`, is the largest photo that arrives in about 2 seconds on the link it
+comes over, which the glasses decide when they send it: 1280×960 at JPEG quality 60 over Bluetooth,
+the full sensor (4032×3024) over the glasses Wi-Fi link. A fixed `size` is the same on every link,
+and a larger one takes longer over Bluetooth. Glasses from before `auto` take it as `"medium"`.
 
 All options are optional. The defaults are listed below.
 
 | Option | Type | Default | What it does |
 |---|---|---|---|
-| `size` | `"low" \| "medium" \| "high" \| "max"` | `"medium"` | Capture resolution. |
+| `size` | `"auto" \| "low" \| "medium" \| "high" \| "max"` | `"auto"` | Resolution: `auto` by link, as above, or a fixed one. |
 | `compress` | `"none" \| "low" \| "medium" \| "high"` | `"none"` | JPEG compression applied on the glasses. |
 | `sound` | `boolean` | `true` | Play a shutter sound on the glasses. |
 | `saveToGallery` | `boolean` | `false` | Keep a copy in the glasses gallery. |

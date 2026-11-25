@@ -11,9 +11,12 @@ function photoTransferMethodForNative(value: unknown): PhotoTransferMethod {
   throw new TypeError(`Invalid transferMethod ${JSON.stringify(value)}. Expected "auto", "direct", or "ble".`)
 }
 
-/** Maps unknown/legacy size strings to the current wire format. */
+/** Maps unknown/legacy size strings to the current wire format; no size is `auto`. */
 export function normalizePhotoSizeTier(size: string | undefined): PhotoSize {
   switch (size) {
+    case undefined:
+    case "auto":
+      return "auto"
     case "small":
       return "low"
     case "large":

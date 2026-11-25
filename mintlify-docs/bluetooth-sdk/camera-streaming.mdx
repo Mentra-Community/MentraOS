@@ -78,7 +78,7 @@ For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `e
 | Parameter | Applies to | Behavior |
 | --- | --- | --- |
 | `requestId` | React Native, Android, iOS | Optional ID used to correlate status and final response events. The SDK generates one when omitted or blank. |
-| `size` | React Native, Android, iOS | JPEG size tier: `low`, `medium`, `high`, or `max`. |
+| `size` | React Native, Android, iOS | JPEG size tier: `auto`, `low`, `medium`, `high`, or `max`. `auto`, the default for `capturePhoto` and `takePhoto`, is the largest photo that arrives in about 2 seconds on the link it is sent over: 1280×960 at quality 60 over Bluetooth, the full sensor over the glasses Wi-Fi link. Glasses from before `auto` take it as `medium`. |
 | `webhookUrl` | React Native, Android, iOS | Upload URL that receives the multipart `photo` file and `requestId`. |
 | `authToken` | React Native, Android, iOS | Optional bearer token for the upload request. Omit it or pass `null` / `nil` to send no `Authorization` header. |
 | `compress` | React Native, Android, iOS | Upload compression: `none`, `low`, `medium`, or `high`. Omitted native values default to `none`. |

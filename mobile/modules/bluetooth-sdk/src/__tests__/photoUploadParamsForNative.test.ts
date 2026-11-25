@@ -17,6 +17,11 @@ describe("photoUploadParamsForNative", () => {
     const {transferMethod: _method, webhookUrl: _url, ...settings} = request
     expect(photoCaptureParamsForNative(capture)).toEqual(settings)
   })
+  it("sends size auto when a capture names none, and keeps a named size", () => {
+    expect(photoCaptureParamsForNative({sound: true}).size).toBe("auto")
+    expect(photoCaptureParamsForNative({size: "auto", sound: true}).size).toBe("auto")
+    expect(photoCaptureParamsForNative({size: "high", sound: true}).size).toBe("high")
+  })
   it("produces only supported native payload keys", () => {
     const payload = photoUploadParamsForNative(baseParams)
     expect(Object.keys(payload).sort()).toEqual(

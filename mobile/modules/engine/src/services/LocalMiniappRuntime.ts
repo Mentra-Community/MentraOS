@@ -3936,7 +3936,7 @@ class LocalMiniappRuntime {
 
   private photoOpts(payload: Record<string, unknown>): PhotoOpts {
     return {
-      size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
+      size: payload.size as PhotoOpts["size"],
       mode: payload.mode as "photo" | "text" | undefined,
       transferMethod: payload.transferMethod as "auto" | "direct" | "ble" | undefined,
       compress: parsePhotoCompression(payload.compress),
@@ -4084,7 +4084,7 @@ class LocalMiniappRuntime {
 
     try {
       await phonePhotoCoordinator.warmUpCamera(packageName, {
-        size: payload.size as "low" | "medium" | "high" | "max" | undefined,
+        size: payload.size as PhotoOpts["size"],
         mode: payload.mode as "photo" | "text" | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
         durationMs: payload.durationMs as number | undefined,

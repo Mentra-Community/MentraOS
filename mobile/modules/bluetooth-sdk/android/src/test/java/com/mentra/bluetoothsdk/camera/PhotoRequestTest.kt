@@ -33,6 +33,14 @@ class PhotoRequestTest {
     }
 
     @Test
+    fun `size defaults to auto and keeps a named size`() {
+        assertThat(PhotoRequest(sound = true).size).isEqualTo(PhotoSize.AUTO)
+        assertThat(PhotoRequest.fromMap(emptyMap()).size).isEqualTo(PhotoSize.AUTO)
+        assertThat(PhotoRequest.fromMap(mapOf("size" to "auto")).size).isEqualTo(PhotoSize.AUTO)
+        assertThat(PhotoRequest.fromMap(mapOf("size" to "high")).size).isEqualTo(PhotoSize.HIGH)
+    }
+
+    @Test
     fun `constructor generates requestId when omitted`() {
         val request =
             PhotoRequest(

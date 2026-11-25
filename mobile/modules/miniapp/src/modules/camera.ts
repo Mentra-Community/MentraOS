@@ -30,8 +30,17 @@ export interface CameraFovResult {
   timestamp: number
 }
 
+/**
+ * A photo's size. `auto` is the largest photo that arrives in about 2 seconds on the link it is
+ * sent over, which the glasses decide when they send it: 1280x960 over Bluetooth, the full sensor
+ * over the glasses Wi-Fi link. `low`, `medium`, `high` and `max` are the same on every link.
+ * Glasses from before `auto` take it as `medium`.
+ */
+export type PhotoSize = "auto" | "low" | "medium" | "high" | "max"
+
 export interface TakePhotoOptions {
-  size?: "low" | "medium" | "high" | "max"
+  /** Default `auto` (`medium` for {@link CameraModule.takeCloudPhoto}). */
+  size?: PhotoSize
   /** Capture at maximum source quality and optimize BLE delivery for readable text. */
   mode?: "photo" | "text"
   compress?: PhotoCompression
@@ -152,7 +161,8 @@ export interface TakeCloudPhotoOptions extends TakePhotoOptions {
 }
 
 export interface WarmUpCameraOptions {
-  size?: "low" | "medium" | "high" | "max"
+  /** Default `auto`, as a photo's. */
+  size?: PhotoSize
   /** Match the upcoming capture mode so warm-up and capture share one ASG camera session. */
   mode?: "photo" | "text"
   exposureTimeNs?: number
@@ -241,7 +251,7 @@ export class CameraModule {
     // One request, which every Mentra App with local photos answers; a current one serves it as
     // capture(options).photo() and then releases the glasses' copy.
     const photo = await this.session.sendRequest<PhotoTaken>(
-      {...this.photoRequest(options), delivery: "local"},
+      {...this.photoRequest(options, "auto"), delivery: "local"},
       options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined,
     )
     // A Mentra App from before local photos answers with a cloud URL and no key. A miniapp built with this
@@ -263,7 +273,7 @@ export class CameraModule {
   capture(options: TakePhotoOptions = {}): PhotoCapture {
     const photoId = `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
     const timeout = options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined
-    const started = quiet(this.session.sendRequest<void>({...this.photoRequest(options), type: MiniappRequestType.PHOTO_CAPTURE, photoId}, timeout))
+    const started = quiet(this.session.sendRequest<void>({...this.photoRequest(options, "auto"), type: MiniappRequestType.PHOTO_CAPTURE, photoId}, timeout))
     const stage = <T>(name: "captured" | "preview" | "photo") =>
       quiet(started.then(() => this.session.sendRequest<T>({type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId, stage: name}, timeout)))
     // Each stage is asked for when first awaited, once.
@@ -314,7 +324,7 @@ export class CameraModule {
   async takeCloudPhoto(options: TakeCloudPhotoOptions = {}): Promise<CloudPhotoTaken> {
     return this.session.sendRequest<CloudPhotoTaken>(
       {
-        ...this.photoRequest(options),
+        ...this.photoRequest(options, "medium"),
         ...(options.transferMethod !== undefined ? {transferMethod: options.transferMethod} : {}),
       },
       options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined,
@@ -322,10 +332,10 @@ export class CameraModule {
   }
 
   /** The capture settings of a photo request, shared by both delivery paths. */
-  private photoRequest(options: TakePhotoOptions) {
+  private photoRequest(options: TakePhotoOptions, size: PhotoSize) {
     return {
       type: MiniappRequestType.PHOTO,
-      size: options.size ?? "medium",
+      size: options.size ?? size,
       mode: options.mode ?? "photo",
       compress: parsePhotoCompression(options.compress),
       sound: options.sound ?? true,
@@ -360,7 +370,7 @@ export class CameraModule {
   async warmUp(options: WarmUpCameraOptions = {}): Promise<void> {
     await this.session.sendRequest<void>({
       type: MiniappRequestType.CAMERA_WARM_UP,
-      size: options.size ?? "medium",
+      size: options.size ?? "auto",
       mode: options.mode ?? "photo",
       exposureTimeNs: options.exposureTimeNs,
       durationMs: options.durationMs ?? 15000,

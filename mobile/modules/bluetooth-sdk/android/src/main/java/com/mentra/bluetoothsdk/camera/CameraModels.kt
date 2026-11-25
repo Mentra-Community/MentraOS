@@ -9,7 +9,14 @@ internal fun generatedCameraRequestId(prefix: String): String =
 internal fun nonBlankRequestId(requestId: String?): String? =
     requestId?.trim()?.takeIf { it.isNotEmpty() }
 
+/**
+ * A photo's size. [AUTO] is the largest photo that arrives in about 2 seconds on the link it is
+ * sent over, which the glasses decide when they send it: 1280x960 over Bluetooth, the full sensor
+ * over the glasses Wi-Fi link. The others are the same on every link. Glasses from before [AUTO]
+ * take it as [MEDIUM].
+ */
 enum class PhotoSize(val value: String) {
+    AUTO("auto"),
     LOW("low"),
     MEDIUM("medium"),
     HIGH("high"),
@@ -202,7 +209,7 @@ enum class PhotoMode(val value: String) {
 
 data class PhotoRequest @JvmOverloads constructor(
     val requestId: String = generatedCameraRequestId("photo"),
-    val size: PhotoSize,
+    val size: PhotoSize = PhotoSize.AUTO,
     /** Where the glasses (or the phone, over BLE) upload the photo; ignored by `capturePhoto`. */
     val webhookUrl: String = "",
     val authToken: String? = null,
@@ -268,7 +275,7 @@ data class PhotoRequest @JvmOverloads constructor(
             return PhotoRequest(
                 requestId = nonBlankRequestId(stringValue(values, "requestId", "request_id"))
                     ?: generatedCameraRequestId("photo"),
-                size = PhotoSize.fromValue(stringValue(values, "size") ?: "medium"),
+                size = PhotoSize.fromValue(stringValue(values, "size") ?: PhotoSize.AUTO.value),
                 webhookUrl = stringValue(values, "webhookUrl", "webhook_url").orEmpty(),
                 authToken = stringValue(values, "authToken", "auth_token")?.takeIf { it.isNotBlank() },
                 compress = if (values.containsKey("compress")) PhotoCompression.fromValue(values["compress"]) else PhotoCompression.NONE,

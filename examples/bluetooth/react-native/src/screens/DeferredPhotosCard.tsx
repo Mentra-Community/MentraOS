@@ -6,7 +6,7 @@ import { colors } from '../components/theme';
 const BURST_SIZE = 5;
 
 type Shot = { capture: PhotoCapture; index: number; cameraMs?: number; previewMs?: number; previewUrl?: string; error?: string };
-type Card = { shots: Shot[]; busy: boolean; fetching: boolean; fetched?: { uri: string; ms: number; bytes: number }; message?: string };
+type Card = { shots: Shot[]; busy: boolean; fetching: boolean; fetched?: { uri: string; ms: number; bytes: number; width?: number; height?: number }; message?: string };
 
 // Outside the component: the app leaves the camera screen when the glasses reconnect, and a burst
 // or fetch still in flight must land in the same list.
@@ -32,7 +32,7 @@ const codeOf = (error: unknown) => (error as { code?: string }).code ?? String(e
  */
 async function takeOne(): Promise<void> {
   const requestedAt = Date.now();
-  const capture = BluetoothSdk.capturePhoto({ size: 'medium', sound: true });
+  const capture = BluetoothSdk.capturePhoto({ sound: true });
   setCard(({ shots }) => ({ shots: [...shots, { capture, index: shots.length + 1 }] }));
   // A capture whose status a restart lost still gets its preview afterwards.
   void capture.preview.then(
@@ -63,7 +63,10 @@ async function fetchFirst() {
   const started = Date.now();
   try {
     const photo = await first.capture.photo();
-    setCard({ fetched: { uri: photo.fileUri, ms: Date.now() - started, bytes: photo.size } });
+    const ms = Date.now() - started;
+    setCard({ fetched: { uri: photo.fileUri, ms, bytes: photo.size } });
+    // Its pixel size: size "auto" is decided by the link it came over.
+    Image.getSize(photo.fileUri, (width, height) => setCard(({ fetched }) => (fetched?.uri === photo.fileUri ? { fetched: { ...fetched, width, height } } : {})));
   } catch (error) {
     setCard({ message: `Fetch failed: ${codeOf(error)}` });
   } finally {
@@ -77,7 +80,7 @@ async function releaseAll() {
 }
 
 /**
- * Deferred photos (`capturePhoto`): a burst whose previews come first while the full photos stay
+ * Deferred photos (`capturePhoto`, size `auto`): a burst whose previews come first while the full photos stay
  * on the glasses, a capture taken while a full photo is being sent, then one full photo fetched and
  * the rest released.
  */
@@ -139,7 +142,7 @@ export function DeferredPhotosCard() {
       </View>
       {fetched ? (
         <View testID="deferred-fetched">
-          <Text style={styles.summary}>{`Full photo fetched in ${seconds(fetched.ms)}, ${Math.round(fetched.bytes / 1024)} KB`}</Text>
+          <Text style={styles.summary}>{`Full photo fetched in ${seconds(fetched.ms)}, ${Math.round(fetched.bytes / 1024)} KB${fetched.width ? `, ${fetched.width} x ${fetched.height}` : ''}`}</Text>
           <Image source={{ uri: fetched.uri }} style={styles.photo} resizeMode="contain" />
         </View>
       ) : null}

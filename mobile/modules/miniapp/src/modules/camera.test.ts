@@ -158,6 +158,18 @@ describe("CameraModule", () => {
     expect(requestOptions).toEqual([undefined])
   })
 
+  test("takePhoto, capture and warmUp default to size auto; takeCloudPhoto keeps medium", async () => {
+    const {session, requestCalls} = mockSession({requestId: "r", key: "k", mimeType: "image/jpeg", size: 1, expiresAt: 0})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto()
+    camera.capture()
+    await camera.warmUp()
+    await camera.takeCloudPhoto().catch(() => undefined)
+
+    expect(requestCalls.map((call) => (call as {size?: string}).size)).toEqual(["auto", "auto", "auto", "medium"])
+  })
+
   test("warmUp forwards size and default duration", async () => {
     const {session, requestCalls} = mockSession(undefined)
     const camera = new CameraModule(session)

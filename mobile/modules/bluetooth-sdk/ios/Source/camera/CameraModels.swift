@@ -10,7 +10,12 @@ func nonBlankRequestId(_ requestId: String?) -> String? {
     return trimmed.isEmpty ? nil : trimmed
 }
 
+/// A photo's size. `auto` is the largest photo that arrives in about 2 seconds on the link it is
+/// sent over, which the glasses decide when they send it: 1280x960 over Bluetooth, the full sensor
+/// over the glasses Wi-Fi link. The others are the same on every link. Glasses from before `auto`
+/// take it as `medium`.
 public enum PhotoSize: String {
+    case auto
     case low
     case medium
     case high
@@ -290,7 +295,7 @@ public struct PhotoRequest {
 
     public init(
         requestId: String? = nil,
-        size: PhotoSize,
+        size: PhotoSize = .auto,
         webhookUrl: String? = nil,
         authToken: String? = nil,
         compress: PhotoCompression = .none,
@@ -331,7 +336,7 @@ public struct PhotoRequest {
     }
 
     public static func from(params: [String: Any]) throws -> PhotoRequest {
-        let sizeRaw = params["size"] as? String ?? "medium"
+        let sizeRaw = params["size"] as? String ?? PhotoSize.auto.rawValue
         let compress = try PhotoCompression.parse(params["compress"])
         let transferMethod: String
         if let rawValue = params["transferMethod"] {

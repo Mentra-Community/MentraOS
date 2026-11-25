@@ -676,7 +676,13 @@ export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
 
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
-export type PhotoSize = "low" | "medium" | "high" | "max"
+/**
+ * A photo's size. `auto` is the largest photo that arrives in about 2 seconds on the link it is
+ * sent over, which the glasses decide when they send it: 1280x960 over Bluetooth, the full sensor
+ * over the glasses Wi-Fi link. `low`, `medium`, `high` and `max` are the same on every link.
+ * Glasses from before `auto` take it as `medium`.
+ */
+export type PhotoSize = "auto" | "low" | "medium" | "high" | "max"
 export type PhotoMode = "photo" | "text"
 export type PhotoTransferMethod = "auto" | "direct" | "ble"
 export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
@@ -798,7 +804,8 @@ export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 export type PhotoCaptureParams = {
   requestId?: string
   appId?: string
-  size: PhotoSize
+  /** Default `auto`. */
+  size?: PhotoSize
   mode?: PhotoMode
   compress?: PhotoCompression
   save?: boolean
@@ -823,6 +830,7 @@ export type PhotoCaptureParams = {
 
 /** A photo uploaded where `webhookUrl` says, by the glasses over Wi-Fi or by the phone over Bluetooth. */
 export type PhotoUploadParams = PhotoCaptureParams & {
+  size: PhotoSize
   /** `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer. */
   transferMethod?: PhotoTransferMethod
   webhookUrl: string | null
