@@ -578,7 +578,12 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
       // stays stuck in zoom mode. See flutter#182828,
       // react-native-webview#1649, manuelstofer/pinchzoom#115.
       nestedScrollEnabled={true}
-      webviewDebuggingEnabled={__DEV__}
+      // A miniapp served by `mentra-miniapp dev` is inspectable from desktop
+      // Chrome (chrome://inspect) or Safari in any app build, so its developer
+      // can see the live page. On Android the switch is process-wide: once a
+      // dev miniapp opens, the app's other web views are inspectable too until
+      // it restarts, which needs adb (or a Mac the iPhone trusts) anyway.
+      webviewDebuggingEnabled={__DEV__ || !!devUrl}
       style={{flex: 1}}
     />
   )
