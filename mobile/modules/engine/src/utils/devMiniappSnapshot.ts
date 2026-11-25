@@ -1,13 +1,9 @@
 /**
- * Dev miniapp snapshot — keep a local copy of the last live-dev bundle so
- * walking away from the laptop still opens the miniapp while Mentra App is
- * running (and after, as long as the on-disk `dev-*` snapshot remains).
- *
- * Live launches load HTTP off `mentra-miniapp dev` for hot reload. After a
- * successful reachability probe we fire-and-forget `${devUrl}/bundle.zip`
- * into `lmas/<pkg>/dev-<ms>/`. When the laptop is unreachable, launch
- * routes and MiniappLauncher fall back to that snapshot instead of the
- * "Dev server offline" dead-end.
+ * A development build runs the way an installed bundle does: from a copy of its `bundle.zip` on the phone, whose
+ * screen loads from a development origin the Mentra App serves (with the package's own files under it). `mentra-miniapp
+ * dev` serves that ZIP and names its SHA-256 in the `miniapp.json` it serves; each launch and each saved change fetch it
+ * into `lmas/<pkg>/dev-<ms>/` when the hash changed, and the newest copy stays, so the miniapp still opens from it
+ * once the laptop is gone.
  */
 
 import appRegistry from "../services/AppRegistry"
@@ -26,12 +22,15 @@ export type DevOpenDecision =
   | {decision: "offline"}
 
 export type DevBundleSource =
-  | {kind: "live"; resolvedUrl: string; manifest: DevManifest}
+  | {kind: "live"; resolvedUrl: string; manifest: DevManifest; version: string}
   | {kind: "snapshot"; version: string}
   | {kind: "none"}
 
 type SnapshotRequest = ReturnType<typeof createDevSnapshotRequest>
-const snapshotInFlight = new Map<string, {promise: Promise<void>; isCurrent: () => boolean}>()
+
+/** The snapshot each package's development server last gave this app, by the SHA-256 of its ZIP. */
+const fetched = new Map<string, {sha256: string; version: string}>()
+const inFlight = new Map<string, {sha256: string | null; promise: Promise<string | null>; isCurrent: () => boolean}>()
 
 /** Candidate zip URLs: same-origin `/bundle.zip`, then the sidecar path. */
 export function snapshotCandidateUrls(baseUrl: string, sidecarPort?: number | null): string[] {
@@ -50,60 +49,77 @@ export function snapshotCandidateUrls(baseUrl: string, sidecarPort?: number | nu
   return urls
 }
 
+/** The SHA-256 the served `miniapp.json` names for its `bundle.zip`, if it names a valid one. */
+export function servedBundleSha256(manifest: DevManifest | null | undefined): string | null {
+  const bundle = manifest?.bundle as {sha256?: unknown} | undefined
+  const sha256 = typeof bundle?.sha256 === "string" ? bundle.sha256.toLowerCase() : null
+  return sha256 && /^[a-f0-9]{64}$/.test(sha256) ? sha256 : null
+}
+
 function storedSidecarPort(packageName: string): number | undefined {
   const stored = storage.load<number>(`${packageName}_dev_port`)
   return stored.is_ok() && Number.isFinite(stored.value) ? stored.value : undefined
 }
 
 /**
- * Download the current live-dev zip into `lmas/<pkg>/dev-<ms>/` and keep
- * only the newest snapshot. Coalesces concurrent calls per package.
+ * The snapshot of what the development server at `baseUrl` serves now: the one this app already fetched when its
+ * hash is `sha256`, else a new one, which replaces the older snapshots. Concurrent calls for the same ZIP share one
+ * download. Null when the download fails or a release installation superseded it.
  */
-export function queueDevSnapshot(
+export function ensureDevSnapshot(
   packageName: string,
   baseUrl: string,
-  sidecarPort?: number | null,
+  sha256: string | null,
   request: SnapshotRequest = createDevSnapshotRequest(packageName),
-): void {
-  if (!packageName || !baseUrl || !request.isCurrent()) return
-  if (snapshotInFlight.get(packageName)?.isCurrent()) return
-  const promise = installDevSnapshot(
-    packageName,
-    baseUrl,
-    request,
-    sidecarPort ?? storedSidecarPort(packageName),
-  ).finally(() => {
-    if (snapshotInFlight.get(packageName)?.promise === promise) snapshotInFlight.delete(packageName)
+): Promise<string | null> {
+  if (!packageName || !baseUrl || !request.isCurrent()) return Promise.resolve(null)
+  const known = fetched.get(packageName)
+  if (sha256 && known?.sha256 === sha256 && appRegistry.getLatestDevSnapshotVersion(packageName) === known.version) {
+    return Promise.resolve(known.version)
+  }
+  const pending = inFlight.get(packageName)
+  if (pending && pending.sha256 === sha256 && pending.isCurrent()) return pending.promise
+  const promise = installDevSnapshot(packageName, baseUrl, sha256, request).finally(() => {
+    if (inFlight.get(packageName)?.promise === promise) inFlight.delete(packageName)
   })
-  snapshotInFlight.set(packageName, {promise, isCurrent: request.isCurrent})
+  inFlight.set(packageName, {sha256, promise, isCurrent: request.isCurrent})
+  return promise
 }
 
 async function installDevSnapshot(
   packageName: string,
   baseUrl: string,
+  sha256: string | null,
   request: SnapshotRequest,
-  sidecarPort?: number | null,
-): Promise<void> {
+): Promise<string | null> {
   let lastError: unknown
-  for (const url of snapshotCandidateUrls(baseUrl, sidecarPort)) {
-    if (!request.isCurrent()) return
+  for (const url of snapshotCandidateUrls(baseUrl, storedSidecarPort(packageName))) {
+    if (!request.isCurrent()) return null
+    const version = `dev-${Date.now()}`
     const res = await appRegistry.installFromUrl(url, {
       expectedPackageName: packageName,
       beforeActivate: request.beforeActivate,
-      versionOverride: `dev-${Date.now()}`,
+      versionOverride: version,
       releaseIdentity: {source: "dev_snapshot"},
+      ...(sha256 ? {expectedBundleSha256: sha256} : {}),
     })
-    if (!request.isCurrent()) return
+    if (!request.isCurrent()) return null
     if (res.is_ok()) {
       appRegistry.gcDevVersions(packageName, 1)
-      return
+      if (sha256) fetched.set(packageName, {sha256, version})
+      else fetched.delete(packageName)
+      return version
     }
     lastError = res.error
   }
   console.warn(`Dev snapshot failed for ${packageName}:`, lastError)
+  return null
 }
 
-/** Reachability first; if the laptop is down, open the last local snapshot. */
+/**
+ * Reachability first; if the laptop is down, open the last local snapshot. A reachable server starts fetching its
+ * bundle, which the launch then waits for.
+ */
 export async function decideDevOpenRoute(
   packageName: string,
   devUrl: string,
@@ -112,7 +128,7 @@ export async function decideDevOpenRoute(
   const request = createDevSnapshotRequest(packageName)
   const route = await decideDevLaunchRoute(packageName, devUrl, options)
   if (route.decision === "live") {
-    queueDevSnapshot(packageName, route.resolvedUrl, undefined, request)
+    void ensureDevSnapshot(packageName, route.resolvedUrl, servedBundleSha256(route.manifest), request)
     return route
   }
   if (packageName && appRegistry.hasDevSnapshot(packageName)) {
@@ -122,8 +138,8 @@ export async function decideDevOpenRoute(
 }
 
 /**
- * Same live-vs-snapshot choice MiniappLauncher uses to resolve a bundle.
- * Live also kicks a background snapshot so the next offline open has a copy.
+ * The snapshot MiniappLauncher runs a development build from: the server's current bundle when it answers, else the
+ * last one on disk.
  */
 export async function resolveDevBundleSource(
   packageName: string,
@@ -133,10 +149,21 @@ export async function resolveDevBundleSource(
   const request = createDevSnapshotRequest(packageName)
   const route: DevLaunchResult = await decideDevLaunchRoute(packageName, devUrl, options)
   if (route.decision === "live" && route.manifest) {
-    queueDevSnapshot(packageName, route.resolvedUrl, undefined, request)
-    return {kind: "live", resolvedUrl: route.resolvedUrl, manifest: route.manifest}
+    const version = await ensureDevSnapshot(
+      packageName,
+      route.resolvedUrl,
+      servedBundleSha256(route.manifest),
+      request,
+    )
+    if (version) return {kind: "live", resolvedUrl: route.resolvedUrl, manifest: route.manifest, version}
   }
   const version = appRegistry.getLatestDevSnapshotVersion(packageName)
   if (version) return {kind: "snapshot", version}
   return {kind: "none"}
+}
+
+/** Tests only. */
+export function resetDevSnapshotsForTests(): void {
+  fetched.clear()
+  inFlight.clear()
 }

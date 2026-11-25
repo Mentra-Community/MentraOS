@@ -63,10 +63,7 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
     release: released,
   }))
   const discardFile = mock((_uri: string) => {})
-  const dataUrlOf = mock(
-    async (_pkg: string, _key: string, _maxBytes: number): Promise<string | null> => "data:image/jpeg;base64,/9j/",
-  )
-  // As miniappScreenOrigin.miniappFileUrl: null for a screen the app doesn't serve.
+  // As miniappScreenOrigin.miniappFileUrl: null for a package with no screen.
   const origin = opts.screenOrigin === undefined ? "miniapp://com.mentra.camera" : opts.screenOrigin
   const miniappFileUrl = mock((_pkg: string, fileName: string) =>
     origin ? `${origin}/.mentra/files/${fileName}` : null,
@@ -81,7 +78,6 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
     "PhotoError",
     "EXPIRING_BLOB_TTL_MS",
     "miniappFileUrl",
-    "PHOTO_DATA_URL_MAX_BYTES",
     "acsMeetingService",
     `${compiled}; return Host`,
   )(
@@ -94,17 +90,16 @@ function fixture(opts: {storeFails?: boolean; screenOrigin?: string | null; phot
     PhotoError,
     30 * 60 * 1000,
     miniappFileUrl,
-    1024 * 1024,
     {photoPauseHeld: () => opts.photoPauseHeld === true},
   )
   const host = new Host()
   const results: Array<{ok: boolean; data?: unknown; error?: {code?: string; stage?: string; photoId?: string}}> = []
   host.connectedApps = new Map([[PACKAGE, {installedManifest: {permissions: [{type: "CAMERA"}]}}]])
-  host.blobStore = {storeExpiringFile, discardFile, dataUrlOf}
+  host.blobStore = {storeExpiringFile, discardFile}
   host.sendResult = (_pkg: string, _requestId: string | undefined, ok: boolean, data?: unknown, error?: never) => {
     results.push({ok, data, error})
   }
-  return {host, results, takePhoto, takeLocalPhoto, capturePhoto, capture, released, storeExpiringFile, discardFile, dataUrlOf, miniappFileUrl}
+  return {host, results, takePhoto, takeLocalPhoto, capturePhoto, capture, released, storeExpiringFile, discardFile, miniappFileUrl}
 }
 
 describe("handlePhoto with local delivery", () => {
@@ -149,19 +144,14 @@ describe("handlePhoto with local delivery", () => {
     const f = fixture()
     await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
     expect(f.miniappFileUrl).toHaveBeenCalledWith(PACKAGE, "mywpiww0-abc.jpg")
-    expect(f.dataUrlOf).not.toHaveBeenCalled()
+    expect(f.results[0]).toMatchObject({
+      ok: true,
+      data: {url: "miniapp://com.mentra.camera/.mentra/files/mywpiww0-abc.jpg"},
+    })
   })
 
-  test("a screen the app doesn't serve (a development server) gets the photo in a data: URL", async () => {
+  test("a package with no screen gets no url, and still has its key", async () => {
     const f = fixture({screenOrigin: null})
-    await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
-    expect(f.dataUrlOf).toHaveBeenCalledWith(PACKAGE, "photo/p1abc", 1024 * 1024)
-    expect(f.results[0]).toMatchObject({ok: true, data: {key: "photo/p1abc", url: "data:image/jpeg;base64,/9j/"}})
-  })
-
-  test("a photo too large for a data: URL has no url there, and still has its key", async () => {
-    const f = fixture({screenOrigin: null})
-    f.dataUrlOf.mockResolvedValue(null)
     await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
     const data = f.results[0]!.data as Record<string, unknown>
     expect(data.key).toBe("photo/p1abc")

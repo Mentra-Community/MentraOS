@@ -1,8 +1,8 @@
 /**
- * The origin each package's screen loads from, when the Mentra App serves it: an installed bundle's own origin
- * (`miniappOrigin.ts`). The launcher records it as it spawns the package, and the miniapp's view records the screen it
- * loads each time one opens. A live development build's screen loads from its development server, which the app
- * doesn't serve, so it has none.
+ * The origin each package's screen loads from (`miniappOrigin.ts`): the package's own for a release, a development
+ * origin for a development build. The Mentra App serves both from the bundle on disk. The launcher records it as it
+ * spawns the package, and the miniapp's view records the screen it loads each time one opens. A package with no
+ * screen has none.
  *
  * That origin also serves the package's own files (the blobs the host stores for it, such as its photos) under
  * {@link MINIAPP_FILES_PATH}, so the screen can load one with a plain same-origin URL.

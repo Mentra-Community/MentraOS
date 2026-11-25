@@ -101,8 +101,8 @@ export interface PhotoTaken {
   key: string
   /**
    * A URL the miniapp's own screen can load, for example `<img src={url}>`: pass it to the UI as it is.
-   * It works only in this miniapp's screen, and only until the photo is deleted. Absent when the screen
-   * loads from a development server and the photo is larger than 1 MB; read the bytes there.
+   * It works only in this miniapp's screen, and only until the photo is deleted. Absent for a miniapp
+   * with no screen.
    */
   url?: string
   mimeType: string

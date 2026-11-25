@@ -76,7 +76,13 @@ describe("DevServerBridge: a save that touched both layers", () => {
 
     finishRespawn()
     await flush()
-    expect(events).toEqual([`respawn-start ${PACKAGE}`, `respawn-done ${PACKAGE}`, `reload ${PACKAGE}`])
+    // The respawn reopens the screen from the new bundle; the save's own reload then finds it current.
+    expect(events).toEqual([
+      `respawn-start ${PACKAGE}`,
+      `respawn-done ${PACKAGE}`,
+      `reload ${PACKAGE}`,
+      `reload ${PACKAGE}`,
+    ])
   })
 
   it("still reloads when the respawn fails", async () => {
@@ -91,7 +97,7 @@ describe("DevServerBridge: a save that touched both layers", () => {
     ws.serve({type: "respawn-bg"})
     ws.serve({type: "reload"})
     await flush()
-    expect(events).toEqual(["reload"])
+    expect(events).toEqual(["reload", "reload"])
   })
 
   it("never overlaps two respawns", async () => {
@@ -113,6 +119,20 @@ describe("DevServerBridge: a save that touched both layers", () => {
     finishers[1]!()
     await flush()
     expect(events).toEqual(["respawn-start", "respawn-done", "respawn-start", "respawn-done"])
+  })
+
+  it("reopens the screen after a background-only change, whose new bundle replaced the screen's", async () => {
+    const events: string[] = []
+    devServerBridge.onRespawnBackground(async () => {
+      events.push("respawn")
+    })
+    devServerBridge.onReload(() => {
+      events.push("reload")
+    })
+    const ws = connect()
+    ws.serve({type: "respawn-bg"})
+    await flush()
+    expect(events).toEqual(["respawn", "reload"])
   })
 
   it("reloads at once when nothing runs before it", async () => {

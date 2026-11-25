@@ -345,22 +345,25 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls[1].hostTrustedSystem).toBe(false)
   })
 
-  test("launches a bundled package from a dev URL without SYSTEM trust", async () => {
+  test("runs a dev URL's bundle from a snapshot on the development origin, without SYSTEM trust", async () => {
     const originalFetch = globalThis.fetch
-    globalThis.fetch = (async (url: string) =>
-      url.endsWith("/miniapp.json")
-        ? new Response(JSON.stringify({packageName: "com.mentra.notes", entry: {background: "bg.js", ui: "ui.html"}}))
-        : new Response("DEV SOURCE")) as typeof fetch
+    const fetched: string[] = []
+    globalThis.fetch = (async (url: string) => {
+      fetched.push(url)
+      return new Response(JSON.stringify({packageName: "com.mentra.notes", entry: {background: "bg.js", ui: "ui.html"}}))
+    }) as typeof fetch
     try {
       const resolved = await miniappLauncher.resolveBundle("com.mentra.notes", {devUrl: "http://localhost:8081"})
+      // The server's address stays for hot reload and log forwarding; the code runs from the snapshot on disk.
       expect(resolved?.devUrl).toBe("http://localhost:8081")
-      expect(resolved?.bgSource).toBe("DEV SOURCE")
+      expect(resolved?.bgSource).toBe("BG SOURCE")
       expect(resolved?.hostTrustedSystem).toBe(false)
-      // A live development build keeps loading its screen from its server.
-      expect(resolved?.uiUri).toBe("http://localhost:8081/dist/ui.html")
-      expect(resolved?.uiOrigin).toBe("http://localhost:8081")
-      expect(resolved?.uiRootDir).toBeNull()
       expect(resolved?.devBuild).toBe(true)
+      expect(resolved?.uiRootDir).toMatch(/^file:\/\/\/bundle\/dev-\d+\/$/)
+      expect(resolved?.uiOriginName).toBe("invalid.dev.com.mentra.notes")
+      expect(resolved?.uiUri?.startsWith(resolved?.uiOrigin ?? "-")).toBe(true)
+      // Only the manifest comes off the server; nothing loads a file from it.
+      expect(fetched).toEqual(["http://localhost:8081/miniapp.json"])
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -465,17 +468,16 @@ describe("MiniappLauncher", () => {
     )
   })
 
-  test("a live development build's screen is on its server, which serves none of the package's files", async () => {
-    const {miniappFileUrl, recordMiniappScreenOrigin} = await import("../miniappScreenOrigin")
-    recordMiniappScreenOrigin("com.mentra.notes", "miniapp://com.mentra.notes")
+  test("a development build's screen origin serves the package's files, as an installed one does", async () => {
+    const {miniappFileUrl, resetMiniappScreenOriginsForTests} = await import("../miniappScreenOrigin")
+    resetMiniappScreenOriginsForTests()
     const originalFetch = globalThis.fetch
-    globalThis.fetch = (async (url: string) =>
-      url.endsWith("/miniapp.json")
-        ? new Response(JSON.stringify({packageName: "com.mentra.notes", entry: {background: "bg.js", ui: "ui.html"}}))
-        : new Response("DEV SOURCE")) as typeof fetch
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({packageName: "com.mentra.notes", entry: {background: "bg.js", ui: "ui.html"}}))) as typeof fetch
     try {
-      await miniappLauncher.ensureRunning("com.mentra.notes", {devUrl: "http://localhost:8081"})
-      expect(miniappFileUrl("com.mentra.notes", "photo-1.jpg")).toBeNull()
+      const result = await miniappLauncher.ensureRunning("com.mentra.notes", {devUrl: "http://localhost:8081"})
+      expect(result.uiOrigin).not.toBeNull()
+      expect(miniappFileUrl("com.mentra.notes", "photo-1.jpg")).toBe(`${result.uiOrigin}/.mentra/files/photo-1.jpg`)
     } finally {
       globalThis.fetch = originalFetch
     }

@@ -205,15 +205,6 @@ describe("expiring blobs", () => {
     expect(last().result).toMatchObject({bytes: 2000, count: 1})
   })
 
-  it("gives a small blob as a data: URL, for a screen no origin can serve it to", async () => {
-    take("photo/p1", 4)
-    expect(await store.dataUrlOf(pkg, "photo/p1", 1000)).toBe("data:image/jpeg;base64,BwcHBw==")
-    expect(await store.dataUrlOf(pkg, "photo/p1", 3)).toBeNull()
-    expect(await store.dataUrlOf(pkg, "photo/missing", 1000)).toBeNull()
-    now += EXPIRING_BLOB_TTL_MS
-    expect(await store.dataUrlOf(pkg, "photo/p1", 1000)).toBeNull()
-  })
-
   it("the first photo of a host run deletes every app's expired photos, in every partition", () => {
     const mine = take("photo/old")
     const theirs = take("photo/old", 1000, "com.other.app")

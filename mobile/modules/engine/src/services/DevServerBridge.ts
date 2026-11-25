@@ -3,8 +3,8 @@
  * sidecar running on a developer's laptop.
  *
  * Multiplexed over a single WebSocket per dev miniapp:
- *   laptop → phone : {type: "reload"}                 → trigger WebView.reload()
- *   laptop → phone : {type: "respawn-bg"}             → restart the background JSContext
+ *   laptop → phone : {type: "reload"}                 → reopen the screen from the new bundle
+ *   laptop → phone : {type: "respawn-bg"}             → restart the background JSContext, then reopen the screen
  *   phone  → laptop: {type: "log", level, args, ...}  → forwarded console calls
  *
  * Lifecycle: `connect(packageName, devUrl, devPort)` is called from
@@ -71,7 +71,8 @@ class DevServerBridge {
    * server sends `{type: "respawn-bg"}` — emitted on filesystem changes
    * under `src/background/`. The host (MentraJSRouter via the
    * bootstrap) should kill + respawn the JSContext to pick up the
-   * change. WebView reload is separate (see `onReload`).
+   * change. The bridge then runs the reload handler (see `onReload`), so
+   * the screen opens from the same new bundle.
    */
   public onRespawnBackground(handler: DevSignalHandler | null): void {
     this.globalRespawnBackgroundHandler = handler
@@ -262,6 +263,9 @@ class DevServerBridge {
       if (parsed.type === "respawn-bg") {
         console.log(`${LOG_TAG}: ${packageName} received respawn-bg signal`)
         this.enqueueSignal(packageName, "respawn-bg", () => this.globalRespawnBackgroundHandler?.(packageName))
+        // The respawn ran from a new snapshot of the bundle, which replaced the one the screen shows: reopen the
+        // screen from it too. A reload that follows for the same save then finds nothing new.
+        this.enqueueSignal(packageName, "reload", () => this.globalReloadHandler?.(packageName))
         return
       }
     }

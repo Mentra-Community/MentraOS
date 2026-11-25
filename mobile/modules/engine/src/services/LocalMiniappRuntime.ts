@@ -297,8 +297,6 @@ function speechProcessingDisabled(processing: SpeechProcessing): string | null {
 }
 
 const LOG_TAG = "LOCAL_MINIAPP"
-/** The largest photo sent to a development server's screen as a data: URL; a larger one has no `url`. */
-const PHOTO_DATA_URL_MAX_BYTES = 1024 * 1024
 
 /**
  * Cloud speech arrives as raw 24 kHz 16-bit mono PCM and streams into the
@@ -3900,11 +3898,8 @@ class LocalMiniappRuntime {
         photo.fileUri,
         photo.mimeType,
       )
-      // The screen's own origin serves the file. A live development build's screen loads from its server, which
-      // can't, so there the photo travels in the URL itself while it is small enough to.
-      const url =
-        miniappFileUrl(packageName, blob.uri.slice(blob.uri.lastIndexOf("/") + 1)) ??
-        (await this.blobStore.dataUrlOf(packageName, blob.key, PHOTO_DATA_URL_MAX_BYTES))
+      // The screen's own origin serves the file.
+      const url = miniappFileUrl(packageName, blob.uri.slice(blob.uri.lastIndexOf("/") + 1))
       return {
         requestId: photo.requestId,
         key: blob.key,

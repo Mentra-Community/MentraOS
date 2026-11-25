@@ -40,18 +40,18 @@ const NO_INSETS: MiniappSafeArea = {top: 0, bottom: 0, left: 0, right: 0}
 
 /** The screen the launcher resolved for this view, before the WebView loads it. */
 export interface MiniappScreen {
-  /** Where the screen loads from: the package's own origin, or a development build's server. */
+  /** Where the screen loads from: the origin the Mentra App serves the bundle from. */
   uiUri: string
   uiOrigin: string
-  /** The installed bundle the origin serves, under `uiOriginName`; null for a development server. */
-  uiRootDir: string | null
-  uiOriginName: string | null
+  /** The bundle on disk the origin serves, under `uiOriginName`. */
+  uiRootDir: string
+  uiOriginName: string
   /**
    * The miniapp's own files directory (its blobs, such as its photos), which the same origin serves under
-   * /.mentra/files/. Null or absent when the origin serves none.
+   * /.mentra/files/. Null when it can't be opened.
    */
-  uiFilesDir?: string | null
-  /** A development build: a live development server or a development snapshot. */
+  uiFilesDir: string | null
+  /** A development build: a snapshot of what a development server serves. */
   devBuild: boolean
 }
 
@@ -134,6 +134,11 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
   const spaDepth = useRef(0)
   const nativeCanGoBack = useRef(false)
   const [screen, setScreen] = useState<MiniappScreen | null>(null)
+  // The bundle root the screen shows, for a dev reload to tell whether its bundle changed.
+  const screenRootRef = useRef<string | null>(null)
+  screenRootRef.current = screen?.uiRootDir ?? null
+  // Bumped when a development build's bundle changed, to open the screen from the new one.
+  const [devRevision, setDevRevision] = useState(0)
 
   // ----- Load-state tracking -------------------------------------------------
   //
@@ -285,21 +290,23 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
       checkpoint()
       setUiReleased(!getMiniappEngine()?.uiRouter.isUiHeld(packageName))
       const next: MiniappScreen | null =
-        result.uiUri && result.uiOrigin
+        result.uiUri && result.uiOrigin && result.uiRootDir && result.uiOriginName
           ? {
               ...result,
               uiUri: result.uiUri,
               uiOrigin: result.uiOrigin,
+              uiRootDir: result.uiRootDir,
+              uiOriginName: result.uiOriginName,
               // Asked once the context is registered: its build kind decides which data partition holds its files.
-              uiFilesDir: result.uiRootDir ? localMiniappRuntime.ownFilesDirectoryUri(packageName) : null,
+              uiFilesDir: localMiniappRuntime.ownFilesDirectoryUri(packageName),
             }
           : null
       if (next) await callbacks.current.prepareScreen?.(next, checkpoint)
       checkpoint()
-      // The screen about to load decides where the miniapp's own files get their URLs. A miniapp that keeps
-      // running can reopen on another one: a development build moves between its server and its snapshot as the
-      // server comes and goes. The launcher's record from the spawn stands until a screen opens.
-      if (next) recordMiniappScreenOrigin(packageName, next.uiRootDir ? next.uiOrigin : null)
+      // The screen about to load decides where the miniapp's own files get their URLs: a miniapp that keeps
+      // running can reopen on another one, such as a new version. The launcher's record from the spawn stands
+      // until a screen opens.
+      if (next) recordMiniappScreenOrigin(packageName, next.uiOrigin)
       // Set unconditionally: clearing a screen the launcher no longer resolves
       // keeps the WebView from showing a stale URL.
       setScreen(next)
@@ -317,7 +324,7 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
       clearReadyTimer()
       getMiniappEngine()?.uiRouter.unbindWebView(packageName)
     }
-  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
+  }, [packageName, version, devUrl, devPort, devRevision, resetLoadState, clearReadyTimer, fail])
 
   useEffect(
     () =>
@@ -484,22 +491,19 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
     [packageName],
   )
 
-  // Dev hot-reload: when the dev server signals a reload for THIS miniapp,
-  // refresh the WebView. The dev UI loads straight off the dev server with
-  // cache-control: no-store, so a plain reload re-fetches the fresh build. The
-  // background respawn for src/background/ changes is the MiniappEngine's.
+  // Dev hot-reload: when the dev server signals a reload for THIS miniapp, fetch its new bundle into a snapshot and
+  // open the screen from it, as an update to an installed bundle does: the launch below reruns and the new bundle
+  // root remounts the WebView. A signal that changed nothing (the bundle a background respawn already fetched) keeps
+  // the screen. The background respawn for src/background/ changes is the MiniappEngine's.
   useEffect(() => {
     if (!devUrl) return
-    devServerBridge.onReload((pkg) => {
+    devServerBridge.onReload(async (pkg) => {
       if (pkg !== packageName) return
-      resetLoadState()
-      try {
-        webViewRef.current?.reload()
-      } catch (e) {
-        console.warn(`MiniappView: reload(${packageName}) failed:`, e)
-      }
+      const resolved = await miniappLauncher.resolveBundle(packageName, {devUrl, version, devPort})
+      if (!resolved?.uiRootDir || resolved.uiRootDir === screenRootRef.current) return
+      setDevRevision((revision) => revision + 1)
     })
-  }, [packageName, devUrl, resetLoadState])
+  }, [packageName, devUrl, version, devPort])
 
   const {top, bottom, left, right} = safeAreaInsets
   const injectedJS = useMemo(
@@ -526,22 +530,17 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
   return (
     <WebView
       // A new bundle root (an update) is a new document on the same URL.
-      key={screen.uiRootDir ?? screen.uiUri}
+      key={screen.uiRootDir}
       ref={handleRef}
       source={holdSource ? undefined : {uri: screen.uiUri}}
-      // An installed bundle loads from its own origin, which serves only that
-      // bundle and never has file access: the package's for a release, a
-      // development origin for a development snapshot. A live development
-      // build loads from its server.
-      miniappOrigin={
-        screen.uiRootDir
-          ? {
-              packageName: screen.uiOriginName ?? packageName,
-              rootDir: screen.uiRootDir,
-              ...(screen.uiFilesDir ? {filesDir: screen.uiFilesDir} : {}),
-            }
-          : undefined
-      }
+      // The bundle loads from its own origin, which serves only that bundle
+      // and never has file access: the package's for a release, a
+      // development origin for a development build.
+      miniappOrigin={{
+        packageName: screen.uiOriginName,
+        rootDir: screen.uiRootDir,
+        ...(screen.uiFilesDir ? {filesDir: screen.uiFilesDir} : {}),
+      }}
       originWhitelist={miniappOriginWhitelist(screen.uiOrigin, getConfigValues().hostLinkPatterns)}
       onShouldStartLoadWithRequest={handleShouldStartLoad}
       javaScriptEnabled={true}

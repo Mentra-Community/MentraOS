@@ -55,9 +55,17 @@ its sidecar neighbor is busy, the CLI scans upward for a free adjacent pair.
 → Scan Miniapp QR Code**. Phone and laptop must share Wi-Fi. `Ctrl+C` stops
 everything.
 
+`dev` runs your miniapp the way an installed one runs: the Mentra App downloads
+`bundle.zip` and runs it from the phone, screen included, so everything your
+miniapp does in development (its storage, `photo.url`) works as it will once
+installed. Your screen can't load files from the LAN server by relative URL,
+just as an installed one can't. Each saved change downloads the new `bundle.zip`
+and reopens the screen from it.
+
 <Warning>
-`dev` is live and temporary. Keep the CLI and computer running: the Mentra App
-loads the runtime bundle from that LAN server. Dev miniapps are keyed by their
+`dev` is live and temporary. Keep the CLI and computer running for hot reload;
+the phone keeps the last bundle it downloaded, so the miniapp still opens from it
+while the computer is away. Dev miniapps are keyed by their
 manifest package name, so you can scan and test several side by side; rescanning
 the same package updates only that entry. The Mentra App caches each entry's name
 and icon. Use `bun run release` for an installed miniapp that works without the

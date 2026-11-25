@@ -149,9 +149,8 @@ minutes. It doesn't count toward your miniapp's storage limit.
 - **Send it somewhere.** Read the bytes in your background script and upload
   them yourself: `await session.blob.bytes(photo.key)`.
 - **Show it.** Pass `photo.url` to your screen and use it as an image source.
-  The URL loads only in your miniapp's own screen. It is absent when your screen
-  loads from a development server and the photo is larger than 1 MB; read the
-  bytes there.
+  The URL loads only in your miniapp's own screen, in development as once
+  installed.
 - **Share it.** `await session.blob.share(photo.key)` opens the share sheet.
 - **Keep it.** Store a copy under a key of your own before it expires:
   `await session.blob.set("saved/" + photo.requestId, bytes)`.

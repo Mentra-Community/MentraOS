@@ -34,8 +34,8 @@ let engine: MiniappEngine | null = null
 function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: MentraUIRouter): void {
   devServerBridge.onRespawnBackground(async (packageName) => {
     try {
-      // Re-resolve the freshly built bundle (dev: HTTP off the dev server;
-      // released: file:// snapshot) via the launcher's shared recipe. Carries
+      // Re-resolve the freshly built bundle (a new snapshot of what the dev
+      // server serves) via the launcher's shared recipe. Carries
       // the declared permissions + manifest across the respawn — omitting them
       // would respawn the JSContext with no permissions, so SUBSCRIBE gates and
       // per-call dispatch checks would start rejecting after a background

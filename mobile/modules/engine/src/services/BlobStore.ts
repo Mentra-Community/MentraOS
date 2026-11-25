@@ -381,20 +381,6 @@ export class BlobStore {
     return meta
   }
 
-  /**
-   * The blob under `key` as a `data:` URL, or null when it is missing or larger than `maxBytes`:
-   * a URL for a screen the app doesn't serve, where no origin can serve the file.
-   */
-  async dataUrlOf(packageName: string, key: string, maxBytes: number): Promise<string | null> {
-    const meta = this.readMeta(packageName, key)
-    if (!meta || meta.bytes > maxBytes) return null
-    try {
-      return `data:${meta.mimeType};base64,${await this.fileFor(packageName, meta.fileName).base64()}`
-    } catch {
-      return null
-    }
-  }
-
   /** Delete a host-produced file that could not be stored. */
   discardFile(uri: string): void {
     try {

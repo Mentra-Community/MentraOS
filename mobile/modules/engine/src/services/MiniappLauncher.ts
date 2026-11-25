@@ -138,7 +138,7 @@ export interface ResolvedBundle {
   uiRootDir: string | null
   /** The name the origin is for. See {@link LaunchResult.uiOriginName}. */
   uiOriginName: string | null
-  /** A development build: a live development server or a development snapshot. */
+  /** A development build: a snapshot of what a development server serves. */
   devBuild: boolean
   declaredPermissions: string[]
   installedManifest?: InstalledMiniappManifest
@@ -146,7 +146,7 @@ export interface ResolvedBundle {
   ageRating: unknown
   /** Build-owned SYSTEM trust derived from install provenance, never the manifest. */
   hostTrustedSystem: boolean
-  /** Set for dev miniapps (HTTP off the dev server); null for released. */
+  /** The development server a development build's snapshot came from, while it answers; null otherwise. */
   devUrl: string | null
   devPort: number | null
 }
@@ -157,28 +157,26 @@ export interface LaunchResult {
    * Where the screen loads from. An installed release loads from its
    * package's own origin: `miniapp://<packageName>/<ui entry>` on iOS and
    * `https://<host>.miniapp.invalid/<ui entry>` on Android (see
-   * {@link miniappOriginUrl}), a development snapshot from the origin of its
-   * {@link uiOriginName}. A live development build loads from its development
-   * server. Null when there is no screen to load.
+   * {@link miniappOriginUrl}), a development build from the origin of its
+   * {@link uiOriginName}. Null when there is no screen to load.
    */
   uiUri: string | null
   /** The origin `uiUri` belongs to, for the WebView's `originWhitelist`. */
   uiOrigin: string | null
   /**
    * The root of the active version's bundle, which the package's origin
-   * serves (the WebView's `miniappOrigin.rootDir`). Null when the screen loads
-   * from a development server.
+   * serves (the WebView's `miniappOrigin.rootDir`). Null with `uiUri`.
    */
   uiRootDir: string | null
   /**
    * The name the origin serves `uiRootDir` under (the WebView's
    * `miniappOrigin.packageName`): the package name for a release, and
-   * {@link developmentOriginName} for a development snapshot, so a development
+   * {@link developmentOriginName} for a development build, so a development
    * build never shares web storage with a release of its name. Null with
    * `uiRootDir`.
    */
   uiOriginName: string | null
-  /** A development build: a live development server or a development snapshot. */
+  /** A development build: a snapshot of what a development server serves. */
   devBuild: boolean
 }
 
@@ -198,12 +196,6 @@ function launchResultOf(resolved: ResolvedBundle | null | undefined): LaunchResu
 /** The platform whose origin shape the Mentra App's WebView serves. */
 function originPlatform(): MiniappOriginPlatform {
   return Platform.OS === "android" ? "android" : "ios"
-}
-
-/** `scheme://host[:port]` of an http(s) URL, lowercased as a page's `location.origin` reads it. */
-function serverOrigin(url: string): string | null {
-  const match = /^(https?:\/\/[^/?#]+)/i.exec(url)
-  return match ? match[1].toLowerCase() : null
 }
 
 /**
@@ -327,9 +319,10 @@ class MiniappLauncher {
 
   /**
    * Resolve the background JS source + UI entry + declared permissions for a
-   * package. Handles both dev (HTTP off the running dev server) and released
-   * (the installed snapshot on disk, whose screen loads from the package's own
-   * origin). Reads disk/network/storage; does
+   * package. Every build runs from a bundle on disk: a release from its
+   * installed version, a development build from the snapshot of what its dev
+   * server serves now (fetched when it changed), or its last snapshot once the
+   * server is gone. Reads disk/network/storage; does
    * NOT spawn. Returns null when the bundle can't be resolved (dev server
    * unreachable with no on-disk snapshot, missing entry, no installed version).
    */
@@ -348,23 +341,18 @@ class MiniappLauncher {
     const selectedSnapshot = devAllowed ? appRegistry.getSelectedDevSnapshot(packageName) : null
     if (selectedSnapshot) return this.resolveInstalledBundle(packageName, selectedSnapshot)
 
-    // --- Dev: live HTTP, then the last on-disk snapshot if the laptop is gone. ---
+    // --- Dev: the server's current bundle, or the last snapshot of it once the laptop is gone. ---
+    // Either one runs from disk like an installed bundle, its screen on the development origin.
     // A stored URL from a scan that this workspace will not run must fall
     // through to the released bundle, or the home tile disappears.
     if (devUrl && devAllowed) {
       const source = await resolveDevBundleSource(packageName, devUrl)
-      if (source.kind === "live") {
-        const live = await this.resolveLiveHttp(packageName, source.resolvedUrl, source.manifest, hints)
-        if (live) return live
-        // Live probe succeeded but the entry fetch failed — still try disk.
-      }
-      const snapshotVersion =
-        source.kind === "snapshot" ? source.version : appRegistry.getLatestDevSnapshotVersion(packageName)
-      if (snapshotVersion) {
-        const snapshot = await this.resolveInstalledBundle(packageName, snapshotVersion)
-        if (snapshot) return snapshot
-      }
-      return null
+      if (source.kind === "none") return null
+      const snapshot = await this.resolveInstalledBundle(packageName, source.version)
+      if (!snapshot || source.kind === "snapshot") return snapshot
+      // The server answered: keep its URL for hot reload and log forwarding. Use the host that actually
+      // answered, which may differ from the stored IP after a laptop Wi-Fi change.
+      return {...snapshot, devUrl: source.resolvedUrl, devPort: this.resolveDevPort(hints?.devPort, packageName)}
     }
 
     // --- Released: resolve from the installed snapshot on disk. ---
@@ -373,66 +361,6 @@ class MiniappLauncher {
     const version = await appRegistry.getActiveVersion(packageName)
     if (!version) return null
     return this.resolveInstalledBundle(packageName, version)
-  }
-
-  private async resolveLiveHttp(
-    packageName: string,
-    resolvedUrl: string,
-    manifest: {entry?: unknown; permissions?: unknown; [key: string]: unknown},
-    hints?: LaunchHints,
-  ): Promise<ResolvedBundle | null> {
-    const entry = manifest.entry as {background?: string; ui?: string} | undefined
-    if (!entry?.background) return null
-
-    // Use the host that actually answered — may differ from the stored IP
-    // after a laptop Wi-Fi change (mDNS / Metro failover inside resolveDevBundleSource).
-    const base = resolvedUrl.replace(/\/$/, "")
-    // entry.* are bundle-root paths (dist/ stripped); the dev server serves
-    // files relative to cwd, so prepend dist/.
-    const bgUrl = `${base}/dist/${entry.background.replace(/^\.?\/+/, "")}`
-    const uiUri = entry.ui ? `${base}/dist/${entry.ui.replace(/^\.?\/+/, "")}` : null
-
-    const perms = manifest.permissions as Array<{type?: string} | string> | undefined
-    const declaredPermissions = (perms ?? [])
-      .map((p) => (typeof p === "string" ? p : p?.type))
-      .filter((t): t is string => typeof t === "string")
-    const installedManifest: InstalledMiniappManifest = {
-      packageName: typeof manifest.packageName === "string" ? manifest.packageName : packageName,
-      name: typeof manifest.name === "string" ? manifest.name : undefined,
-      version: typeof manifest.version === "string" ? manifest.version : undefined,
-      sdkVersion: typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined,
-      minHostVersion: typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined,
-      type: typeof manifest.type === "string" ? manifest.type : undefined,
-      entry: manifest.entry as InstalledMiniappManifest["entry"],
-      permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
-      hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
-      actions: manifest.actions as InstalledMiniappManifest["actions"],
-    }
-
-    let bgSource: string
-    try {
-      const res = await fetch(bgUrl)
-      if (!res.ok) return null
-      bgSource = await res.text()
-    } catch {
-      return null
-    }
-
-    return {
-      bgSource,
-      uiUri,
-      uiOrigin: uiUri ? serverOrigin(uiUri) : null,
-      uiRootDir: null,
-      uiOriginName: null,
-      devBuild: true,
-      declaredPermissions,
-      installedManifest,
-      ageRating: manifest.ageRating ?? null,
-      // A dev server is never host-trusted, whatever package name it claims.
-      hostTrustedSystem: false,
-      devUrl: resolvedUrl,
-      devPort: this.resolveDevPort(hints?.devPort, packageName),
-    }
   }
 
   private async resolveInstalledBundle(packageName: string, version: string): Promise<ResolvedBundle | null> {
@@ -692,10 +620,10 @@ class MiniappLauncher {
       if (projectRunning) this.reportLaunch(packageName, "started", runtimeOptions, resolved.installedManifest)
     }
 
-    // Where this launch's screen would load from, for the URLs of the package's own files: only an installed
-    // bundle's origin is served by the app. A screen that opens records its own (MiniappView), which is why the
-    // already-running path of ensureRunning doesn't: a headless caller resolves with other hints than the screen.
-    recordMiniappScreenOrigin(packageName, resolved.uiRootDir ? resolved.uiOrigin : null)
+    // Where this launch's screen would load from, for the URLs of the package's own files. A screen that opens
+    // records its own (MiniappView), which is why the already-running path of ensureRunning doesn't: a headless
+    // caller resolves with other hints than the screen.
+    recordMiniappScreenOrigin(packageName, resolved.uiOrigin)
     return launchResultOf(resolved)
   }
 

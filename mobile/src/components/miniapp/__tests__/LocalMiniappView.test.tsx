@@ -41,7 +41,7 @@ let mockForegroundedPackage: string | null = null
 let mockDevMode = false
 // The engine modules MiniappView runs on.
 jest.mock("../../../../modules/engine/src/services/MiniappLauncher", () => ({
-  miniappLauncher: {ensureRunning: jest.fn()},
+  miniappLauncher: {ensureRunning: jest.fn(), resolveBundle: jest.fn()},
 }))
 jest.mock("../../../../modules/engine/src/services/MiniappEngine", () => ({getMiniappEngine: () => null}))
 const mockOwnFilesDirectoryUri = jest.fn((_packageName: string): string | null => FILES_DIR)
@@ -275,12 +275,12 @@ describe("the screen's origin", () => {
   })
 
   it("records the screen each open loads, so the miniapp's own files get URLs it can load", async () => {
-    // The miniapp keeps running while its development server goes away and comes back.
-    const server = {
-      uiUri: "http://192.168.1.20:8081/dist/ui/index.html",
-      uiOrigin: "http://192.168.1.20:8081",
-      uiRootDir: null,
-      uiOriginName: null,
+    // A development build of the miniapp keeps running while it opens from a release, then from its snapshot.
+    const snapshot = {
+      uiUri: "https://invalid.dev.com.mentra.test.miniapp.invalid/ui/index.html",
+      uiOrigin: "https://invalid.dev.com.mentra.test.miniapp.invalid",
+      uiRootDir: "file:///documents/lmas/com.mentra.test/dev-1000/",
+      uiOriginName: "invalid.dev.com.mentra.test",
       devBuild: true,
     }
     jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(INSTALLED)
@@ -289,34 +289,51 @@ describe("the screen's origin", () => {
     expect(miniappFileUrl("com.mentra.test", "photo-1.jpg")).toBe(`${INSTALLED.uiOrigin}/.mentra/files/photo-1.jpg`)
     first.unmount()
 
-    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(server)
-    const second = render(<LocalMiniappView {...props} />)
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(snapshot)
+    render(<LocalMiniappView {...props} devUrl="http://192.168.1.20:8081" />)
     await finishLaunch()
-    // The server can't serve the miniapp's files, so they have no URL there.
-    expect(miniappFileUrl("com.mentra.test", "photo-1.jpg")).toBeNull()
-    second.unmount()
-
-    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(INSTALLED)
-    render(<LocalMiniappView {...props} />)
-    await finishLaunch()
-    expect(miniappFileUrl("com.mentra.test", "photo-1.jpg")).toBe(`${INSTALLED.uiOrigin}/.mentra/files/photo-1.jpg`)
+    expect(miniappFileUrl("com.mentra.test", "photo-1.jpg")).toBe(`${snapshot.uiOrigin}/.mentra/files/photo-1.jpg`)
   })
 
-  it("keeps a live development build on its server", async () => {
-    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue({
-      uiUri: "http://192.168.1.20:8081/dist/ui/index.html",
-      uiOrigin: "http://192.168.1.20:8081",
-      uiRootDir: null,
-      uiOriginName: null,
+  it("opens a live development build from its snapshot, never from its server", async () => {
+    const snapshot = {
+      uiUri: "https://invalid.dev.com.mentra.test.miniapp.invalid/ui/index.html",
+      uiOrigin: "https://invalid.dev.com.mentra.test.miniapp.invalid",
+      uiRootDir: "file:///documents/lmas/com.mentra.test/dev-1000/",
+      uiOriginName: "invalid.dev.com.mentra.test",
       devBuild: true,
-    })
+    }
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(snapshot)
     const view = render(<LocalMiniappView {...props} devUrl="http://192.168.1.20:8081" />)
     await finishLaunch()
-    const webView = view.UNSAFE_getByType("WebView" as never)
-    expect(webView.props.source).toEqual({uri: "http://192.168.1.20:8081/dist/ui/index.html"})
-    expect(webView.props.miniappOrigin).toBeUndefined()
-    expect(webView.props.originWhitelist).toContain("http://192.168.1.20:8081")
-    expect(webView.props.allowFileAccess).toBeUndefined()
+    const first = view.UNSAFE_getByType("WebView" as never)
+    expect(first.props.source).toEqual({uri: snapshot.uiUri})
+    expect(first.props.miniappOrigin).toEqual({
+      packageName: snapshot.uiOriginName,
+      rootDir: snapshot.uiRootDir,
+      filesDir: FILES_DIR,
+    })
+    expect(first.props.originWhitelist).not.toContain("http://192.168.1.20:8081")
+
+    // A reload whose bundle didn't change keeps the screen.
+    jest.mocked(miniappLauncher.resolveBundle).mockResolvedValue({uiRootDir: snapshot.uiRootDir} as never)
+    await act(async () => {
+      await jest.mocked(devServerBridge.onReload).mock.calls.at(-1)![0]("com.mentra.test")
+    })
+    await finishLaunch()
+    expect(view.UNSAFE_getByType("WebView" as never)).toBe(first)
+
+    // A changed bundle opens from its new snapshot in a new WebView.
+    const next = {...snapshot, uiRootDir: "file:///documents/lmas/com.mentra.test/dev-2000/"}
+    jest.mocked(miniappLauncher.resolveBundle).mockResolvedValue({uiRootDir: next.uiRootDir} as never)
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(next)
+    await act(async () => {
+      await jest.mocked(devServerBridge.onReload).mock.calls.at(-1)![0]("com.mentra.test")
+    })
+    await finishLaunch()
+    const second = view.UNSAFE_getByType("WebView" as never)
+    expect(second.props.miniappOrigin.rootDir).toBe(next.uiRootDir)
+    expect(() => first.props).toThrow(/unmounted/)
   })
 
   it("keeps the miniapp's document on its origin and opens other links in the system browser", async () => {
@@ -460,18 +477,24 @@ describe("the ready handshake", () => {
   })
 
   it("retries a hot-reloaded development page the shim never reached", async () => {
-    const devUrl = "http://192.168.1.20:8081"
-    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue({
-      uiUri: `${devUrl}/dist/ui/index.html`,
-      uiOrigin: devUrl,
-      uiRootDir: null,
-      uiOriginName: null,
+    const snapshot = {
+      uiUri: "https://invalid.dev.com.mentra.test.miniapp.invalid/ui/index.html",
+      uiOrigin: "https://invalid.dev.com.mentra.test.miniapp.invalid",
+      uiRootDir: "file:///documents/lmas/com.mentra.test/dev-1000/",
+      uiOriginName: "invalid.dev.com.mentra.test",
       devBuild: true,
-    })
-    const view = render(<LocalMiniappView {...props} devUrl={devUrl} />)
+    }
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(snapshot)
+    const view = render(<LocalMiniappView {...props} devUrl="http://192.168.1.20:8081" />)
     await finishLaunch()
     load(view, {type: "page_loaded"}, {type: "ready"})
-    act(() => jest.mocked(devServerBridge.onReload).mock.calls.at(-1)![0]("com.mentra.test"))
+    const next = {...snapshot, uiRootDir: "file:///documents/lmas/com.mentra.test/dev-2000/"}
+    jest.mocked(miniappLauncher.resolveBundle).mockResolvedValue({uiRootDir: next.uiRootDir} as never)
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(next)
+    await act(async () => {
+      await jest.mocked(devServerBridge.onReload).mock.calls.at(-1)![0]("com.mentra.test")
+    })
+    await finishLaunch()
     load(view)
     act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
     expect(splashError(view)).toBeUndefined()
