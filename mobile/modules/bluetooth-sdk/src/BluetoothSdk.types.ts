@@ -878,6 +878,16 @@ export type WarmUpCameraParams = {
   mfnr?: boolean
 }
 
+/** What a held warm-up asks for: a warm-up's capture settings, with no request ID or duration of its own. */
+export type HoldCameraWarmParams = Omit<WarmUpCameraParams, "requestId" | "durationMs">
+
+/** A warm camera, held until {@link CameraWarmHold.release} ({@link BluetoothSdkPublicModule.holdCameraWarm}). */
+export interface CameraWarmHold {
+  readonly requestId: string
+  /** Idempotent. The glasses close the camera once no warm-up or photo needs it. */
+  release(): Promise<void>
+}
+
 export type StreamDegradationPreference = "MAINTAIN_FRAMERATE" | "MAINTAIN_RESOLUTION" | "BALANCED" | "DISABLED"
 
 export type StreamVideoConfig = {
@@ -1709,6 +1719,12 @@ export interface BluetoothSdkPublicModule {
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
   stopCameraWarmUp(requestId: string): Promise<void>
+  /**
+   * Keep the camera warm until `release()`, for photos with the same settings to be taken at once, however long
+   * that is: the hold re-arms the glasses' 5-minute warm-up lease before it lapses and after the camera stops.
+   * Resolves once the camera is first warm.
+   */
+  holdCameraWarm(params: HoldCameraWarmParams): Promise<CameraWarmHold>
   startVideoRecording(
     requestId: string,
     save: boolean,

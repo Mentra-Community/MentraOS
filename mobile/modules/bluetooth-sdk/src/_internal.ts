@@ -9,6 +9,7 @@
 export {default} from "./_private/BluetoothSdkModule"
 export type {BluetoothSdkInternalModule} from "./_private/BluetoothSdkModule"
 export * from "./BluetoothSdk.types"
+export {holdCameraWarm} from "./camera-warm"
 export {default as MentraLocalNetwork} from "./_private/MentraLocalNetworkModule"
 export * from "./_private/MentraLocalNetworkModule"
 export {default as MentraOtaServer} from "./ota-server"

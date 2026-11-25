@@ -1,7 +1,6 @@
 export type PhotoSize = "low" | "medium" | "high" | "max"
 export type PhotoMode = "photo" | "text"
 
-export const DEFAULT_WARMUP_DURATION_MS = 15_000
 
 export const CANONICAL_PHOTO_SIZES = ["low", "medium", "high", "max"] as const satisfies readonly PhotoSize[]
 
@@ -45,12 +44,9 @@ export function buildTakePhotoArgs(config: TakePhotoConfig) {
   return [options] as const
 }
 
-export function buildWarmUpArgs(
-  size: PhotoSize,
-  mode: PhotoMode,
-  durationMs = DEFAULT_WARMUP_DURATION_MS,
-) {
-  return [{size: wirePhotoSize(size, mode), mode, durationMs}] as const
+/** warmUp() holds the camera warm until the tester closes. */
+export function buildWarmUpArgs(size: PhotoSize, mode: PhotoMode) {
+  return [{size: wirePhotoSize(size, mode), mode}] as const
 }
 
 export function formatElapsedMs(elapsedMs: number | undefined): string {

@@ -3,7 +3,6 @@ import {useSyncExternalStore} from "react"
 import {act, fireEvent, render, screen, waitFor} from "@testing-library/react"
 import {MemoryRouter} from "react-router-dom"
 
-import {DEFAULT_WARMUP_DURATION_MS} from "./cameraPageModel"
 
 const photoResult = {
   requestId: "photo-1",
@@ -67,19 +66,18 @@ describe("CameraPage", () => {
     latestInputEvent = null
   })
 
-  test("warmUp sends the selected size and duration", async () => {
+  test("warmUp sends the selected size", async () => {
     render(
       <MemoryRouter>
         <CameraPage />
       </MemoryRouter>,
     )
 
-    fireEvent.change(screen.getByLabelText("warmUp durationMs"), {target: {value: "20000"}})
     fireEvent.click(screen.getByRole("button", {name: /warmUp\(/}))
 
     await waitFor(() => {
       expect(cameraInvokeMock).toHaveBeenCalledWith("warmUp", [
-        {size: "medium", mode: "photo", durationMs: 20000},
+        {size: "medium", mode: "photo"},
       ])
     })
   })
@@ -99,7 +97,7 @@ describe("CameraPage", () => {
 
     await waitFor(() => {
       expect(cameraInvokeMock).toHaveBeenCalledWith("warmUp", [
-        {size: "medium", mode: "text", durationMs: DEFAULT_WARMUP_DURATION_MS},
+        {size: "medium", mode: "text"},
       ])
     })
 

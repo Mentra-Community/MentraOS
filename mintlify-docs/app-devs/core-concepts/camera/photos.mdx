@@ -124,6 +124,23 @@ on by itself. `stop()` stops taking photos at once and resolves once the photos
 the run handed out are released; closing the miniapp stops it. Full photos and
 previews come quickly while the run is on. It requires CAMERA permission.
 
+### Keep the camera warm
+
+Opening the camera takes about a second. A miniapp that takes photos on demand
+for a while, like a session that photographs on each button press, can keep it
+open:
+
+```typescript
+const warm = await session.camera.warmUp({ size: "medium" }); // resolves once the camera is warm
+// ... capture({ size: "medium" }) and takePhoto({ size: "medium" }) start at once
+await warm.release();                                           // or close the miniapp
+```
+
+Warm with the same `size`, `mode`, `exposureTimeNs`, `zsl` and `mfnr` as your
+photos: a photo with other settings reconfigures the camera. The phone keeps the
+camera warm until you release it, however long. A miniapp holds one warm-up at a
+time; a new `warmUp()` replaces the previous one.
+
 ## Use the photo
 
 The photo is an ordinary `session.blob` entry that the phone deletes after 30

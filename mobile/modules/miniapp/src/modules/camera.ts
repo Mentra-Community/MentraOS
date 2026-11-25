@@ -178,12 +178,16 @@ export interface WarmUpCameraOptions {
   /** Match the upcoming capture mode so warm-up and capture share one ASG camera session. */
   mode?: "photo" | "text"
   exposureTimeNs?: number
-  /** Ready-state hold in milliseconds. Defaults to 15 seconds and is capped at 5 minutes. */
-  durationMs?: number
   /** ZSL preview buffering for the warm-up session. */
   zsl?: boolean
   /** MFNR still capture for the warm-up session. */
   mfnr?: boolean
+}
+
+/** A warm camera, held until {@link CameraWarmUp.release} or the miniapp closes ({@link CameraModule.warmUp}). */
+export interface CameraWarmUp {
+  /** Idempotent. The glasses close the camera once nothing needs it. */
+  release(): Promise<void>
 }
 
 export interface StartVideoRecordingOptions {
@@ -427,29 +431,31 @@ export class CameraModule {
   }
 
   /**
-   * Pre-warm the glasses camera so the next takePhoto() is near-instant.
-   * The camera stays warm for ~durationMs (default 15s, maximum 5 minutes); call warmUp() again to
-   * extend it. Warm with the same `size` you'll capture with — a mismatched size
-   * forces the camera to reconfigure and loses the speedup. Requires CAMERA
-   * permission in miniapp.json. Resolves once the camera reports ready. The host automatically
-   * releases this miniapp's request-owned lease when the miniapp closes.
+   * Keep the glasses camera warm until `release()` or the miniapp closes, so each photo taken with the same `size`,
+   * `mode`, `exposureTimeNs`, `zsl` and `mfnr` is taken at once, however long that is: the phone re-arms the glasses'
+   * warm-up as needed. Resolves once the camera is warm. A miniapp holds one warm-up: a new one replaces it.
+   * Requires CAMERA permission in miniapp.json.
    *
-   * Warm-ups are serialized: only one runs at a time and none may start while a
-   * photo is being captured. If the camera is busy (a capture is in flight, or
-   * another warm-up is still opening) this rejects with `camera_busy` — retry
-   * shortly, or just call takePhoto() (it works regardless, only slower). The
-   * normal warmUp() → takePhoto() sequence never hits this.
+   * Rejects with `camera_busy` while a photo is being captured or another warm-up is opening: retry shortly, or just
+   * take the photo (it works regardless, only slower).
    */
-  async warmUp(options: WarmUpCameraOptions = {}): Promise<void> {
+  async warmUp(options: WarmUpCameraOptions = {}): Promise<CameraWarmUp> {
+    const warmUpId = `w${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
     await this.session.sendRequest<void>({
       type: MiniappRequestType.CAMERA_WARM_UP,
+      hold: true,
+      warmUpId,
       size: options.size ?? "auto",
       mode: options.mode ?? "photo",
       exposureTimeNs: options.exposureTimeNs,
-      durationMs: options.durationMs ?? 15000,
       zsl: options.zsl,
       mfnr: options.mfnr,
     })
+    let released: Promise<void> | undefined
+    return {
+      release: () =>
+        (released ??= this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_WARM_UP_RELEASE, warmUpId})),
+    }
   }
 
   /**

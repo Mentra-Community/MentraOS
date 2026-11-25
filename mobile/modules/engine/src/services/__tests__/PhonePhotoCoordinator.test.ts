@@ -65,6 +65,18 @@ let glassesState: {connection: {state: string}; capabilities?: {hasCamera?: bool
 mock.module("../../stores/glasses", () => ({
   useGlassesStore: {getState: () => glassesState},
 }))
+// The real BgTimer drags react-native too; held warm-ups renew on it.
+mock.module("../../utils/timers", () => ({
+  BgTimer: {
+    // Unref'd: a released hold's pending renewal must not keep the test process alive.
+    setTimeout: (callback: () => void, delayMs: number) => {
+      const timer = setTimeout(callback, delayMs)
+      ;(timer as {unref?: () => void}).unref?.()
+      return timer as unknown as number
+    },
+    clearTimeout: (timerId: number) => clearTimeout(timerId),
+  },
+}))
 mock.module("../GlassesReadiness", () => ({
   isGlassesConnected: (connection: {state?: string} | undefined) => connection?.state === "connected",
 }))
@@ -504,6 +516,33 @@ describe("PhonePhotoCoordinator", () => {
       expect(a.photoUrl).toBe("https://r2.test/rq-A")
       expect(b.photoUrl).toBe("https://r2.test/rq-B")
       expect(requestPhotoNative).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe("holdWarmUp", () => {
+    beforeEach(() => {
+      Object.assign(bluetoothSdk, {addListener: () => ({remove: () => {}})})
+    })
+
+    test("holds the camera warm until the miniapp releases it", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.holdWarmUp("com.a", "w1", {size: "auto"})
+      expect(warmUpCameraNative).toHaveBeenCalledTimes(1)
+      const requestId = (warmUpCameraNative.mock.calls[0]![0] as {requestId: string}).requestId
+      await coord.releaseWarmUp("com.a", "stale")
+      expect(stopCameraWarmUpNative).not.toHaveBeenCalled()
+      await coord.releaseWarmUp("com.a", "w1")
+      expect(stopCameraWarmUpNative.mock.calls).toEqual([[requestId]])
+    })
+
+    test("two warm-ups asked for at once leave one hold, and closing the miniapp releases it", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await Promise.all([coord.holdWarmUp("com.a", "w1", {}), coord.holdWarmUp("com.a", "w2", {})])
+      await coord.stopWarmUpForApp("com.a")
+      // Every hold the camera got is released: none keeps renewing after the miniapp closed.
+      const warmed = new Set(warmUpCameraNative.mock.calls.map((call) => (call[0] as {requestId: string}).requestId))
+      const stopped = new Set(stopCameraWarmUpNative.mock.calls.map((call) => call[0]))
+      expect(stopped).toEqual(warmed)
     })
   })
 

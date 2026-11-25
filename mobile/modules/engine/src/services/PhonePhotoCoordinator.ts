@@ -31,7 +31,8 @@
 
 import {parsePhotoCompression, type PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 import {Buffer} from "buffer"
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {BgTimer} from "../utils/timers"
+import BluetoothSdk, {holdCameraWarm, type CameraWarmHold} from "@mentra/bluetooth-sdk/internal"
 import type {
   PhotoCapture as BluetoothPhotoCapture,
   PhotoPreview,
@@ -256,6 +257,8 @@ export class PhonePhotoCoordinator {
     string,
     {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>}
   >()
+  /** Each miniapp's held warm-up (`camera.warmUp()`), by package: one at a time, until it releases it or closes. */
+  private readonly heldWarmUps = new Map<string, {warmUpId: string; hold: Promise<CameraWarmHold | null>}>()
 
   constructor(
     private readonly streamFrames: StreamFrameSource = nativeStreamFrames,
@@ -272,7 +275,7 @@ export class PhonePhotoCoordinator {
   getDiagnosticSnapshot(): Record<string, unknown> {
     return {
       captureOwners: [...new Set([...this.activeRequests.values()].map((request) => request.packageName))].sort(),
-      warmUpOwners: [...this.activeWarmUps.keys()].sort(),
+      warmUpOwners: [...new Set([...this.activeWarmUps.keys(), ...this.heldWarmUps.keys()])].sort(),
       activeCaptureCount: this.activeRequests.size,
     }
   }
@@ -669,8 +672,82 @@ export class PhonePhotoCoordinator {
     }
   }
 
-  /** Release a miniapp's warm-up even if its original warmUpCamera promise is still opening. */
+  /**
+   * Keep the camera warm for a miniapp until it releases `warmUpId` or closes, however long that is: the Bluetooth
+   * SDK's hold re-arms the glasses' 5-minute lease. A miniapp's new warm-up replaces its previous one. Resolves once
+   * the camera is warm.
+   */
+  async holdWarmUp(
+    packageName: string,
+    warmUpId: string,
+    opts: {
+      size?: PhotoOpts["size"]
+      mode?: "photo" | "text"
+      exposureTimeNs?: number
+      zsl?: boolean
+      mfnr?: boolean
+      /** False when the caller paused the stream to give the camera to its photo. Default true. */
+      streamFrame?: boolean
+    },
+  ): Promise<void> {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+      throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
+    }
+    const previous = this.heldWarmUps.get(packageName)
+    const entry: {warmUpId: string; hold: Promise<CameraWarmHold | null>} = {warmUpId, hold: Promise.resolve(null)}
+    // Registered before any wait: a warm-up asked for meanwhile replaces this one instead of missing it.
+    this.heldWarmUps.set(packageName, entry)
+    const current = () => this.heldWarmUps.get(packageName) === entry
+    entry.hold = (async () => {
+      if (previous) await (await previous.hold.catch(() => null))?.release()
+      await this.stopTimedWarmUp(packageName)
+      // As warmUpCamera: the stream has the camera open, and the next photo comes from its frames.
+      if (!current() || (opts.streamFrame !== false && this.streamFrames.isLive())) return null
+      const hold = await holdCameraWarm(
+        BluetoothSdk as never,
+        {
+          size: normalizePhotoSize(opts.size ?? "medium"),
+          mode: opts.mode ?? "photo",
+          exposureTimeNs: opts.exposureTimeNs ?? null,
+          ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
+          ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
+        },
+        // Renewals keep running while the app is in the background.
+        (ms) => new Promise<void>((resolve) => BgTimer.setTimeout(resolve, ms)),
+      )
+      // Replaced or released while the camera warmed: the newer warm-up, if any, holds the camera.
+      if (!current()) {
+        await hold.release()
+        return null
+      }
+      return hold
+    })()
+    try {
+      await entry.hold
+    } catch (err) {
+      if (current()) this.heldWarmUps.delete(packageName)
+      throw this.toPhotoError(err, "WARM_UP_FAILED", "command", "ble")
+    }
+  }
+
+  /** A miniapp released its held warm-up. A stale ID (replaced since) releases nothing. */
+  async releaseWarmUp(packageName: string, warmUpId: string): Promise<void> {
+    const entry = this.heldWarmUps.get(packageName)
+    if (!entry || entry.warmUpId !== warmUpId) return
+    this.heldWarmUps.delete(packageName)
+    await (await entry.hold.catch(() => null))?.release()
+  }
+
+  /** Release a miniapp's warm-ups, held or timed, even if one is still opening. */
   async stopWarmUpForApp(packageName: string): Promise<void> {
+    const held = this.heldWarmUps.get(packageName)
+    if (held) await this.releaseWarmUp(packageName, held.warmUpId)
+    // Nothing timed to stop: return at once, as a warm-up that follows waits on this.
+    if (this.activeWarmUps.has(packageName)) await this.stopTimedWarmUp(packageName)
+  }
+
+  /** Stop a 3.4 miniapp's timed warm-up. */
+  private async stopTimedWarmUp(packageName: string): Promise<void> {
     const active = this.activeWarmUps.get(packageName)
     if (!active) return
     await BluetoothSdk.stopCameraWarmUp(active.requestId)

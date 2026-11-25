@@ -121,8 +121,13 @@ export enum MiniappRequestType {
   /** Write camera FOV settings. */
   CAMERA_FOV = "miniapp_camera_fov",
 
-  /** Pre-warm the glasses camera so the next takePhoto() is near-instant. */
+  /**
+   * Keep the glasses camera warm so photos are taken at once: `{hold: true, warmUpId, ...settings}` holds it until
+   * CAMERA_WARM_UP_RELEASE or the miniapp closes. A 3.4 SDK sends `{durationMs}` instead, a warm-up that expires.
+   */
   CAMERA_WARM_UP = "miniapp_camera_warm_up",
+  /** Release a held warm-up: `{warmUpId}`. */
+  CAMERA_WARM_UP_RELEASE = "miniapp_camera_warm_up_release",
 
   /**
    * Enable/disable raw accelerometer (IMU) streaming on the glasses. The

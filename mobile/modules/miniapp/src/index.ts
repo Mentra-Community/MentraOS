@@ -114,6 +114,7 @@ export type {
   CameraFovRequest,
   CameraFovResult,
   CameraRoiPosition,
+  CameraWarmUp,
   CloudPhotoTaken,
   ContinuousCapture,
   ContinuousCaptureState,

@@ -2,6 +2,8 @@
 
 import {mock} from "bun:test"
 
+import {holdCameraWarm} from "../../../../bluetooth-sdk/src/camera-warm"
+
 /**
  * One BluetoothSdk stub for the whole bun process.
  *
@@ -49,6 +51,8 @@ const glassesWifi = {
 mock.module("@mentra/bluetooth-sdk/internal", () => ({
   __esModule: true,
   default: bluetoothSdk,
+  // The SDK's own held warm-up, over whatever warmUpCamera / stopCameraWarmUp / addListener a suite installs.
+  holdCameraWarm,
   ...glassesWifi,
 }))
 mock.module("@mentra/bluetooth-sdk/glasses-wifi", () => glassesWifi)

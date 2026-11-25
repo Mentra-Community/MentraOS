@@ -5,6 +5,7 @@ import type {
   BluetoothSdkEventListener,
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
+  HoldCameraWarmParams,
   PhotoCaptureDefaults,
   PhotoCapture,
   PhotoCaptureParams,
@@ -12,6 +13,8 @@ import type {
   PublicGlassesStatus,
   VideoRecordingDefaults,
 } from "./BluetoothSdk.types"
+import {holdCameraWarm} from "./camera-warm"
+import {delay} from "./glasses-wifi/native"
 import {getReleaseChangelogs} from "./changelogs"
 import {runContinuousCapture} from "./glasses-wifi/continuous"
 import {createLink} from "./glasses-wifi/link"
@@ -195,6 +198,8 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
     ),
   warmUpCamera: bindPublicMethod("warmUpCamera"),
   stopCameraWarmUp: bindPublicMethod("stopCameraWarmUp"),
+  // Renewals wait natively, so they keep running while Android has the app in the background.
+  holdCameraWarm: (params: HoldCameraWarmParams) => holdCameraWarm(BluetoothSdk, params, delay),
   startVideoRecording: bindPublicMethod("startVideoRecording"),
   stopVideoRecording: bindPublicMethod("stopVideoRecording"),
   queryVideoRecordingStatus: bindPublicMethod("queryVideoRecordingStatus"),
@@ -271,6 +276,8 @@ export type {
   PhotoCaptureDefaults,
   ButtonPressEvent,
   CameraFovPreset,
+  CameraWarmHold,
+  HoldCameraWarmParams,
   CameraFovRequest,
   CameraFovResult,
   CameraRoiPosition,

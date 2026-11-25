@@ -158,32 +158,28 @@ describe("CameraModule", () => {
     expect(requestOptions).toEqual([undefined])
   })
 
-  test("takePhoto, capture and warmUp default to size auto; takeCloudPhoto keeps medium", async () => {
-    const {session, requestCalls} = mockSession({requestId: "r", key: "k", mimeType: "image/jpeg", size: 1, expiresAt: 0})
-    const camera = new CameraModule(session)
-
-    await camera.takePhoto()
-    camera.capture()
-    await camera.warmUp()
-    await camera.takeCloudPhoto().catch(() => undefined)
-
-    expect(requestCalls.map((call) => (call as {size?: string}).size)).toEqual(["auto", "auto", "auto", "medium"])
-  })
-
-  test("warmUp forwards size and default duration", async () => {
+  test("warmUp holds the camera warm until released, once", async () => {
     const {session, requestCalls} = mockSession(undefined)
     const camera = new CameraModule(session)
 
-    await camera.warmUp({size: "high", durationMs: 20_000})
+    const warm = await camera.warmUp({size: "high"})
+    await warm.release()
+    await warm.release()
 
+    const warmUpId = (requestCalls[0] as {warmUpId: string}).warmUpId
+    expect(warmUpId).toBeTruthy()
     expect(requestCalls).toEqual([
       {
         type: MiniappRequestType.CAMERA_WARM_UP,
+        hold: true,
+        warmUpId,
         size: "high",
         mode: "photo",
         exposureTimeNs: undefined,
-        durationMs: 20_000,
+        zsl: undefined,
+        mfnr: undefined,
       },
+      {type: MiniappRequestType.CAMERA_WARM_UP_RELEASE, warmUpId},
     ])
   })
 

@@ -1565,6 +1565,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.CAMERA_WARM_UP:
         void this.handleCameraWarmUp(packageName, payload, requestId)
         break
+      case MiniappRequestType.CAMERA_WARM_UP_RELEASE:
+        void phonePhotoCoordinator
+          .releaseWarmUp(packageName, String(payload.warmUpId ?? ""))
+          .catch((error) => console.warn(`${LOG_TAG}: warm-up release failed for ${packageName}`, error))
+          .finally(() => this.sendResult(packageName, requestId, true))
+        break
       case MiniappRequestType.VIDEO_RECORDING_START:
         void this.handleVideoRecordingStart(packageName, payload, requestId)
         break
@@ -4098,6 +4104,19 @@ class LocalMiniappRuntime {
     }
 
     try {
+      // A current Miniapp SDK holds its warm-up until it releases it; a 3.4 one asks for a duration.
+      if (payload.hold === true && typeof payload.warmUpId === "string") {
+        await phonePhotoCoordinator.holdWarmUp(packageName, payload.warmUpId, {
+          size: payload.size as PhotoOpts["size"],
+          mode: payload.mode as "photo" | "text" | undefined,
+          exposureTimeNs: payload.exposureTimeNs as number | undefined,
+          zsl: payload.zsl as boolean | undefined,
+          mfnr: payload.mfnr as boolean | undefined,
+          streamFrame: !acsMeetingService.photoPauseHeld(),
+        })
+        this.sendResult(packageName, requestId, true)
+        return
+      }
       await phonePhotoCoordinator.warmUpCamera(packageName, {
         size: payload.size as PhotoOpts["size"],
         mode: payload.mode as "photo" | "text" | undefined,

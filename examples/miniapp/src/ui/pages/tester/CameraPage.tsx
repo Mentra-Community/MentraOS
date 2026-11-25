@@ -12,7 +12,6 @@ import {useChannel} from "../../hooks/useChannel"
 import {useTester} from "../../hooks/useTester"
 import {Shell} from "../Shell"
 import {Button} from "../../components/button"
-import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "../../components/select"
 import {Spinner} from "../../components/spinner"
@@ -22,7 +21,6 @@ import {
   buildTakePhotoArgs,
   buildWarmUpArgs,
   CANONICAL_PHOTO_SIZES,
-  DEFAULT_WARMUP_DURATION_MS,
   formatByteSize,
   formatElapsedMs,
   type PhotoMode,
@@ -58,7 +56,6 @@ export default function CameraPage() {
   const [mode, setMode] = useState<PhotoMode>("photo")
   const [zsl, setZsl] = useState(true)
   const [mfnr, setMfnr] = useState(true)
-  const [durationMs, setDurationMs] = useState(String(DEFAULT_WARMUP_DURATION_MS))
   const [capturePending, setCapturePending] = useState(false)
   const [warmupPending, setWarmupPending] = useState(false)
   const [warmupStatus, setWarmupStatus] = useState<string | null>(null)
@@ -68,9 +65,6 @@ export default function CameraPage() {
   const [shareError, setShareError] = useState<TesterEventPayload | null>(null)
   const sharingRef = useRef(false)
 
-  const parsedDurationMs = Number.parseInt(durationMs, 10)
-  const warmupDurationMs =
-    Number.isFinite(parsedDurationMs) && parsedDurationMs > 0 ? parsedDurationMs : DEFAULT_WARMUP_DURATION_MS
   const busy = capturePending || warmupPending || isSharing
   const config: TakePhotoConfig = {
     size,
@@ -112,7 +106,7 @@ export default function CameraPage() {
     const started = performance.now()
     setWarmupPending(true)
     setWarmupStatus("warming")
-    invoke("warmUp", [...buildWarmUpArgs(size, mode, warmupDurationMs)])
+    invoke("warmUp", [...buildWarmUpArgs(size, mode)])
       .then(() => {
         setWarmupElapsedMs(performance.now() - started)
         setWarmupStatus("ready")
@@ -228,16 +222,6 @@ export default function CameraPage() {
             </div>
             <Switch id="mfnr" checked={mfnr} onCheckedChange={setMfnr} disabled={busy} />
           </div>
-          <div>
-            <Label htmlFor="warmup-duration">warmUp durationMs</Label>
-            <Input
-              id="warmup-duration"
-              inputMode="numeric"
-              value={durationMs}
-              onChange={(event) => setDurationMs(event.target.value)}
-              disabled={busy}
-            />
-          </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button onClick={warmUp} disabled={busy} className="sm:flex-1">
@@ -276,7 +260,6 @@ export default function CameraPage() {
             mode,
             zsl: config.zsl,
             mfnr: config.mfnr,
-            warmupDurationMs,
             warmupStatus: warmupStatus ?? "(not warmed)",
             warmupElapsed: formatElapsedMs(warmupElapsedMs),
             captureElapsed: formatElapsedMs(captureElapsedMs),

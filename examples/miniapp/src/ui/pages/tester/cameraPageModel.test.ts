@@ -4,7 +4,6 @@ import {
   buildTakePhotoArgs,
   buildWarmUpArgs,
   CANONICAL_PHOTO_SIZES,
-  DEFAULT_WARMUP_DURATION_MS,
   formatByteSize,
   formatElapsedMs,
   wirePhotoSize,
@@ -47,11 +46,9 @@ describe("cameraPageModel", () => {
 
   test("warm-up carries mode so ASG can apply text sensor constants", () => {
     expect(buildWarmUpArgs("low", "photo")).toEqual([
-      {size: "low", mode: "photo", durationMs: DEFAULT_WARMUP_DURATION_MS},
+      {size: "low", mode: "photo"},
     ])
-    expect(buildWarmUpArgs("high", "text", 20_000)).toEqual([
-      {size: "medium", mode: "text", durationMs: 20_000},
-    ])
+    expect(buildWarmUpArgs("high", "text")).toEqual([{size: "medium", mode: "text"}])
   })
 
   test("size matrix covers canonical sizes", () => {
