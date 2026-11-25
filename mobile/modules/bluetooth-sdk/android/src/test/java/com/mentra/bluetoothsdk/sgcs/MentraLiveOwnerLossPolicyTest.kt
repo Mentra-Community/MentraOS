@@ -379,4 +379,25 @@ class MentraLiveOwnerLossPolicyTest {
                     msSinceAutoReconnectLink = msSinceAutoReconnectLink,
                     secureFirmware = secureFirmware,
             )
+
+    @Test
+    fun onlyADeclineEndsASecurePairAtOnce() {
+        // auth failed (Samsung's Cancel), rejected, cancelled, remote auth cancelled
+        for (reason in listOf(1, 2, 3, 8)) {
+            assertTrue(MentraLiveOwnerLossPolicy.isSecurePairingDeclined(reason))
+        }
+    }
+
+    @Test
+    fun aStaleBondRemovedWhileRebondingIsNotADecline() {
+        assertFalse(MentraLiveOwnerLossPolicy.isSecurePairingDeclined(9))
+    }
+
+    @Test
+    fun otherBondEndingsWaitForTheSecureBondWait() {
+        // remote device down, timeout, repeated attempts, no reason
+        for (reason in listOf(4, 6, 7, -1)) {
+            assertFalse(MentraLiveOwnerLossPolicy.isSecurePairingDeclined(reason))
+        }
+    }
 }

@@ -197,6 +197,23 @@ internal object MentraLiveOwnerLossPolicy {
                     (bondState != BluetoothDevice.BOND_BONDED ||
                             !pairingInfoConfirmsOwner(ownerCommitted))
 
+    /**
+     * Android's hidden unbond reasons for a person declining a pairing request: auth failed (1),
+     * rejected (2), cancelled (3) and remote auth cancelled (8). Samsung reports Cancel on its
+     * pairing request as 1. Hidden constants with stable values; the bond-state broadcast carries
+     * them under `android.bluetooth.device.extra.REASON`.
+     */
+    private val DECLINE_UNBOND_REASONS = setOf(1, 2, 3, 8)
+
+    /**
+     * Whether a bond that went BONDING→NONE during an explicit secure pair was declined. Only a
+     * decline ends the attempt at once. Success comes from the glasses (`pairing_info`
+     * `owner_committed`) with the bond reaching BONDED. Any other reason, such as 9 (removed:
+     * Android dropping a stale bond while it bonds again), is not a result: the attempt stays
+     * bounded by [SECURE_BOND_WAIT_MS].
+     */
+    fun isSecurePairingDeclined(unbondReason: Int): Boolean = unbondReason in DECLINE_UNBOND_REASONS
+
     /** How long an explicit secure pair may wait for a bond result before the attempt fails. */
     const val SECURE_BOND_WAIT_MS = 40_000L
 

@@ -1126,8 +1126,13 @@ private extension Device {
             model: DeviceModel.fromDeviceType(model),
             name: name,
             identifier: identifier?.isEmpty == true ? nil : identifier,
+            projectName: (values["projectName"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             rssi: rssi,
-            id: id
+            id: id,
+            pairingMode: values["pairingMode"] as? Bool,
+            pairingCode: (values["pairingCode"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            // The pairing flow reads it to tell a declined secure pair from a failed legacy one.
+            securePairingCapable: values["securePairingCapable"] as? Bool
         )
     }
 }

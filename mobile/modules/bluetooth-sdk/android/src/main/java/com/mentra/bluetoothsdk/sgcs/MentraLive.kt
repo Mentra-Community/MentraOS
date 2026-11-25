@@ -8023,13 +8023,30 @@ class MentraLive : SGCManager() {
                                         audioConnected = false
                                         if (previousBondState == BluetoothDevice.BOND_BONDING &&
                                                         isExplicitPairingAttempt() &&
+                                                        isSecurePairingTarget() &&
+                                                        !MentraLiveOwnerLossPolicy.isSecurePairingDeclined(
+                                                                // AOSP's EXTRA_UNBOND_REASON key is
+                                                                // "extra.REASON".
+                                                                reason
+                                                        )
+                                        ) {
+                                            // Not a decline, such as Android removing a stale bond
+                                            // while it bonds again: no result yet. The owner commit
+                                            // and bond decide, within the secure bond wait.
+                                            Bridge.log(
+                                                    "LIVE: CTKD: secure pairing bond reset (reason=$reason), not declined — waiting for the bond"
+                                            )
+                                            armSecureBondWait()
+                                        } else if (previousBondState == BluetoothDevice.BOND_BONDING &&
+                                                        isExplicitPairingAttempt() &&
                                                         isSecurePairingTarget()
                                         ) {
-                                            // Secure glasses own a phone only through this bond.
-                                            // Re-prompting after a decline only repeats the
-                                            // system dialog; let the pairing screen offer Try again.
+                                            // The person declined Android's pairing request. Secure
+                                            // glasses own a phone only through this bond, and
+                                            // re-prompting only repeats the system dialog; let the
+                                            // pairing screen offer Try again.
                                             Bridge.log(
-                                                    "LIVE: CTKD: secure pairing bond not completed — reporting pairing failure"
+                                                    "LIVE: CTKD: secure pairing declined (reason=$reason) — reporting pairing failure"
                                             )
                                             bondingRetryCount = 0
                                             cancelSecureBondWait()

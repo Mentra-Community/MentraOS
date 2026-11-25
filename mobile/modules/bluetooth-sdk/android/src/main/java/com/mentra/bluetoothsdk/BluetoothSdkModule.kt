@@ -1143,23 +1143,9 @@ class BluetoothSdkModule : Module() {
     }
 }
 
-private fun Map<String, Any>?.toMentraDevice(): Device? {
-    val values = this ?: return null
-    val model = values["model"] as? String ?: return null
-    val name = values["name"] as? String ?: return null
-    val address = values["address"] as? String
-    val projectName = values["projectName"] as? String
-    val rssi = (values["rssi"] as? Number)?.toInt()
-    val id = values["id"] as? String
-    return Device(
-            model = DeviceModel.fromDeviceType(model),
-            name = name,
-            address = address?.takeIf { it.isNotBlank() },
-            projectName = projectName?.takeIf { it.isNotBlank() },
-            rssi = rssi,
-            id = id?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() } ?: "$model:$name",
-    )
-}
+// Every field the scan reported, securePairingCapable included: the pairing flow reads it to tell a declined secure
+// pair from a failed legacy one before the glasses send pairing_info.
+private fun Map<String, Any>?.toMentraDevice(): Device? = this?.let(Device::fromMap)
 
 private fun Map<String, Any>?.toMentraConnectOptions(): ConnectOptions {
     val values = this ?: return ConnectOptions()
