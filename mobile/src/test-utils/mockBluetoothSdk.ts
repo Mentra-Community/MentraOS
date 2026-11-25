@@ -79,14 +79,12 @@ export const glassesWifiMock = {
       return () => subscription.remove()
     },
   },
-  runContinuousCapture: jest.fn(() => ({
-    state: "paused",
-    onPhoto: jest.fn(() => () => {}),
-    onState: jest.fn(() => () => {}),
+  openCameraSession: jest.fn(() => ({
     capture: jest.fn(async () => {
-      throw new Error("runContinuousCapture is not stubbed in this test")
+      throw new Error("openCameraSession is not stubbed in this test")
     }),
-    stop: jest.fn(async () => {}),
+    continuous: jest.fn(() => ({state: "paused", onPhoto: () => () => {}, onState: () => () => {}, stop: () => {}})),
+    close: jest.fn(async () => {}),
   })),
 }
 

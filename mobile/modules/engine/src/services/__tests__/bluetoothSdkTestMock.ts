@@ -37,14 +37,12 @@ const glassesWifi = {
     cancel: async () => {},
     onDownloadProgress: () => () => {},
   },
-  runContinuousCapture: () => ({
-    state: "paused",
-    onPhoto: () => () => {},
-    onState: () => () => {},
+  openCameraSession: () => ({
     capture: async () => {
-      throw new Error("runContinuousCapture is not stubbed in this suite")
+      throw new Error("openCameraSession is not stubbed in this suite")
     },
-    stop: async () => {},
+    continuous: () => ({state: "paused", onPhoto: () => () => {}, onState: () => () => {}, stop: () => {}}),
+    close: async () => {},
   }),
 }
 

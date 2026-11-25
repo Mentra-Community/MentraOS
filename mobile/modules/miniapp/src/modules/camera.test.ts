@@ -263,10 +263,10 @@ describe("CameraModule.capture", () => {
   })
 })
 
-describe("CameraModule continuous capture", () => {
-  test("starts a run, hands out its photos as captures, follows its state, and stops it", async () => {
+describe("CameraModule camera session", () => {
+  function eventSession() {
     const requests: Array<Record<string, unknown>> = []
-    const listeners = new Map<string, (event: Record<string, unknown>) => void>()
+    const listeners = new Map<string, Set<(event: Record<string, unknown>) => void>>()
     const session = {
       _hasManifestPermission: () => true,
       sendRequest: (payload: Record<string, unknown>) => {
@@ -274,49 +274,65 @@ describe("CameraModule continuous capture", () => {
         return Promise.resolve(undefined)
       },
       on: (event: string, handler: (event: Record<string, unknown>) => void) => {
-        listeners.set(event, handler)
-        return () => listeners.delete(event)
+        const set = listeners.get(event) ?? new Set()
+        set.add(handler)
+        listeners.set(event, set)
+        return () => set.delete(handler)
       },
     } as unknown as MiniappSession
-    const run = new CameraModule(session).captureContinuous({size: "medium", sound: false, maxPending: 4})
-    const start = requests[0]
-    expect(start).toMatchObject({type: MiniappRequestType.CAMERA_CONTINUOUS_START, maxPending: 4})
-    const runId = start.runId as string
-    const photos: string[] = []
-    const states: string[] = []
-    run.onPhoto((capture) => photos.push(capture.photoId))
-    run.onState((state) => states.push(state))
-    // The first state is heard even when it is the starting "paused".
-    listeners.get("continuousState")?.({runId, state: "paused"})
-    listeners.get("continuousState")?.({runId, state: "capturing"})
-    listeners.get("continuousPhoto")?.({runId, photoId: "p1"})
-    listeners.get("continuousPhoto")?.({runId: "another run", photoId: "p2"})
-    expect(photos).toEqual(["p1"])
-    expect(states).toEqual(["paused", "capturing"])
-    expect(run.state).toBe("capturing")
-    const asked = await run.capture({sound: true})
-    expect(requests.at(-1)).toMatchObject({type: MiniappRequestType.CAMERA_CONTINUOUS_CAPTURE, runId, photoId: asked.photoId})
-    expect("preview" in asked).toBe(false)
-    await run.stop()
-    expect(requests.at(-1)).toEqual({type: MiniappRequestType.CAMERA_CONTINUOUS_STOP, runId})
-    expect(listeners.size).toBe(0)
+    const emit = (event: string, payload: Record<string, unknown>) => listeners.get(event)?.forEach((handler) => handler(payload))
+    const heard = () => [...listeners.values()].reduce((count, set) => count + set.size, 0)
+    return {session, requests, emit, heard}
+  }
+
+  test("opens a session with its settings; a tap is taken in its turn with only its own options", async () => {
+    const {session, requests} = eventSession()
+    const camera = new CameraModule(session).open({size: "medium", sound: false, preview: true})
+    const open = requests[0]
+    expect(open).toMatchObject({type: MiniappRequestType.CAMERA_OPEN, size: "medium", sound: false, preview: true})
+    const cameraId = open.cameraId as string
+    expect(cameraId).toBeTruthy()
+    const tap = await camera.capture({sound: true})
+    expect(requests.at(-1)).toEqual({type: MiniappRequestType.CAMERA_SESSION_CAPTURE, cameraId, photoId: tap.photoId, sound: true})
+    await tap.preview
+    expect(requests.at(-1)).toEqual({type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId: tap.photoId, stage: "preview"})
+    await camera.close()
+    expect(requests.at(-1)).toEqual({type: MiniappRequestType.CAMERA_CLOSE, cameraId})
   })
 
-  test("a run asked with preview: true gives each photo a preview", async () => {
-    const requests: Array<Record<string, unknown>> = []
-    const session = {
-      _hasManifestPermission: () => true,
-      sendRequest: (payload: Record<string, unknown>) => {
-        requests.push(payload)
-        return Promise.resolve(undefined)
-      },
-      on: () => () => undefined,
-    } as unknown as MiniappSession
-    const run = new CameraModule(session).captureContinuous({preview: true})
-    expect(requests[0]).toMatchObject({type: MiniappRequestType.CAMERA_CONTINUOUS_START, preview: true})
-    const asked = await run.capture()
-    expect(requests.at(-1)).toMatchObject({type: MiniappRequestType.CAMERA_CONTINUOUS_CAPTURE, preview: true})
-    await asked.preview
-    expect(requests.at(-1)).toEqual({type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId: asked.photoId, stage: "preview"})
+  test("continuous: hands out its photos as captures with its own options, and stops while the session stays", async () => {
+    const {session, requests, emit, heard} = eventSession()
+    const camera = new CameraModule(session).open({size: "medium", sound: true})
+    const cameraId = requests[0].cameraId as string
+    const run = camera.continuous({sound: false})
+    await Promise.resolve()
+    await Promise.resolve()
+    const start = requests.at(-1)!
+    expect(start).toEqual({type: MiniappRequestType.CAMERA_CONTINUOUS_START, cameraId, runId: start.runId, sound: false})
+    const runId = start.runId as string
+    const photos: Array<{photoId: string}> = []
+    run.onPhoto((capture) => photos.push(capture))
+    emit("continuousPhoto", {runId, photoId: "p1"})
+    emit("continuousPhoto", {runId: "another run", photoId: "p2"})
+    expect(photos.map((photo) => photo.photoId)).toEqual(["p1"])
+    expect("preview" in photos[0]).toBe(false)
+    await run.stop()
+    expect(requests.at(-1)).toEqual({type: MiniappRequestType.CAMERA_CONTINUOUS_STOP, cameraId, runId})
+    expect(heard()).toBe(0)
+    // The session goes on: a tap still goes through it.
+    await camera.capture()
+    expect(requests.at(-1)).toMatchObject({type: MiniappRequestType.CAMERA_SESSION_CAPTURE, cameraId})
+    await camera.close()
+  })
+
+  test("a new trigger or closing stops hearing the previous trigger", async () => {
+    const {session, heard} = eventSession()
+    const camera = new CameraModule(session).open()
+    camera.continuous()
+    expect(heard()).toBe(1)
+    camera.continuous()
+    expect(heard()).toBe(1)
+    await camera.close()
+    expect(heard()).toBe(0)
   })
 })

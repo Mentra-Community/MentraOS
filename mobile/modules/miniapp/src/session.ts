@@ -249,7 +249,6 @@ type SessionEmitterEvents = {
   meetingVideoPublisher: (event: import("./modules/meeting").MeetingVideoPublisherEvent) => void
   meetingStill: (event: import("./modules/meeting").MeetingStillProgressEvent) => void
   continuousPhoto: (event: {runId: string; photoId: string}) => void
-  continuousState: (event: {runId: string; state: import("./modules/camera").ContinuousCaptureState}) => void
   auth: (auth: MiniappAuthState) => void
 }
 
@@ -958,13 +957,6 @@ export class MiniappSession<TChannels extends object = any> {
       case MiniappResponseType.CAMERA_CONTINUOUS_PHOTO: {
         if (typeof payload.runId !== "string" || typeof payload.photoId !== "string") return
         this.emitter.emit("continuousPhoto", {runId: payload.runId, photoId: payload.photoId})
-        return
-      }
-
-      case MiniappResponseType.CAMERA_CONTINUOUS_STATE: {
-        if (typeof payload.runId !== "string") return
-        const state = payload.state === "capturing" ? "capturing" : "paused"
-        this.emitter.emit("continuousState", {runId: payload.runId, state})
         return
       }
 

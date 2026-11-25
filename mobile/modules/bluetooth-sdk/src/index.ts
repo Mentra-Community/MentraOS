@@ -16,7 +16,7 @@ import type {
 import {holdCameraWarm} from "./camera-warm"
 import {delay} from "./glasses-wifi/native"
 import {getReleaseChangelogs} from "./changelogs"
-import {runContinuousCapture} from "./glasses-wifi/continuous"
+import {openCameraSession} from "./glasses-wifi/camera-session"
 import {createLink} from "./glasses-wifi/link"
 
 /** The app's own links to the glasses, and its hold on the fast link. */
@@ -177,18 +177,31 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   takePhoto: bindPublicMethod("takePhoto"),
   makePhotoThumbnail: bindPublicMethod("makePhotoThumbnail"),
   link,
-  captureContinuous: ((options: CapturePhotoParams & {maxPending?: number}) =>
-    runContinuousCapture(
+  openCamera: ((options: CapturePhotoParams) =>
+    openCameraSession(
       (params: CapturePhotoParams, released): PhotoCapture => {
         const capture = PrivateBluetoothSdkModule.capturePhoto(params)
-        // The run counts the photos still on the glasses: this one stops counting once released.
+        // The session counts the photos still on the glasses: this one stops counting once released.
         return Object.create(capture, {
           release: {value: () => capture.release().finally(released), enumerable: true},
         }) as PhotoCapture
       },
       options,
-      "app continuous capture",
-    )) as BluetoothSdkPublicModule["captureContinuous"],
+      "app camera session",
+      // Warm with the session's photo settings, so each photo is taken at once.
+      () =>
+        holdCameraWarm(
+          BluetoothSdk,
+          {
+            size: options.size ?? "auto",
+            mode: options.mode,
+            exposureTimeNs: options.exposureTimeNs,
+            ...(options.zsl != null ? {zsl: options.zsl} : {}),
+            ...(options.mfnr != null ? {mfnr: options.mfnr} : {}),
+          },
+          delay,
+        ),
+    )) as BluetoothSdkPublicModule["openCamera"],
   warmUpCamera: bindPublicMethod("warmUpCamera"),
   stopCameraWarmUp: bindPublicMethod("stopCameraWarmUp"),
   // Renewals wait natively, so they keep running while Android has the app in the background.
@@ -235,7 +248,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
 export default BluetoothSdk
 
 export type {GlassesLink, LinkState} from "./glasses-wifi/link"
-export type {ContinuousCapture, ContinuousState} from "./glasses-wifi/continuous"
+export type {CameraSession, ContinuousCapture} from "./glasses-wifi/camera-session"
 
 export {
   CAMERA_FOV_DEFAULT,

@@ -176,19 +176,31 @@ export interface CaptureOptions extends TakePhotoOptions {
   preview?: boolean
 }
 
-/** A continuous capture is `capturing` photos on its own, or `paused` while they would pile up on the glasses. */
-export type ContinuousCaptureState = "capturing" | "paused"
-
-/** A run of {@link CameraModule.captureContinuous}; its photos have a preview when the run asked for one. */
+/** A camera session's continuous trigger ({@link CameraSession.continuous}). */
 export interface ContinuousCapture<C extends PhotoCapture = PhotoCapture> {
-  readonly state: ContinuousCaptureState
-  /** Each photo the run takes on its own; release it when done. */
+  /** Each photo it takes on its own; release it when done. */
   onPhoto(handler: (capture: C) => void): () => void
-  onState(handler: (state: ContinuousCaptureState) => void): () => void
-  /** One more photo, with these options, in the run's turn even while it is paused. */
-  capture(options?: TakePhotoOptions): Promise<C>
-  /** Stop taking photos at once; resolves once the photos the run handed out are released. */
+  /** Stop taking photos on their own. The session stays open: its link, camera and photos stay. */
   stop(): Promise<void>
+}
+
+/**
+ * The glasses camera, opened for a stretch of work ({@link CameraModule.open}). From open to
+ * {@link close} the Mentra App holds the glasses Wi-Fi link, so full photos come over it, and
+ * keeps the camera warm, so each photo is taken at once. Every photo goes through the session the
+ * same way, one at a time; its photos have a preview when the session asked for one.
+ */
+export interface CameraSession<C extends PhotoCapture = PhotoCapture> {
+  /** One photo (a tap), with these options over the session's, taken in the session's turn; resolves once started. */
+  capture(options?: TakePhotoOptions): Promise<C>
+  /**
+   * Photos back to back on their own, as fast as the camera takes them, with these options over
+   * the session's, until `stop()` or the session closes. It waits by itself while the link is down,
+   * so photos never pile up on the glasses. Starting another stops this one.
+   */
+  continuous(options?: TakePhotoOptions): ContinuousCapture<C>
+  /** Stop taking photos at once; resolves once the photos the session handed out are released and the link given back. */
+  close(): Promise<void>
 }
 
 /** What {@link CameraModule.takeCloudPhoto} resolves to: a photo uploaded to Mentra's cloud. */
@@ -258,6 +270,16 @@ export interface StopVideoRecordingOptions {
   uploadUrl?: string
   /** Bearer token sent as the `Authorization` header on the upload, if your endpoint needs one. */
   uploadAuthToken?: string
+}
+
+/** Only the options a photo of a camera session sets itself: the session's own fill the rest. */
+function photoOverrides(options: TakePhotoOptions): Record<string, unknown> {
+  const overrides: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(options)) {
+    if (value === undefined || key === "timeoutMs" || key === "preview") continue
+    overrides[key] = key === "compress" ? parsePhotoCompression(value as TakePhotoOptions["compress"]) : value
+  }
+  return overrides
 }
 
 /** A stage the caller may never await is not an unhandled rejection. */
@@ -334,80 +356,86 @@ export class CameraModule {
   }
 
   /**
-   * Photos back to back, for a miniapp that takes many (documenting a site, a walk-through). Each
-   * photo is a capture like {@link capture}'s, handed to `onPhoto`; release each when done. The run
-   * is `capturing` while it takes photos on its own and `paused` while they would pile up on the
-   * glasses, then goes on by itself; at most `maxPending` (default 12) of its photos stay on the
-   * glasses unreleased. `run.capture(options)` takes one more in the run's turn, even while
-   * paused. `run.stop()` ends it, as the miniapp closing does. `preview: true` gives each photo a
-   * preview, as {@link capture}'s. Requires CAMERA permission.
+   * Open the camera for a stretch of work (documenting a site, a walk-through). From open to
+   * `close()` the Mentra App holds the glasses Wi-Fi link, so full photos come over it, and keeps
+   * the camera warm with these settings, so each photo is taken at once. `camera.capture(options)`
+   * takes one photo (a tap); `camera.continuous()` takes them back to back. Both are
+   * captures like {@link capture}'s, through the same session; release each when done.
+   * `preview: true` gives every photo a preview. The miniapp closing closes it. Requires CAMERA
+   * permission.
    */
-  captureContinuous(options: CaptureOptions & {preview: true; maxPending?: number}): ContinuousCapture<PhotoCaptureWithPreview>
-  captureContinuous(options?: CaptureOptions & {maxPending?: number}): ContinuousCapture
-  captureContinuous(options: CaptureOptions & {maxPending?: number} = {}): ContinuousCapture {
-    const {maxPending, ...photoOptions} = options
-    const preview = photoOptions.preview === true
-    const runId = mintPhotoId()
-    const timeout = photoOptions.timeoutMs != null ? {timeoutMs: photoOptions.timeoutMs} : undefined
-    const photoHandlers = new Set<(capture: PhotoCapture) => void>()
-    const stateHandlers = new Set<(state: ContinuousCaptureState) => void>()
-    let state: ContinuousCaptureState = "paused"
-    // The run's first state is heard once known, even when it is the starting "paused".
-    let announced = false
-    const offPhoto = this.session.on("continuousPhoto", (event) => {
-      if (event.runId !== runId) return
-      const capture = this.captureOf(event.photoId, Promise.resolve(), preview, timeout)
-      for (const handler of photoHandlers) handler(capture)
-    })
-    const offState = this.session.on("continuousState", (event) => {
-      if (event.runId !== runId || (event.state === state && announced)) return
-      state = event.state
-      announced = true
-      for (const handler of stateHandlers) handler(event.state)
-    })
-    const started = quiet(
-      this.session.sendRequest<void>({
-        ...this.photoRequest(photoOptions, "auto"),
-        type: MiniappRequestType.CAMERA_CONTINUOUS_START,
-        runId,
-        ...(maxPending != null ? {maxPending} : {}),
-      }),
+  open(options: CaptureOptions & {preview: true}): CameraSession<PhotoCaptureWithPreview>
+  open(options?: CaptureOptions): CameraSession
+  open(options: CaptureOptions = {}): CameraSession {
+    const preview = options.preview === true
+    const cameraId = mintPhotoId()
+    const timeout = options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined
+    const opened = quiet(
+      this.session.sendRequest<void>({...this.photoRequest(options, "auto"), type: MiniappRequestType.CAMERA_OPEN, cameraId}),
     )
+    let closing: Promise<void> | undefined
+    /** The current trigger's subscriptions: the host stops a trigger when another starts or the session closes. */
+    let silenceTrigger = () => {}
     return {
-      get state() {
-        return state
-      },
-      onPhoto(handler) {
-        photoHandlers.add(handler)
-        return () => {
-          photoHandlers.delete(handler)
-        }
-      },
-      onState(handler) {
-        stateHandlers.add(handler)
-        return () => {
-          stateHandlers.delete(handler)
-        }
-      },
       capture: async (extra: TakePhotoOptions = {}) => {
-        await started
+        await opened
         const photoId = mintPhotoId()
-        // The run takes it in its turn, after the photo the camera is taking now.
+        // The session takes it in its turn, after the photo the camera is taking now.
         const taken = quiet(
           this.session.sendRequest<void>(
-            {...this.photoRequest({...photoOptions, ...extra}, "auto"), type: MiniappRequestType.CAMERA_CONTINUOUS_CAPTURE, runId, photoId},
+            {...photoOverrides(extra), type: MiniappRequestType.CAMERA_SESSION_CAPTURE, cameraId, photoId},
             {timeoutMs: 60_000},
           ),
         )
         await taken
         return this.captureOf(photoId, taken, preview, timeout)
       },
-      stop: async () => {
-        offPhoto()
-        offState()
-        await started.catch(() => undefined)
-        // The host answers once the run's photos are released, which can take a while on Bluetooth.
-        await this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_CONTINUOUS_STOP, runId}, {timeoutMs: 180_000})
+      continuous: (photoOptions: TakePhotoOptions = {}) => {
+        const runId = mintPhotoId()
+        const photoHandlers = new Set<(capture: PhotoCapture) => void>()
+        const offPhoto = this.session.on("continuousPhoto", (event) => {
+          if (event.runId !== runId) return
+          const capture = this.captureOf(event.photoId, Promise.resolve(), preview, timeout)
+          for (const handler of photoHandlers) handler(capture)
+        })
+        silenceTrigger()
+        silenceTrigger = offPhoto
+        const started = quiet(
+          opened.then(() =>
+            this.session.sendRequest<void>({
+              ...photoOverrides(photoOptions),
+              type: MiniappRequestType.CAMERA_CONTINUOUS_START,
+              cameraId,
+              runId,
+            }),
+          ),
+        )
+        let stopped: Promise<void> | undefined
+        return {
+          onPhoto(handler) {
+            photoHandlers.add(handler)
+            return () => {
+              photoHandlers.delete(handler)
+            }
+          },
+          stop: () => {
+            if (stopped) return stopped
+            offPhoto()
+            stopped = started
+              .catch(() => undefined)
+              .then(() => this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_CONTINUOUS_STOP, cameraId, runId}))
+            return stopped
+          },
+        }
+      },
+      close: () => {
+        if (closing) return closing
+        silenceTrigger()
+        // The host answers once the session's photos are released, which can take a while on Bluetooth.
+        closing = opened
+          .catch(() => undefined)
+          .then(() => this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_CLOSE, cameraId}, {timeoutMs: 180_000}))
+        return closing
       },
     }
   }

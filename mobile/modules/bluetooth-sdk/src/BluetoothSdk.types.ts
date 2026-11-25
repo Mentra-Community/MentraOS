@@ -1743,18 +1743,17 @@ export interface BluetoothSdkPublicModule {
    */
   readonly link: import("./glasses-wifi/link").GlassesLink
   /**
-   * Photos back to back, for a run that takes many (documenting a site, a walk-through): see
-   * {@link import("./glasses-wifi/continuous").ContinuousCapture}. Each photo is a capture like
-   * `capturePhoto`'s. While the run is on, the SDK holds the fast link for it, so full photos come
-   * over Wi-Fi; the run is `paused` while only Bluetooth is left, and `stop()` gives the link back.
-   * `maxPending` (default 12) is how many of its photos may stay on the glasses unreleased.
+   * Open the camera for a stretch of work (documenting a site, a walk-through): see
+   * {@link import("./glasses-wifi/camera-session").CameraSession}. From open to `close()` the SDK
+   * holds the fast link, so full photos come over Wi-Fi, and keeps the camera warm with these
+   * settings, so each photo is taken at once. `session.capture(options)` takes one photo (a tap),
+   * `session.continuous()` takes them back to back; both are captures like
+   * `capturePhoto`'s, through the same session. `preview: true` gives every photo a preview.
    */
-  captureContinuous(
-    options: CapturePhotoParams & {preview: true; maxPending?: number},
-  ): import("./glasses-wifi/continuous").ContinuousCapture<PhotoCaptureWithPreview>
-  captureContinuous(
-    options: CapturePhotoParams & {maxPending?: number},
-  ): import("./glasses-wifi/continuous").ContinuousCapture<PhotoCapture>
+  openCamera(
+    options: CapturePhotoParams & {preview: true},
+  ): import("./glasses-wifi/camera-session").CameraSession<PhotoCaptureWithPreview>
+  openCamera(options: CapturePhotoParams): import("./glasses-wifi/camera-session").CameraSession<PhotoCapture>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
   stopCameraWarmUp(requestId: string): Promise<void>

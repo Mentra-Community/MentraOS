@@ -125,31 +125,37 @@ after that. For a preview only, await `preview` and `release()` without calling
 `photo()`. `takePhoto(options)` is `capture(options).photo()` with no preview,
 releasing the glasses' copy once the photo is on the phone.
 
-### Continuous capture
+### Camera sessions
 
-A miniapp that takes many photos, like documenting a site, can run a continuous
-capture instead of calling `capture()` itself:
+A miniapp that takes many photos, like documenting a site, opens the camera for
+the whole stretch of work instead of calling `capture()` on its own:
 
 ```typescript
-const run = session.camera.captureContinuous({ size: "medium", sound: false, preview: true, maxPending: 12 });
-run.onPhoto((capture) => {        // a normal capture: captured, preview, photo(), release()
-  void capture.preview.then((preview) => showThumbnail(preview.url));
+const camera = session.camera.open({ size: "medium" });
+
+// A tap: one photo, in the session's turn, with its shutter sound.
+const tap = await camera.capture({ sound: true });
+
+// Or photos back to back on their own, silently.
+const run = camera.continuous({ sound: false });
+run.onPhoto((capture) => {        // a normal capture: captured, photo(), release()
+  void capture.photo().then((photo) => show(photo.url)).finally(() => capture.release());
 });
-run.onState((state) => {          // "capturing" | "paused"
-  console.log(`continuous capture ${state}`);
-});
-const one = await run.capture({ sound: true }); // one more photo in the run's turn, even while paused
-await run.stop();                 // or close the miniapp
+await run.stop();                 // the session stays open
+
+await camera.close();             // or close the miniapp
 ```
 
-Photos are taken back to back, one at a time: the next starts once the camera
-took the previous one. The run takes photos on its own while it is `capturing`
-and fewer than `maxPending` (default 12) of its photos are still on the glasses
-unreleased. It is `paused` while photos would pile up on the glasses, and goes
-on by itself. `stop()` stops taking photos at once and resolves once the photos
-the run handed out are released; closing the miniapp stops it. `preview: true`
-gives every photo of the run a preview. Full photos and previews come quickly
-while the run is on. It requires CAMERA permission.
+From `open()` to `close()` the Mentra App holds the glasses Wi-Fi link, so full
+photos come over it, and keeps the camera warm with the session's settings, so
+each photo is taken at once. Every photo goes through the session the same way,
+one at a time: the next starts once the camera took the previous one. Only what
+asks for a photo differs: `capture(options)` for a tap, with its options over
+the session's, or `continuous(options)`, which takes photos on its own as fast
+as the camera takes them. It waits by itself while the link is down, so photos
+never pile up on the glasses behind Bluetooth. `close()` stops taking photos at
+once and resolves once the photos the session handed out are released; closing
+the miniapp closes it. It requires CAMERA permission.
 
 ### Keep the camera warm
 

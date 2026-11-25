@@ -231,7 +231,7 @@ These are the supported React Native app developer entrypoints:
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget`, `unpair` |
 | Display | `displayText`, `clearDisplay`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
 | Wi-Fi | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork` |
-| Links and continuous capture | `link.state`, `link.onChange`, `link.openFast`, `link.closeFast`, `captureContinuous` |
+| Links and camera sessions | `link.state`, `link.onChange`, `link.openFast`, `link.closeFast`, `openCamera` |
 | Camera and gallery | `capturePhoto`, `takePhoto`, `uploadPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setPreferredMic`, `setVoiceActivityDetectionEnabled`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
@@ -560,18 +560,17 @@ stop();
 
 The SDK picks the radio (Wi-Fi Direct on Android with glasses that support it, the glasses' hotspot otherwise) and shares the one link with its other users; it goes down once nobody holds it. Both calls are idempotent. `openFast()` rejects if the link can't come up; photos keep going over Bluetooth. While it is held, the SDK brings the link back after the glasses restart. On an iPhone, joining the glasses' hotspot takes the phone's Wi-Fi while it is held, so hold it only while you take photos. The React Native example's Camera tab shows it in its Deferred photos card.
 
-`captureContinuous(options)` takes photos back to back for as long as the run lasts, built on `link`: while the run is on, the SDK holds the fast link for it, so its photos come over Wi-Fi. Photos are taken one at a time; the next starts once the camera took the previous one. Each is a capture like `capturePhoto`'s, handed to `onPhoto`; release each when done. The run takes photos on its own while it is `capturing` and fewer than `maxPending` (default 12) of its photos are still on the glasses unreleased. It is `paused` while only Bluetooth is left, since photos would pile up on the glasses, and goes on by itself once the fast link is back. `run.capture(options)` takes one more photo in the run's turn, even while paused. `stop()` stops taking photos at once, and resolves and gives the link back once the photos the run handed out are released:
+`openCamera(options)` opens the camera for a stretch of work, built on `link`: from open to `close()` the SDK holds the fast link, so full photos come over Wi-Fi, and keeps the camera warm with the session's settings, so each photo is taken at once. Every photo goes through the session the same way, one at a time; only what asks for it differs. `session.capture(options)` takes one photo (a tap) in the session's turn. `session.continuous(options)` takes photos back to back on their own, as fast as the camera takes them, each handed to `onPhoto`, until `stop()`, which keeps the session; it waits by itself while the fast link is down, so photos never pile up on the glasses behind Bluetooth. Each photo is a capture like `capturePhoto`'s; release each when done. `close()` stops taking photos at once, and resolves and gives the link and camera back once the photos the session handed out are released:
 
 ```ts
-const run = BluetoothSdk.captureContinuous({size: 'medium', sound: false, maxPending: 12});
-run.onPhoto((capture) => {
-  // a normal capture: captured, photo(), release(); preview too with preview: true
+const camera = BluetoothSdk.openCamera({size: 'medium'});
+const one = await camera.capture({sound: true}); // a tap
+const auto = camera.continuous({sound: false}); // silent
+auto.onPhoto((capture) => {
+  // a normal capture: captured, photo(), release()
 });
-run.onState((state) => {
-  // "capturing" | "paused"
-});
-const one = await run.capture({sound: true}); // one more photo in the run's turn, even while paused
-await run.stop();
+auto.stop();
+await camera.close();
 ```
 
 ## Camera Video Recording

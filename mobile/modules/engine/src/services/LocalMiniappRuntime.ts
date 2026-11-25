@@ -10,7 +10,12 @@
  */
 
 import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
-import {holdGlassesWifi, runContinuousCapture, type ContinuousCapture} from "@mentra/bluetooth-sdk/glasses-wifi"
+import {
+  holdGlassesWifi,
+  openCameraSession,
+  type CameraSession,
+  type ContinuousCapture,
+} from "@mentra/bluetooth-sdk/glasses-wifi"
 import {AppState, Platform} from "react-native"
 import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
@@ -631,11 +636,17 @@ const SOFTAP_CLEANUP_NARRATE_AFTER_MS = 250
 // LocalMiniappRuntime
 // =============================================================================
 
+/** A miniapp's camera session (`camera.open`), with the continuous trigger running on it, if any. */
+interface MiniappCameraSession {
+  camera: CameraSession<PhoneCapture>
+  run?: {runId: string; trigger: ContinuousCapture<PhoneCapture>}
+}
+
 class LocalMiniappRuntime {
   private static instance: LocalMiniappRuntime | null = null
 
-  /** Each miniapp's continuous captures (`camera.captureContinuous`), by package and run. */
-  private continuousRuns = new Map<string, Map<string, ContinuousCapture<PhoneCapture>>>()
+  /** Each miniapp's camera sessions (`camera.open`), by package and camera ID, with the continuous trigger running on each. */
+  private cameraSessions = new Map<string, Map<string, MiniappCameraSession>>()
 
   /**
    * The SoftAP call being started or running, if any.
@@ -1206,7 +1217,7 @@ class LocalMiniappRuntime {
     // Close all camera consumers before restoring FOV. A shared publisher may
     // remain active for another subscriber; a rejected FOV release then stops
     // renewing the departed owner's lease and ASG restores it once idle.
-    this.stopContinuous(packageName)
+    this.closeCameraSessions(packageName)
     const cameraCleanup = Promise.allSettled([
       this.leaveMeetingForApp(packageName),
       phonePhotoCoordinator.stopWarmUpForApp(packageName),
@@ -1582,10 +1593,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.PHOTO_RELEASE:
         void this.handlePhotoCapture(packageName, requestType, payload, requestId)
         break
+      case MiniappRequestType.CAMERA_OPEN:
+      case MiniappRequestType.CAMERA_SESSION_CAPTURE:
       case MiniappRequestType.CAMERA_CONTINUOUS_START:
-      case MiniappRequestType.CAMERA_CONTINUOUS_CAPTURE:
       case MiniappRequestType.CAMERA_CONTINUOUS_STOP:
-        void this.handleContinuousCapture(packageName, requestType, payload, requestId)
+      case MiniappRequestType.CAMERA_CLOSE:
+        void this.handleCameraSession(packageName, requestType, payload, requestId)
         break
       case MiniappRequestType.CAMERA_WARM_UP:
         void this.handleCameraWarmUp(packageName, payload, requestId)
@@ -4070,67 +4083,100 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * `camera.captureContinuous()`: the Bluetooth SDK's continuous capture over this miniapp's
-   * captures. While a run is on, the SDK holds the glasses fast link for it; stopping it, or the
-   * miniapp closing, gives the link back. Its photos are ordinary captures by photo ID.
+   * `camera.open()`: the Bluetooth SDK's camera session over this miniapp's captures. From open to
+   * close the session holds the glasses fast link and the warm camera; a tap (`capture`) and the
+   * continuous trigger take their photos through it the same way, as ordinary captures by photo ID.
+   * The miniapp closing closes its sessions and gives the link back.
    */
-  private async handleContinuousCapture(
+  private async handleCameraSession(
     packageName: string,
     type: string,
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
-    const runId = typeof payload.runId === "string" ? payload.runId : ""
-    const runs = this.continuousRuns.get(packageName) ?? new Map<string, ContinuousCapture<PhoneCapture>>()
+    const cameraId = typeof payload.cameraId === "string" ? payload.cameraId : ""
+    const sessions = this.cameraSessions.get(packageName) ?? new Map<string, MiniappCameraSession>()
     try {
-      if (type === MiniappRequestType.CAMERA_CONTINUOUS_START) {
+      if (type === MiniappRequestType.CAMERA_OPEN) {
         if (!this.cameraPermitted(packageName, requestId, type)) return
-        if (!runId || runs.has(runId)) throw new Error("A continuous capture needs a new runId")
-        const maxPending = typeof payload.maxPending === "number" ? payload.maxPending : undefined
-        const run = runContinuousCapture(
-          (options: Record<string, unknown>, released) =>
-            phonePhotoCoordinator.capturePhoto(
-              packageName,
-              this.photoOpts(options),
-              typeof options.photoId === "string" ? options.photoId : undefined,
-              released,
-            ),
-          {...payload, ...(maxPending != null ? {maxPending} : {})},
+        if (!cameraId || sessions.has(cameraId)) throw new Error("A camera session needs a new cameraId")
+        const defaults = this.photoOpts(payload)
+        const camera = openCameraSession(
+          (options: PhotoOpts & {photoId?: string}, released) =>
+            phonePhotoCoordinator.capturePhoto(packageName, options, options.photoId, released),
+          defaults as PhotoOpts & {photoId?: string},
           `miniapp ${packageName}`,
+          async () => {
+            const warmUpId = `camera-${cameraId}`
+            await phonePhotoCoordinator.holdWarmUp(packageName, warmUpId, {
+              size: defaults.size,
+              mode: defaults.mode,
+              exposureTimeNs: defaults.exposureTimeNs,
+              zsl: defaults.zsl,
+              mfnr: defaults.mfnr,
+              streamFrame: defaults.streamFrame,
+            })
+            return {release: () => phonePhotoCoordinator.releaseWarmUp(packageName, warmUpId)}
+          },
         )
-        run.onPhoto((capture) =>
+        sessions.set(cameraId, {camera})
+        this.cameraSessions.set(packageName, sessions)
+        this.sendResult(packageName, requestId, true)
+        return
+      }
+      const entry = sessions.get(cameraId)
+      if (type === MiniappRequestType.CAMERA_CLOSE) {
+        sessions.delete(cameraId)
+        await entry?.camera.close()
+        this.sendResult(packageName, requestId, true)
+        return
+      }
+      if (type === MiniappRequestType.CAMERA_CONTINUOUS_STOP) {
+        if (entry?.run && entry.run.runId === payload.runId) {
+          entry.run.trigger.stop()
+          entry.run = undefined
+        }
+        this.sendResult(packageName, requestId, true)
+        return
+      }
+      if (!entry) throw new Error(`No camera session ${cameraId}`)
+      if (type === MiniappRequestType.CAMERA_CONTINUOUS_START) {
+        const runId = typeof payload.runId === "string" ? payload.runId : ""
+        if (!runId) throw new Error("A continuous capture needs a runId")
+        // Starting a trigger stops the session's previous one.
+        const trigger = entry.camera.continuous(this.photoOverrides(payload))
+        trigger.onPhoto((capture) =>
           this.sendToMiniapp(packageName, {type: MiniappResponseType.CAMERA_CONTINUOUS_PHOTO, runId, photoId: capture.photoId}),
         )
-        run.onState((state) =>
-          this.sendToMiniapp(packageName, {type: MiniappResponseType.CAMERA_CONTINUOUS_STATE, runId, state}),
-        )
-        runs.set(runId, run)
-        this.continuousRuns.set(packageName, runs)
-        // The run says its first state itself, once it knows whether photos can reach the phone quickly.
+        entry.run = {runId, trigger}
         this.sendResult(packageName, requestId, true)
         return
       }
-      const run = runs.get(runId)
-      if (type === MiniappRequestType.CAMERA_CONTINUOUS_STOP) {
-        runs.delete(runId)
-        await run?.stop()
-        this.sendResult(packageName, requestId, true)
-        return
-      }
-      if (!run) throw new Error(`No continuous capture ${runId}`)
       const photoId = typeof payload.photoId === "string" ? payload.photoId : undefined
-      await run.capture({...payload, photoId})
+      await entry.camera.capture({...this.photoOverrides(payload), photoId})
       this.sendResult(packageName, requestId, true)
     } catch (err) {
-      this.sendPhotoError(packageName, requestId, err, "Continuous capture failed")
+      this.sendPhotoError(packageName, requestId, err, "Camera session failed")
     }
   }
 
-  /** A miniapp closed: its continuous captures stop and give the link back. */
-  private stopContinuous(packageName: string): void {
-    const runs = this.continuousRuns.get(packageName)
-    this.continuousRuns.delete(packageName)
-    for (const run of runs?.values() ?? []) void run.stop()
+  /** A camera session photo's own options: only those it sets, over the session's. */
+  private photoOverrides(payload: Record<string, unknown>): Partial<PhotoOpts> {
+    const opts = this.photoOpts(payload)
+    const overrides: Partial<PhotoOpts> = {}
+    for (const key of Object.keys(opts) as Array<keyof PhotoOpts>) {
+      // `preview` and the stream-frame rule belong to the session.
+      if (key === "preview" || key === "streamFrame") continue
+      if (payload[key] !== undefined) (overrides as Record<string, unknown>)[key] = opts[key]
+    }
+    return overrides
+  }
+
+  /** A miniapp closed: its camera sessions stop taking photos and give the link back once their photos are released. */
+  private closeCameraSessions(packageName: string): void {
+    const sessions = this.cameraSessions.get(packageName)
+    this.cameraSessions.delete(packageName)
+    for (const {camera} of sessions?.values() ?? []) void camera.close()
   }
 
   private sendPhotoError(packageName: string, requestId: string | undefined, err: unknown, fallback: string) {

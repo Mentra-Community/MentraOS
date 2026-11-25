@@ -231,12 +231,19 @@ export enum MiniappRequestType {
   PHOTO_CAPTURE_STAGE = "miniapp_photo_capture_stage",
   /** A capture's full photo isn't needed: `{photoId}`; the glasses delete it. */
   PHOTO_RELEASE = "miniapp_photo_release",
-  /** Start a continuous capture (`camera.captureContinuous`): `{runId, preview?, ...photo options, maxPending?}`. */
+  /**
+   * Open a camera session (`camera.open`): `{cameraId, preview?, ...photo options}`. The host holds
+   * the glasses fast link and the warm camera until CAMERA_CLOSE or the miniapp closes.
+   */
+  CAMERA_OPEN = "miniapp_camera_open",
+  /** One photo in a camera session's turn (`camera.capture`): `{cameraId, photoId, ...photo options}`; answers once it started. */
+  CAMERA_SESSION_CAPTURE = "miniapp_camera_session_capture",
+  /** Start a camera session's continuous trigger (`camera.continuous`): `{cameraId, runId, ...photo options}`. */
   CAMERA_CONTINUOUS_START = "miniapp_camera_continuous_start",
-  /** One photo in a continuous capture's turn (`run.capture`): `{runId, photoId, ...photo options}`. */
-  CAMERA_CONTINUOUS_CAPTURE = "miniapp_camera_continuous_capture",
-  /** Stop a continuous capture (`run.stop`): `{runId}`. */
+  /** Stop a continuous trigger (`run.stop`), keeping its session: `{cameraId, runId}`. */
   CAMERA_CONTINUOUS_STOP = "miniapp_camera_continuous_stop",
+  /** Close a camera session (`camera.close`): `{cameraId}`; answers once its photos are released and the link given back. */
+  CAMERA_CLOSE = "miniapp_camera_close",
   VIDEO_RECORDING_START = "miniapp_video_recording_start",
   VIDEO_RECORDING_STOP = "miniapp_video_recording_stop",
   STREAM_START = "miniapp_stream_start",
@@ -390,10 +397,8 @@ export enum MiniappResponseType {
    */
   STREAM_PREVIEW_STATUS = "miniapp_stream_preview_status",
 
-  /** Push: a photo a continuous capture took on its own, `{runId, photoId}`; its stages are a capture's. */
+  /** Push: a photo a continuous trigger took on its own, `{runId, photoId}`; its stages are a capture's. */
   CAMERA_CONTINUOUS_PHOTO = "miniapp_camera_continuous_photo",
-  /** Push: a continuous capture is `capturing` or `paused` (photos would pile up on the glasses): `{runId, state}`. */
-  CAMERA_CONTINUOUS_STATE = "miniapp_camera_continuous_state",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK
