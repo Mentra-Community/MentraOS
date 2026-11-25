@@ -223,6 +223,10 @@ export enum MiniappRequestType {
   PHOTO_CAPTURE_STAGE = "miniapp_photo_capture_stage",
   /** A capture's full photo isn't needed: `{photoId}`; the glasses delete it. */
   PHOTO_RELEASE = "miniapp_photo_release",
+  /** Hold the glasses Wi-Fi link for this miniapp (`camera.openFastLink`); answers once it is up. */
+  CAMERA_FAST_LINK_OPEN = "miniapp_camera_fast_link_open",
+  /** Give the glasses Wi-Fi link back (`camera.closeFastLink`). */
+  CAMERA_FAST_LINK_CLOSE = "miniapp_camera_fast_link_close",
   VIDEO_RECORDING_START = "miniapp_video_recording_start",
   VIDEO_RECORDING_STOP = "miniapp_video_recording_stop",
   STREAM_START = "miniapp_stream_start",
@@ -375,6 +379,12 @@ export enum MiniappResponseType {
    * See PreviewHandle.onStatus().
    */
   STREAM_PREVIEW_STATUS = "miniapp_stream_preview_status",
+
+  /**
+   * Push: the Wi-Fi link this miniapp holds (`camera.openFastLink`) went down or came back.
+   * Carries {state: "up" | "down"}. While it is down, photos travel over Bluetooth.
+   */
+  CAMERA_FAST_LINK = "miniapp_camera_fast_link",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK

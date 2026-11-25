@@ -115,6 +115,7 @@ export type {
   CameraFovResult,
   CameraRoiPosition,
   CloudPhotoTaken,
+  FastLinkState,
   PhotoCapture,
   PhotoPreview,
   PhotoTaken,

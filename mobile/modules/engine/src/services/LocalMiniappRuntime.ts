@@ -10,7 +10,7 @@
  */
 
 import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
-import {holdGlassesWifi} from "./GlassesWifi"
+import {holdGlassesWifi, type GlassesWifiHold} from "./GlassesWifi"
 import {AppState, Platform} from "react-native"
 import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
@@ -609,6 +609,9 @@ const SOFTAP_CLEANUP_NARRATE_AFTER_MS = 250
 class LocalMiniappRuntime {
   private static instance: LocalMiniappRuntime | null = null
 
+  /** The glasses Wi-Fi link each miniapp holds through `camera.openFastLink`, by package. */
+  private fastLinks = new Map<string, {abort: AbortController; hold: Promise<GlassesWifiHold>}>()
+
   /**
    * The SoftAP call being started or running, if any.
    *
@@ -1178,6 +1181,7 @@ class LocalMiniappRuntime {
     // Close all camera consumers before restoring FOV. A shared publisher may
     // remain active for another subscriber; a rejected FOV release then stops
     // renewing the departed owner's lease and ASG restores it once idle.
+    this.closeFastLink(packageName)
     const cameraCleanup = Promise.allSettled([
       this.leaveMeetingForApp(packageName),
       phonePhotoCoordinator.stopWarmUpForApp(packageName),
@@ -1552,6 +1556,13 @@ class LocalMiniappRuntime {
       case MiniappRequestType.PHOTO_CAPTURE_STAGE:
       case MiniappRequestType.PHOTO_RELEASE:
         void this.handlePhotoCapture(packageName, requestType, payload, requestId)
+        break
+      case MiniappRequestType.CAMERA_FAST_LINK_OPEN:
+        void this.openFastLink(packageName, requestId)
+        break
+      case MiniappRequestType.CAMERA_FAST_LINK_CLOSE:
+        this.closeFastLink(packageName)
+        this.sendResult(packageName, requestId, true)
         break
       case MiniappRequestType.CAMERA_WARM_UP:
         void this.handleCameraWarmUp(packageName, payload, requestId)
@@ -3994,6 +4005,53 @@ class LocalMiniappRuntime {
     } catch (err) {
       this.sendPhotoError(packageName, requestId, err, "Photo capture failed")
     }
+  }
+
+  /**
+   * `camera.openFastLink()`: hold the glasses Wi-Fi link for the miniapp, answering once it is up.
+   * Photos ride whatever link the service has up; this only keeps one up. The miniapp hears
+   * `down` and `up` as the link drops and comes back, and the hold ends when it closes the link
+   * or closes.
+   */
+  private async openFastLink(packageName: string, requestId?: string): Promise<void> {
+    if (!this.cameraPermitted(packageName, requestId, MiniappRequestType.CAMERA_FAST_LINK_OPEN)) return
+    let link = this.fastLinks.get(packageName)
+    if (!link) {
+      const abort = new AbortController()
+      const entry = {abort, hold: holdGlassesWifi({consumer: `miniapp ${packageName}`, signal: abort.signal})}
+      this.fastLinks.set(packageName, entry)
+      link = entry
+      void entry.hold
+        .then((hold) =>
+          hold.onChange((event) => {
+            if (this.fastLinks.get(packageName) !== entry) return
+            this.sendToMiniapp(packageName, {
+              type: MiniappResponseType.CAMERA_FAST_LINK,
+              state: event.type === "restored" ? "up" : "down",
+            })
+            if (event.type === "ended") this.closeFastLink(packageName)
+          }),
+        )
+        .catch(() => undefined)
+    }
+    try {
+      await (await link.hold).ready()
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      if (this.fastLinks.get(packageName) === link) this.closeFastLink(packageName)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "The glasses Wi-Fi link did not come up",
+      })
+    }
+  }
+
+  private closeFastLink(packageName: string): void {
+    const link = this.fastLinks.get(packageName)
+    if (!link) return
+    this.fastLinks.delete(packageName)
+    link.abort.abort()
+    void link.hold.then((hold) => hold.release()).catch(() => undefined)
   }
 
   private sendPhotoError(packageName: string, requestId: string | undefined, err: unknown, fallback: string) {

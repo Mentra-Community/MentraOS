@@ -201,6 +201,11 @@
       "groups": ["mentra-enterprise-dev-doppler"]
     },
     {
+      "name": "mentra-documentation-dev",
+      "cluster": 5783,
+      "groups": ["mentra-documentation-dev-doppler"]
+    },
+    {
       "name": "mentra-paperwork-miniapp-dev",
       "cluster": 5783,
       "groups": ["mentra-paperwork-dev-doppler"]
@@ -1589,6 +1594,21 @@
         "OWNER_MANUAL_INDEX_PATH",
         "PORT",
         "VEHICLE_DATABASES_API_KEY"
+      ]
+    },
+    {
+      "name": "mentra-documentation-dev-doppler",
+      "cluster": 5783,
+      "project": "mentra-documentation",
+      "config": "dev",
+      "keys": [
+        "CEREBRAS_API_KEY",
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "MENTRA_CORE_URL",
+        "NODE_ENV",
+        "PORT"
       ]
     },
     {

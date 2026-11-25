@@ -248,6 +248,7 @@ type SessionEmitterEvents = {
   meetingState: (event: import("./modules/meeting").MeetingState) => void
   meetingVideoPublisher: (event: import("./modules/meeting").MeetingVideoPublisherEvent) => void
   meetingStill: (event: import("./modules/meeting").MeetingStillProgressEvent) => void
+  fastLink: (state: import("./modules/camera").FastLinkState) => void
   auth: (auth: MiniappAuthState) => void
 }
 
@@ -950,6 +951,11 @@ export class MiniappSession<TChannels extends object = any> {
         const phase = payload.phase
         if (!stillId || (phase !== "card" && phase !== "uploading" && phase !== "shown")) return
         this.emitter.emit("meetingStill", {stillId, phase})
+        return
+      }
+
+      case MiniappResponseType.CAMERA_FAST_LINK: {
+        if (payload.state === "up" || payload.state === "down") this.emitter.emit("fastLink", payload.state)
         return
       }
 

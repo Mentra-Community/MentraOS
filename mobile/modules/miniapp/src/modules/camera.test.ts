@@ -239,3 +239,36 @@ describe("CameraModule.capture", () => {
     await expect(capture.photo()).rejects.toThrow("CAMERA_BUSY")
   })
 })
+
+describe("CameraModule fast link", () => {
+  test("openFastLink holds the glasses Wi-Fi link and waits for it to come up; closeFastLink gives it back", async () => {
+    const {session, requestCalls, requestOptions} = mockSession(undefined)
+    const camera = new CameraModule(session)
+    await camera.openFastLink()
+    await camera.closeFastLink()
+    expect(requestCalls).toEqual([
+      {type: MiniappRequestType.CAMERA_FAST_LINK_OPEN},
+      {type: MiniappRequestType.CAMERA_FAST_LINK_CLOSE},
+    ])
+    // Joining a hotspot can take longer than an ordinary request.
+    expect(requestOptions[0]).toEqual({timeoutMs: 90_000})
+  })
+
+  test("onFastLinkChange hears the link go down and come back", () => {
+    const heard: string[] = []
+    let listener: ((state: string) => void) | undefined
+    const session = {
+      on: (event: string, handler: (state: string) => void) => {
+        expect(event).toBe("fastLink")
+        listener = handler
+        return () => (listener = undefined)
+      },
+    } as unknown as MiniappSession
+    const off = new CameraModule(session).onFastLinkChange((state) => heard.push(state))
+    listener?.("down")
+    listener?.("up")
+    off()
+    expect(heard).toEqual(["down", "up"])
+    expect(listener).toBeUndefined()
+  })
+})

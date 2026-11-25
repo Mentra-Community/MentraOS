@@ -97,6 +97,26 @@ minutes at most; `photo()` asks for it the first time and returns the same photo
 after that. `takePhoto(options)` is `capture(options).photo()`, releasing the
 glasses' copy once the photo is on the phone.
 
+### Photos over Wi-Fi
+
+Full photos and previews travel over the glasses Wi-Fi link when one is up, and
+over Bluetooth otherwise. A miniapp that takes many photos, like continuous
+capture, can hold the link for as long as it needs it:
+
+```typescript
+await session.camera.openFastLink();         // resolves once the link is up
+session.camera.onFastLinkChange((state) => {  // "down" while it is lost, "up" when it is back
+  console.log(`glasses Wi-Fi ${state}`);
+});
+await session.camera.closeFastLink();        // or close the miniapp
+```
+
+The phone picks the radio (Wi-Fi Direct or the glasses' hotspot) and shares the
+one link with its other users. `openFastLink()` rejects if the link can't come
+up; photos keep going over Bluetooth. On an iPhone, joining the glasses'
+hotspot takes the phone's Wi-Fi while it is held, so hold it only while you
+take photos.
+
 ## Use the photo
 
 The photo is an ordinary `session.blob` entry that the phone deletes after 30

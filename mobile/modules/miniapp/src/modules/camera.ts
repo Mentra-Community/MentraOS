@@ -130,6 +130,9 @@ export interface PhotoCapture {
   release(): Promise<void>
 }
 
+/** The glasses Wi-Fi link held with {@link CameraModule.openFastLink}: up, or down (photos go over Bluetooth). */
+export type FastLinkState = "up" | "down"
+
 /** What {@link CameraModule.takeCloudPhoto} resolves to: a photo uploaded to Mentra's cloud. */
 export interface CloudPhotoTaken {
   /** Request id that correlates glasses status, upload, and phone/cloud logs. */
@@ -278,6 +281,26 @@ export class CameraModule {
       photo: () => (photo ??= stage<PhotoTaken>("photo")),
       release: () => started.then(() => this.session.sendRequest<void>({type: MiniappRequestType.PHOTO_RELEASE, photoId})),
     }
+  }
+
+  /**
+   * Hold the glasses Wi-Fi link, so photos and previews travel over it instead of Bluetooth, until
+   * {@link closeFastLink} or the miniapp closes. The phone picks the radio (Wi-Fi Direct or the
+   * glasses' hotspot) and shares the one link with its other users. Resolves once the link is up;
+   * rejects if it can't come up, and photos keep going over Bluetooth. Requires CAMERA permission.
+   */
+  async openFastLink(): Promise<void> {
+    await this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_FAST_LINK_OPEN}, {timeoutMs: 90_000})
+  }
+
+  /** Give the link back; it goes down once nobody else holds it. Idempotent. */
+  async closeFastLink(): Promise<void> {
+    await this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_FAST_LINK_CLOSE})
+  }
+
+  /** The held link went down (photos go over Bluetooth meanwhile) or came back. */
+  onFastLinkChange(handler: (state: FastLinkState) => void): () => void {
+    return this.session.on("fastLink", handler)
   }
 
   /**
