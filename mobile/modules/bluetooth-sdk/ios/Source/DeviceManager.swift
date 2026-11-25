@@ -1182,6 +1182,7 @@ struct ViewState {
         pendingController = ""
         defaultController = controller.type
         searching = false
+        searchingController = false
 
         // save the default_controller now that we're connected:
         Bridge.saveSetting("default_controller", defaultController)
