@@ -361,8 +361,8 @@ export class CameraModule {
    * the camera warm with these settings, so each photo is taken at once. `camera.capture(options)`
    * takes one photo (a tap); `camera.continuous()` takes them back to back. Both are
    * captures like {@link capture}'s, through the same session; release each when done.
-   * `preview: true` gives every photo a preview. The miniapp closing closes it. Requires CAMERA
-   * permission.
+   * `preview: true` gives every photo a preview. A miniapp has one camera open at a time: open it
+   * again only after `close()`. The miniapp closing closes it. Requires CAMERA permission.
    */
   open(options: CaptureOptions & {preview: true}): CameraSession<PhotoCaptureWithPreview>
   open(options?: CaptureOptions): CameraSession

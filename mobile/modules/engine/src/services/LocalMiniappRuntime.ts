@@ -645,7 +645,7 @@ interface MiniappCameraSession {
 class LocalMiniappRuntime {
   private static instance: LocalMiniappRuntime | null = null
 
-  /** Each miniapp's camera sessions (`camera.open`), by package and camera ID, with the continuous trigger running on each. */
+  /** Each miniapp's open camera (`camera.open`, one at a time), by package and camera ID, with its continuous trigger. */
   private cameraSessions = new Map<string, Map<string, MiniappCameraSession>>()
 
   /**
@@ -4099,7 +4099,9 @@ class LocalMiniappRuntime {
     try {
       if (type === MiniappRequestType.CAMERA_OPEN) {
         if (!this.cameraPermitted(packageName, requestId, type)) return
-        if (!cameraId || sessions.has(cameraId)) throw new Error("A camera session needs a new cameraId")
+        if (!cameraId) throw new Error("A camera session needs a cameraId")
+        // One open camera per miniapp: the camera's warm-up, like the camera itself, is the miniapp's one.
+        if (sessions.size > 0) throw new Error("The camera is already open: close it before opening it again")
         const defaults = this.photoOpts(payload)
         const camera = openCameraSession(
           (options: PhotoOpts & {photoId?: string}, released) =>

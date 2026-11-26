@@ -166,18 +166,24 @@ test("the continuous trigger reports its photos, and stops while the session sta
   ])
 })
 
-test("a camera ID can't be opened twice", async () => {
-  const {host, results} = fixture()
-  await host.handleCameraSession(APP, "open", {cameraId: "c"}, "q1")
-  await host.handleCameraSession(APP, "open", {cameraId: "c"}, "q2")
-  expect(results[1]).toEqual({requestId: "q2", error: "A camera session needs a new cameraId"})
-})
-
-test("a miniapp closing closes its sessions", async () => {
-  const {host, sessions} = fixture()
+test("a miniapp opens one camera at a time: a second open is refused until the first closes", async () => {
+  const {host, sessions, results} = fixture()
   await host.handleCameraSession(APP, "open", {cameraId: "a"}, "q1")
   await host.handleCameraSession(APP, "open", {cameraId: "b"}, "q2")
+  expect(results[1]).toEqual({requestId: "q2", error: "The camera is already open: close it before opening it again"})
+  expect(sessions).toHaveLength(1)
+  // Another miniapp has its own.
+  await host.handleCameraSession("com.other", "open", {cameraId: "b"}, "q3")
+  expect(results[2]).toEqual({requestId: "q3", success: true})
+  await host.handleCameraSession(APP, "close", {cameraId: "a"}, "q4")
+  await host.handleCameraSession(APP, "open", {cameraId: "b"}, "q5")
+  expect(results[4]).toEqual({requestId: "q5", success: true})
+})
+
+test("a miniapp closing closes its camera", async () => {
+  const {host, sessions} = fixture()
+  await host.handleCameraSession(APP, "open", {cameraId: "a"}, "q1")
   host.closeCameraSessions(APP)
-  expect(sessions.map((session) => session.closed)).toEqual([true, true])
+  expect(sessions.map((session) => session.closed)).toEqual([true])
   expect(host.cameraSessions.size).toBe(0)
 })

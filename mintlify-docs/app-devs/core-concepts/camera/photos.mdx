@@ -155,7 +155,8 @@ the session's, or `continuous(options)`, which takes photos on its own as fast
 as the camera takes them. It waits by itself while the link is down, so photos
 never pile up on the glasses behind Bluetooth. `close()` stops taking photos at
 once and resolves once the photos the session handed out are released; closing
-the miniapp closes it. It requires CAMERA permission.
+the miniapp closes it. A miniapp has one camera open at a time: open it again
+only after `close()`. It requires CAMERA permission.
 
 ### Keep the camera warm
 
