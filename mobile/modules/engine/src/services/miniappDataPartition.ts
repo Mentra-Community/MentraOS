@@ -133,10 +133,77 @@ export function partitionIdOf(context: MiniappDataContext): string {
   return `${sessionId(context)}.${context.workspaceId ? `w${escapeSegment(context.workspaceId)}` : "p"}`
 }
 
+const LAST_SESSION_KEY = "session.last"
+let lastSessionRecorded: string | undefined
+
 function currentSession(): MiniappDataSession | null {
   const session = hooks?.getSession() ?? null
   if (!session?.coreUrl || !session.mentraUserId?.trim()) return null
+  recordLastSession(session)
   return session
+}
+
+/** Remember the account whose data is in use, so deleting it can find its partitions after its session is gone. */
+function recordLastSession(session: MiniappDataSession): void {
+  const value = JSON.stringify({coreUrl: session.coreUrl, mentraUserId: session.mentraUserId.trim()})
+  if (value === lastSessionRecorded) return
+  store().set(LAST_SESSION_KEY, value)
+  lastSessionRecorded = value
+}
+
+/**
+ * The account whose miniapp data was in use last, signed in or not: the account a deletion that follows its sign-out
+ * erases. Null before any account was known.
+ */
+export function lastMiniappDataSession(): MiniappDataSession | null {
+  currentSession()
+  const raw = store().getString(LAST_SESSION_KEY)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<MiniappDataSession>
+    return typeof parsed.coreUrl === "string" && typeof parsed.mentraUserId === "string"
+      ? {coreUrl: parsed.coreUrl, mentraUserId: parsed.mentraUserId}
+      : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Forget what this store records for `session`'s account, once its data is deleted with it: its current workspace,
+ * its development contexts' stashed selections and snapshot tags, and the record of it as the last account.
+ */
+export function forgetMiniappDataAccount(session: MiniappDataSession): void {
+  const contextPrefix = `${sessionId(session)}.`
+  store().remove(workspaceKey(session))
+  for (const key of store().getAllKeys()) {
+    if (key.startsWith("devsel:") && key.slice("devsel:".length).startsWith(contextPrefix)) store().remove(key)
+    else if (key.startsWith("devowner:") && store().getString(key)?.startsWith(contextPrefix)) store().remove(key)
+  }
+  const held = heldSelections()
+  for (const [packageName, contextId] of Object.entries(held)) {
+    if (contextId.startsWith(contextPrefix)) delete held[packageName]
+  }
+  writeHeld(held)
+  // The live selections are the account's when its context is the active one: they go too, and the next account
+  // starts from its own.
+  if (store().getString(ACTIVE_DEV_CONTEXT_KEY)?.startsWith(contextPrefix)) {
+    for (const key of storage.getAllKeys()) if (isDevSelectionKey(key)) storage.remove(key)
+    store().remove(ACTIVE_DEV_CONTEXT_KEY)
+  }
+  const last = store().getString(LAST_SESSION_KEY)
+  if (last) {
+    try {
+      const parsed = JSON.parse(last) as MiniappDataSession
+      if (sessionId(parsed) === sessionId(session)) {
+        store().remove(LAST_SESSION_KEY)
+        lastSessionRecorded = undefined
+      }
+    } catch {
+      store().remove(LAST_SESSION_KEY)
+      lastSessionRecorded = undefined
+    }
+  }
 }
 
 function computeContext(packageName: string, session: MiniappDataSession): MiniappDataContext {
@@ -257,6 +324,11 @@ export function isDevelopmentSelectionCurrent(packageName: string): boolean {
   syncDevelopmentSelections()
   const target = targetDevContextId()
   return target === null || developmentContextOf(packageName) === target
+}
+
+/** A development selection key of the default MMKV instance: a package's `<pkg>_dev_*` key, or `dev_apps_index`. */
+export function isDevelopmentSelectionKey(key: string): boolean {
+  return isDevSelectionKey(key)
 }
 
 function isDevSelectionKey(key: string): boolean {
@@ -497,5 +569,6 @@ export function resetMiniappDataPartitionsForTests(): void {
   resetMiniappBuildsForTests()
   unsubscribeContexts?.()
   unsubscribeContexts = null
+  lastSessionRecorded = undefined
   partitionStore?.clearAll()
 }

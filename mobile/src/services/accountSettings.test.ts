@@ -209,3 +209,105 @@ describe("an update from an older build, signed out", () => {
     for (const key of ACCOUNT_KEYS) expect(setting(key)).toEqual(OLDER_INSTALL[key])
   })
 })
+
+describe("an account's data beyond its settings", () => {
+  const {partitionIdOf} = jest.requireActual("../../modules/engine/src/services/miniappDataPartition")
+  const CORE = "https://core.example.test"
+  const partitionOf = (mentraUserId: string) => partitionIdOf({coreUrl: CORE, mentraUserId, workspaceId: null})
+  const pkg = "com.mentra.documentation"
+  /** What a user's miniapps keep in their account's partition: reports, a saved file's record, a screen's copy. */
+  const miniappData = (mentraUserId: string): Record<string, unknown> => ({
+    [`mentraos_miniappdata/${partitionOf(mentraUserId)}/${pkg}/reports`]: `[${mentraUserId}'s reports]`,
+    [`mentraos_miniappdata/${partitionOf(mentraUserId)}/${pkg}/auth_token_of_a_miniapp`]: "the miniapp's own",
+    [`mentraos_blobmeta/${partitionOf(mentraUserId)}/${pkg}/r1-pdf`]: {key: "r1-pdf", fileName: "r1.pdf", bytes: 3},
+    [`mentraos_miniappwebstorage/${partitionOf(mentraUserId)}/${pkg}`]: {id: "copy-1", origin: null, removed: []},
+  })
+  /** What the app's own stores keep for the account signed in, outside the settings. */
+  const APP_STATE: Record<string, unknown> = {
+    "foreground_apps_order": ["com.mentra.documentation", "com.mentra.notes"],
+    "com.mentra.notes_hidden": true,
+    "com.mentra.documentation_running": true,
+    "asg_downloaded_files": {"IMG_1.jpg": {name: "IMG_1.jpg"}},
+    "wifi_credentials": [{ssid: "Home", password: "secret"}],
+    "miniapp_update_declined:com.mentra.notes": "1.2.0",
+  }
+  /** Kept with the phone, whoever is signed in. */
+  const PHONE_STATE: Record<string, unknown> = {
+    "com.mentra.notes_active_version": "1.1.0",
+    "com.mentra.notes_dev_url": "http://192.168.1.4:8081",
+    "dev_apps_index": JSON.stringify(["com.mentra.notes"]),
+    "deployment_default_miniapps:v1": {coreUrl: CORE, defaults: ["com.mentra.notes"]},
+  }
+  /** The session's own, gone at sign-out. */
+  const SESSION_STATE: Record<string, unknown> = {
+    "mentra.account.userProfile": {id: "user-1"},
+    "mentra.localMiniapp.userId": "mu_1",
+    "supabase.auth.token": "old",
+    "auth_email": "person@example.test",
+    "mentra.deployment.active.v1": {kind: "consumer"},
+  }
+  const save = (values: Record<string, unknown>) => {
+    for (const [key, value] of Object.entries(values)) storage.save(key, value)
+  }
+  const expectStored = (values: Record<string, unknown>) => {
+    for (const [key, value] of Object.entries(values)) expect([key, stored(key)]).toEqual([key, value])
+  }
+  const expectAbsent = (values: Record<string, unknown>) => {
+    for (const key of Object.keys(values)) expect([key, stored(key)]).toEqual([key, undefined])
+  }
+
+  beforeEach(async () => {
+    await start()
+    openAccountSettings("user-1")
+    save({...miniappData("mu_1"), ...APP_STATE, ...PHONE_STATE, ...SESSION_STATE})
+  })
+
+  it("is all back exactly when the same account signs back in, and its miniapps' data never moves", async () => {
+    const before = Object.fromEntries(storage.getAllKeys().map((key) => [key, stored(key)]))
+    closeAccountSettings()
+    expectStored(miniappData("mu_1"))
+    expectStored(PHONE_STATE)
+    expectAbsent(APP_STATE)
+    expectAbsent(SESSION_STATE)
+
+    await start()
+    openAccountSettings("user-1")
+    // The session's own come back from the sign-in itself.
+    save(SESSION_STATE)
+    expect(Object.fromEntries(storage.getAllKeys().map((key) => [key, stored(key)]))).toEqual(before)
+  })
+
+  it("is not seen by another account, whose own data is kept apart, and is still there for its own", async () => {
+    closeAccountSettings()
+    openAccountSettings("user-2")
+    expectAbsent(APP_STATE)
+    expectStored(PHONE_STATE)
+    // Its miniapps read only its own partitions.
+    save({...miniappData("mu_2"), foreground_apps_order: ["com.mentra.notes"]})
+
+    closeAccountSettings()
+    openAccountSettings("user-1")
+    expectStored({...APP_STATE, ...miniappData("mu_1"), ...miniappData("mu_2")})
+
+    closeAccountSettings()
+    openAccountSettings("user-2")
+    expectStored({foreground_apps_order: ["com.mentra.notes"]})
+    expect(stored("asg_downloaded_files")).toBeUndefined()
+  })
+
+  it("is erased with the account, its miniapps' partitions included, and another account's stays", async () => {
+    save(miniappData("mu_2"))
+    // The account whose miniapp data was in use last: the one deleted, once its session is gone.
+    mockMmkvInstances
+      .get("mentra-miniapp-partitions")!
+      .set("session.last", JSON.stringify({coreUrl: CORE, mentraUserId: "mu_1"}))
+
+    closeAccountSettings({deleteAccount: true})
+
+    expectAbsent(miniappData("mu_1"))
+    expectStored(miniappData("mu_2"))
+    expectStored(PHONE_STATE)
+    openAccountSettings("user-1")
+    expectAbsent(APP_STATE)
+  })
+})

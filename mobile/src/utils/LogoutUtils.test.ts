@@ -8,7 +8,6 @@ const mockCloseAccountSettings = jest.fn()
 const mockMantleCleanup = jest.fn()
 const mockSettle = jest.fn()
 jest.mock("@mentra/engine", () => ({
-  PHONE_WIDE_SETTING_KEYS: new Set(["glasses_user_disconnected"]),
   engine: {
     glasses: {forget: () => mockForget()},
     stop: () => mockStop(),
@@ -16,13 +15,13 @@ jest.mock("@mentra/engine", () => ({
 }))
 jest.mock("@/services/accountSettings", () => ({
   closeAccountSettings: (options: unknown) => mockCloseAccountSettings(options),
+  isKeptInPlaceAtSignOut: (key: string) => key === "glasses_user_disconnected",
 }))
 jest.mock("@/services/cloudClient", () => ({cloudClient: {clearAuthSession: () => mockCoreSignOut()}}))
 jest.mock("@/utils/auth/authClient", () => ({__esModule: true, default: {signOut: () => mockAccountSignOut()}}))
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {cleanup: () => mockMantleCleanup()}}))
 jest.mock("@/utils/pairing/unpairSavedGlasses", () => ({unpairSavedGlasses: () => mockUnpair()}))
 jest.mock("@/utils/settleFrame", () => ({settleFrame: () => mockSettle()}))
-jest.mock("@/utils/GlobalEventEmitter", () => ({__esModule: true, default: {emit: jest.fn()}}))
 
 import {LogoutUtils} from "./LogoutUtils"
 import {result as Res} from "typesafe-ts"

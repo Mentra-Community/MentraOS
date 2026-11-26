@@ -1,10 +1,9 @@
 import {SessionRevocationError} from "@mentra/cloud-client"
-import {PHONE_WIDE_SETTING_KEYS, engine} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 
 import mantle from "@/services/MantleManager"
-import {closeAccountSettings} from "@/services/accountSettings"
+import {closeAccountSettings, isKeptInPlaceAtSignOut} from "@/services/accountSettings"
 import {settleFrame} from "@/utils/settleFrame"
-import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {accountCredentials, hasStoredAccountSession} from "@/utils/auth/accountCredentials"
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
@@ -15,8 +14,8 @@ export class LogoutUtils {
   private static readonly TAG = "LogoutUtils"
 
   /**
-   * Comprehensive logout that completely nukes all user state and connections
-   * This should be used for both regular logout and account deletion scenarios
+   * Sign out: end the session, keep the account's data on this phone for its next sign-in (`accountSettings.ts`),
+   * and leave the phone as another account would find it. With `deleteAccount`, the account's data is erased instead.
    */
   public static async performCompleteLogout(
     options: {skipAuthSignOut?: boolean; deleteAccount?: boolean; keepGlasses?: boolean} = {},
@@ -82,9 +81,6 @@ export class LogoutUtils {
 
       // Step 6: Clear any remaining auth-related storage
       await this.clearAuthStorage()
-
-      // Step 7: Reset status providers and event emitters
-      await this.resetStatusProviders()
 
       console.log(`${this.TAG}: Complete logout process finished successfully`)
     } catch (error) {
@@ -171,8 +167,8 @@ export class LogoutUtils {
   }
 
   /**
-   * Keep the account's settings for its next sign-in (or delete them with the account), and clear the rest of the
-   * app's storage except the phone-wide settings.
+   * Keep the account's settings and data for its next sign-in (or delete them with the account), and clear the rest
+   * of the app's storage except the phone's.
    */
   private static async clearAppSettings(deleteAccount: boolean): Promise<void> {
     console.log(`${this.TAG}: Clearing app settings...`)
@@ -198,10 +194,11 @@ export class LogoutUtils {
 
     // Get all AsyncStorage keys and filter for user/auth related ones
     const allKeys = storage.getAllKeys()
-    // Phone-wide settings stay, such as glasses_user_disconnected when a backend switch keeps the glasses.
+    // The phone's keys stay: phone-wide settings, such as glasses_user_disconnected when a backend switch keeps the
+    // glasses, and the miniapp data each account keeps in its partitions, whatever its keys contain.
     const authKeys = allKeys.filter(
       (key: string) =>
-        !PHONE_WIDE_SETTING_KEYS.has(key) &&
+        !isKeptInPlaceAtSignOut(key) &&
         (key.startsWith("supabase.auth.") ||
           key.includes("user") ||
           key.includes("token") ||
@@ -216,22 +213,6 @@ export class LogoutUtils {
       } else {
         console.log(`${this.TAG}: Cleared ${authKeys.length} additional auth keys`)
       }
-    }
-  }
-
-  /**
-   * Reset status providers and emit cleanup events
-   */
-  private static async resetStatusProviders(): Promise<void> {
-    console.log(`${this.TAG}: Resetting status providers...`)
-
-    try {
-      // Emit event to clear WebView data and cache
-      GlobalEventEmitter.emit("CLEAR_WEBVIEW_DATA")
-
-      console.log(`${this.TAG}: Reset status providers and event listeners`)
-    } catch (error) {
-      console.error(`${this.TAG}: Error resetting status providers:`, error)
     }
   }
 

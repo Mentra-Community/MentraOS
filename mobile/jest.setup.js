@@ -435,6 +435,8 @@ const mockIslandEntries = () => {
     PHONE_WIDE_SETTING_KEYS: realSettings.PHONE_WIDE_SETTING_KEYS,
     SIGN_OUT_ERASED_SETTING_KEYS: realSettings.SIGN_OUT_ERASED_SETTING_KEYS,
     useSetting: realSettings.useSetting,
+    // Which miniapp keys signing out keeps, and the deletion of an account's miniapp data: real.
+    ...jest.requireActual("./modules/engine/src/services/miniappAccountData"),
     MENTRA_LIVE_SETTING_KEYS: realBtSettingKeys.MENTRA_LIVE_SETTING_KEYS,
     getBluetoothSettingKeysForDevice: realBtSettingKeys.getBluetoothSettingKeysForDevice,
     // The namespaced (A) host API. Mirrors the real `engine` object; members are

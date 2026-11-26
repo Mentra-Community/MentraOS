@@ -384,17 +384,7 @@ export class LocalStorageService {
       if (files[fileName]) {
         const file = files[fileName]
 
-        // Delete actual file from filesystem
-        if (file.filePath && (await RNFS.exists(file.filePath))) {
-          await RNFS.unlink(file.filePath)
-          console.log(`[LocalStorage] Deleted file: ${file.filePath}`)
-        }
-
-        // Delete thumbnail if exists
-        if (file.thumbnailPath && (await RNFS.exists(file.thumbnailPath))) {
-          await RNFS.unlink(file.thumbnailPath)
-          console.log(`[LocalStorage] Deleted thumbnail: ${file.thumbnailPath}`)
-        }
+        await this.deleteFilesOf(file)
 
         // Delete metadata - need to get raw data to maintain relative paths
         const res = storage.load<Record<string, DownloadedFile>>(this.DOWNLOADED_FILES_KEY)
@@ -524,19 +514,14 @@ export class LocalStorageService {
   }
 
   /**
-   * Clear all downloaded files (both metadata and actual files)
+   * Clear all downloaded files (both metadata and actual files): every capture this account's gallery lists,
+   * quarantined ones included, with all its files. The photos directory is the phone's, and another account that signed out
+   * keeps its own gallery in it for its next sign-in, so the directory itself stays.
    */
   async clearAllFiles(): Promise<void> {
-    // Nuke the entire photos directory (includes thumbnails subdirectory)
-    // This is more reliable than deleting individual files, which can miss orphaned thumbnails
-    try {
-      if (await RNFS.exists(this.ASG_PHOTOS_DIR)) {
-        await RNFS.unlink(this.ASG_PHOTOS_DIR)
-        console.log("[LocalStorage] Deleted entire photos directory")
-      }
-    } catch (error) {
-      console.error("[LocalStorage] Error deleting photos directory:", error)
-    }
+    const listed = [...Object.values(this.loadRawDownloadedFiles()), ...Object.values(this.loadQuarantinedFiles())]
+    for (const file of listed) await this.deleteFilesOf(file)
+    console.log(`[LocalStorage] Deleted the ${listed.length} captures the gallery lists`)
 
     // Recreate empty directories
     await this.initializeDirectories()
@@ -632,6 +617,28 @@ export class LocalStorageService {
     if (!queue) return false
     // Has resumable queue if there are still files to process
     return queue.currentIndex < queue.files.length
+  }
+
+  /**
+   * Delete every file of a capture the gallery lists: its media and thumbnail, and for a capture synced through the
+   * capture-aware pipeline its whole folder (original, HDR brackets, IMU sidecar, thumbnail). Paths may be stored
+   * relative or absolute. A file that can't be deleted is logged.
+   */
+  private async deleteFilesOf(file: DownloadedFile): Promise<void> {
+    const paths = [file.filePath, file.thumbnailPath].flatMap((path) => {
+      const relative = path ? this.toPortableRelativePath(path) : null
+      return relative ? [`${RNFS.DocumentDirectoryPath}/${relative}`] : []
+    })
+    const captureId = file.capture_id?.trim()
+    if (captureId && !captureId.includes("/") && captureId !== "." && captureId !== ".." && captureId !== "thumbnails")
+      paths.push(this.getPhotoFilePath(captureId))
+    for (const path of paths) {
+      try {
+        if (await RNFS.exists(path)) await RNFS.unlink(path)
+      } catch (error) {
+        console.error(`[LocalStorage] Error deleting ${path}:`, error)
+      }
+    }
   }
 
   private loadRawDownloadedFiles(): Record<string, DownloadedFile> {

@@ -223,6 +223,7 @@ export {
 export {decideDevOpenRoute, type DevOpenDecision} from "./utils/devMiniappSnapshot"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {getAppBuildInfo} from "./utils/appBuildInfo"
+export {deleteMiniappDataOfAccount, isMiniappKeyKeptAtSignOut} from "./services/miniappAccountData"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 export {default as glassesMicProbe, parseMicProbeParams} from "./services/GlassesMicProbe"
 export type {MicProbeA2dpMode, MicProbeOptions, MicProbeSample} from "./services/GlassesMicProbe"

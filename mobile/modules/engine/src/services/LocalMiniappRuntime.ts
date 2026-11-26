@@ -136,7 +136,12 @@ import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./Minia
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import {isLocalBuildContext} from "./miniappBuildKind"
-import {configureMiniappDataPartitions, miniappDataSessionOf, resolveMiniappDataPartition} from "./miniappDataPartition"
+import {
+  configureMiniappDataPartitions,
+  miniappDataSessionOf,
+  resolveMiniappDataPartition,
+  syncDevelopmentSelections,
+} from "./miniappDataPartition"
 import {sameCoreUrl} from "./fleet/coreUrl"
 import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
 import {installMiniapp, InstallMiniappError, type InstallMiniappErrorCode} from "./installMiniapp"
@@ -455,6 +460,8 @@ configureMiniappDataPartitions({
       : null
   },
 })
+// Signing out leaves the development selections in place: the next account to sign in swaps in its own at once.
+cloudClientService.onCoreSessionChanged(() => syncDevelopmentSelections())
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)

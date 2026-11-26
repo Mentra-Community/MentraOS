@@ -10,8 +10,9 @@
  * - **Where it lives.** In the miniapp's data partition (`miniappDataPartition.ts`), beside its SDK storage, in the
  *   default MMKV instance: one account on one Core, personal or one workspace's, and a local or development build's
  *   own `.local` space. So it follows SDK storage's rules: one package never sees another's copy, a local build never
- *   sees the installed package's, logout's `clearAll()` of the default instance clears it, and an uninstall keeps it
- *   in its partition for a later reinstall, as it keeps the package's SDK storage and blobs.
+ *   sees the installed package's, signing out keeps it for the account's next sign-in and deleting the account
+ *   erases it (`miniappAccountData.ts`), and an uninstall keeps it in its partition for a later reinstall, as it
+ *   keeps the package's SDK storage and blobs.
  * - **The cap.** At most {@link MINIAPP_WEB_STORAGE_CAP_BYTES} per package, counted as browsers count their
  *   `localStorage` quota: two bytes per UTF-16 code unit of every key and value. A write that doesn't fit isn't kept
  *   (the key drops out of the copy, so the copy never restores an older value of it); the page itself is unaffected.
@@ -20,7 +21,7 @@
  *   leaves alone), and marks it unknown while a screen that hasn't confirmed its load may have changed it. Only an
  *   origin the host has never opened is adopted as it is. When an origin holds the current copy, a load restores the keys it lost and takes the values it
  *   has that the copy lacks (the origin's value wins: a lost report, or a write the keeper didn't see). When it holds
- *   another copy (another account's, another workspace's, or one cleared by logout since), the load replaces the
+ *   another copy (another account's, another workspace's, or one deleted with its account since), the load replaces the
  *   origin's storage with the current copy, so no account's page ever starts with another's data.
  *
  * Only `localStorage` is kept. `sessionStorage` lasts for one WebView, as in a browser tab; IndexedDB, Cache Storage
@@ -49,7 +50,7 @@ export type MiniappWebStorageOp = ["set", string, string] | ["remove", string] |
 
 /**
  * One screen's link to its package's copy, from {@link openMiniappWebStorage}. Its changes go to the copy it was
- * opened on, and are dropped once that copy is gone (cleared by logout).
+ * opened on, and are dropped once that copy is gone (deleted with its account).
  */
 export interface MiniappWebStorageSession {
   packageName: string
