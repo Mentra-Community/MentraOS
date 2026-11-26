@@ -299,9 +299,11 @@ export class CameraModule {
   /**
    * Apply a session-owned camera FOV/ROI override on the glasses.
    *
-   * Resolves after the ASG client reports that the setting was applied to camera
-   * hardware after the restart cooldown. The host restores the prior override or persistent base
-   * when this miniapp closes. Requires CAMERA permission declared in miniapp.json.
+   * Resolves once the field of view is set and the glasses' camera, restarted for it, takes photos
+   * again: the Bluetooth SDK's `setCameraFovOverride` result, which waits for the glasses' ready
+   * ack. A photo asked for after it resolves is not refused for the restart. The host restores the
+   * prior override or persistent base when this miniapp closes. Requires CAMERA permission declared
+   * in miniapp.json.
    */
   async setFov(request: CameraFovRequest): Promise<CameraFovResult> {
     return this.session.sendRequest<CameraFovResult>({

@@ -118,6 +118,28 @@ describe("PhoneCameraFovCoordinator", () => {
     await coordinator.releaseForApp("com.b")
   })
 
+  test("resolves a miniapp's FOV only with the Bluetooth SDK's camera-ready result", async () => {
+    // The Bluetooth SDK resolves setCameraFovOverride on the glasses' ready ack: FOV set and the
+    // restarted camera accepting photos. The miniapp's setFov is that same promise, nothing earlier.
+    let ready!: (result: Record<string, unknown>) => void
+    setCameraFovOverride.mockImplementationOnce(
+      () => new Promise<Record<string, unknown>>((resolve) => (ready = resolve)) as never,
+    )
+    const coordinator = new PhoneCameraFovCoordinator()
+    let resolved = false
+    const set = coordinator.setOverride("com.a", {fov: 102}).then((result) => {
+      resolved = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(setCameraFovOverride).toHaveBeenCalledTimes(1)
+    expect(resolved).toBe(false)
+
+    ready({requestId: "ack-ready", fov: 102, roiPosition: "center", timestamp: 2})
+    await expect(set).resolves.toMatchObject({requestId: "ack-ready", fov: 102})
+    await coordinator.releaseForApp("com.a")
+  })
+
   test("serializes concurrent HAL-changing requests", async () => {
     const coordinator = new PhoneCameraFovCoordinator()
     await Promise.all([coordinator.setOverride("com.a", {fov: 82}), coordinator.setOverride("com.b", {fov: 102})])
