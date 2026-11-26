@@ -12,6 +12,7 @@ import NavigationHost from "@/effects/NavigationHost"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import Compositor from "@/effects/Compositor"
 import {MiniappOpenWait} from "@/effects/MiniappOpenWait"
+import {MiniappLinkOpen} from "@/effects/MiniappLinkOpen"
 import {QrScanOverlay} from "@/effects/QrScanOverlay"
 import {PhoneWifiOverlay} from "@/effects/PhoneWifiOverlay"
 import {FleetSheets} from "@/effects/FleetSheets"
@@ -46,6 +47,8 @@ export const AllEffects = () => {
           {/* Below the Compositor: a miniapp that waited opens over its waiting splash. */}
           <MiniappOpenWait />
           <Compositor />
+          {/* Above the Compositor: a miniapp opened from a link opens under its splash, which then closes. */}
+          <MiniappLinkOpen />
           <QrScanOverlay />
           <PhoneWifiOverlay />
           <RunningUpdatePrompt />

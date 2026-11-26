@@ -1,13 +1,19 @@
 /**
  * Installing a miniapp a person chose: from an open link or a package link, the QR scanner, or the paste box (spec,
- * "Installing"). Every way in ends in the engine's `installMiniapp` with the install sheet as its `confirm`
- * (`MiniappInstallSheet.tsx`), so nothing installs until the person presses Install on a sheet that names where the
- * miniapp comes from. A miniapp can't start this: it never opens the Mentra App's own links (`isMentraAppLink`).
+ * "Installing"). Every way in ends in the engine's `installMiniapp`. A miniapp can't start this: it never opens the
+ * Mentra App's own links (`isMentraAppLink`).
  *
- * - **Installed:** the tile appears on Home.
+ * **From a link** the miniapp installs and opens with nothing to press: its splash shows at once
+ * (`effects/MiniappLinkOpen.tsx`), and the miniapp opens in place of it. A link that can't be installed closes the
+ * splash, leaves the person where they were and says why; nothing is added to Home.
+ *
+ * **From the scanner or the paste box** the install sheet asks first (`MiniappInstallSheet.tsx`), naming where the
+ * miniapp comes from, and the tile then appears on Home. A link asks the same way in two cases: a development build
+ * from the local network, and an install that would replace the copy the person has.
+ *
  * - **Already installed** from that URL: it opens, as a tap on its tile would.
  * - **Errors** say why, in the standard alert sheet. A stop by the age gate (`age_restricted`) shows nothing more:
- *   the engine's age gate asks the person's age and tells them why itself, before the sheet would show.
+ *   the engine's age gate asks the person's age and tells them why itself, before anything installs.
  */
 import {
   engine,
@@ -25,6 +31,8 @@ import {confirmMiniappInstall} from "@/components/miniapps/MiniappInstallSheet"
 import {showAlert, waitForAlertHost} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
 import {deploymentStore} from "@/services/deployment"
+import {beginMiniappLinkOpen, type MiniappLinkOpen} from "@/stores/miniappLinkOpen"
+import {type MiniappOpeningAnimation, setMiniappOpeningAnimation} from "@/stores/miniappLaunch"
 import {useNavigationStore} from "@/stores/navigation"
 import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
@@ -43,6 +51,11 @@ export interface MiniappInstallFlowOptions {
   expectedPackageName?: string
   /** Called once, when the flow first shows something (the sheet, an alert, the miniapp) or ends. */
   onPresent?: () => void
+  /**
+   * The splash of a link being opened (`startMiniappInstallFromLink` shows it for a link): the miniapp installs
+   * without the install sheet and opens in place of the splash.
+   */
+  opening?: MiniappLinkOpen
 }
 
 /** Why an install failed, as the person is told: an engine code, or a failure before the engine ran. */
@@ -53,21 +66,28 @@ const inFlight = new Set<string>()
 
 /**
  * Install from what a person scanned, pasted or opened: an open link, a package link or a miniapp URL. Anything else
- * says it isn't a link to a miniapp.
+ * says it isn't a link to a miniapp. A link (`source` "link") shows the miniapp's splash from the start, and opens
+ * the miniapp once it is installed.
  */
 export async function startMiniappInstallFromLink(
   text: string,
   source: InstallMiniappSource,
   options: Pick<MiniappInstallFlowOptions, "onPresent"> = {},
 ): Promise<MiniappInstallOutcome> {
-  const link = parseMiniappInstallLink(text)
-  if (!link) {
-    options.onPresent?.()
-    await showFailure("not_a_link", {})
-    return "failed"
+  const opening = source === "link" ? beginMiniappLinkOpen() : undefined
+  try {
+    const link = parseMiniappInstallLink(text)
+    if (!link) {
+      opening?.end()
+      options.onPresent?.()
+      await showFailure("not_a_link", {})
+      return "failed"
+    }
+    if (link.kind === "package") return await startListedMiniappInstall(link.packageName, source, {...options, opening})
+    return await startMiniappInstall(link.url, source, {...options, opening})
+  } finally {
+    opening?.end()
   }
-  if (link.kind === "package") return startListedMiniappInstall(link.packageName, source, options)
-  return startMiniappInstall(link.url, source, options)
 }
 
 /**
@@ -77,10 +97,11 @@ export async function startMiniappInstallFromLink(
 export async function startListedMiniappInstall(
   packageName: string,
   source: InstallMiniappSource,
-  options: Pick<MiniappInstallFlowOptions, "onPresent"> = {},
+  options: Pick<MiniappInstallFlowOptions, "onPresent" | "opening"> = {},
 ): Promise<MiniappInstallOutcome> {
   const directoryUrl = deploymentStore.getActive().manifest.artifacts.directoryUrl
   if (!directoryUrl) {
+    options.opening?.end()
     options.onPresent?.()
     // An in-app browser, which never hands the page's own link back to the app.
     await WebBrowser.openBrowserAsync(directoryPackageLink(packageName)).catch((error) =>
@@ -94,11 +115,15 @@ export async function startListedMiniappInstall(
     url = await fetchListedMiniappUrl(directoryUrl, packageName)
   } catch (error) {
     console.warn(`MiniappInstall: the directory couldn't look up ${packageName}`, error)
+    if (stoppedByPerson(options)) return "cancelled"
+    options.opening?.end()
     options.onPresent?.()
     await showFailure("directory_unreachable", {})
     return "failed"
   }
+  if (stoppedByPerson(options)) return "cancelled"
   if (!url) {
+    options.opening?.end()
     options.onPresent?.()
     await showFailure("unlisted", {})
     return "failed"
@@ -106,7 +131,10 @@ export async function startListedMiniappInstall(
   return startMiniappInstall(url, source, {...options, expectedPackageName: packageName})
 }
 
-/** Install the miniapp at a miniapp URL, asking through the install sheet. */
+/**
+ * Install the miniapp at a miniapp URL. With `opening` (a link) it installs and opens with nothing to press;
+ * otherwise the install sheet asks first, and the tile appears on Home.
+ */
 export async function startMiniappInstall(
   url: string,
   source: InstallMiniappSource,
@@ -118,8 +146,11 @@ export async function startMiniappInstall(
     presented = true
     options.onPresent?.()
   }
+  // The link's splash, until the install has to ask after all (the sheet shows over where the person was).
+  let opening = options.opening
   const target = normalizeMiniappUrl(url)
   if (!target) {
+    opening?.end()
     present()
     await showFailure("not_a_link", {})
     return "failed"
@@ -135,12 +166,21 @@ export async function startMiniappInstall(
   try {
     const result = await engine.miniapps.install(target.url, {
       source,
+      isCancelled: () => stoppedByPerson(options),
       confirm: async (preview: MiniappInstallPreview) => {
         name = preview.name
         if (options.expectedPackageName && preview.packageName !== options.expectedPackageName) {
           otherPackage = true
           return false
         }
+        // From a link the miniapp installs with nothing to press. A development build from the local network, and
+        // an install that replaces the copy the person has, still ask.
+        if (opening && !preview.local && !preview.alreadyInstalled) {
+          opening.show({name: preview.name, iconUrl: preview.iconUrl})
+          return !opening.cancelled
+        }
+        opening?.end()
+        opening = undefined
         present()
         const accepted = await confirmMiniappInstall(preview, installedMiniappName(preview.packageName))
         // The download can take a moment: say it's under way.
@@ -152,8 +192,19 @@ export async function startMiniappInstall(
     // An install that needed no sheet (the package is installed from that URL already) never met the check above.
     if (options.expectedPackageName && result.packageName !== options.expectedPackageName) {
       console.warn(`MiniappInstall: ${target.url} serves ${result.packageName}, not ${options.expectedPackageName}`)
+      opening?.end()
       await showFailure("unlisted", {})
       return "failed"
+    }
+    // The person closed the splash: nothing opens. Whatever installed is on Home.
+    if (stoppedByPerson(options)) return "cancelled"
+    if (opening) {
+      // The miniapp opens in place of its splash, which closes over it. Not opened (its permissions declined, the
+      // launch refused): the splash closes on where the person was; a miniapp just installed is on Home.
+      const opened = await openInstalledMiniapp(result.packageName, "none", () => stoppedByPerson(options))
+      opening.end()
+      if (result.status === "opened") return opened ? "opened" : "cancelled"
+      return "installed"
     }
     if (result.status === "opened") {
       // Not opened (its permissions declined, an update running, the launch refused): the person stays where they
@@ -168,6 +219,13 @@ export async function startMiniappInstall(
     Toast.show({type: "success", text1: translate("miniappInstall:installed", {name: name ?? result.packageName})})
     return "installed"
   } catch (error) {
+    // The person closed the splash: whatever stopped the install after that, there is nothing to tell them.
+    if (stoppedByPerson(options)) {
+      present()
+      return "cancelled"
+    }
+    // The splash closes before anything says why: nothing was added to Home.
+    opening?.end()
     present()
     const code = installErrorCode(error)
     if (otherPackage) {
@@ -182,6 +240,11 @@ export async function startMiniappInstall(
   } finally {
     inFlight.delete(target.url)
   }
+}
+
+/** Whether the person closed the splash of the link being opened: nothing more installs, opens or is said. */
+function stoppedByPerson(options: Pick<MiniappInstallFlowOptions, "opening">): boolean {
+  return options.opening?.cancelled === true
 }
 
 /** The alert for a failed install, or null when the person has been told already or chose it. */
@@ -248,15 +311,27 @@ function showHome(): void {
 
 /**
  * Open an installed miniapp as a tap on its Home tile does: required permissions first. Resolves whether it opened;
- * it goes Home only once the miniapp is starting.
+ * it goes Home only once the miniapp is starting. `animation` "none": it appears in place, under the splash it
+ * opens from. `isStopped`: the person closed that splash, so nothing starts, and a miniapp that started meanwhile is
+ * stopped again without coming to the front.
  */
-async function openInstalledMiniapp(packageName: string): Promise<boolean> {
+async function openInstalledMiniapp(
+  packageName: string,
+  animation?: MiniappOpeningAnimation,
+  isStopped: () => boolean = () => false,
+): Promise<boolean> {
   const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
   if (!app || blockUpdatingMiniapp(packageName)) return false
   if ((await askPermissionsUI(app)) !== 1) return false
+  if (isStopped()) return false
   try {
     if (!(await engine.miniapps.start(app, {trigger: "user", skipNavigation: true}))) return false
+    if (isStopped()) {
+      await engine.miniapps.stop(packageName)
+      return false
+    }
     useNavigationStore.getState().clearHistoryAndGoHome()
+    if (animation) setMiniappOpeningAnimation(packageName, animation)
     await engine.miniapps.setForeground(packageName)
     return true
   } catch (error) {

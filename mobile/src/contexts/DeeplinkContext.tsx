@@ -1,6 +1,5 @@
 import * as Linking from "expo-linking"
 import * as WebBrowser from "expo-web-browser"
-import Toast from "react-native-toast-message"
 import {FC, ReactNode, createContext, useContext, useEffect, useRef, useState} from "react"
 import {AppState, Platform} from "react-native"
 
@@ -16,7 +15,6 @@ import {loadAuthoringMiniapp} from "@/services/miniapps/loadAuthoringMiniapp"
 import {startMiniappInstallFromLink} from "@/services/miniapps/miniappInstallFlow"
 import {publishPermissionStatusRequest} from "@/services/permissionStatusRequest"
 import {requestAttendedPermissions} from "@/services/attendedPermissionRequest"
-import {translate} from "@/i18n"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -59,16 +57,16 @@ export interface DeepLinkRoute {
   requiresAuth?: boolean
   /**
    * No splash covers the current screen while the handler runs: diagnostic observations, and handlers that present
-   * their own sheet (which the splash would hide).
+   * their own sheet or splash (which the splash would hide).
    */
   presentation?: "passive"
 }
 
 /**
  * The open link (`/open?url=<miniapp URL>`) and the package link (`/package/<packageName>`, and the directory's older
- * `/app/<packageName>`) install a miniapp through the install sheet (distribution spec, "Installing"), as Universal
- * Links and App Links on apps.mentraglass.com and apps.mentra.glass, and on the app's own scheme. The flow reads the
- * whole link, and says so when it names no miniapp.
+ * `/app/<packageName>`) open a miniapp, installing it first (distribution spec, "Installing"), as Universal Links
+ * and App Links on apps.mentraglass.com and apps.mentra.glass, and on the app's own scheme. The flow shows the
+ * miniapp's splash while it reads the whole link, and says so when it names no miniapp.
  */
 const miniappInstallRoutes: DeepLinkRoute[] = [
   "/open",
@@ -82,9 +80,7 @@ const miniappInstallRoutes: DeepLinkRoute[] = [
   requiresAuth: true,
   presentation: "passive",
   handler: async (url: string) => {
-    // The miniapp's URL is fetched before its sheet shows.
-    Toast.show({type: "info", text1: translate("miniappInstall:opening")})
-    await startMiniappInstallFromLink(url, "link", {onPresent: () => Toast.hide()})
+    await startMiniappInstallFromLink(url, "link")
   },
 }))
 

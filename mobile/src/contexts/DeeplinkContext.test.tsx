@@ -714,7 +714,7 @@ describe("miniapp install links", () => {
     "https://apps.mentraglass.com/package/com.example.notes/",
     "https://apps.mentraglass.com/app/com.example.notes",
     "com.mentra://package/com.example.notes",
-  ])("hands %s to the install flow, with no splash over its sheet", async (url) => {
+  ])("hands %s to the install flow, with no app splash over the miniapp's own", async (url) => {
     signedIn()
     render(
       <DeeplinkProvider>
@@ -724,7 +724,7 @@ describe("miniapp install links", () => {
     await act(async () => {
       await processUrl(url)
     })
-    expect(mockStartMiniappInstallFromLink).toHaveBeenCalledWith(url, "link", {onPresent: expect.any(Function)})
+    expect(mockStartMiniappInstallFromLink).toHaveBeenCalledWith(url, "link")
     expect(mockSetSplashEnabled).not.toHaveBeenCalled()
     expect(mockPush).not.toHaveBeenCalled()
     expect(mockReplaceAll).not.toHaveBeenCalled()
@@ -743,19 +743,11 @@ describe("miniapp install links", () => {
     expect(mockStartMiniappInstallFromLink).toHaveBeenCalledWith(
       "https://apps.mentra.glass/open?url=https%3A%2F%2Fnotes.example.com%2F",
       "link",
-      expect.anything(),
     )
   })
 
-  it("says the link is opening until its sheet shows", async () => {
+  it("shows no toast: the flow's splash says the miniapp is opening", async () => {
     signedIn()
-    mockStartMiniappInstallFromLink.mockImplementationOnce(
-      async (_url: string, _source: string, options: {onPresent: () => void}) => {
-        expect(mockToastShow).toHaveBeenCalledTimes(1)
-        expect(mockToastHide).not.toHaveBeenCalled()
-        options.onPresent()
-      },
-    )
     render(
       <DeeplinkProvider>
         <Probe />
@@ -764,8 +756,8 @@ describe("miniapp install links", () => {
     await act(async () => {
       await processUrl("https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F")
     })
-    expect(mockToastShow).toHaveBeenCalledWith({type: "info", text1: expect.any(String)})
-    expect(mockToastHide).toHaveBeenCalledTimes(1)
+    expect(mockStartMiniappInstallFromLink).toHaveBeenCalledTimes(1)
+    expect(mockToastShow).not.toHaveBeenCalled()
   })
 
   it("waits for sign-in before installing", async () => {
@@ -782,7 +774,7 @@ describe("miniapp install links", () => {
     expect(mockSetPendingRoute).toHaveBeenCalledWith(url)
   })
 
-  it("ignores the same link again while its sheet is open", async () => {
+  it("ignores the same link again while it is opening", async () => {
     signedIn()
     let finish!: () => void
     mockStartMiniappInstallFromLink.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)))

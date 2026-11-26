@@ -2,6 +2,9 @@ import i18n from "i18next"
 
 import en from "@/i18n/en"
 
+import {consumeMiniappOpeningAnimation} from "@/stores/miniappLaunch"
+import {cancelMiniappLinkOpens, useMiniappLinkOpenStore} from "@/stores/miniappLinkOpen"
+
 import {
   miniappInstallFailureCopy,
   startListedMiniappInstall,
@@ -10,7 +13,7 @@ import {
 } from "./miniappInstallFlow"
 
 type Confirm = (preview: Record<string, unknown>) => Promise<boolean>
-type InstallOptions = {source: string; confirm: Confirm}
+type InstallOptions = {source: string; confirm: Confirm; isCancelled?: () => boolean}
 
 const mockInstall = jest.fn<Promise<{status: string; packageName: string; version: string}>, [string, InstallOptions]>()
 const mockList = jest.fn(
@@ -19,6 +22,7 @@ const mockList = jest.fn(
 const mockStart = jest.fn(async (..._args: unknown[]) => true)
 const mockSetForeground = jest.fn(async (..._args: unknown[]) => {})
 const mockClearForeground = jest.fn()
+const mockStop = jest.fn(async (..._args: unknown[]) => {})
 jest.mock("@mentra/engine", () => ({
   engine: {
     miniapps: {
@@ -27,6 +31,7 @@ jest.mock("@mentra/engine", () => ({
       start: (...args: unknown[]) => mockStart(...args),
       setForeground: (...args: unknown[]) => mockSetForeground(...args),
       clearForeground: () => mockClearForeground(),
+      stop: (...args: unknown[]) => mockStop(...args),
     },
   },
 }))
@@ -280,6 +285,213 @@ describe("startMiniappInstallFromLink", () => {
     await expect(startMiniappInstallFromLink("hello there", "paste", {onPresent})).resolves.toBe("failed")
     expect(onPresent).toHaveBeenCalled()
     expect(lastAlert()?.message).toBe("This isn't a link to a miniapp.")
+  })
+})
+
+describe("a link opens the miniapp with nothing to press", () => {
+  const LINK = "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F"
+  const notes = {packageName: "com.example.notes", name: "Notes"}
+  const splash = () => useMiniappLinkOpenStore.getState().view
+
+  afterEach(() => {
+    cancelMiniappLinkOpens()
+    consumeMiniappOpeningAnimation("")
+  })
+
+  it("installs without the sheet, under the miniapp's splash, then opens it in place", async () => {
+    const seen: unknown[] = []
+    mockInstall.mockImplementation(async (_url, options) => {
+      // Before the link is read, the splash is up with no miniapp on it yet.
+      seen.push(splash())
+      expect(await options.confirm({...preview, iconUrl: "https://notes.example.com/icon.png"})).toBe(true)
+      seen.push(splash())
+      mockList.mockReturnValue([notes])
+      return {status: "installed", packageName: "com.example.notes", version: "1.0.0"}
+    })
+    mockSetForeground.mockImplementation(async () => {
+      // The miniapp comes to the front under the splash, which is still up.
+      seen.push(splash())
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("installed")
+
+    expect(seen[0]).toEqual({id: expect.any(Number), installing: false})
+    const installing = {name: "Notes", iconUrl: "https://notes.example.com/icon.png", installing: true}
+    expect(seen[1]).toEqual({id: expect.any(Number), ...installing})
+    expect(seen[2]).toEqual(seen[1])
+    expect(mockConfirm).not.toHaveBeenCalled()
+    expect(mockToast).not.toHaveBeenCalled()
+    expect(mockShowAlert).not.toHaveBeenCalled()
+    expect(mockAskPermissions).toHaveBeenCalledWith(notes)
+    expect(mockStart).toHaveBeenCalledWith(notes, {trigger: "user", skipNavigation: true})
+    expect(mockSetForeground).toHaveBeenCalledWith("com.example.notes")
+    // It appears in place: no opening animation over the splash.
+    expect(consumeMiniappOpeningAnimation("com.example.notes")).toBe("none")
+    expect(splash()).toBeNull()
+  })
+
+  it("opens a miniapp already installed from that URL the same way", async () => {
+    installs("opened")
+    mockList.mockReturnValue([notes])
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("opened")
+    expect(mockConfirm).not.toHaveBeenCalled()
+    expect(mockSetForeground).toHaveBeenCalledWith("com.example.notes")
+    expect(consumeMiniappOpeningAnimation("com.example.notes")).toBe("none")
+    expect(splash()).toBeNull()
+  })
+
+  it("closes the splash before it says why a link couldn't be installed, and opens nothing", async () => {
+    mockInstall.mockRejectedValue(installError("network"))
+    mockShowAlert.mockImplementationOnce(async () => {
+      expect(splash()).toBeNull()
+      return 0
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("failed")
+    expect(lastAlert()?.message).toBe("Couldn't reach notes.example.com. Check your connection and try again.")
+    expect(mockStart).not.toHaveBeenCalled()
+    expect(mockGoHome).not.toHaveBeenCalled()
+    expect(splash()).toBeNull()
+  })
+
+  it("closes the splash on a link that names no miniapp", async () => {
+    mockShowAlert.mockImplementationOnce(async () => {
+      expect(splash()).toBeNull()
+      return 0
+    })
+    await expect(startMiniappInstallFromLink("https://apps.mentraglass.com/open", "link")).resolves.toBe("failed")
+    expect(lastAlert()?.message).toBe("This isn't a link to a miniapp.")
+    expect(mockInstall).not.toHaveBeenCalled()
+  })
+
+  it("leaves a miniapp the person wouldn't give its permissions on Home, unopened", async () => {
+    installs()
+    mockList.mockReturnValue([notes])
+    mockAskPermissions.mockResolvedValueOnce(0)
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("installed")
+    expect(mockStart).not.toHaveBeenCalled()
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(splash()).toBeNull()
+  })
+
+  it("stops when the person closes the splash: nothing more installs, and nothing opens", async () => {
+    mockInstall.mockImplementation(async (_url, options) => {
+      expect(options.isCancelled?.()).toBe(false)
+      cancelMiniappLinkOpens()
+      expect(splash()).toBeNull()
+      expect(options.isCancelled?.()).toBe(true)
+      throw installError("cancelled")
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("cancelled")
+    expect(mockShowAlert).not.toHaveBeenCalled()
+    expect(mockStart).not.toHaveBeenCalled()
+  })
+
+  it("says nothing about a failure that comes after the person closed the splash", async () => {
+    mockInstall.mockImplementation(async () => {
+      cancelMiniappLinkOpens()
+      throw installError("network")
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("cancelled")
+    expect(mockShowAlert).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["can't be reached", () => Promise.reject(new Error("offline"))],
+    ["doesn't list the package", async () => ({ok: false, status: 404, json: async () => null})],
+  ])("says nothing when the splash is closed while a directory that %s is asked", async (_case, answer) => {
+    const realFetch = global.fetch
+    global.fetch = jest.fn(() => {
+      cancelMiniappLinkOpens()
+      return answer()
+    }) as unknown as typeof fetch
+    try {
+      await expect(
+        startMiniappInstallFromLink("https://apps.mentraglass.com/package/com.example.notes", "link"),
+      ).resolves.toBe("cancelled")
+    } finally {
+      global.fetch = realFetch
+    }
+    expect(mockShowAlert).not.toHaveBeenCalled()
+    expect(mockInstall).not.toHaveBeenCalled()
+  })
+
+  it("opens nothing when the splash is closed just as the install finishes", async () => {
+    mockInstall.mockImplementation(async (_url, options) => {
+      await options.confirm(preview)
+      mockList.mockReturnValue([notes])
+      cancelMiniappLinkOpens()
+      return {status: "installed", packageName: "com.example.notes", version: "1.0.0"}
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("cancelled")
+    expect(mockAskPermissions).not.toHaveBeenCalled()
+    expect(mockStart).not.toHaveBeenCalled()
+  })
+
+  it("starts nothing when the splash is closed while the miniapp's permissions are asked", async () => {
+    installs()
+    mockList.mockReturnValue([notes])
+    mockAskPermissions.mockImplementationOnce(async () => {
+      cancelMiniappLinkOpens()
+      return 1
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("installed")
+    expect(mockStart).not.toHaveBeenCalled()
+    expect(mockSetForeground).not.toHaveBeenCalled()
+  })
+
+  it("stops a miniapp that started as the splash was closed, without bringing it to the front", async () => {
+    installs()
+    mockList.mockReturnValue([notes])
+    mockStart.mockImplementationOnce(async () => {
+      cancelMiniappLinkOpens()
+      return true
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("installed")
+    expect(mockStop).toHaveBeenCalledWith("com.example.notes")
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockGoHome).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["a development build from the local network", {...preview, local: true}],
+    ["an install that replaces the copy the person has", {...preview, alreadyInstalled: true}],
+  ])("still asks through the sheet for %s, with the splash closed", async (_case, served) => {
+    mockConfirm.mockImplementationOnce(async () => {
+      expect(splash()).toBeNull()
+      return true
+    })
+    installs("installed", served)
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("installed")
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    // As from the scanner: the tile is on Home, and nothing opens.
+    expect(mockGoHome).toHaveBeenCalledTimes(1)
+    expect(mockToast).toHaveBeenLastCalledWith({type: "success", text1: "Notes is on your Home screen"})
+    expect(mockStart).not.toHaveBeenCalled()
+  })
+
+  it("keeps the splash of a link that is opening when the same link is tapped again", async () => {
+    let finish!: () => void
+    mockInstall.mockImplementationOnce(async (_url, options) => {
+      await options.confirm(preview)
+      await new Promise<void>((resolve) => (finish = resolve))
+      mockList.mockReturnValue([notes])
+      return {status: "installed", packageName: "com.example.notes", version: "1.0.0"}
+    })
+    const first = startMiniappInstallFromLink(LINK, "link")
+    await Promise.resolve()
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("cancelled")
+    expect(splash()).toEqual(expect.objectContaining({name: "Notes", installing: true}))
+    finish()
+    await expect(first).resolves.toBe("installed")
+    expect(splash()).toBeNull()
+  })
+
+  it("asks through the sheet from the scanner and the paste box, with no splash", async () => {
+    installs()
+    await expect(startMiniappInstallFromLink("https://notes.example.com/", "scanner")).resolves.toBe("installed")
+    await expect(startMiniappInstallFromLink("notes.example.com", "paste")).resolves.toBe("installed")
+    expect(mockConfirm).toHaveBeenCalledTimes(2)
+    expect(mockStart).not.toHaveBeenCalled()
+    expect(splash()).toBeNull()
   })
 })
 
