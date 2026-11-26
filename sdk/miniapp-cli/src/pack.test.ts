@@ -16,6 +16,17 @@ afterEach(() => {
 })
 
 describe("pack", () => {
+  test("records the API level of the project's @mentra/miniapp as minApiLevel", async () => {
+    const cwd = createProject()
+    mkdirSync(join(cwd, "node_modules", "@mentra", "miniapp"), {recursive: true})
+    writeFileSync(join(cwd, "node_modules", "@mentra", "miniapp", "package.json"), JSON.stringify({apiLevel: 7}))
+    const zipPath = await pack({cwd, silent: true})
+
+    const zip = await JSZip.loadAsync(readFileSync(zipPath))
+    expect(JSON.parse(await zip.file("miniapp.json")!.async("string")).minApiLevel).toBe(7)
+    expect(JSON.parse(readFileSync(join(cwd, "build", "miniapp.json"), "utf-8")).minApiLevel).toBe(7)
+  })
+
   test("does not retain stale files from an older archive", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "mentra-pack-"))
     dirs.push(cwd)
@@ -313,7 +324,6 @@ function scaffoldedManifest(packageName: string, version: string): Record<string
     description: "Take notes with your voice.",
     icon: "icon.png",
     type: "standard",
-    sdkVersion: "0.3.0",
     minHostVersion: "1.42.0",
     entry: {background: "background/index.js", ui: "ui/index.html"},
     permissions: [{type: "MICROPHONE", required: true}],

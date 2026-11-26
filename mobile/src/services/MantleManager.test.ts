@@ -667,10 +667,9 @@ describe("MantleManager", () => {
     })
   })
 
-  it("declares the build's system miniapps and leaves the miniapp SDK range to the engine", () => {
+  it("declares the build's system miniapps", () => {
     expect(miniappConfig.systemMiniappPackages).toContain("com.mentra.ai")
     expect(miniappConfig.isMiniappAvailable).toBeUndefined()
-    expect(miniappConfig.supportedMiniappSdkRange).toBeUndefined()
   })
 
   it("starts miniapp updates after restoring sessions", async () => {

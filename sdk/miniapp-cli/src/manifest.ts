@@ -11,6 +11,9 @@
 //   - AppletPermission shape: {type, required?, description?}
 //   - HardwareRequirement shape: {type, level, description?}
 
+import { createRequire } from 'node:module';
+import { join } from 'path';
+
 export const ALLOWED_PERMISSIONS = [
   'MICROPHONE',
   // The glasses camera. For this phone's own camera — which a miniapp needs when it publishes
@@ -117,10 +120,10 @@ export interface MiniappManifestV1 {
   port?: number;
   permissions?: ManifestPermission[];
   hardwareRequirements: ManifestHardwareRequirement[];
-  /** Semver of the @mentra/miniapp SDK ABI this bundle targets. */
-  sdkVersion?: string;
   /** Lowest MentraOS Manager host version that can run this bundle. */
   minHostVersion?: string;
+  /** The @mentra/miniapp API level the bundle was built with. Written by `pack` and `dev`. */
+  minApiLevel?: number;
   /** Two-layer bundle entry points. */
   entry?: ManifestEntry;
   /** Miniapp shape — defaults to "standard" (background + on-demand UI). */
@@ -269,15 +272,13 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
     });
   }
 
-  // Optional sdkVersion / minHostVersion (semver-coercible strings).
-  // We don't enforce strict semver — many real-world manifests use a
-  // shorthand like "0.2" that semver.coerce normalises to "0.2.0". Reject
-  // only if the field is present and not a non-empty string.
-  if (m.sdkVersion !== undefined && (typeof m.sdkVersion !== 'string' || !m.sdkVersion)) {
-    errors.push('sdkVersion must be a non-empty string when set');
-  }
+  // Optional minHostVersion (a semver-coercible string such as "3.5" or "3.5.0").
   if (m.minHostVersion !== undefined && (typeof m.minHostVersion !== 'string' || !m.minHostVersion)) {
     errors.push('minHostVersion must be a non-empty string when set');
+  }
+
+  if (m.minApiLevel !== undefined && (!Number.isInteger(m.minApiLevel) || (m.minApiLevel as number) < 1)) {
+    errors.push('minApiLevel must be a positive integer when set');
   }
 
   // Optional entry object. When set, entry.background is required.
@@ -350,4 +351,20 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * The manifest a build ships: `minApiLevel` set to the API level of the @mentra/miniapp the project at `cwd` builds
+ * with, so a Mentra App that doesn't implement that level refuses it instead of failing its requests. Unchanged when
+ * the project has no @mentra/miniapp with a level.
+ */
+export function withApiLevel(manifest: Record<string, unknown>, cwd: string): Record<string, unknown> {
+  let apiLevel: unknown;
+  try {
+    apiLevel = (createRequire(join(cwd, 'package.json'))('@mentra/miniapp/package.json') as { apiLevel?: unknown })
+      .apiLevel;
+  } catch {
+    return manifest;
+  }
+  return Number.isInteger(apiLevel) ? { ...manifest, minApiLevel: apiLevel } : manifest;
 }

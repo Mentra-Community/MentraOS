@@ -7,10 +7,9 @@ export type MiniappInstallCompatibility =
   | {compatible: true}
   | {compatible: false; blocker: "host" | "sdk" | "hardware"; reason: string}
 
-/** What the phone itself can run: the Mentra App version and the Mentra Miniapp SDK range it supports. */
+/** What the phone itself is: its Mentra App version (the Miniapp SDK API levels it runs are the engine's own). */
 export interface MiniappVersionPolicy {
-  hostVersion: string
-  supportedSdkRange: string
+  hostVersion?: string
 }
 
 export interface MiniappCompatibilityPolicy extends MiniappVersionPolicy {
@@ -22,13 +21,13 @@ export type MiniappPhoneCompatibility =
   | {compatible: false; blocker: "host" | "sdk"; reason: string}
 
 /**
- * Whether the phone can run a release: `minHostVersion` and `sdkVersion` only. This is the rule installs and updates
+ * Whether the phone can run a release: `minHostVersion` and `minApiLevel` only. This is the rule installs and updates
  * (from a link, a system miniapp, a Fleet assignment or the updater) refuse by. `hardwareRequirements` describe the
  * glasses, which are not always paired when a miniapp installs, so they never refuse an install: see
  * {@link missingRequiredHardware} and the launch check.
  */
 export function checkMiniappRunsOnPhone(
-  manifest: {sdkVersion?: string; minHostVersion?: string},
+  manifest: {minHostVersion?: string; minApiLevel?: number},
   policy: MiniappVersionPolicy,
 ): MiniappPhoneCompatibility {
   const versions = checkManifestVersions(manifest, policy)
@@ -52,7 +51,7 @@ export function missingRequiredHardware(hardwareRequirements: unknown, capabilit
 
 /** The full compatibility report against the paired glasses, for callers that only report it (`checkInstallCompatibility`). */
 export function checkMiniappInstallCompatibility(
-  manifest: {sdkVersion?: string; minHostVersion?: string; hardwareRequirements?: unknown},
+  manifest: {minHostVersion?: string; minApiLevel?: number; hardwareRequirements?: unknown},
   policy: MiniappCompatibilityPolicy,
 ): MiniappInstallCompatibility {
   const versionCompatibility = checkManifestVersions(manifest, policy)

@@ -364,7 +364,7 @@ const offDeferred = engine.miniapps.onDeferredUpdateReady((packageName) => { …
 token, checks that the URL's domain owns the package name, registers the URL in Core's
 registry, then calls your `confirm(preview)` to show an install sheet (omit it for a
 headless install), checks the phone can run the miniapp (its `minHostVersion` and
-`sdkVersion`), and downloads, verifies and installs its ZIP. A miniapp's
+`minApiLevel`), and downloads, verifies and installs its ZIP. A miniapp's
 `hardwareRequirements` describe the glasses and never stop an install or an update:
 the preview's `missingHardware` lists the required hardware the paired glasses (or
 none) lack, for the sheet to show, as "Needs glasses with a camera." `opened` means it was already installed from that URL. A failure

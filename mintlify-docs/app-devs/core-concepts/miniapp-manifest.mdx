@@ -22,7 +22,6 @@ values fail on your laptop, not on the phone.
   "description": "Hands-free note taking",
   "icon": "icon.png",
   "type": "standard",
-  "sdkVersion": "0.3.0",
   "minHostVersion": "1.42.0",
   "entry": {
     "background": "background/index.js",
@@ -52,8 +51,8 @@ else is optional.
 | `description` | string | Short summary. |
 | `icon` | string | Path to the icon, relative to the project root (e.g. `icon.png`). Packed into the bundle. |
 | `type` | string | `"standard"`. |
-| `sdkVersion` | string | The `@mentra/miniapp` version you built against. |
 | `minHostVersion` | string | Minimum Mentra App version required to run this miniapp. |
+| `minApiLevel` | integer | Written by `mentra-miniapp pack` and `dev`: the API level of the `@mentra/miniapp` you built with. A Mentra App that doesn't run that level refuses to install the miniapp and asks to be updated. Don't set it yourself. |
 | `entry` | object | `{ "background": "background/index.js", "ui": "ui/index.html" }`: built output paths for the two layers. Declaring `entry.background` is what makes a miniapp two-layer (and gives you `session.ui`). |
 | `ageRating` | string | `4+`, `9+`, `13+`, `16+` or `18+`. A rating above the Mentra App's own App Store rating gates install and open on the person's declared age. Without it a miniapp is never gated; an unrecognized value counts as `18+`. |
 | `listing` | object | For the Mentra Miniapp Store: `{ "category": "productivity" }`. The phone ignores it. There are no screenshots. |

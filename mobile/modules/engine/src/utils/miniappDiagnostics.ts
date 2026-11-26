@@ -8,7 +8,7 @@ export interface MiniappManifestSnapshot {
   packageName: string
   name?: string
   version?: string
-  sdkVersion?: string
+  minApiLevel?: number
   minHostVersion?: string
   type?: string
   entry?: {
@@ -120,7 +120,7 @@ export function buildMiniappManifestSnapshot(raw: unknown, fallback: ManifestFal
     packageName,
     ...(name ? {name} : {}),
     ...(version ? {version} : {}),
-    ...(boundedString(manifest?.sdkVersion) ? {sdkVersion: boundedString(manifest?.sdkVersion)} : {}),
+    ...(Number.isInteger(manifest?.minApiLevel) ? {minApiLevel: manifest?.minApiLevel as number} : {}),
     ...(boundedString(manifest?.minHostVersion) ? {minHostVersion: boundedString(manifest?.minHostVersion)} : {}),
     ...(type ? {type} : {}),
     ...(background || ui ? {entry: {...(background ? {background} : {}), ...(ui ? {ui} : {})}} : {}),

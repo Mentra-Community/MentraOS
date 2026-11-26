@@ -161,22 +161,16 @@ describe('validateManifest', () => {
     });
   });
 
-  describe('Two-layer fields (sdkVersion / minHostVersion / entry / type)', () => {
+  describe('Two-layer fields (minHostVersion / entry / type)', () => {
     test('accepts a two-layer manifest with full two-layer fields', () => {
       const {valid, errors} = validateManifest({
         ...minimalValid,
-        sdkVersion: '0.2.0',
         minHostVersion: '1.42.0',
         entry: {background: 'dist/background/index.js', ui: 'dist/ui/index.html'},
         type: 'standard',
       });
       expect(errors).toEqual([]);
       expect(valid).toBe(true);
-    });
-
-    test('sdkVersion must be a non-empty string when set', () => {
-      const {errors} = validateManifest({...minimalValid, sdkVersion: ''});
-      expect(errors.some((e) => e.includes('sdkVersion'))).toBe(true);
     });
 
     test('minHostVersion must be a non-empty string when set', () => {

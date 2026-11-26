@@ -64,7 +64,7 @@ export interface HostedMiniappManifest {
   name: string
   ageRating?: MiniappAgeRating
   minHostVersion?: string
-  sdkVersion?: string
+  minApiLevel?: number
   hardwareRequirements?: unknown
   bundle: {url: string; sha256: string}
 }
@@ -148,7 +148,7 @@ export function parseHostedManifest(body: string, packageName: string): HostedMi
     name: manifest.name,
     ...(manifest.ageRating ? {ageRating: manifest.ageRating} : {}),
     minHostVersion: manifest.minHostVersion,
-    sdkVersion: manifest.sdkVersion,
+    minApiLevel: manifest.minApiLevel,
     hardwareRequirements: manifest.hardwareRequirements,
     bundle: {url: manifest.bundle.url.trim(), sha256: manifest.bundle.sha256},
   }
@@ -452,7 +452,6 @@ export class MiniappUrlUpdater {
         expectedPackageName: packageName,
         expectedVersion: manifest.version,
         expectedBundleSha256: manifest.bundle.sha256,
-        compatibilityPolicy: policy,
         onlyIfStopped: true,
         // Not asked, a running miniapp's update waits without downloading.
         askIfRunning: this.deps.launchesWithPairedGlasses(manifest.hardwareRequirements, packageName),

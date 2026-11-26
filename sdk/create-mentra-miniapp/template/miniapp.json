@@ -6,7 +6,6 @@
   "description": "A MentraOS miniapp",
   "icon": "icon.png",
   "type": "standard",
-  "sdkVersion": "0.3.0",
   "minHostVersion": "1.42.0",
   "entry": {
     "background": "background/index.js",

@@ -61,9 +61,8 @@ import {
   parseActivationArtifact,
   runInstallFilesystemTransaction,
 } from "./installOperation"
-import {checkManifestVersions} from "./manifestVersionGate"
 import {linkedEntry} from "./miniappFiles"
-import {checkMiniappRunsOnPhone, type MiniappVersionPolicy} from "./miniappInstallCompatibility"
+import {checkMiniappRunsOnPhone} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {normalizeManifestPermissions} from "./manifestPermissions"
 import {isFileUriInside} from "./miniappPaths"
@@ -261,8 +260,6 @@ export interface InstallBundleOptions {
    * installer still checks the size and `expectedBundleSha256` of what it returns.
    */
   downloadBundle?: (url: string) => Promise<Uint8Array>
-  /** Refuse a bundle this host cannot run. Hardware is the glasses' business, and never refuses an install. */
-  compatibilityPolicy?: MiniappVersionPolicy
   onProgress?: (phase: InstallProgressPhase) => void
   /**
    * Runs once the bundle is downloaded, verified, checked against the signer,
@@ -508,11 +505,8 @@ function assertPublisherContinuity(packageName: string, publisherKeyFingerprint:
   })
 }
 
-function assertInstallCompatibility(
-  manifest: Awaited<ReturnType<typeof validateInstallBundleArchive>>,
-  policy: NonNullable<InstallBundleOptions["compatibilityPolicy"]>,
-): void {
-  const compatibility = checkMiniappRunsOnPhone(manifest, policy)
+function assertInstallCompatibility(manifest: Awaited<ReturnType<typeof validateInstallBundleArchive>>): void {
+  const compatibility = checkMiniappRunsOnPhone(manifest, {hostVersion: getConfigValues().hostVersion})
   if (!compatibility.compatible) throw new Error(compatibility.reason)
 }
 
@@ -1331,19 +1325,6 @@ class AppRegistry {
     }
   }
 
-  /**
-   * Verify a manifest declares an SDK / host version range compatible
-   * with the current host. Delegates to the pure
-   * {@link checkManifestVersions} helper — same shape, no React Native
-   * imports, unit-testable. Manifests missing either field pass
-   * through unchanged (legacy single-layer path).
-   */
-  public checkManifestVersions(
-    manifest: {sdkVersion?: string; minHostVersion?: string} | null,
-    options: {hostVersion: string; supportedSdkRange: string},
-  ): {ok: true} | {ok: false; reason: string} {
-    return checkManifestVersions(manifest, options)
-  }
 
   /**
    * Read and parse the miniapp manifest (miniapp.json with app.json fallback)
@@ -1512,8 +1493,9 @@ class AppRegistry {
     // The artifact must be the package and version its source selected.
     const identityError = miniappInstallIdentityError(manifest, expected)
     if (identityError) throw new Error(identityError)
-    // The bundle's own manifest decides compatibility, not the catalog that offered it.
-    if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
+    // Every install, whatever its source, refuses a bundle this host can't run: the bundle's own manifest decides,
+    // not the catalog that offered it. Hardware is the glasses' business, and never refuses an install.
+    assertInstallCompatibility(manifest)
     const version = opts?.versionOverride ?? manifest.version
     // The publisher fingerprint only ever comes from signature verification.
     const {publisherKeyFingerprint: _callerFingerprint, ...callerIdentity} = opts?.releaseIdentity ?? {

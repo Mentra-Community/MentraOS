@@ -6,7 +6,6 @@
   "description": "Your notes, floating in front of you while you speak. Paste a script, then read it from your glasses — scrolling follows your voice or runs at a speed you set.",
   "icon": "icon.png",
   "type": "standard",
-  "sdkVersion": "0.3.0",
   "minHostVersion": "3.2.1",
   "port": 3160,
   "entry": {

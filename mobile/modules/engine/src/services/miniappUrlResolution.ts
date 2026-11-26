@@ -73,10 +73,7 @@ export async function resolveMiniappUrl(url: string, transport?: MiniappFetchTra
   } catch {
     return {ok: false, reason: "not_a_miniapp"}
   }
-  const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
-  if (hostVersion && supportedMiniappSdkRange) {
-    const versions = checkManifestVersions(manifest, {hostVersion, supportedSdkRange: supportedMiniappSdkRange})
-    if (!versions.ok) return {ok: false, reason: "incompatible_host"}
-  }
+  if (!checkManifestVersions(manifest, {hostVersion: getConfigValues().hostVersion}).ok)
+    return {ok: false, reason: "incompatible_host"}
   return {ok: true, packageName, version, bundleUrl, bundleSha256: manifest.bundle.sha256}
 }

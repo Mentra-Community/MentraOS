@@ -35,9 +35,9 @@ let snapshotVersions: string[] = []
 let uiPath = "ui/index.html"
 /** The installed bundle's own `ageRating`; undefined declares none. */
 let manifestAgeRating: string | undefined
-/** The installed bundle's own `minHostVersion` and `sdkVersion`; undefined declares none. */
+/** The installed bundle's own `minHostVersion` and `minApiLevel`; undefined declares none. */
 let manifestMinHostVersion: string | undefined
-let manifestSdkVersion: string | undefined
+let manifestApiLevel: number | undefined
 const revoked = new Set<string>()
 
 mock.module("../AppRegistry", () => ({
@@ -62,7 +62,7 @@ mock.module("../AppRegistry", () => ({
       hardwareRequirements: [],
       ...(manifestAgeRating === undefined ? {} : {ageRating: manifestAgeRating}),
       ...(manifestMinHostVersion === undefined ? {} : {minHostVersion: manifestMinHostVersion}),
-      ...(manifestSdkVersion === undefined ? {} : {sdkVersion: manifestSdkVersion}),
+      ...(manifestApiLevel === undefined ? {} : {minApiLevel: manifestApiLevel}),
     }),
     getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
     // AppRegistry asks the deployment's policy, knowing whether the current workspace assigned the package.
@@ -129,7 +129,6 @@ const launcherConfig: IslandConfigValues = {
   isMiniappAvailable: (_packageName, mode) => available || (mode === "background" && backgroundAvailable),
   systemMiniappPackages: ["com.mentra.notes"],
   hostVersion: "3.3.0",
-  supportedMiniappSdkRange: "^0.3.0",
 }
 
 beforeAll(async () => {
@@ -206,7 +205,7 @@ describe("MiniappLauncher", () => {
     uiPath = "ui/index.html"
     manifestAgeRating = undefined
     manifestMinHostVersion = undefined
-    manifestSdkVersion = undefined
+    manifestApiLevel = undefined
     reactNativeAppState.currentState = "active"
     ;(reactNative.Platform as {OS: string}).OS = "android"
     waitForConnectCalls = []
@@ -677,17 +676,15 @@ describe("MiniappLauncher", () => {
       expect(waitForConnectCalls).toEqual([])
     })
 
-    test("a release built for a Mentra Miniapp SDK this app doesn't run is refused", async () => {
-      manifestSdkVersion = "1.0.0"
-      await expect(miniappLauncher.ensureRunning("com.x")).rejects.toThrow(
-        "Night Club can't run on this phone: Built for SDK 1.0.0; host supports ^0.3.0.",
-      )
+    test("a release built at a Miniapp SDK API level this app doesn't run is refused", async () => {
+      manifestApiLevel = 1_000
+      await expect(miniappLauncher.ensureRunning("com.x")).rejects.toThrow(/can't run on this phone: Built at Miniapp SDK API level 1000/)
       expect(mockRouter.spawnCalls).toEqual([])
     })
 
     test("a release that needs this Mentra App or older launches", async () => {
       manifestMinHostVersion = "3.3.0"
-      manifestSdkVersion = "0.3.0"
+      manifestApiLevel = 1
       await miniappLauncher.ensureRunning("com.x")
       expect(mockRouter.spawnCalls.map((call) => call.packageName)).toEqual(["com.x"])
     })

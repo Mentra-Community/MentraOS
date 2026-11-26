@@ -48,7 +48,7 @@ describe("miniapp diagnostics", () => {
         packageName: "com.mentra.ai",
         name: "Mentra AI",
         version: "1.4.9",
-        sdkVersion: "0.3.0",
+        minApiLevel: 2,
         minHostVersion: "2.12.0",
         type: "standard",
         entry: {background: "background/index.js", ui: "ui/index.html"},
@@ -65,7 +65,7 @@ describe("miniapp diagnostics", () => {
       packageName: "com.mentra.ai",
       name: "Mentra AI",
       version: "1.4.9",
-      sdkVersion: "0.3.0",
+      minApiLevel: 2,
       minHostVersion: "2.12.0",
       type: "standard",
       entry: {background: "background/index.js", ui: "ui/index.html"},
@@ -116,7 +116,7 @@ describe("miniapp diagnostics", () => {
             {
               packageName: "com.example.dev",
               version: "0.4.0",
-              sdkVersion: "0.3.0",
+              minApiLevel: 2,
               actions: [{id: "dev_action"}],
             },
             {packageName: "com.example.dev"},
@@ -138,7 +138,7 @@ describe("miniapp diagnostics", () => {
         candidate.packageName === "com.mentra.notes" ? 300 : candidate.packageName === "com.mentra.ai" ? 200 : 100,
       getManifest: (candidate) =>
         candidate.packageName === "com.mentra.ai"
-          ? {packageName: candidate.packageName, version: candidate.version, sdkVersion: "0.3.0"}
+          ? {packageName: candidate.packageName, version: candidate.version, minApiLevel: 2}
           : undefined,
       getReleaseIdentity: (candidate) =>
         candidate.packageName === "com.mentra.ai"
@@ -165,7 +165,7 @@ describe("miniapp diagnostics", () => {
       version: "1.4.9",
       executionMode: "installed_bundle",
       foregrounded: true,
-      manifest: {packageName: "com.mentra.ai", version: "1.4.9", sdkVersion: "0.3.0"},
+      manifest: {packageName: "com.mentra.ai", version: "1.4.9", minApiLevel: 2},
       releaseIdentity: {source: "preinstalled_registry", bundleSha256: "abc123", channel: "stable"},
       runtime: {handshakeComplete: true, subscriptions: ["button_press", "transcription:auto"]},
     })
@@ -176,7 +176,7 @@ describe("miniapp diagnostics", () => {
       manifest: {
         packageName: "com.example.dev",
         version: "0.4.0",
-        sdkVersion: "0.3.0",
+        minApiLevel: 2,
         actionIds: ["dev_action"],
       },
     })

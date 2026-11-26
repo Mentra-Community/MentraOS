@@ -8,7 +8,7 @@
  *    be reached, or Core refuses the call, the install goes on, as for an entry only the phone can reach.
  * 4. Ask the person, unless the install is headless. First the age gate: a miniapp rated above the host app's own
  *    rating needs the person's declared age to be old enough. A headless install meets the gate when it first opens.
- * 5. Check the phone can run it: `minHostVersion` and `sdkVersion`. `hardwareRequirements` describe the glasses, which
+ * 5. Check the phone can run it: `minHostVersion` and `minApiLevel`. `hardwareRequirements` describe the glasses, which
  *    may not be paired yet, so they never refuse an install: the sheet says what the paired glasses lack.
  * 6. Download the ZIP (answering its server's challenge), check its SHA-256, and install it through the shared
  *    installer, which checks the ZIP's own package name and version and applies the signing and version rules.
@@ -307,7 +307,7 @@ export function createMiniappInstaller(
       assertCurrent()
     }
 
-    const policy = assertCompatible(deps, manifest)
+    assertCompatible(deps, manifest)
 
     const headless = !options.confirm
     try {
@@ -315,7 +315,6 @@ export function createMiniappInstaller(
         expectedPackageName: packageName,
         expectedVersion: manifest.version,
         expectedBundleSha256: manifest.bundle.sha256,
-        ...(policy ? {compatibilityPolicy: policy} : {}),
         releaseIdentity: identity,
         // The installer reads the identity after the download, so a ZIP whose server alone asked for sign-in is
         // recorded as private too.
@@ -407,7 +406,7 @@ async function installFromLocalNetwork(
     assertCurrent()
   }
 
-  const policy = assertCompatible(deps, manifest)
+  assertCompatible(deps, manifest)
   const server = developmentServer(manifest, target.url, served.iconUrl)
   try {
     await deps.installLocal(served.bundleUrl, {
@@ -416,7 +415,6 @@ async function installFromLocalNetwork(
       sourceUrl: target.url,
       sha256: manifest.bundle.sha256,
       ...(server ? {server} : {}),
-      ...(policy ? {compatibilityPolicy: policy} : {}),
       downloadBundle: (bundleUrl) =>
         deps.fetchBundle(bundleUrl, {packageName, sha256: manifest.bundle.sha256, onChallenge: () => {}, local: true}),
       isCancelled: cancelled,
@@ -466,13 +464,10 @@ async function confirmInstall(
   if (!accepted) throw new InstallMiniappError("cancelled", `The install of ${preview.packageName} was declined`)
 }
 
-/** The phone's compatibility policy, once the manifest is known to pass it; null when none. */
-function assertCompatible(
-  deps: InstallMiniappDependencies,
-  manifest: ServedMiniappManifest,
-): MiniappVersionPolicy | null {
+/** Refuses, before the download, a miniapp whose served manifest this phone can't run. The installer checks the ZIP's. */
+function assertCompatible(deps: InstallMiniappDependencies, manifest: ServedMiniappManifest): void {
   const policy = deps.compatibilityPolicy()
-  if (!policy) return null
+  if (!policy) return
   const compatibility = checkMiniappRunsOnPhone(manifest, policy)
   if (!compatibility.compatible) {
     throw new InstallMiniappError(
@@ -480,7 +475,6 @@ function assertCompatible(
       `${manifest.name} can't run on this phone: ${compatibility.reason}`,
     )
   }
-  return policy
 }
 
 /**
@@ -721,10 +715,7 @@ const engineDependencies: InstallMiniappDependencies = {
   allowsRelease: (packageName, version, identity, source) =>
     isInstalledMiniappAllowed(packageName, version, identity, {assigned: source === "assignment"}),
   checkAge: (miniapp) => checkMiniappAge(miniapp, {interactive: true}),
-  compatibilityPolicy: () => {
-    const policy = localMiniappRuntime.currentInstallCompatibilityPolicy()
-    return policy ? {hostVersion: policy.hostVersion, supportedSdkRange: policy.supportedSdkRange} : null
-  },
+  compatibilityPolicy: () => ({hostVersion: getConfigValues().hostVersion}),
   missingHardware: (hardwareRequirements) => {
     const capabilities = localMiniappRuntime.currentInstallCompatibilityPolicy()?.hardwareCapabilities
     return capabilities ? missingRequiredHardware(hardwareRequirements, capabilities) : []

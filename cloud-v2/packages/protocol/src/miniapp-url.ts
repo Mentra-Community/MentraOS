@@ -269,8 +269,9 @@ export interface ServedMiniappManifest {
   icon?: string
   /** Absent: the Mentra App's own rating, so the miniapp is never age-gated. */
   ageRating?: MiniappAgeRating
-  sdkVersion?: string
   minHostVersion?: string
+  /** The Miniapp SDK API level the bundle was built with; the phone refuses it below that level. */
+  minApiLevel?: number
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
   /** The directory's listing; the phone ignores it, so it isn't checked here. */
   listing?: unknown
@@ -292,8 +293,8 @@ export const ServedMiniappManifestSchema: z.ZodType<ServedMiniappManifest> = z
     description: z.string().optional(),
     icon: NonBlankString.optional(),
     ageRating: z.enum(MINIAPP_AGE_RATINGS).optional(),
-    sdkVersion: NonBlankString.optional(),
     minHostVersion: NonBlankString.optional(),
+    minApiLevel: z.number().int().positive().optional(),
     hardwareRequirements: z
       .array(z.object({type: z.string(), level: z.string(), description: z.string().optional()}).passthrough())
       .optional(),

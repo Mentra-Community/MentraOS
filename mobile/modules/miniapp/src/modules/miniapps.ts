@@ -122,7 +122,8 @@ export type InstallMiniappFailureReason =
 
 export interface InstallMiniappCompatibilityRequest {
   minHostVersion?: string | null
-  sdkVersion?: string | null
+  /** The Miniapp SDK API level the release was built with (its `miniapp.json` `minApiLevel`). */
+  minApiLevel?: number | null
   hardwareRequirements?: MiniappHardwareRequirement[]
 }
 
@@ -198,12 +199,12 @@ export class MiniappsModule {
     )
   }
 
-  /** Check a release's Mentra App, SDK and glasses requirements against this phone. System-list miniapps only. */
+  /** Check a release's Mentra App, Miniapp SDK API level and glasses requirements against this phone. System-list miniapps only. */
   async checkInstallCompatibility(request: InstallMiniappCompatibilityRequest): Promise<InstallMiniappCompatibility> {
     return this.session.sendRequest<InstallMiniappCompatibility>({
       type: MiniappRequestType.MINIAPPS_INSTALL_CHECK,
       minHostVersion: request.minHostVersion ?? undefined,
-      sdkVersion: request.sdkVersion ?? undefined,
+      minApiLevel: request.minApiLevel ?? undefined,
       hardwareRequirements: request.hardwareRequirements ?? [],
     })
   }

@@ -188,7 +188,6 @@ beforeEach(() => {
     config: {
       systemMiniappPackages: [ai, notes],
       hostVersion: "3.4.0",
-      supportedMiniappSdkRange: ">=0.3.0 <4.0.0",
     },
   })
   identities = {[ai]: {source: "bundled_asset"}, [notes]: {source: "bundled_asset"}}
@@ -348,7 +347,7 @@ describe("compatibility checks", () => {
   test("answer a system-list miniapp, and refuse any other caller", () => {
     const h = harness([app(ai), app(weather)])
     h.host.handleMiniappsInstallCheck(ai, {minHostVersion: "9.0.0"}, "r1")
-    h.host.handleMiniappsInstallCheck(ai, {minHostVersion: "3.2.1", sdkVersion: "3.2.1"}, "r2")
+    h.host.handleMiniappsInstallCheck(ai, {minHostVersion: "3.2.1", minApiLevel: 1}, "r2")
     h.host.handleMiniappsInstallCheck(weather, {}, "r3")
     expect(h.results[0]).toMatchObject({ok: true, data: {compatible: false, blocker: "host"}})
     expect(h.results[1]).toEqual({ok: true, data: {compatible: true}, error: undefined})

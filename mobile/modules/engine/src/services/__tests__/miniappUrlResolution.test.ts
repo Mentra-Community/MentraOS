@@ -4,7 +4,7 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 
 import {cloudClientService} from "./cloudClientServiceTestMock"
 
-let config: {hostVersion?: string; supportedMiniappSdkRange?: string} = {}
+let config: {hostVersion?: string} = {}
 mock.module("../../runtime/bootstrap", () => ({getConfigValues: () => config}))
 // Each test passes its own transport.
 mock.module("expo/fetch", () => ({
@@ -119,7 +119,7 @@ describe("resolving a miniapp URL", () => {
   })
 
   test("a manifest this Mentra App cannot run is incompatible_host", async () => {
-    config = {hostVersion: "3.0.0", supportedMiniappSdkRange: "^1.0.0"}
+    config = {hostVersion: "3.0.0"}
     const body = manifest({minHostVersion: "9.0.0"})
     expect(await resolveMiniappUrl("https://notes.acme.com/app", serve(200, body))).toEqual({
       ok: false,

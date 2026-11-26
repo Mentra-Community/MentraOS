@@ -22,7 +22,6 @@ describe("validateInstallBundleArchive", () => {
     const bytes = await bundle({
       packageName: "com.example.app",
       version: "1.0.0",
-      sdkVersion: "0.3.0",
       minHostVersion: "2.13.0",
       hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
       entry: {background: "background/index.js"},
@@ -32,7 +31,6 @@ describe("validateInstallBundleArchive", () => {
     ).resolves.toEqual({
       packageName: "com.example.app",
       version: "1.0.0",
-      sdkVersion: "0.3.0",
       minHostVersion: "2.13.0",
       hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
       publisherKeyFingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),

@@ -15,7 +15,7 @@ import JSZip from 'jszip';
 import { buildProduction } from './build.js';
 import { signBundleArchive, verifySignedBundleArchive } from './bundle-signing.js';
 import { warnIfPlaceholderIcon } from './icon.js';
-import { validateManifest } from './manifest.js';
+import { validateManifest, withApiLevel } from './manifest.js';
 import { missingSigningKeyError, resolvePackageSigningKey, type PackageSigningKey } from './package-signing-key.js';
 
 export interface PackOptions {
@@ -161,8 +161,9 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
     checkRelative('ui', entry.ui, false);
   }
 
-  // Copy miniapp.json into dist/
-  copyFileSync(manifestSrc, join(distDir, 'miniapp.json'));
+  // miniapp.json into dist/, with the SDK's API level
+  manifest = withApiLevel(manifest, cwd);
+  writeFileSync(join(distDir, 'miniapp.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
   // Copy icon.png into dist/ if it exists
   if (existsSync(iconSrc)) {

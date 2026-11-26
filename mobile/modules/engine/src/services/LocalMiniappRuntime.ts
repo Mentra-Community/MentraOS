@@ -197,8 +197,8 @@ export interface InstalledMiniappManifest {
    * <name>…" boot message; falls back to the package name when absent. */
   name?: string
   version?: string
-  sdkVersion?: string
   minHostVersion?: string
+  minApiLevel?: number
   type?: string
   entry?: {background?: string; ui?: string}
   permissions?: Array<{type: string; required?: boolean; description?: string}>
@@ -7223,32 +7223,25 @@ class LocalMiniappRuntime {
     return false
   }
 
-  /** The host's compatibility policy for installs and updates, or null until configured. */
-  public currentInstallCompatibilityPolicy(): MiniappCompatibilityPolicy | null {
-    const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
-    if (!hostVersion || !supportedMiniappSdkRange) return null
+  /** The host's compatibility policy for installs and updates. */
+  public currentInstallCompatibilityPolicy(): MiniappCompatibilityPolicy {
     const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
       | DeviceTypes
       | undefined
     return {
-      hostVersion,
-      supportedSdkRange: supportedMiniappSdkRange,
+      hostVersion: getConfigValues().hostVersion,
       hardwareCapabilities: getModelCapabilities(defaultWearable || DeviceTypes.NONE),
     }
   }
 
   private evaluateInstallCompatibility(payload: Record<string, unknown>): MiniappInstallCompatibility {
-    const policy = this.currentInstallCompatibilityPolicy()
-    if (!policy) {
-      return {compatible: false, blocker: "host", reason: "Host miniapp compatibility policy is not configured"}
-    }
     return checkMiniappInstallCompatibility(
       {
         minHostVersion: typeof payload.minHostVersion === "string" ? payload.minHostVersion.trim() : undefined,
-        sdkVersion: typeof payload.sdkVersion === "string" ? payload.sdkVersion.trim() : undefined,
+        minApiLevel: payload.minApiLevel as number | undefined,
         hardwareRequirements: payload.hardwareRequirements,
       },
-      policy,
+      this.currentInstallCompatibilityPolicy(),
     )
   }
 

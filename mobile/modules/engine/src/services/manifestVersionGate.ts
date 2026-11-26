@@ -1,25 +1,31 @@
 import semver from "semver"
 
+const sdkPackage = require("@mentra/miniapp/package.json") as {apiLevel: number; oldestApiLevel: number}
+
+/** The Miniapp SDK API levels this engine runs: those of the `@mentra/miniapp` it ships (sdk/README.md). */
+export const MINIAPP_API_LEVELS = {current: sdkPackage.apiLevel, oldest: sdkPackage.oldestApiLevel}
+
 /**
  * Pure helper extracted from `AppRegistry.checkManifestVersions` so it
  * can be unit-tested without dragging in the `expo-file-system`
  * transitively-React-Native dependency tree.
  *
  * Returns `{ok: true}` when the manifest is compatible with the host, or
- * `{ok: false, blocker, reason}` with a user-facing string. Manifests missing
- * either field pass through (legacy single-bundle bundles).
+ * `{ok: false, blocker, reason}` with a log string.
  *
- * `sdkVersion` is the Mentra Miniapp SDK version the bundle targets;
- * `minHostVersion` is the Mentra App version the miniapp requires. A non-empty
- * constraint that does not parse is refused: Store metadata is untrusted, and
- * the extracted ZIP manifest is checked again before activation.
+ * `minHostVersion` is the Mentra App version the miniapp requires: the only rule apps released before API levels
+ * check. `minApiLevel` is the Miniapp SDK API level the bundle was built with; a manifest without one was built before
+ * levels, at level 1. A host whose level is lower lacks part of the contract the miniapp uses (blocker `host`: update
+ * the app); one whose oldest level is higher no longer runs what the miniapp relies on (blocker `sdk`: update the
+ * miniapp). A constraint that does not parse is refused: Store metadata is untrusted, and the extracted ZIP manifest is
+ * checked again before activation.
  */
 export function checkManifestVersions(
-  manifest: {sdkVersion?: string; minHostVersion?: string} | null,
-  options: {hostVersion: string; supportedSdkRange: string},
+  manifest: {minHostVersion?: string; minApiLevel?: number} | null,
+  options: {hostVersion?: string; apiLevels?: {current: number; oldest: number}},
 ): {ok: true} | {ok: false; blocker: "host" | "sdk"; reason: string} {
   if (!manifest) return {ok: true}
-  if (manifest.minHostVersion) {
+  if (manifest.minHostVersion && options.hostVersion) {
     const cleanHost = semver.valid(semver.coerce(options.hostVersion) ?? options.hostVersion)
     const cleanMin = semver.valid(semver.coerce(manifest.minHostVersion) ?? manifest.minHostVersion)
     if (!cleanMin) {
@@ -33,17 +39,19 @@ export function checkManifestVersions(
       }
     }
   }
-  if (manifest.sdkVersion) {
-    const cleanSdk = semver.valid(semver.coerce(manifest.sdkVersion) ?? manifest.sdkVersion)
-    if (!cleanSdk) {
-      return {ok: false, blocker: "sdk", reason: `Invalid Mentra Miniapp SDK version: ${manifest.sdkVersion}.`}
-    }
-    if (!semver.satisfies(cleanSdk, options.supportedSdkRange)) {
-      return {
-        ok: false,
-        blocker: "sdk",
-        reason: `Built for SDK ${manifest.sdkVersion}; host supports ${options.supportedSdkRange}.`,
-      }
+  const level = manifest.minApiLevel ?? 1
+  const {current, oldest} = options.apiLevels ?? MINIAPP_API_LEVELS
+  if (!Number.isInteger(level) || level < 1) {
+    return {ok: false, blocker: "host", reason: `Invalid Miniapp SDK API level: ${manifest.minApiLevel}.`}
+  }
+  if (level > current) {
+    return {ok: false, blocker: "host", reason: `Built at Miniapp SDK API level ${level}; this host runs ${current}.`}
+  }
+  if (level < oldest) {
+    return {
+      ok: false,
+      blocker: "sdk",
+      reason: `Built at Miniapp SDK API level ${level}; this host runs ${oldest} and later.`,
     }
   }
   return {ok: true}

@@ -92,6 +92,29 @@ We keep these two steps explicit rather than chaining the watchers together:
 interleaved watcher output and racey rebuilds (the example bundling a
 half-written `dist/`) cost more in confusion than the manual `build` saves.
 
+## API level
+
+`apiLevel` in [`mobile/modules/miniapp/package.json`](../mobile/modules/miniapp/package.json)
+numbers the contract between the SDK and the Mentra App that runs it. **Raise it
+by one in the PR that changes that contract**: a new request type or stream (as
+`BLOB_COPY` and `BLOB_UPLOAD` did, level 2), a new argument or field (an older
+app ignores it and silently does something else), a changed or removed argument,
+a changed response shape or meaning. A change inside the SDK that the app never
+sees doesn't raise it.
+
+`mentra-miniapp pack` and `dev` write the level into every built `miniapp.json`
+as `minApiLevel` (a manifest without one is level 1). The Mentra App runs the
+levels from `oldestApiLevel` to `apiLevel` of the SDK it ships, and refuses to
+install or update to a miniapp outside them: one built at a newer level needs
+the app updated, one at a level below `oldestApiLevel` needs rebuilding. Raise
+`oldestApiLevel` when the app stops supporting something miniapps of older
+levels rely on. Versions can't do this job: every dev build of a release family
+has the same version.
+
+`src/apiLevel.test.ts` fails when `src/protocol.ts`, where the request, response
+and stream types are, changes without the level: raise the level, or, when the
+change doesn't touch the contract, record the file's new hash there.
+
 ## Useful scripts
 
 From `sdk/`:

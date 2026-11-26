@@ -6,7 +6,6 @@
   "description": "Capture the glasses microphone to a real audio file on your phone — record, play back, and export WAV. A debugging tool for the audio system, built on session.recorder + session.blob.",
   "icon": "icon.png",
   "type": "background",
-  "sdkVersion": "0.3.0",
   "minHostVersion": "3.2.1",
   "port": 3170,
   "entry": {

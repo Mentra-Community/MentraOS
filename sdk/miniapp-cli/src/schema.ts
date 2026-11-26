@@ -63,13 +63,14 @@ export function generateSchema(): Record<string, unknown> {
         maximum: 65535,
         description: 'Port the dev server listens on (default 3000)',
       },
-      sdkVersion: {
-        type: 'string',
-        description: 'Semver of the @mentra/miniapp SDK this bundle targets. Host refuses to spawn a miniapp whose sdkVersion is incompatible with the runtime it ships.',
-      },
       minHostVersion: {
         type: 'string',
         description: 'Semver of the lowest MentraOS Manager host version that can run this bundle. The host re-validates this on every install and after host upgrades; bundles that no longer meet the bar are disabled (not deleted) with a clear UI.',
+      },
+      minApiLevel: {
+        type: 'integer',
+        minimum: 1,
+        description: 'API level of the @mentra/miniapp SDK this bundle was built with. Written by `pack` and `dev`; the Mentra App refuses a bundle above its own level and asks to be updated.',
       },
       entry: {
         type: 'object',

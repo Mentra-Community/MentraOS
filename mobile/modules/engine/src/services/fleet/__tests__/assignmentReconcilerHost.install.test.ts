@@ -89,7 +89,6 @@ async function serve(target: string, init: {headers: Record<string, string>; red
     packageName: found.packageName,
     version,
     name: found.packageName.split(".").at(-1),
-    sdkVersion: "3.3.0",
     minHostVersion: "3.3.0",
     bundle: {url: `${found.packageName}-${version}.zip`, sha256: found.sha256},
   }
@@ -207,7 +206,6 @@ mock.module("../../LocalMiniappRuntime", () => ({
   default: {
     currentInstallCompatibilityPolicy: () => ({
       hostVersion: "3.4.0",
-      supportedSdkRange: ">=3.0.0 <4.0.0",
       hardwareCapabilities: {},
     }),
     installSession: () => 1,
@@ -295,7 +293,7 @@ function start(): void {
 beforeEach(() => {
   stopAssignmentReconciler()
   resetForTests()
-  configure({auth: {}, config: {hostVersion: "3.4.0", supportedMiniappSdkRange: ">=3.0.0 <4.0.0"}})
+  configure({auth: {}, config: {hostVersion: "3.4.0"}})
   sites = new Map()
   sent = []
   tokens = []
@@ -496,7 +494,6 @@ describe("a workspace deployment whose developer tools are off", () => {
       auth: {},
       config: {
         hostVersion: "3.4.0",
-        supportedMiniappSdkRange: ">=3.0.0 <4.0.0",
         localMiniappPolicy: {systemPackageNames: ["com.mentra.settings"], managed: []},
       },
     })

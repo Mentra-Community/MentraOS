@@ -54,10 +54,7 @@ const urlUpdater = new MiniappUrlUpdater({
   isSystemPackage: isSystemMiniappPackage,
   firstPartyUrl: (packageName) => firstPartyMiniappUrl(getConfigValues(), packageName),
   hasDevelopmentSelection: (packageName) => localMiniappRuntime.hasDevelopmentSelection(packageName),
-  compatibilityPolicy: () => {
-    const policy = localMiniappRuntime.currentInstallCompatibilityPolicy()
-    return policy ? {hostVersion: policy.hostVersion, supportedSdkRange: policy.supportedSdkRange} : null
-  },
+  compatibilityPolicy: () => ({hostVersion: getConfigValues().hostVersion}),
   launchesWithPairedGlasses,
   // Redirects come back to the updater, which follows moves itself.
   fetchManifest: (url, {etag, packageName}) =>

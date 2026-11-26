@@ -20,6 +20,7 @@ import {createHash} from "node:crypto"
 import {readdirSync, readFileSync, statSync, watch} from "fs"
 import {join, relative, sep} from "path"
 import JSZip from "jszip"
+import {withApiLevel} from "./manifest.js"
 import type {ServerWebSocket} from "bun"
 
 export interface DevServerOptions {
@@ -515,9 +516,18 @@ export async function buildProjectSnapshot(rootDir: string): Promise<ProjectSnap
   for (const {disk, entry} of files) {
     const abs = join(rootDir, disk)
     try {
-      const buf = readFileSync(abs)
+      let buf: Buffer | string = readFileSync(abs)
+      if (entry === "miniapp.json") {
+        // The SDK's API level, as `pack` writes it: a development build is refused where its release would be.
+        // One that doesn't parse ships as it is, for the dev server to refuse.
+        manifest = buf = buf.toString("utf-8")
+        try {
+          const parsed = JSON.parse(manifest) as Record<string, unknown>
+          const stamped = withApiLevel(parsed, rootDir)
+          if (stamped !== parsed) manifest = buf = `${JSON.stringify(stamped, null, 2)}\n`
+        } catch {}
+      }
       zip.file(entry, buf, {date: ZIP_ENTRY_DATE})
-      if (entry === "miniapp.json") manifest = buf.toString("utf-8")
     } catch (err) {
       console.warn(`[__mentra_dev] failed to read ${disk}, skipping:`, err)
     }

@@ -94,7 +94,6 @@ function manifest(overrides: Record<string, unknown> = {}) {
     name: "Acme Tools",
     icon: "icon.png",
     ageRating: "4+",
-    sdkVersion: "3.3.0",
     minHostVersion: "3.3.0",
     hardwareRequirements: [],
     bundle: {url: `${pkg}-1.2.0.zip`, sha256: zipSha},
@@ -146,7 +145,7 @@ function deps(overrides: Partial<InstallMiniappDependencies> = {}): InstallMinia
       steps.push("age gate")
       return ageVerdict()
     },
-    compatibilityPolicy: () => ({hostVersion, supportedSdkRange: ">=3.0.0 <4.0.0"}),
+    compatibilityPolicy: () => ({hostVersion}),
     missingHardware: (requirements) => missingRequiredHardware(requirements, getModelCapabilities(glasses)),
     install: async (bundleUrl, options) => {
       // Like the installer: download through the caller's downloader, then read the identity, then the ZIP's manifest.
@@ -506,6 +505,12 @@ describe("what stops an install", () => {
     expect(installs).toEqual([])
   })
 
+  test("a release built at a Miniapp SDK API level this app doesn't run needs a newer Mentra App, and isn't downloaded", async () => {
+    served = manifest({minApiLevel: 1_000})
+    expect(await failure(install(url, {confirm: async () => true}))).toBe("needs_newer_app")
+    expect(installs).toEqual([])
+  })
+
   test("a miniapp that needs hardware installs on a phone with no glasses, and the sheet says what it needs", async () => {
     served = manifest({
       hardwareRequirements: [
@@ -523,7 +528,6 @@ describe("what stops an install", () => {
     expect(result.status).toBe("installed")
     expect(previews[0]!.missingHardware).toEqual(["CAMERA"])
     expect(installs).toHaveLength(1)
-    expect("hardwareCapabilities" in installs[0]!.options.compatibilityPolicy!).toBe(false)
   })
 
   test("the sheet names nothing when the paired glasses have what it needs", async () => {
@@ -859,9 +863,7 @@ describe("headless installs", () => {
       onlyIfStopped: true,
       askIfRunning: true,
       firstInstall: true,
-      compatibilityPolicy: {hostVersion: "3.4.0", supportedSdkRange: ">=3.0.0 <4.0.0"},
     })
-    expect("hardwareCapabilities" in installs[0]!.options.compatibilityPolicy!).toBe(false)
   })
 
   test("an assignment of a package installed from its URL still installs: the reconciler decides", async () => {

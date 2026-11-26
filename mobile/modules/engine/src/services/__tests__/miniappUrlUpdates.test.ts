@@ -82,7 +82,6 @@ function manifest(version: string, overrides: Record<string, unknown> = {}) {
     packageName: pkg,
     version,
     name: "Captions",
-    sdkVersion: "0.3.0",
     minHostVersion: "3.0.0",
     hardwareRequirements: [],
     bundle: {url: `${pkg}-${version}.zip`, sha256: sha},
@@ -100,7 +99,6 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
     hasDevelopmentSelection: (packageName) => devSelected.has(packageName),
     compatibilityPolicy: () => ({
       hostVersion,
-      supportedSdkRange: ">=0.3.0 <4.0.0",
     }),
     launchesWithPairedGlasses: (hardwareRequirements) => {
       glassesAsked.push(hardwareRequirements)
@@ -529,6 +527,12 @@ describe("updates from a miniapp's own URL", () => {
 
   test("skips a release this phone can't run", async () => {
     responses = [served(manifest("1.1.0", {minHostVersion: "9.0.0"}))]
+    await updater().checkAll()
+    expect(installs).toHaveLength(0)
+  })
+
+  test("skips, before downloading it, a release built at a Miniapp SDK API level this app doesn't run", async () => {
+    responses = [served(manifest("1.1.0", {minApiLevel: 1_000}))]
     await updater().checkAll()
     expect(installs).toHaveLength(0)
   })

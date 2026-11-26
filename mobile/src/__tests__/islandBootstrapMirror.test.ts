@@ -18,12 +18,11 @@ describe("island bootstrap front door", () => {
     const analytics = jest.fn()
     bootstrap.configure({auth, config: {coreUrl: "http://core", oemId: "mentra"}, analytics})
     expect(bootstrap.getAuth()).toBe(auth)
-    // With the engine's own hostVersion and miniapp SDK range, which the host didn't name.
+    // With the engine's own hostVersion, which the host didn't name.
     expect(bootstrap.getConfigValues()).toEqual({
       coreUrl: "http://core",
       oemId: "mentra",
       hostVersion: expect.any(String),
-      supportedMiniappSdkRange: expect.any(String),
     })
     expect(bootstrap.getAnalytics()).toBe(analytics)
   })

@@ -42,7 +42,6 @@ export interface LocalBuildInstall {
   sha256?: string
   /** Its development server. */
   server?: LocalBuildServer
-  compatibilityPolicy?: InstallBundleOptions["compatibilityPolicy"]
   /** Download the ZIP; by default, a plain download. */
   downloadBundle?: InstallBundleOptions["downloadBundle"]
   /** True once the install should stop. Nothing activates after that. */
@@ -81,7 +80,6 @@ export async function installLocalBuild(bundleUrl: string, install: LocalBuildIn
           sourceUrl: install.sourceUrl,
           ...(install.sha256 ? {bundleSha256: install.sha256} : {}),
         },
-        ...(install.compatibilityPolicy ? {compatibilityPolicy: install.compatibilityPolicy} : {}),
         ...(install.downloadBundle ? {downloadBundle: install.downloadBundle} : {}),
         beforeActivate: assertCurrent,
       })

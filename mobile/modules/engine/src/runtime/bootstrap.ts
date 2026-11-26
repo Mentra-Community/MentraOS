@@ -56,8 +56,6 @@ export interface IslandConfigValues {
   isMiniappAvailable?: (packageName: string, mode: MiniappAvailabilityMode) => boolean
   /** User-facing Mentra App version, compared with a release's `minHostVersion`. Defaults to the engine's version. */
   hostVersion?: string
-  /** Semver range of Mentra Miniapp SDK versions (`sdkVersion`) this host runs. Defaults to the engine's own. */
-  supportedMiniappSdkRange?: string
   /**
    * The system miniapps this host build declares, like an Android system image's system apps: the packages it owns,
    * whatever any manifest says. They install and update from `firstPartyMiniappsUrl`.
@@ -336,8 +334,6 @@ let options: IslandConfigureOptions | null = null
 
 /** The engine's release family version, the same at this depth under src/ and build/. */
 const ENGINE_VERSION = (require("../../package.json") as {version: string}).version
-/** Mentra Miniapp SDK versions (`sdkVersion` in miniapp.json) this engine runs. */
-const SUPPORTED_MINIAPP_SDK_RANGE = ">=0.3.0 <4.0.0"
 let started = false
 
 /**
@@ -357,7 +353,6 @@ export function configure(opts: IslandConfigureOptions): void {
   const config = {
     ...opts.config,
     hostVersion: opts.config?.hostVersion ?? ENGINE_VERSION,
-    supportedMiniappSdkRange: opts.config?.supportedMiniappSdkRange ?? SUPPORTED_MINIAPP_SDK_RANGE,
   }
   options = {...opts, config: {...config, ...frozenMiniappPolicy(config)}}
 }

@@ -66,7 +66,6 @@ my-miniapp/
   "version": "1.0.0",
   "name": "Notes",
   "type": "standard",
-  "sdkVersion": "0.3.0",
   "minHostVersion": "1.42.0",
   "entry": {
     "background": "dist/background/index.js",

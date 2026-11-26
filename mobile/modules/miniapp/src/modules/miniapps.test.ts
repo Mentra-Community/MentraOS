@@ -58,7 +58,7 @@ describe("MiniappsModule installs", () => {
     await expect(
       new MiniappsModule(session).checkInstallCompatibility({
         minHostVersion: "3.0.0",
-        sdkVersion: null,
+        minApiLevel: null,
         hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
       }),
     ).resolves.toEqual(result)
@@ -66,7 +66,7 @@ describe("MiniappsModule installs", () => {
       {
         type: MiniappRequestType.MINIAPPS_INSTALL_CHECK,
         minHostVersion: "3.0.0",
-        sdkVersion: undefined,
+        minApiLevel: undefined,
         hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}],
       },
     ])

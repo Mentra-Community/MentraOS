@@ -124,7 +124,6 @@ beforeAll(async () => {
     config: {
       isMiniappAvailable: (packageName) => !unavailable.has(packageName),
       hostVersion: "3.3.0",
-      supportedMiniappSdkRange: "^0.3.0",
     },
   })
   miniappLauncher = (await import("../MiniappLauncher")).miniappLauncher

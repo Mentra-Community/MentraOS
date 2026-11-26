@@ -22,8 +22,8 @@ export async function validateInstallBundleArchive(
 ): Promise<{
   packageName: string
   version: string
-  sdkVersion?: string
   minHostVersion?: string
+  minApiLevel?: number
   hardwareRequirements: HardwareRequirement[]
   publisherKeyFingerprint?: string
 }> {
@@ -89,8 +89,9 @@ export async function validateInstallBundleArchive(
   const manifest = JSON.parse(manifestText) as Record<string, unknown>
   const packageName = typeof manifest.packageName === "string" ? manifest.packageName : ""
   const version = typeof manifest.version === "string" ? manifest.version : ""
-  const sdkVersion = typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined
   const minHostVersion = typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined
+  // Kept as found: the version gate refuses one that isn't a level.
+  const minApiLevel = manifest.minApiLevel as number | undefined
   validateManifestPermissions(manifest.permissions)
   const hardwareRequirements = validateManifestHardwareRequirements(manifest.hardwareRequirements)
   if (!PACKAGE_NAME_PATTERN.test(packageName)) throw new Error("bundle manifest has an invalid packageName")
@@ -120,8 +121,8 @@ export async function validateInstallBundleArchive(
   return {
     packageName,
     version,
-    sdkVersion,
     minHostVersion,
+    minApiLevel,
     hardwareRequirements,
     ...(publisherKeyFingerprint ? {publisherKeyFingerprint} : {}),
   }

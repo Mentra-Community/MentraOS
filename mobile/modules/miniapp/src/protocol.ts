@@ -12,6 +12,7 @@
 // Miniapp → phone (request, via bridge envelope)
 // ============================================================================
 
+/** A change to the contract with the Mentra App raises `apiLevel` in package.json (sdk/README.md, "API level"). */
 export enum MiniappRequestType {
   /** Handshake: miniapp announces itself and asks phone to bind the session. */
   CONNECT = "miniapp_connect",

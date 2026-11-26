@@ -388,8 +388,8 @@ class MiniappLauncher {
       packageName?: string
       name?: string
       version?: string
-      sdkVersion?: string
       minHostVersion?: string
+      minApiLevel?: number
       type?: string
       ageRating?: unknown
       entry?: {background?: string; ui?: string}
@@ -416,8 +416,8 @@ class MiniappLauncher {
           packageName: manifest.packageName ?? packageName,
           name: manifest.name,
           version: manifest.version ?? version,
-          sdkVersion: manifest.sdkVersion,
           minHostVersion: manifest.minHostVersion,
+          minApiLevel: manifest.minApiLevel,
           type: manifest.type,
           entry: manifest.entry,
           permissions: manifest.permissions,
@@ -470,9 +470,8 @@ class MiniappLauncher {
   /** Throws {@link MiniappIncompatibleHostError} when this Mentra App can't run the resolved bundle. */
   assertRunsOnPhone(packageName: string, resolved: ResolvedBundle): void {
     const manifest = resolved.installedManifest
-    const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
-    if (!manifest || !hostVersion || !supportedMiniappSdkRange) return
-    const versions = checkManifestVersions(manifest, {hostVersion, supportedSdkRange: supportedMiniappSdkRange})
+    if (!manifest) return
+    const versions = checkManifestVersions(manifest, {hostVersion: getConfigValues().hostVersion})
     if (!versions.ok) throw new MiniappIncompatibleHostError(packageName, manifest.name || packageName, versions.reason)
   }
 

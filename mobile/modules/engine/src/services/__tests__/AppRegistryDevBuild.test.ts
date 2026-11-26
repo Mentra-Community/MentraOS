@@ -10,6 +10,7 @@ import type {MiniappReleaseIdentity} from "../AppRegistry"
 const values = new Map<string, unknown>()
 const installationValues = new Map<string, string>()
 let candidateFingerprint: string | undefined
+let candidateApiLevel: number | undefined
 /** The dev icon's download, which a test may hold open. */
 let iconDownload: () => Promise<{uri: string}> = async () => {
   throw new Error("no network in this test")
@@ -119,6 +120,7 @@ mock.module("../validateInstallBundle", () => ({
     packageName,
     version: "1.0.0",
     ...(candidateFingerprint ? {publisherKeyFingerprint: candidateFingerprint} : {}),
+    ...(candidateApiLevel ? {minApiLevel: candidateApiLevel} : {}),
   }),
 }))
 
@@ -177,9 +179,17 @@ beforeEach(() => {
     throw new Error("no network in this test")
   }
   candidateFingerprint = undefined
+  candidateApiLevel = undefined
   developmentAllowed = true
   installedAllowed = () => true
   extractions = 0
+})
+
+test("a snapshot built with a newer Miniapp SDK API level is refused, though its caller names no policy", async () => {
+  candidateApiLevel = 1_000
+  const installed = await installDevSnapshot()
+  expect(installed.is_error() && installed.error.message).toContain("API level")
+  expect(extractions).toBe(0)
 })
 
 describe("live dev builds follow the installed signer", () => {

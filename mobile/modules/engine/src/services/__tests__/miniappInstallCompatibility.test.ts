@@ -11,7 +11,6 @@ import {
 
 const policy = {
   hostVersion: "2.13.0",
-  supportedSdkRange: "^0.3.0",
   hardwareCapabilities: evenRealitiesG1,
 }
 
@@ -49,15 +48,15 @@ describe("miniapp install compatibility", () => {
       compatible: false,
       blocker: "host",
     })
-    expect(checkMiniappInstallCompatibility({sdkVersion: "0.4.0"}, policy)).toMatchObject({
+    expect(checkMiniappInstallCompatibility({minApiLevel: 1_000}, policy)).toMatchObject({
       compatible: false,
-      blocker: "sdk",
+      blocker: "host",
     })
   })
 })
 
 describe("what the phone can run", () => {
-  const phone = {hostVersion: "2.13.0", supportedSdkRange: "^0.3.0"}
+  const phone = {hostVersion: "2.13.0"}
 
   test("hardware never refuses a release: it describes the glasses, not the phone", () => {
     expect(
@@ -70,7 +69,7 @@ describe("what the phone can run", () => {
       compatible: false,
       blocker: "host",
     })
-    expect(checkMiniappRunsOnPhone({sdkVersion: "0.4.0"}, phone)).toMatchObject({compatible: false, blocker: "sdk"})
+    expect(checkMiniappRunsOnPhone({minApiLevel: 1_000}, phone)).toMatchObject({compatible: false, blocker: "host"})
   })
 })
 
