@@ -1606,6 +1606,7 @@
         "DOPPLER_CONFIG",
         "DOPPLER_ENVIRONMENT",
         "DOPPLER_PROJECT",
+        "GEMINI_API_KEY",
         "MENTRA_CORE_URL",
         "NODE_ENV",
         "PORT"
