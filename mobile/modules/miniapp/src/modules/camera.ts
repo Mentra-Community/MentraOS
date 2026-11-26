@@ -95,8 +95,8 @@ export interface PhotoTaken {
   requestId: string
   /**
    * The photo's key in `session.blob`. Read it with `session.blob.bytes(key)`, for example to send to a
-   * backend with `fetch`. The photo is deleted at `expiresAt`; to keep it, store a copy under a key of
-   * your own (`session.blob.set(myKey, bytes)`).
+   * backend with `fetch`. The photo is deleted at `expiresAt`; to keep it, copy it under a key of your
+   * own with `session.blob.copy(key, myKey)`: a file copy on the phone, with a `url` that doesn't expire.
    */
   key: string
   /**

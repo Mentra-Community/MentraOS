@@ -48,6 +48,9 @@ class File {
   rename(name: string) {
     this.move(new File(path.dirname(this.path), name))
   }
+  copy(target: File) {
+    fs.copyFileSync(this.path, target.path)
+  }
   delete() {
     fs.unlinkSync(this.path)
   }
@@ -155,6 +158,17 @@ describe("expiring blobs", () => {
     expect(last()).toMatchObject({ok: false, error: {code: "BLOB_NOT_FOUND"}})
   })
 
+  it("names the URL the package's screen loads each file from, kept files and expiring ones alike", async () => {
+    const {recordMiniappScreenOrigin, resetMiniappScreenOriginsForTests} = await import("../miniappScreenOrigin")
+    expect(take("photo/p0")).not.toHaveProperty("url")
+    recordMiniappScreenOrigin(pkg, "miniapp://com.acme.camera")
+    const photo = take("photo/p1")
+    const fileName = photo.uri.slice(photo.uri.lastIndexOf("/") + 1)
+    expect(photo.url).toBe(`miniapp://com.acme.camera/.mentra/files/${fileName}`)
+    expect(get("photo/p1")).toMatchObject({url: photo.url})
+    resetMiniappScreenOriginsForTests()
+  })
+
   it("stays outside the quota", () => {
     take("photo/p1", 5000)
     store.handleUsage(pkg, {})
@@ -203,6 +217,22 @@ describe("expiring blobs", () => {
     expect(list()).toEqual(["receipt"])
     store.handleUsage(pkg, {})
     expect(last().result).toMatchObject({bytes: 2000, count: 1})
+  })
+
+  it("copies a photo under the miniapp's own key on disk: kept past the photo's expiry, under the quota", () => {
+    const photo = take("photo/p1", 3000)
+    store.handleCopy(pkg, {from: "photo/p1", key: "photos/kept.jpg"})
+    expect(last()).toMatchObject({ok: true, result: {key: "photos/kept.jpg", mimeType: "image/jpeg", bytes: 3000}})
+    const copy = last().result as {uri: string; expiresAt?: number}
+    expect(copy.expiresAt).toBeUndefined()
+    expect(copy.uri).not.toBe(photo.uri)
+    now += EXPIRING_BLOB_TTL_MS * 2
+    expect(list()).toEqual(["photos/kept.jpg"])
+    expect(onDisk(copy.uri)).toBe(true)
+    store.handleUsage(pkg, {})
+    expect(last().result).toMatchObject({bytes: 3000, count: 1})
+    store.handleCopy(pkg, {from: "photo/p1", key: "again"})
+    expect(last()).toMatchObject({ok: false, error: {code: "BLOB_NOT_FOUND"}})
   })
 
   it("the first photo of a host run deletes every app's expired photos, in every partition", () => {

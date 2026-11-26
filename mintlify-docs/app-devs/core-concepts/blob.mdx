@@ -27,7 +27,8 @@ registerMiniapp(async (session) => {
 Blob needs no permission and no hardware. Every method is async and round-trips
 to the phone. A stored blob's `uri` is a `file://` path in your miniapp's private
 storage, which you can hand to `session.speaker.play`, `session.blob.share`, or
-another host capability.
+another host capability. Its `url` is where your miniapp's own screen loads it,
+as `<img src={meta.url}>`: no bytes cross the bridge.
 
 ## Reading and writing
 
@@ -141,6 +142,7 @@ await reader.close();
 | `set(key, data, opts?)` | `Promise<BlobMeta>` | Store `Uint8Array`/`ArrayBuffer`/base64 bytes. |
 | `setFromUrl(key, url, opts?)` | `Promise<BlobMeta>` | Host downloads `url` to disk. `opts.headers` for auth. |
 | `importFile(opts?)` | `Promise<BlobMeta \| null>` | OS file picker. `null` if cancelled. |
+| `copy(from, key)` | `Promise<BlobMeta>` | Copy the blob under `from` to `key` on the phone. The way to keep a camera photo, which expires. |
 | `createWriteStream(key, opts?)` | `Promise<BlobWriter>` | Streaming writer for large payloads. |
 | `get(key)` | `Promise<BlobMeta \| null>` | Metadata (incl. `uri`), or `null` if absent. |
 | `stat(key)` | `Promise<BlobMeta \| null>` | Alias of `get`. |
@@ -156,7 +158,7 @@ await reader.close();
 
 ## BlobMeta
 
-`get`, `stat`, `list`, and `close` resolve to a `BlobMeta`.
+`get`, `stat`, `list`, `copy`, and `close` resolve to a `BlobMeta`.
 
 | Field | Type | Description |
 |---|---|---|
@@ -168,6 +170,7 @@ await reader.close();
 | `updatedAt` | `number` | Epoch ms last written. |
 | `md5` | `string` | Content md5 (lowercase hex). Skipped for very large blobs. |
 | `uri` | `string` | `file://` URI. Feed to `session.speaker.play` or `session.system.share`; they accept no other file. |
+| `url` | `string` | Where your miniapp's screen loads the file, as `<img src>` or `fetch`. Absent for a miniapp with no screen. It names the screen's current origin, so read it again rather than store it. |
 | `meta` | `Record<string, string \| number \| boolean>` | App-defined metadata persisted with the blob. |
 
 ## Size limits

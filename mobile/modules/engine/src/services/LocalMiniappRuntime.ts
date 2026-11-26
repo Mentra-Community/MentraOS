@@ -136,7 +136,6 @@ import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./Minia
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import {isLocalBuildContext} from "./miniappBuildKind"
-import {miniappFileUrl} from "./miniappScreenOrigin"
 import {configureMiniappDataPartitions, miniappDataSessionOf, resolveMiniappDataPartition} from "./miniappDataPartition"
 import {sameCoreUrl} from "./fleet/coreUrl"
 import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
@@ -1539,6 +1538,9 @@ class LocalMiniappRuntime {
         this.enqueueBlobRequest(packageName, requestId, () =>
           this.blobStore.handleImport(packageName, payload, requestId),
         )
+        break
+      case MiniappRequestType.BLOB_COPY:
+        this.enqueueBlobRequest(packageName, requestId, () => this.blobStore.handleCopy(packageName, payload, requestId))
         break
       case MiniappRequestType.BLOB_GET:
         this.enqueueBlobRequest(packageName, requestId, () => this.blobStore.handleGet(packageName, payload, requestId))
@@ -3936,7 +3938,7 @@ class LocalMiniappRuntime {
         photo.mimeType,
       )
       // The screen's own origin serves the file.
-      const url = this.screenUrlOf(packageName, blob.uri)
+      const url = blob.url
       const thumbnail = photo.thumbnail && this.keepThumbnailForMiniapp(packageName, blob.key, photo.thumbnail)
       return {
         requestId: photo.requestId,
@@ -3974,7 +3976,7 @@ class LocalMiniappRuntime {
         thumbnail.mimeType,
       )
       if (!blob) return undefined
-      const url = this.screenUrlOf(packageName, blob.uri)
+      const url = blob.url
       return {
         key: blob.key,
         ...(url ? {url} : {}),
@@ -3987,11 +3989,6 @@ class LocalMiniappRuntime {
       this.blobStore.discardFile(thumbnail.fileUri)
       return undefined
     }
-  }
-
-  /** The URL the miniapp's screen loads one of its blob files from, if it has a screen. */
-  private screenUrlOf(packageName: string, blobUri: string): string | undefined {
-    return miniappFileUrl(packageName, blobUri.slice(blobUri.lastIndexOf("/") + 1)) ?? undefined
   }
 
   /** The manifest's CAMERA permission, or an error answer naming the operation. */

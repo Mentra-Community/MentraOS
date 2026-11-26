@@ -49,6 +49,11 @@ export interface BlobMeta {
   md5?: string
   /** `file://` URI. Feed to `session.speaker.play`, `blob.share`, etc. */
   uri: string
+  /**
+   * A URL the miniapp's own screen loads the file from (an `<img src>`, a `fetch`), like a camera photo's `url`.
+   * Absent for a miniapp with no screen. It names the screen's current origin, so read it again rather than keep it.
+   */
+  url?: string
   /** App-defined metadata persisted with the blob. */
   meta?: Record<string, string | number | boolean>
 }
@@ -239,6 +244,15 @@ export class BlobModule {
       meta: opts.meta,
     })
     return new BlobWriter(this.session, res.key)
+  }
+
+  /**
+   * Copy the blob under `from` to `key`, on the phone: no bytes cross the bridge, so a photo copies in milliseconds.
+   * The copy is the miniapp's own, under its quota, and never expires: the way to keep a camera photo (which expires).
+   * Resolves to the copy's metadata, with its `url` for the screen.
+   */
+  copy(from: string, key: string): Promise<BlobMeta> {
+    return this.session.sendRequest<BlobMeta>({type: MiniappRequestType.BLOB_COPY, from, key})
   }
 
   // ── read ─────────────────────────────────────────────────────────────────

@@ -59,6 +59,9 @@ function fixture(
     requestId: "p1abc",
     ...(opts.thumbnail ? {thumbnail: THUMBNAIL} : {}),
   }))
+  // The blob store names each file's screen URL, as BlobStore does: null for a package with no screen.
+  const origin = opts.screenOrigin === undefined ? "miniapp://com.mentra.camera" : opts.screenOrigin
+  const urlOf = (fileName: string) => (origin ? {url: `${origin}/.mentra/files/${fileName}`} : {})
   const storeExpiringFile = mock((_pkg: string, key: string, _uri: string, mimeType: string) => {
     if (opts.storeFails) throw new Error("disk full")
     return {
@@ -67,6 +70,7 @@ function fixture(
       bytes: 61234,
       expiresAt: 1_800_000_000_000,
       uri: "file:///documents/mentra_blobs/core.mu_1.p/com.mentra.camera/mywpiww0-abc.jpg",
+      ...urlOf("mywpiww0-abc.jpg"),
     }
   })
   const storeExpiringCompanion = mock(
@@ -78,6 +82,7 @@ function fixture(
         bytes: 30000,
         expiresAt: 1_800_000_000_000,
         uri: "file:///documents/mentra_blobs/core.mu_1.p/com.mentra.camera/mywpiww1-def.jpg",
+        ...urlOf("mywpiww1-def.jpg"),
       }
     },
   )
@@ -91,11 +96,6 @@ function fixture(
     release: released,
   }))
   const discardFile = mock((_uri: string) => {})
-  // As miniappScreenOrigin.miniappFileUrl: null for a package with no screen.
-  const origin = opts.screenOrigin === undefined ? "miniapp://com.mentra.camera" : opts.screenOrigin
-  const miniappFileUrl = mock((_pkg: string, fileName: string) =>
-    origin ? `${origin}/.mentra/files/${fileName}` : null,
-  )
   const Host = new Function(
     "phonePhotoCoordinator",
     "fleetEvents",
@@ -105,7 +105,6 @@ function fixture(
     "MiniappErrorCode",
     "PhotoError",
     "EXPIRING_BLOB_TTL_MS",
-    "miniappFileUrl",
     "acsMeetingService",
     "LOG_TAG",
     `${compiled}; return Host`,
@@ -118,7 +117,6 @@ function fixture(
     {PERMISSION_NOT_DECLARED: "PERMISSION_NOT_DECLARED", INTERNAL: "INTERNAL"},
     PhotoError,
     30 * 60 * 1000,
-    miniappFileUrl,
     {photoPauseHeld: () => opts.photoPauseHeld === true},
     "LOCAL_MINIAPP",
   )
@@ -140,7 +138,6 @@ function fixture(
     storeExpiringFile,
     storeExpiringCompanion,
     discardFile,
-    miniappFileUrl,
   }
 }
 
@@ -182,10 +179,9 @@ describe("handlePhoto with local delivery", () => {
     ])
   })
 
-  test("the photo's URL is on the screen's own origin, by the file's name on disk", async () => {
+  test("the photo's URL is the stored file's, on the screen's own origin", async () => {
     const f = fixture()
     await f.host.handlePhoto(PACKAGE, {delivery: "local"}, "req-1")
-    expect(f.miniappFileUrl).toHaveBeenCalledWith(PACKAGE, "mywpiww0-abc.jpg")
     expect(f.results[0]).toMatchObject({
       ok: true,
       data: {url: "miniapp://com.mentra.camera/.mentra/files/mywpiww0-abc.jpg"},

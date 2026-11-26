@@ -41,6 +41,7 @@ import {MiniappErrorCode} from "@mentra/miniapp"
 import {storage as mmkvStorage} from "../utils/storage/storage"
 import {sanitizeSegment, shareFileName, withDiskExt} from "./blobPaths"
 import {canonicalPath} from "./miniappFiles"
+import {miniappFileUrl} from "./miniappScreenOrigin"
 import {filePathOfUri, isNetworkUrl} from "./miniappPaths"
 import type {MiniappDataPartition} from "./miniappDataPartition"
 
@@ -258,8 +259,9 @@ export class BlobStore {
     return new File(this.dirFor(packageName), fileName)
   }
 
-  /** Public API shape: stored meta + derived file:// uri. */
+  /** Public API shape: stored meta + derived file:// uri, and the URL the package's screen loads it from. */
   private toBlobMeta(packageName: string, m: StoredBlobMeta) {
+    const url = miniappFileUrl(packageName, m.fileName)
     return {
       key: m.key,
       name: m.name,
@@ -270,6 +272,7 @@ export class BlobStore {
       md5: m.md5,
       uri: this.fileFor(packageName, m.fileName).uri,
       meta: m.meta,
+      ...(url ? {url} : {}),
       ...(m.expiresAt ? {expiresAt: m.expiresAt} : {}),
     }
   }
@@ -689,6 +692,36 @@ export class BlobStore {
       this.hooks.sendResult(packageName, requestId, true, meta)
     } catch (err) {
       this.fail(packageName, requestId, MiniappErrorCode.BLOB_IMPORT_FAILED, err)
+    }
+  }
+
+  /** Copy the blob under `from` to `key` on disk: the copy is the package's own, under its quota, never expiring. */
+  handleCopy(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    const from = payload.from as string
+    const key = payload.key as string
+    const source = from ? this.readMeta(packageName, from) : null
+    const file = source ? this.fileFor(packageName, source.fileName) : null
+    if (!key || !source || !file?.exists) {
+      this.hooks.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.BLOB_NOT_FOUND,
+        message: `Blob ${from} not found`,
+      })
+      return
+    }
+    if (this.overQuota(packageName, key, source.bytes || 0)) {
+      this.hooks.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.BLOB_QUOTA_EXCEEDED,
+        message: `Blob quota (${BLOB_QUOTA_BYTES} bytes) exceeded`,
+      })
+      return
+    }
+    try {
+      const fileName = this.makeId()
+      file.copy(this.fileFor(packageName, fileName))
+      const meta = this.commitFile(packageName, key, fileName, source.mimeType, source.name, source.meta)
+      this.hooks.sendResult(packageName, requestId, true, meta)
+    } catch (err) {
+      this.fail(packageName, requestId, MiniappErrorCode.INTERNAL, err)
     }
   }
 
