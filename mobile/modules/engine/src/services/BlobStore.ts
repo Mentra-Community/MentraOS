@@ -47,8 +47,13 @@ import type {MiniappDataPartition} from "./miniappDataPartition"
 
 const LOG_TAG = "LocalMiniappRuntime"
 
-/** Per-app blob quota: 1 GB. */
-export const BLOB_QUOTA_BYTES = 1024 * 1024 * 1024
+/**
+ * Per-app blob quota: half the space the app could use (what it stores plus the phone's free
+ * space), never below 1 GB unless the phone has less room than that. It moves with the phone's
+ * free space, and an app that reaches it still leaves as much free as it holds, so one app never
+ * fills the phone.
+ */
+export const BLOB_MIN_QUOTA_BYTES = 1024 * 1024 * 1024
 /**
  * Expiring blobs are files the host stores for a miniapp, such as the photos it takes. They
  * outlive their request only briefly, so they sit outside the quota under their own limits:
@@ -308,9 +313,25 @@ export class BlobStore {
       .slice(2, 6)}`
   }
 
-  /** Would storing `incoming` bytes under `key` exceed the per-app quota? */
-  private overQuota(packageName: string, key: string, incoming: number): boolean {
-    return this.committedUsage(packageName) - this.quotaBytesOf(packageName, key) + incoming > BLOB_QUOTA_BYTES
+  private quotaBytes(packageName: string): number {
+    const room = this.committedUsage(packageName) + Paths.availableDiskSpace
+    return Math.min(room, Math.max(BLOB_MIN_QUOTA_BYTES, Math.floor(room / 2)))
+  }
+
+  /** Fails the request with BLOB_QUOTA_EXCEEDED when the app would store more than its quota. */
+  private rejectOverQuota(packageName: string, requestId: string | undefined, bytesAfter: number): boolean {
+    const quota = this.quotaBytes(packageName)
+    if (bytesAfter <= quota) return false
+    this.hooks.sendResult(packageName, requestId, false, undefined, {
+      code: MiniappErrorCode.BLOB_QUOTA_EXCEEDED,
+      message: `Blob quota (${quota} bytes) exceeded`,
+    })
+    return true
+  }
+
+  /** What the app would store with `incoming` bytes under `key`, the blob there now replaced. */
+  private usageWith(packageName: string, key: string, incoming: number): number {
+    return this.committedUsage(packageName) - this.quotaBytesOf(packageName, key) + incoming
   }
 
   /** The bytes the blob now under `key` counts toward the quota: none when absent or expiring. */
@@ -537,13 +558,7 @@ export class BlobStore {
         return
       }
       // Exclude the prior blob under this key — it's freed on commit (overwrite).
-      if (this.committedUsage(packageName) - up.priorBytes + up.bytes + bytes.length > BLOB_QUOTA_BYTES) {
-        this.hooks.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.BLOB_QUOTA_EXCEEDED,
-          message: `Blob quota (${BLOB_QUOTA_BYTES} bytes) exceeded`,
-        })
-        return
-      }
+      if (this.rejectOverQuota(packageName, requestId, this.committedUsage(packageName) - up.priorBytes + up.bytes + bytes.length)) return
       up.handle.offset = up.bytes
       up.handle.writeBytes(bytes)
       up.bytes += bytes.length
@@ -615,16 +630,12 @@ export class BlobStore {
     try {
       const dl = await File.downloadFileAsync(url, partFile, {idempotent: true, ...(headers ? {headers} : {})})
       const size = dl.size ?? 0
-      if (this.overQuota(packageName, key, size)) {
+      if (this.rejectOverQuota(packageName, requestId, this.usageWith(packageName, key, size))) {
         try {
           dl.delete()
         } catch {
           /* ignore */
         }
-        this.hooks.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.BLOB_QUOTA_EXCEEDED,
-          message: `Blob quota (${BLOB_QUOTA_BYTES} bytes) exceeded`,
-        })
         return
       }
       partFile.rename(fileName)
@@ -705,13 +716,7 @@ export class BlobStore {
     }
     try {
       const size = file.size ?? 0
-      if (this.overQuota(packageName, key, size)) {
-        this.hooks.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.BLOB_QUOTA_EXCEEDED,
-          message: `Blob quota (${BLOB_QUOTA_BYTES} bytes) exceeded`,
-        })
-        return
-      }
+      if (this.rejectOverQuota(packageName, requestId, this.usageWith(packageName, key, size))) return
       const fileName = this.makeId()
       file.copy(this.fileFor(packageName, fileName))
       const name = basename(file.uri) || key
@@ -743,13 +748,7 @@ export class BlobStore {
       })
       return
     }
-    if (this.overQuota(packageName, key, source.bytes || 0)) {
-      this.hooks.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.BLOB_QUOTA_EXCEEDED,
-        message: `Blob quota (${BLOB_QUOTA_BYTES} bytes) exceeded`,
-      })
-      return
-    }
+    if (this.rejectOverQuota(packageName, requestId, this.usageWith(packageName, key, source.bytes || 0))) return
     try {
       const fileName = this.makeId()
       file.copy(this.fileFor(packageName, fileName))
@@ -787,7 +786,7 @@ export class BlobStore {
     this.hooks.sendResult(packageName, requestId, true, {
       bytes: metas.reduce((s, m) => s + (m.bytes || 0), 0),
       count: metas.length,
-      quotaBytes: BLOB_QUOTA_BYTES,
+      quotaBytes: this.quotaBytes(packageName),
     })
   }
 

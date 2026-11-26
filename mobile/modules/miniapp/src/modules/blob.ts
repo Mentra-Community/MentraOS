@@ -350,7 +350,11 @@ export class BlobModule {
 
   // ── manage ───────────────────────────────────────────────────────────────
 
-  /** Per-app usage + the quota ceiling, in bytes. */
+  /**
+   * Per-app usage and the current quota ceiling, in bytes. The quota is half of what the app
+   * stores plus the phone's free space, never below 1 GB unless the phone has less room, so it
+   * changes as the phone fills up.
+   */
   usage(): Promise<{bytes: number; count: number; quotaBytes: number}> {
     return this.session.sendRequest<{bytes: number; count: number; quotaBytes: number}>({
       type: MiniappRequestType.BLOB_USAGE,

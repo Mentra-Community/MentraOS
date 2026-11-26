@@ -5,7 +5,8 @@ import * as path from "node:path"
 
 let root: string
 let now: number
-const Paths = {cache: "", document: ""}
+const GB = 1024 ** 3
+const Paths = {cache: "", document: "", availableDiskSpace: 0}
 type Part = string | {path: string}
 const pathname = (parts: Part[]) =>
   path.join(...parts.map((p) => (typeof p === "string" ? p.replace(/^file:\/\//, "") : p.path)))
@@ -96,7 +97,7 @@ mock.module("../../utils/storage/storage", () => ({
     getAllKeys: () => [...values.keys()],
   },
 }))
-const {BlobStore, BLOB_QUOTA_BYTES, EXPIRING_BLOB_MAX_BYTES, EXPIRING_BLOB_MAX_COUNT, EXPIRING_BLOB_TTL_MS} =
+const {BlobStore, BLOB_MIN_QUOTA_BYTES, EXPIRING_BLOB_MAX_BYTES, EXPIRING_BLOB_MAX_COUNT, EXPIRING_BLOB_TTL_MS} =
   await import("../BlobStore")
 
 const pkg = "com.acme.camera"
@@ -126,6 +127,7 @@ beforeEach(() => {
   Paths.document = path.join(root, "documents")
   fs.mkdirSync(Paths.cache)
   fs.mkdirSync(Paths.document)
+  Paths.availableDiskSpace = GB
   values.clear()
   partition = "core.mu_1.p"
   now = 1_800_000_000_000
@@ -190,7 +192,7 @@ describe("expiring blobs", () => {
   it("stays outside the quota", () => {
     take("photo/p1", 5000)
     store.handleUsage(pkg, {})
-    expect(last().result).toEqual({bytes: 0, count: 0, quotaBytes: BLOB_QUOTA_BYTES})
+    expect(last().result).toEqual({bytes: 0, count: 0, quotaBytes: BLOB_MIN_QUOTA_BYTES})
     expect(list()).toEqual(["photo/p1"])
     // Expiry must not push the cached usage below what the miniapp really stores.
     now += EXPIRING_BLOB_TTL_MS
@@ -235,6 +237,20 @@ describe("expiring blobs", () => {
     expect(list()).toEqual(["receipt"])
     store.handleUsage(pkg, {})
     expect(last().result).toMatchObject({bytes: 2000, count: 1})
+  })
+
+  it("the quota is half of what the app stores plus the phone's free space, never below 1 GB unless the phone has less room", () => {
+    take("photo/p1", 2000)
+    store.handleCopy(pkg, {from: "photo/p1", key: "kept"})
+    Paths.availableDiskSpace = 8 * GB
+    store.handleUsage(pkg, {})
+    expect(last().result).toMatchObject({bytes: 2000, quotaBytes: 4 * GB + 1000})
+    Paths.availableDiskSpace = GB
+    store.handleUsage(pkg, {})
+    expect(last().result).toMatchObject({quotaBytes: BLOB_MIN_QUOTA_BYTES})
+    Paths.availableDiskSpace = 100_000
+    store.handleUsage(pkg, {})
+    expect(last().result).toMatchObject({quotaBytes: 102_000})
   })
 
   it("copies a photo under the miniapp's own key on disk: kept past the photo's expiry, under the quota", () => {

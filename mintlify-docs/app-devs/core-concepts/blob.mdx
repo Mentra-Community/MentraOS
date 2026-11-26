@@ -82,6 +82,12 @@ if (picked) {
 const { bytes, count, quotaBytes } = await session.blob.usage();
 ```
 
+The quota follows the phone's free space: it's half of what your miniapp stores
+plus the phone's free space, and never below 1 GB unless the phone has less
+room than that. It changes as the phone fills
+up or frees space, so call `usage()` again before a large write rather than
+caching `quotaBytes`. A write past it fails with `BLOB_QUOTA_EXCEEDED`.
+
 ## Large files: streaming
 
 For files past the in-memory caps, stream them. `createWriteStream` opens a
@@ -152,7 +158,7 @@ await reader.close();
 | `list()` | `Promise<BlobMeta[]>` | Every blob you own, newest first. |
 | `createReadStream(key)` | `Promise<BlobReader>` | Streaming reader. |
 | `bytes(key)` | `Promise<Uint8Array \| null>` | Read whole blob into memory. Throws past the cap. |
-| `usage()` | `Promise<{ bytes: number; count: number; quotaBytes: number }>` | Per-app usage and quota ceiling, in bytes. |
+| `usage()` | `Promise<{ bytes: number; count: number; quotaBytes: number }>` | Per-app usage and the current quota ceiling, in bytes; the quota follows the phone's free space. |
 | `delete(key)` | `Promise<void>` | Delete the blob. No-op if absent. |
 | `clear()` | `Promise<void>` | Delete every blob you own. |
 | `share(key)` | `Promise<{ success: boolean; cancelled?: boolean }>` | Hand the file to the OS share sheet (host shares from disk). |
