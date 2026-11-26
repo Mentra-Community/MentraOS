@@ -123,6 +123,32 @@ describe("startMiniappInstall", () => {
     expect(mockShowAlert).not.toHaveBeenCalled()
   })
 
+  it("opens a development build installed from the local network, as the developer scanner does", async () => {
+    const local = {...preview, url: "http://192.168.1.20:3160/", host: "192.168.1.20:3160", local: true}
+    installs("installed", local)
+    mockList.mockReturnValue([{packageName: "com.example.notes", name: "Notes"}])
+    await expect(startMiniappInstall("http://192.168.1.20:3160/", "link")).resolves.toBe("opened")
+
+    expect(mockStart).toHaveBeenCalledWith(
+      expect.objectContaining({packageName: "com.example.notes"}),
+      expect.objectContaining({trigger: "user"}),
+    )
+    expect(mockSetForeground).toHaveBeenCalledWith("com.example.notes")
+    expect(mockToast).not.toHaveBeenCalledWith({type: "success", text1: "Notes is on your Home screen"})
+  })
+
+  it("shows a local development build's tile on Home when it can't open", async () => {
+    const local = {...preview, url: "http://192.168.1.20:3160/", host: "192.168.1.20:3160", local: true}
+    installs("installed", local)
+    mockList.mockReturnValue([{packageName: "com.example.notes", name: "Notes"}])
+    mockAskPermissions.mockResolvedValueOnce(0)
+    await expect(startMiniappInstall("http://192.168.1.20:3160/", "link")).resolves.toBe("installed")
+
+    expect(mockStart).not.toHaveBeenCalled()
+    expect(mockGoHome).toHaveBeenCalled()
+    expect(mockToast).toHaveBeenCalledWith({type: "success", text1: "Notes is on your Home screen"})
+  })
+
   it("names the installed copy on the sheet, which can be a development build under another name", async () => {
     installs("installed", {...preview, alreadyInstalled: true})
     mockList.mockReturnValue([{packageName: "com.example.notes", name: "Notes Dev"}])

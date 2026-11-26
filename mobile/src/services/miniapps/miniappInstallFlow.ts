@@ -160,6 +160,9 @@ export async function startMiniappInstall(
       // were, and a scanner resumes.
       return (await openInstalledMiniapp(result.packageName)) ? "opened" : "cancelled"
     }
+    // A development build from the local network (the URL `mentra-miniapp dev` prints) opens, as the developer
+    // scanner opens it: a running copy of the release is still on screen otherwise.
+    if (target.kind === "local" && (await openInstalledMiniapp(result.packageName))) return "opened"
     // Installed (a sheet's install never waits for the miniapp to stop): its tile is on Home now.
     showHome()
     Toast.show({type: "success", text1: translate("miniappInstall:installed", {name: name ?? result.packageName})})
