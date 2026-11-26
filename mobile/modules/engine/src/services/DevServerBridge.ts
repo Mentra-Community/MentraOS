@@ -26,6 +26,8 @@ const RING_BUFFER_MAX_ENTRIES = 100
 const RING_BUFFER_MAX_BYTES = 32 * 1024
 /** A handler for a dev server signal. A promise holds the package's later signals until it settles. */
 export type DevSignalHandler = (packageName: string) => void | Promise<void>
+/** Whether the package runs older code than its dev server serves now. */
+export type DevCatchUpCheck = (packageName: string) => Promise<boolean>
 
 type State = "idle" | "connecting" | "connected" | "disconnected" | "closed"
 
@@ -54,6 +56,7 @@ class DevServerBridge {
   private entries = new Map<string, BridgeEntry>()
   private globalReloadHandler: DevSignalHandler | null = null
   private globalRespawnBackgroundHandler: DevSignalHandler | null = null
+  private globalCatchUpCheck: DevCatchUpCheck | null = null
   /** Each package's signals run in the order the dev server sent them, one at a time. */
   private signalQueues = new Map<string, Promise<void>>()
 
@@ -176,7 +179,10 @@ class DevServerBridge {
       host = parsed.hostname
     } catch {
       // devHostUrl might already be just an IP; best-effort.
-      host = devHostUrl.replace(/^https?:\/\//, "").split(":")[0].split("/")[0]
+      host = devHostUrl
+        .replace(/^https?:\/\//, "")
+        .split(":")[0]
+        .split("/")[0]
     }
     return `ws://${host}:${devPort}/__mentra_dev`
   }
@@ -204,7 +210,9 @@ class DevServerBridge {
       entry.state = "disconnected"
       entry.ws = null
       entry.attempts++
-      console.log(`${LOG_TAG}: ${packageName} disconnected (${reason}); reconnect in ${this.backoffMs(entry.attempts)}ms`)
+      console.log(
+        `${LOG_TAG}: ${packageName} disconnected (${reason}); reconnect in ${this.backoffMs(entry.attempts)}ms`,
+      )
       this.scheduleReconnect(packageName, entry)
     }
 
@@ -248,6 +256,11 @@ class DevServerBridge {
         entry.attempts = 0
         console.log(`${LOG_TAG}: ${packageName} connected to ${entry.url}`)
         this.flushRingBuffer(packageName, entry)
+        this.enqueueSignal(packageName, "catch-up", async () => {
+          if (!(await this.globalCatchUpCheck?.(packageName))) return
+          console.log(`${LOG_TAG}: ${packageName} runs older code than its dev server serves; restarting it`)
+          void this.respawn(packageName)
+        })
         return
       }
 
@@ -262,10 +275,9 @@ class DevServerBridge {
       // reload). The host's MentraJSRouter listens here.
       if (parsed.type === "respawn-bg") {
         console.log(`${LOG_TAG}: ${packageName} received respawn-bg signal`)
-        this.enqueueSignal(packageName, "respawn-bg", () => this.globalRespawnBackgroundHandler?.(packageName))
-        // The respawn ran from a new snapshot of the bundle, which replaced the one the screen shows: reopen the
+        // The respawn runs from a new snapshot of the bundle, which replaces the one the screen shows: it reopens the
         // screen from it too. A reload that follows for the same save then finds nothing new.
-        this.enqueueSignal(packageName, "reload", () => this.globalReloadHandler?.(packageName))
+        void this.respawn(packageName)
         return
       }
     }
@@ -298,13 +310,30 @@ class DevServerBridge {
     return Math.round(jitter)
   }
 
+  /**
+   * Register the check the bridge runs each time it connects to a dev server (the first time and after every drop):
+   * saves made while the phone wasn't listening sent their reload to nobody, and a launch that fell back to the last
+   * snapshot never got one. When the check finds the running code outdated, the bridge restarts the background and
+   * reopens the screen, as a `respawn-bg` signal does.
+   */
+  public onCatchUp(check: DevCatchUpCheck | null): void {
+    this.globalCatchUpCheck = check
+  }
+
+  /**
+   * Restart the package's background from the current snapshot and reopen its screen, as a `respawn-bg` signal does,
+   * in order with the package's other signals. Resolves once both ran.
+   */
+  public respawn(packageName: string): Promise<void> {
+    this.enqueueSignal(packageName, "respawn-bg", () => this.globalRespawnBackgroundHandler?.(packageName))
+    this.enqueueSignal(packageName, "reload", () => this.globalReloadHandler?.(packageName))
+    return this.signalQueues.get(packageName) ?? Promise.resolve()
+  }
+
   private bufferLog(entry: BridgeEntry, log: BufferedLog): void {
     entry.ringBuffer.push(log)
     entry.ringBytes += log.size
-    while (
-      entry.ringBuffer.length > RING_BUFFER_MAX_ENTRIES ||
-      entry.ringBytes > RING_BUFFER_MAX_BYTES
-    ) {
+    while (entry.ringBuffer.length > RING_BUFFER_MAX_ENTRIES || entry.ringBytes > RING_BUFFER_MAX_BYTES) {
       const dropped = entry.ringBuffer.shift()
       if (dropped) entry.ringBytes -= dropped.size
       if (entry.ringBuffer.length === 0) {

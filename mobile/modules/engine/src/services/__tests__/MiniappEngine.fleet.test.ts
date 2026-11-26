@@ -12,20 +12,25 @@ let incompatibleReason: string | null = null
 
 class FakeRouter {
   readonly projected = new Set<string>()
+  /** Contexts running out of the running tray, as a hidden action wake keeps them. */
+  readonly hidden = new Set<string>()
+  spawns = 0
   crashController: unknown
   uiRouter: unknown
   timer: unknown
   registeredPackages(): string[] {
-    return [...this.projected]
+    return [...this.projected, ...this.hidden]
   }
   isProjectedRunning(packageName: string): boolean {
     return this.projected.has(packageName)
   }
   async unregister(packageName: string): Promise<void> {
     this.projected.delete(packageName)
+    this.hidden.delete(packageName)
   }
   async spawnAndRegister(packageName: string, _src: string, options?: {projectRunning?: boolean}): Promise<boolean> {
-    if (spawnSucceeds && (options?.projectRunning ?? true)) this.projected.add(packageName)
+    this.spawns++
+    if (spawnSucceeds) ((options?.projectRunning ?? true) ? this.projected : this.hidden).add(packageName)
     return spawnSucceeds
   }
   start(): void {}
@@ -39,6 +44,7 @@ mock.module("../DevServerBridge", () => ({
       respawn = handler
     },
     clearRespawnBackgroundHandler: () => {},
+    onCatchUp: () => {},
   },
 }))
 mock.module("../LocalMiniappRuntime", () => ({default: {}}))
@@ -58,6 +64,7 @@ mock.module("../MiniappLauncher", () => ({
     assertRunsOnPhone: () => {
       if (incompatibleReason) throw new Error(incompatibleReason)
     },
+    noteRunningVersion: () => {},
   },
 }))
 mock.module("../MentraJSCrashController", () => ({MentraJSCrashController: class {}}))
@@ -83,6 +90,8 @@ beforeEach(() => {
   spawnSucceeds = true
   incompatibleReason = null
   router.projected.clear()
+  router.hidden.clear()
+  router.spawns = 0
   launches.length = 0
   fleetEvents.discardUndeliveredLaunches()
   stopListening = fleetEvents.subscribe({launch: (event) => launches.push(event)})
@@ -125,7 +134,17 @@ describe("a dev server's background hot reload", () => {
   })
 
   test("of a context a hidden action wake keeps out of the running tray is no launch", async () => {
+    router.hidden.add("com.mentra.notes")
     await respawn?.("com.mentra.notes")
+    expect(router.spawns).toBe(1)
+    expect(router.hidden.has("com.mentra.notes")).toBe(true)
+    expect(launches).toEqual([])
+  })
+
+  test("of a closed miniapp starts nothing: its next launch runs the new code", async () => {
+    await respawn?.("com.mentra.notes")
+    expect(router.spawns).toBe(0)
+    expect(router.registeredPackages()).toEqual([])
     expect(launches).toEqual([])
   })
 })

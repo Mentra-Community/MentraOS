@@ -50,6 +50,7 @@ beforeEach(() => {
 afterEach(() => {
   devServerBridge.disconnect(PACKAGE)
   devServerBridge.clearRespawnBackgroundHandler()
+  devServerBridge.onCatchUp(null)
   ;(globalThis as {WebSocket: unknown}).WebSocket = realWebSocket
   logSpy.mockRestore()
   warnSpy.mockRestore()
@@ -144,5 +145,24 @@ describe("DevServerBridge: a save that touched both layers", () => {
     ws.serve({type: "reload"})
     await flush()
     expect(events).toEqual(["reload"])
+  })
+})
+
+describe("DevServerBridge: catching up on connect", () => {
+  it("restarts the build only when the check finds it older than the server's code", async () => {
+    const events: string[] = []
+    devServerBridge.onRespawnBackground((pkg) => void events.push(`respawn ${pkg}`))
+    devServerBridge.onReload((pkg) => void events.push(`reload ${pkg}`))
+    let outdated = false
+    devServerBridge.onCatchUp(async () => outdated)
+    const ws = connect()
+    await flush()
+    expect(events).toEqual([])
+
+    // Saves landed while the connection was down; the next hello-ack catches up.
+    outdated = true
+    ws.serve({type: "hello-ack", protocol: "mentra-dev/1"})
+    await flush()
+    expect(events).toEqual([`respawn ${PACKAGE}`, `reload ${PACKAGE}`])
   })
 })

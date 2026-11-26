@@ -149,6 +149,14 @@ export interface ResolvedBundle {
   /** The development server a development build's snapshot came from, while it answers; null otherwise. */
   devUrl: string | null
   devPort: number | null
+  /** The bundle's version directory: a release's version, or a development build's `dev-<ms>` snapshot. */
+  version: string
+  /**
+   * The development server to listen to for changes: {@link devUrl} when it answered, or the stored one when it
+   * didn't and the build fell back to its last snapshot. When the server answers again, the bridge brings the
+   * build up to date (`devServerBridge.onCatchUp`). Null for a release.
+   */
+  watchDevUrl: string | null
 }
 
 /** What the host needs back to render the UI layer. */
@@ -224,6 +232,8 @@ class MiniappLauncher {
    * callers share the same promise.
    */
   private readonly inFlight = new Map<string, Promise<LaunchResult>>()
+  /** The bundle version each running context was spawned from. */
+  private readonly runningVersions = new Map<string, string>()
   /** In-flight launches that keep their context out of the running tray (a hidden action wake). */
   private readonly hiddenInFlight = new Set<string>()
 
@@ -349,10 +359,17 @@ class MiniappLauncher {
       const source = await resolveDevBundleSource(packageName, devUrl)
       if (source.kind === "none") return null
       const snapshot = await this.resolveInstalledBundle(packageName, source.version)
-      if (!snapshot || source.kind === "snapshot") return snapshot
+      if (!snapshot) return snapshot
+      const devPort = this.resolveDevPort(hints?.devPort, packageName)
+      if (source.kind === "snapshot") {
+        // The server didn't answer: the last snapshot runs, and the bridge keeps listening for the server, so the
+        // build catches up as soon as it answers instead of staying on old code until the next save.
+        console.warn(`MiniappLauncher: ${packageName}'s dev server didn't answer; running its last snapshot`)
+        return {...snapshot, devPort, watchDevUrl: devUrl}
+      }
       // The server answered: keep its URL for hot reload and log forwarding. Use the host that actually
       // answered, which may differ from the stored IP after a laptop Wi-Fi change.
-      return {...snapshot, devUrl: source.resolvedUrl, devPort: this.resolveDevPort(hints?.devPort, packageName)}
+      return {...snapshot, devUrl: source.resolvedUrl, devPort, watchDevUrl: source.resolvedUrl}
     }
 
     // --- Released: resolve from the installed snapshot on disk. ---
@@ -441,11 +458,12 @@ class MiniappLauncher {
       installedManifest,
       ageRating: manifest?.ageRating ?? null,
       // A development build never runs with the build's privileges, whatever name it claims.
-      hostTrustedSystem:
-        !devBuild && isHostTrustedSystemMiniapp(packageName, releaseIdentity),
+      hostTrustedSystem: !devBuild && isHostTrustedSystemMiniapp(packageName, releaseIdentity),
       // A snapshot on disk — do not wire the sidecar; the laptop is gone.
       devUrl: null,
       devPort: null,
+      version,
+      watchDevUrl: null,
     }
   }
 
@@ -496,6 +514,12 @@ class MiniappLauncher {
       const promoted = projectRunning && this.promote(packageName)
       const existing = await this.resolveBundle(packageName, hints, runtimeOptions).catch(() => null)
       if (promoted) this.reportLaunch(packageName, "started", runtimeOptions, existing?.installedManifest)
+      // Opened again while its context still runs older code than its dev server serves (saves made while the phone
+      // wasn't listening): restart it on the current snapshot, as a save would, so the screen and the background
+      // run the same, current code.
+      if (projectRunning && existing && this.isOutdatedDevBuild(packageName, existing)) {
+        await devServerBridge.respawn(packageName)
+      }
       return launchResultOf(existing)
     }
 
@@ -508,7 +532,8 @@ class MiniappLauncher {
         result = await pending
       } catch (error) {
         // A visible launch reports its own failure; one joined to a hidden wake fails with it.
-        if (projectRunning && joinedHidden) this.reportLaunch(packageName, "failed", runtimeOptions, undefined, launchFailureReason(error))
+        if (projectRunning && joinedHidden)
+          this.reportLaunch(packageName, "failed", runtimeOptions, undefined, launchFailureReason(error))
         throw error
       }
       if (projectRunning && this.promote(packageName)) this.reportLaunch(packageName, "started", runtimeOptions)
@@ -521,7 +546,8 @@ class MiniappLauncher {
     try {
       return await launch
     } catch (error) {
-      if (projectRunning) this.reportLaunch(packageName, "failed", runtimeOptions, undefined, launchFailureReason(error))
+      if (projectRunning)
+        this.reportLaunch(packageName, "failed", runtimeOptions, undefined, launchFailureReason(error))
       throw error
     } finally {
       this.inFlight.delete(packageName)
@@ -606,11 +632,12 @@ class MiniappLauncher {
       if (!ok) {
         throw new Error(`MiniappLauncher: spawn failed for ${packageName}`)
       }
+      this.noteRunningVersion(packageName, resolved.version)
 
       // Dev: wire the hot-reload + log-forwarding sidecar. No-op in prod
       // (devServerBridge silently drops when no sidecar is up).
-      if (resolved.devUrl && resolved.devPort != null) {
-        devServerBridge.connect(packageName, resolved.devUrl, resolved.devPort)
+      if (resolved.watchDevUrl && resolved.devPort != null) {
+        devServerBridge.connect(packageName, resolved.watchDevUrl, resolved.devPort)
       } else if (resolved.devUrl) {
         // Dev miniapp with no resolvable port — it still launches, but hot
         // reload + log forwarding won't connect. Surface it instead of failing
@@ -708,7 +735,29 @@ class MiniappLauncher {
       }
     }
     await this.deps?.router.unregister(packageName)
+    this.runningVersions.delete(packageName)
     console.log(`MiniappLauncher: stopped ${packageName}`)
+  }
+
+  /** Record the bundle version a context of the package was just spawned from (a launch or a dev respawn). */
+  noteRunningVersion(packageName: string, version: string): void {
+    this.runningVersions.set(packageName, version)
+  }
+
+  /**
+   * True when the package's running context is a development build whose dev server, answering now, serves other
+   * code than the snapshot the context was spawned from. Fetches the server's current snapshot when it changed.
+   */
+  async runsOutdatedDevBuild(packageName: string): Promise<boolean> {
+    if (!this.isRunning(packageName)) return false
+    const resolved = await this.resolveBundle(packageName).catch(() => null)
+    return !!resolved && this.isOutdatedDevBuild(packageName, resolved)
+  }
+
+  private isOutdatedDevBuild(packageName: string, resolved: ResolvedBundle): boolean {
+    const running = this.runningVersions.get(packageName)
+    // Only a server that answered proves newer code; a snapshot fallback is the newest the phone has.
+    return resolved.devBuild && resolved.devUrl !== null && running !== undefined && running !== resolved.version
   }
 
   // --- internals -----------------------------------------------------------

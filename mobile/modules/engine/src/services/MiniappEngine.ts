@@ -33,6 +33,8 @@ let engine: MiniappEngine | null = null
 
 function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: MentraUIRouter): void {
   devServerBridge.onRespawnBackground(async (packageName) => {
+    // A closed miniapp stays closed: its next launch resolves the server's current code.
+    if (!router.registeredPackages().includes(packageName)) return
     try {
       // Re-resolve the freshly built bundle (a new snapshot of what the dev
       // server serves) via the launcher's shared recipe. Carries
@@ -73,6 +75,7 @@ function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: Mentra
         console.warn(`MentraJS: respawn-bg failed for ${packageName}`)
         return
       }
+      miniappLauncher.noteRunningVersion(packageName, resolved.version)
       // The respawned JSContext is a fresh MiniappSession with ui.bound false.
       // The mounted WebView won't re-fire mentra.ready() (it's latched), so
       // re-announce it so RPC replies (mentra.request) reach the UI again
@@ -82,6 +85,8 @@ function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: Mentra
       console.warn(`MentraJS: respawn-bg threw for ${packageName}:`, e)
     }
   })
+  // Each connection to a dev server checks that the running build is the one it serves now (see `onCatchUp`).
+  devServerBridge.onCatchUp((packageName) => miniappLauncher.runsOutdatedDevBuild(packageName))
 }
 
 /**
@@ -143,6 +148,7 @@ export async function stopMiniappEngine(): Promise<void> {
   engine = null
 
   devServerBridge.clearRespawnBackgroundHandler()
+  devServerBridge.onCatchUp(null)
   current.router.stop()
 
   const packages = current.router.registeredPackages()
