@@ -189,6 +189,8 @@ export enum MiniappRequestType {
   BLOB_CLOSE_READ = "miniapp_blob_close_read",
   /** Download a URL straight into a blob, host-side (no bytes cross the bridge). */
   BLOB_SET_FROM_URL = "miniapp_blob_set_from_url",
+  /** Send a stored blob to a URL, host-side (no bytes cross the bridge). */
+  BLOB_UPLOAD = "miniapp_blob_upload",
   /** Open the OS file picker and import the chosen file into a blob, host-side. */
   BLOB_IMPORT = "miniapp_blob_import",
   /** Copy a stored blob under another key, host-side (no bytes cross the bridge). */
@@ -546,6 +548,8 @@ export enum MiniappErrorCode {
   BLOB_WRITE_FAILED = "BLOB_WRITE_FAILED",
   /** `blob.setFromUrl` could not download the URL (network / non-2xx). */
   BLOB_DOWNLOAD_FAILED = "BLOB_DOWNLOAD_FAILED",
+  /** `blob.upload` could not send the file (network / non-2xx). */
+  BLOB_UPLOAD_FAILED = "BLOB_UPLOAD_FAILED",
   /** `blob.importFile` failed (not the user cancelling — that resolves to null). */
   BLOB_IMPORT_FAILED = "BLOB_IMPORT_FAILED",
 }

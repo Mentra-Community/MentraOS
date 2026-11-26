@@ -1541,6 +1541,11 @@ class LocalMiniappRuntime {
           this.blobStore.handleSetFromUrl(packageName, payload, requestId),
         )
         break
+      case MiniappRequestType.BLOB_UPLOAD:
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleUpload(packageName, payload, requestId),
+        )
+        break
       case MiniappRequestType.BLOB_IMPORT:
         this.enqueueBlobRequest(packageName, requestId, () =>
           this.blobStore.handleImport(packageName, payload, requestId),

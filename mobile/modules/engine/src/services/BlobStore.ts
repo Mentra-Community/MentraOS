@@ -650,6 +650,41 @@ export class BlobStore {
     }
   }
 
+  /** Send a blob's file as a request body (a presigned upload): native code reads it from disk. */
+  async handleUpload(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+    const key = payload.key as string
+    const url = payload.url as string
+    const stored = key ? this.readMeta(packageName, key) : null
+    const file = stored ? this.fileFor(packageName, stored.fileName) : null
+    if (!stored || !file?.exists) {
+      this.hooks.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.BLOB_NOT_FOUND,
+        message: `Blob ${key} not found`,
+      })
+      return
+    }
+    if (!url || !isNetworkUrl(url)) {
+      this.hooks.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.BLOB_UPLOAD_FAILED,
+        message: "upload sends only to http: and https: URLs",
+      })
+      return
+    }
+    try {
+      // The legacy module is the one with a native upload from a file; loaded only when needed.
+      const {uploadAsync, FileSystemUploadType} = await import("expo-file-system/legacy")
+      const answer = await uploadAsync(url, file.uri, {
+        httpMethod: payload.method === "POST" ? "POST" : "PUT",
+        uploadType: FileSystemUploadType.BINARY_CONTENT,
+        headers: payload.headers as Record<string, string> | undefined,
+      })
+      if (answer.status < 200 || answer.status >= 300) throw new Error(`The server answered ${answer.status}`)
+      this.hooks.sendResult(packageName, requestId, true, {status: answer.status})
+    } catch (err) {
+      this.fail(packageName, requestId, MiniappErrorCode.BLOB_UPLOAD_FAILED, err)
+    }
+  }
+
   async handleImport(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     const key = (typeof payload.key === "string" && payload.key) || this.makeId()
     const mimeFilter = payload.mimeType as string | undefined

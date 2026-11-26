@@ -141,6 +141,7 @@ await reader.close();
 |---|---|---|
 | `set(key, data, opts?)` | `Promise<BlobMeta>` | Store `Uint8Array`/`ArrayBuffer`/base64 bytes. |
 | `setFromUrl(key, url, opts?)` | `Promise<BlobMeta>` | Host downloads `url` to disk. `opts.headers` for auth. |
+| `upload(key, url, opts?)` | `Promise<{status}>` | Host sends the file to `url` (`PUT` by default, as a presigned upload URL expects). `opts.headers` for auth. Rejects on a non-2xx answer. |
 | `importFile(opts?)` | `Promise<BlobMeta \| null>` | OS file picker. `null` if cancelled. |
 | `copy(from, key)` | `Promise<BlobMeta>` | Copy the blob under `from` to `key` on the phone. The way to keep a camera photo, which expires. |
 | `createWriteStream(key, opts?)` | `Promise<BlobWriter>` | Streaming writer for large payloads. |

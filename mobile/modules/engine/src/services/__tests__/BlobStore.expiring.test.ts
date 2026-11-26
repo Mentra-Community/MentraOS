@@ -75,6 +75,14 @@ const values = new Map<string, unknown>()
 const ok = (value: unknown) => ({is_ok: () => true, is_error: () => false, value})
 const missing = {is_ok: () => false, is_error: () => true}
 mock.module("expo-file-system", () => ({Directory, File, Paths}))
+const uploads: Array<{url: string; body: string; method?: string}> = []
+mock.module("expo-file-system/legacy", () => ({
+  FileSystemUploadType: {BINARY_CONTENT: 0},
+  uploadAsync: async (url: string, uri: string, options: {httpMethod?: string}) => {
+    uploads.push({url, body: fs.readFileSync(uri.replace(/^file:\/\//, ""), "utf8"), method: options.httpMethod})
+    return {status: url.includes("refused") ? 403 : 200}
+  },
+}))
 mock.module("react-native-share", () => ({default: {open: async () => {}}}))
 mock.module("@mentra/crust", () => ({default: {canonicalFilePath: () => null}}))
 mock.module("@mentra/miniapp", () => ({
@@ -167,6 +175,16 @@ describe("expiring blobs", () => {
     expect(photo.url).toBe(`miniapp://com.acme.camera/.mentra/files/${fileName}`)
     expect(get("photo/p1")).toMatchObject({url: photo.url})
     resetMiniappScreenOriginsForTests()
+  })
+
+  it("uploads a kept file from disk, and fails on a refused answer", async () => {
+    fs.writeFileSync(path.join(Paths.cache, "note.txt"), "hello")
+    store.storeExpiringFile(pkg, "note", `file://${path.join(Paths.cache, "note.txt")}`, "text/plain")
+    await store.handleUpload(pkg, {key: "note", url: "https://store.example/put"})
+    expect(last()).toMatchObject({ok: true, result: {status: 200}})
+    expect(uploads.at(-1)).toEqual({url: "https://store.example/put", body: "hello", method: "PUT"})
+    await store.handleUpload(pkg, {key: "note", url: "https://store.example/refused"})
+    expect(last()).toMatchObject({ok: false, error: {code: "BLOB_UPLOAD_FAILED"}})
   })
 
   it("stays outside the quota", () => {

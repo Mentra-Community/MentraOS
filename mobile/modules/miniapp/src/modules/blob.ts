@@ -70,6 +70,13 @@ export interface BlobSetFromUrlOptions extends BlobSetOptions {
   headers?: Record<string, string>
 }
 
+export interface BlobUploadOptions {
+  /** Default "PUT", as a presigned upload URL expects. */
+  method?: "PUT" | "POST"
+  /** Request headers (e.g. a Content-Type or an Authorization token) for the upload. */
+  headers?: Record<string, string>
+}
+
 export interface BlobImportOptions {
   /** Key to store under. Default: a generated key. */
   key?: string
@@ -218,6 +225,21 @@ export class BlobModule {
       name: opts.name,
       headers: opts.headers,
       meta: opts.meta,
+    })
+  }
+
+  /**
+   * Send the blob under `key` as the body of an HTTP request to `url`, host-side: the bytes never cross the bridge,
+   * as `setFromUrl` downloads. Made for presigned upload URLs. Resolves to the response status on a 2xx answer;
+   * rejects with `BLOB_UPLOAD_FAILED` on any other answer or no answer. Only http: and https: URLs.
+   */
+  upload(key: string, url: string, opts: BlobUploadOptions = {}): Promise<{status: number}> {
+    return this.session.sendRequest<{status: number}>({
+      type: MiniappRequestType.BLOB_UPLOAD,
+      key,
+      url,
+      method: opts.method,
+      headers: opts.headers,
     })
   }
 
