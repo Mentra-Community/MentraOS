@@ -5,8 +5,12 @@
 //  Created by Matthew Fosse on 10/7/25.
 //
 
+import Foundation
+
 @MainActor
 class Simulated: SGCManager {
+    fileprivate var displayEvents = [SimulatedDisplayEvent]()
+
     init() {
         DeviceStore.shared.apply("glasses", "fullyBooted", true)
         DeviceStore.shared.apply("glasses", "connected", true)
@@ -129,22 +133,31 @@ class Simulated: SGCManager {
 
     func clearDisplay() {
         Bridge.log("clearDisplay")
+        displayEvents.append(SimulatedDisplayEvent(kind: .clear))
     }
 
     func sendText(_ text: String) async {
-        await sendTextWall(text)
+        Bridge.log("sendText")
+        displayEvents.append(SimulatedDisplayEvent(kind: .text, text: text))
     }
 
-    func sendTextWall(_: String) async {
+    func sendTextWall(_ text: String) async {
         Bridge.log("sendTextWall")
+        displayEvents.append(SimulatedDisplayEvent(kind: .textWall, text: text))
     }
 
-    func sendDoubleTextWall(_: String, _: String) async {
+    func sendDoubleTextWall(_ top: String, _ bottom: String) async {
         Bridge.log("sendDoubleTextWall")
+        displayEvents.append(
+            SimulatedDisplayEvent(kind: .doubleTextWall, top: top, bottom: bottom)
+        )
     }
 
-    func displayBitmap(base64ImageData _: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?) async -> Bool {
+    func displayBitmap(base64ImageData: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?) async -> Bool {
         Bridge.log("displayBitmap")
+        displayEvents.append(
+            SimulatedDisplayEvent(kind: .bitmap, base64ImageData: base64ImageData)
+        )
         return false
     }
 
@@ -273,4 +286,53 @@ class Simulated: SGCManager {
     }
 
     func sendIncidentId(_: String, apiBaseUrl _: String?) {}
+
+    /// Returns a public scriptable handle bound to this simulated manager.
+    func snapshot() -> SimulatedGlasses {
+        return SimulatedGlassesSnapshot(simulated: self)
+    }
+}
+
+@MainActor
+private struct SimulatedGlassesSnapshot: SimulatedGlasses {
+    private let simulated: Simulated
+
+    init(simulated: Simulated) {
+        self.simulated = simulated
+    }
+
+    func displayTranscript() -> [SimulatedDisplayEvent] {
+        simulated.displayEvents
+    }
+
+    func clearDisplayTranscript() {
+        simulated.displayEvents.removeAll()
+    }
+
+    func injectMicPcm(_ pcm: Data) {
+        Bridge.sendMicPcm(pcm, source: MicTypes.GLASSES_CUSTOM)
+    }
+
+    func injectTouch(_ gesture: TouchGesture) {
+        Bridge.sendTouchEvent(
+            deviceModel: DeviceTypes.SIMULATED,
+            gestureName: gesture.rawValue,
+            timestamp: Int64(Date().timeIntervalSince1970 * 1000)
+        )
+    }
+
+    func injectHeadUp(_ headUp: Bool) {
+        Bridge.sendHeadUp(headUp)
+    }
+
+    func simulateDisconnect() {
+        DeviceStore.shared.apply("glasses", "connected", false)
+        DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+    }
+
+    func simulateReconnect() {
+        DeviceStore.shared.apply("glasses", "connected", true)
+        DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTED)
+        DeviceStore.shared.apply("glasses", "fullyBooted", true)
+    }
 }

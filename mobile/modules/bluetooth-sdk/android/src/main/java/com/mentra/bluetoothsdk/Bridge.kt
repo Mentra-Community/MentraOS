@@ -172,7 +172,15 @@ public class Bridge private constructor() {
 
         @JvmStatic
         fun sendMicPcm(data: ByteArray) {
-            val body = micPcmEventBody(data)
+            sendMicPcm(
+                data,
+                DeviceStore.store.get("bluetooth", "currentMic") as? String ?: "",
+            )
+        }
+
+        @JvmStatic
+        fun sendMicPcm(data: ByteArray, source: String) {
+            val body = micPcmEventBody(data, source)
             sendTypedMessage("mic_pcm", body as Map<String, Any>)
         }
         
@@ -190,7 +198,7 @@ public class Bridge private constructor() {
             sendTypedMessage("mic_health", body)
         }
 
-        private fun micPcmEventBody(data: ByteArray): HashMap<String, Any> {
+        private fun micPcmEventBody(data: ByteArray, source: String): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
                             ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
@@ -202,9 +210,9 @@ public class Bridge private constructor() {
             body["encoding"] = "pcm_s16le"
             body["voiceActivityDetectionEnabled"] = voiceActivityDetectionEnabled
             // Stamped per frame so a consumer that pinned the source can verify it rather than
-            // assume it. Read from the store, not from a captured value: the whole point is to
-            // report the microphone that is selected right now.
-            body["source"] = DeviceStore.store.get("bluetooth", "currentMic") as? String ?: ""
+            // assume it. The default overload reads the currently selected microphone; scripted
+            // simulated audio explicitly tags the source it is injecting.
+            body["source"] = source
             return body
         }
 

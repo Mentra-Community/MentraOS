@@ -208,8 +208,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("connectSimulated") {
-            await MainActor.run {
-                self.bluetoothSdk().connectSimulated()
+            try await MainActor.run {
+                _ = try self.bluetoothSdk().connectSimulated()
             }
         }
 

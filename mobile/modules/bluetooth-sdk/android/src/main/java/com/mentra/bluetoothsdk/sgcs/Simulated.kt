@@ -5,10 +5,16 @@ import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.SimulatedDisplayEvent
+import com.mentra.bluetoothsdk.SimulatedDisplayEventKind
+import com.mentra.bluetoothsdk.SimulatedGlasses
+import com.mentra.bluetoothsdk.TouchGesture
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
+import com.mentra.bluetoothsdk.utils.MicTypes
 
 class Simulated : SGCManager() {
+    private val displayEvents = mutableListOf<SimulatedDisplayEvent>()
 
     init {
         type = DeviceTypes.SIMULATED
@@ -81,18 +87,36 @@ class Simulated : SGCManager() {
 
     override fun clearDisplay() {
         Bridge.log("clearDisplay")
+        synchronized(displayEvents) {
+            displayEvents.add(SimulatedDisplayEvent(kind = SimulatedDisplayEventKind.CLEAR))
+        }
     }
     
     override fun sendText(text: String) {
         Bridge.log("sendText")
+        synchronized(displayEvents) {
+            displayEvents.add(SimulatedDisplayEvent(kind = SimulatedDisplayEventKind.TEXT, text = text))
+        }
     }
 
     override fun sendTextWall(text: String) {
         Bridge.log("sendTextWall")
+        synchronized(displayEvents) {
+            displayEvents.add(SimulatedDisplayEvent(kind = SimulatedDisplayEventKind.TEXT_WALL, text = text))
+        }
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
         Bridge.log("sendDoubleTextWall")
+        synchronized(displayEvents) {
+            displayEvents.add(
+                SimulatedDisplayEvent(
+                    kind = SimulatedDisplayEventKind.DOUBLE_TEXT_WALL,
+                    top = top,
+                    bottom = bottom,
+                )
+            )
+        }
     }
 
     override fun displayBitmap(
@@ -103,6 +127,14 @@ class Simulated : SGCManager() {
             height: Int?
     ): Boolean {
         Bridge.log("displayBitmap")
+        synchronized(displayEvents) {
+            displayEvents.add(
+                SimulatedDisplayEvent(
+                    kind = SimulatedDisplayEventKind.BITMAP,
+                    base64ImageData = base64ImageData,
+                )
+            )
+        }
         return false
     }
 
@@ -224,5 +256,42 @@ class Simulated : SGCManager() {
     // Version info
     override fun requestVersionInfo() {
         Bridge.log("SIMULATED: 📱 Requesting version info (no-op)")
+    }
+
+    /** Returns a public scriptable handle bound to this simulated manager. */
+    fun snapshot(): SimulatedGlasses = object : SimulatedGlasses {
+        override fun displayTranscript(): List<SimulatedDisplayEvent> =
+            synchronized(displayEvents) { displayEvents.toList() }
+
+        override fun clearDisplayTranscript() {
+            synchronized(displayEvents) { displayEvents.clear() }
+        }
+
+        override fun injectMicPcm(pcm: ByteArray) {
+            Bridge.sendMicPcm(pcm, MicTypes.GLASSES_CUSTOM)
+        }
+
+        override fun injectTouch(gesture: TouchGesture) {
+            Bridge.sendTouchEvent(
+                DeviceTypes.SIMULATED,
+                gesture.wireName,
+                System.currentTimeMillis(),
+            )
+        }
+
+        override fun injectHeadUp(headUp: Boolean) {
+            Bridge.sendHeadUp(headUp)
+        }
+
+        override fun simulateDisconnect() {
+            DeviceStore.apply("glasses", "connected", false)
+            DeviceStore.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+        }
+
+        override fun simulateReconnect() {
+            DeviceStore.apply("glasses", "connected", true)
+            DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
+            DeviceStore.apply("glasses", "fullyBooted", true)
+        }
     }
 }

@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.mentra.bluetoothsdk.sgcs.MentraLive
+import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.streaming.StreamSessionState
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
@@ -529,8 +530,15 @@ class MentraBluetoothSdk private constructor(
         deviceManager.disconnect()
     }
 
-    internal fun connectSimulated() {
+    /** Connect the built-in simulated glasses and return a scriptable handle for native app tests. */
+    fun connectSimulated(): SimulatedGlasses {
         deviceManager.connectSimulated()
+        val simulated = deviceManager.sgc as? Simulated
+            ?: throw BluetoothSdkException(
+                "simulated_not_available",
+                "Simulated glasses failed to initialize.",
+            )
+        return simulated.snapshot()
     }
 
     fun disconnect() {
