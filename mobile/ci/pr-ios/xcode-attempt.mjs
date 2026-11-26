@@ -6,8 +6,12 @@ import path from "node:path"
 // Xcode's compilation cache, on this Mac outside any one build's derived data,
 // so a build reuses what an earlier build (any runner, PR or release) compiled
 // from the same inputs. Xcode bounds its size (a share of the disk).
+// Swift is cached only with explicit modules, which React Native's Podfile
+// turns off for every pod when it uses prebuilt React Native: without them the
+// pods' Swift (most of the build) compiles again on every run.
 export const compilationCacheSettings = [
   "COMPILATION_CACHE_ENABLE_CACHING=YES",
+  "SWIFT_ENABLE_EXPLICIT_MODULES=YES",
   `COMPILATION_CACHE_CAS_PATH=${path.join(os.homedir(), "Library/Caches/mentra-compilation-cache")}`,
 ]
 
