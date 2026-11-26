@@ -264,6 +264,8 @@ android {
     versionCode 1
     versionName project.version
     buildConfigField "String", "SDK_VERSION", "\"${project.version}\""
+    // The hardware tests (androidTest, from the lab's routines below), which a lab run's phone runs against its glasses.
+    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
   }
   publishing {
     singleVariant("release") {
@@ -278,6 +280,13 @@ android {
     unitTests {
       includeAndroidResources = true
     }
+  }
+  // The SDK's hardware tests are the lab's routines' native code, in the Mentra monorepo: each
+  // routine's android/ folder, with the helpers in routines/shared/android/. Outside the
+  // monorepo there are none.
+  def routines = file("../../../../../../testing/routines")
+  if (routines.isDirectory()) {
+    sourceSets.androidTest.java.srcDirs += routines.listFiles().collect { new File(it, "android") }.findAll { it.isDirectory() }
   }
   packagingOptions {
     pickFirst '**/libjsc.so'
@@ -331,6 +340,13 @@ dependencies {
   // The Android SDK jar stubs org.json in JVM unit tests; the queue serializes real JSON.
   testImplementation 'org.json:json:20240303'
   testImplementation 'androidx.test:core:1.5.0'
+
+  // Hardware tests (androidTest): the SDK's public API against real glasses, run by the lab's
+  // native-test routines (testing/agent/lanes/native-android.ts).
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test:rules:1.6.1'
+  androidTestImplementation 'junit:junit:4.13.2'
+  androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
 
   // Local photo upload receiver
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
