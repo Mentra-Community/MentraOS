@@ -85,9 +85,12 @@ class MentraLocalNetworkModule : Module() {
             connect("", "", incoming, wifiDirect = true, promise)
         }
 
-        /** Whether this phone and the connected glasses can use Wi-Fi Direct now. */
-        Function("wifiDirectAvailable") {
-            appContext.reactContext?.let { ScopedSoftApNetwork.shared(it).wifiDirectAvailable() } == true
+        /** Whether this phone and the connected glasses can use Wi-Fi Direct now; right after connecting, it waits for the glasses to say. */
+        AsyncFunction("wifiDirectAvailable") { promise: Promise ->
+            // Off Expo's shared queue: the wait must not hold up the module's other calls.
+            executor.execute {
+                promise.resolve(appContext.reactContext?.let { ScopedSoftApNetwork.shared(it).wifiDirectAvailable() } == true)
+            }
         }
 
         AsyncFunction("request") {

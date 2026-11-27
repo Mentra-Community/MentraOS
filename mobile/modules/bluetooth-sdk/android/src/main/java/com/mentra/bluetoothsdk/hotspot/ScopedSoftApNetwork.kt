@@ -67,7 +67,7 @@ class ScopedSoftApNetwork(private val context: Context) {
     /** The Wi-Fi Direct group's interface name, while it is the joined link. */
     fun wifiDirectInterface(): String? = synchronized(lock) { joinedDirect?.interfaceName }
 
-    /** Whether the phone and the connected glasses can use Wi-Fi Direct now. */
+    /** Whether the phone and the connected glasses can use Wi-Fi Direct now. Right after a connection it waits, up to 10 s, for the glasses to say. */
     fun wifiDirectAvailable(): Boolean = direct.available()
 
     /**

@@ -8,8 +8,30 @@ import org.json.JSONObject
  * glasses Wi-Fi service's join in [ScopedSoftApNetwork] uses it; nothing else talks to the radio.
  */
 object GlassesWifiDirect {
-    /** The connected glasses' `wifi_direct_version`; 0 when they can't hold a group or are gone. */
-    @Volatile var version: Int = 0
+    private val lock = Object()
+    private var known: Int? = 0
+
+    /**
+     * The connected glasses' `wifi_direct_version`: 0 when they can't hold a group or none are
+     * connected, null from asking them for their `version_info` until it answers.
+     */
+    var version: Int?
+        get() = synchronized(lock) { known }
+        set(value) = synchronized(lock) {
+            known = value
+            lock.notifyAll()
+        }
+
+    /** [version] once the glasses have answered, waiting up to [timeoutMs]; 0 if they never do. */
+    fun awaitVersion(timeoutMs: Long): Int = synchronized(lock) {
+        val deadline = System.nanoTime() / 1_000_000 + timeoutMs
+        while (known == null) {
+            val left = deadline - System.nanoTime() / 1_000_000
+            if (left <= 0) break
+            lock.wait(left)
+        }
+        known ?: 0
+    }
 
     /** Sends a command to the connected glasses; false when none are connected. */
     @Volatile internal var sender: ((JSONObject) -> Boolean)? = null

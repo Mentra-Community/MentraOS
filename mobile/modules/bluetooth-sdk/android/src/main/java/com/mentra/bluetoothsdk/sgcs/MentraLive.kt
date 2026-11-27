@@ -5235,6 +5235,8 @@ class MentraLive : SGCManager() {
                 try {
                     val versionRequest = JSONObject()
                     versionRequest.put("type", "request_version")
+                    // Wi-Fi Direct is unknown, not unsupported, until the answer says.
+                    GlassesWifiDirect.version = null
                     sendJson(versionRequest)
                 } catch (t: Throwable) {
                     Bridge.log("LIVE: ⚠️ glasses_ready: request_version threw: " + t)

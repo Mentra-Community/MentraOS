@@ -48,7 +48,7 @@ internal class WifiDirectJoin(context: Context) {
     private var onLost: (() -> Unit)? = null
     private var releases = 0
 
-    /** Whether the phone and the connected glasses can hold this link now. */
+    /** Whether the phone and the connected glasses can hold this link now, once the glasses have said what they support. */
     fun available(): Boolean = blocker() == null
 
     @Throws(ScopedNetworkError::class)
@@ -172,12 +172,12 @@ internal class WifiDirectJoin(context: Context) {
 
     /** Why the phone can't use Wi-Fi Direct with these glasses now, or null. */
     private fun blocker(): String? {
-        if (GlassesWifiDirect.version < 1) return "glasses_unsupported"
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return "android_too_old"
         if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT)) return "unsupported"
         val wifi = context.getSystemService(WifiManager::class.java)
         if (wifi == null || !wifi.isWifiEnabled) return "wifi_off"
         if (context.checkSelfPermission(nearbyPermission()) != PackageManager.PERMISSION_GRANTED) return "permission"
+        if (GlassesWifiDirect.awaitVersion(CAPABILITY_WAIT_MS) < 1) return "glasses_unsupported"
         return null
     }
 
@@ -276,5 +276,7 @@ internal class WifiDirectJoin(context: Context) {
         const val GLASSES_ANSWER_TIMEOUT_MS = 20_000L
         const val JOIN_TIMEOUT_MS = 20_000L
         const val ADDRESS_WAIT_MS = 5_000L
+        /** The glasses answer `request_version` within a few seconds of connecting. */
+        const val CAPABILITY_WAIT_MS = 10_000L
     }
 }

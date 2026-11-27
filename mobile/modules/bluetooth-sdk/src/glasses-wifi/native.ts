@@ -26,9 +26,10 @@ const native = () => {
 
 const requestId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`
 
-/** Android: whether the phone and the connected glasses can use the Wi-Fi Direct link now. */
-export function wifiDirectAvailable(): boolean {
-  return Platform.OS === "android" && MentraLocalNetwork?.wifiDirectAvailable?.() === true
+/** Android: whether the phone and the connected glasses can use the Wi-Fi Direct link now. Right after a connection
+ * it waits for the glasses to say what they support. */
+export async function wifiDirectAvailable(): Promise<boolean> {
+  return Platform.OS === "android" && (await MentraLocalNetwork?.wifiDirectAvailable?.()) === true
 }
 
 /** Join the glasses' hotspot. Resolves with the phone's address on it, when the platform reports it. */

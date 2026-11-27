@@ -234,8 +234,8 @@ export async function holdGlassesWifi(options: GlassesWifiHoldOptions): Promise<
  * The radio, chosen once per bring-up from the platform and the glasses' capability: Wi-Fi Direct
  * on Android with glasses that advertise `wifi_direct_version`, the hotspot otherwise.
  */
-function chooseLink(): Link {
-  return native.wifiDirectAvailable() ? "wifi_direct" : "hotspot"
+async function chooseLink(): Promise<Link> {
+  return (await native.wifiDirectAvailable()) ? "wifi_direct" : "hotspot"
 }
 
 const purpose = (): native.JoinPurpose =>
@@ -244,7 +244,7 @@ const purpose = (): native.JoinPurpose =>
 function bringUp(first: Holder | null): Promise<GlassesWifiBinding> {
   const attempt = (async () => {
     const report = (line: string) => first?.options.report?.(line)
-    linkType = chooseLink()
+    linkType = await chooseLink()
     console.log(`[GlassesWifi] Bringing up the ${linkType} link`)
     const joined = linkType === "wifi_direct" ? await joinWifiDirect(report) : await joinHotspot(first, report)
     const wasLost = lostAt !== null

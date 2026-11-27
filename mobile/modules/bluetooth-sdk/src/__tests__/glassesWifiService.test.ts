@@ -55,7 +55,7 @@ jest.mock("../glasses-wifi/native", () => ({
     if (answer instanceof Error) throw answer
     return answer
   },
-  wifiDirectAvailable: () => mockState.wifiDirect,
+  wifiDirectAvailable: async () => mockState.wifiDirect,
   joinWifiDirect: async () => {
     mockState.directJoins++
     return {ssid: "DIRECT-ML-abcd", localAddress: "192.168.43.50", gateway: "192.168.43.1"}

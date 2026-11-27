@@ -22,7 +22,7 @@ const mockNative = {
     gateway: "192.168.43.1",
   })),
   disconnect: jest.fn(async () => {}),
-  wifiDirectAvailable: jest.fn(() => false),
+  wifiDirectAvailable: jest.fn(async () => false),
   cacheDirectory: jest.fn(() => "/data/cache/"),
   download: jest.fn(async (..._args: unknown[]) => ({statusCode: 200, bytesWritten: 3, headers: {}})),
   addListener: jest.fn((event: string, listener: Listener) => {
