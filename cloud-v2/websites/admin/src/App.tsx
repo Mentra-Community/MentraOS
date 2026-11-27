@@ -177,7 +177,7 @@ function AdminPage() {
 
   const pageMeta: Record<AdminPageKey, { title: string; body: string }> = {
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
-    workspaces: { title: "Workspaces", body: "Every workspace in this organization: make one and invite its owner, grant it licenses, and manage its members, invitations, keys, settings, audit and ownership." },
+    workspaces: { title: "Workspaces", body: "Every workspace in this organization: find one, or make one and invite its owner. Manage an active one in Mentra Portal, with its Admin tools." },
     licenses: { title: "Licenses", body: "Every product bought in this organization's workspaces: which workspace holds it, how many licenses are assigned and what it is paid through." },
     registry: { title: "Miniapp registry", body: "Every miniapp URL installed in the Mentra App. Archive a URL, a package, a domain or everything one account registered, and register URLs yourself." },
     websites: { title: "Miniapp websites", body: "The websites registered to sign people in with Mentra, each for one miniapp." },
