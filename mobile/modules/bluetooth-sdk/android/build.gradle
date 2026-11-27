@@ -267,6 +267,16 @@ android {
     // The hardware tests (androidTest, from the lab's routines below), which a lab run's phone runs against its glasses.
     testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
   }
+  // Only the explicitly selected diagnostic app variant includes the DUMP-protected seam.
+  buildTypes {
+    nimoDiagnostic {
+      initWith debug
+      matchingFallbacks = ['debug']
+    }
+  }
+  sourceSets {
+    nimoDiagnostic.java.srcDirs = ['src/debug/java']
+  }
   publishing {
     singleVariant("release") {
       withSourcesJar()

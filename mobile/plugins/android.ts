@@ -10,8 +10,11 @@ import {
   withGradleProperties,
   withAndroidManifest,
   withMainActivity,
+  withMainApplication,
 } from "@expo/config-plugins"
 import {mergeContents} from "@expo/config-plugins/build/utils/generateCode"
+
+import {withNimoDiagnosticGradle, withNimoDiagnosticApplication} from "../scripts/nimo-diagnostic-build.mjs"
 
 import {withDebugAbiFilters} from "../scripts/android-abi-filters.mjs"
 
@@ -29,6 +32,10 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   // Apply all modifications in sequence
   config = withProjectBuildGradleModifications(config)
   config = withAppBuildGradleModifications(config)
+  config = withMainApplication(config, (config) => {
+    config.modResults.contents = withNimoDiagnosticApplication(config.modResults.contents)
+    return config
+  })
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
   config = withGradlePropertiesModifications(config)
@@ -300,7 +307,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
     // 8. Filter debug APK native libs to reactNativeArchitectures. Release/AAB stay unfiltered.
     buildGradle = withDebugAbiFilters(buildGradle)
 
-    config.modResults.contents = buildGradle
+    config.modResults.contents = withNimoDiagnosticGradle(buildGradle)
     return config
   })
 }
