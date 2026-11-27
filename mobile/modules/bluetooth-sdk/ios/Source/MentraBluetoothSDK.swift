@@ -603,9 +603,17 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.disconnect()
     }
 
-    func connectSimulated() {
+    /// Connect the built-in simulated glasses and return a scriptable handle for native app tests.
+    public func connectSimulated() throws -> SimulatedGlasses {
         clearBluetoothRestoreIntent()
         DeviceManager.shared.connectSimulated()
+        guard let simulated = DeviceManager.shared.sgc as? Simulated else {
+            throw BluetoothSdkError(
+                code: "simulated_not_available",
+                message: "Simulated glasses failed to initialize."
+            )
+        }
+        return simulated.snapshot()
     }
 
     public func disconnect() {

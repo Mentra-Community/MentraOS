@@ -117,7 +117,12 @@ class Bridge {
 
     @MainActor
     static func sendMicPcm(_ data: Data) {
-        Bridge.sendTypedMessage("mic_pcm", body: micPcmEventBody(data))
+        sendMicPcm(data, source: DeviceStore.shared.get("bluetooth", "currentMic") as? String ?? "")
+    }
+
+    @MainActor
+    static func sendMicPcm(_ data: Data, source: String) {
+        Bridge.sendTypedMessage("mic_pcm", body: micPcmEventBody(data, source: source))
     }
 
     @MainActor
@@ -134,7 +139,7 @@ class Bridge {
     }
 
     @MainActor
-    private static func micPcmEventBody(_ data: Data) -> [String: Any] {
+    private static func micPcmEventBody(_ data: Data, source: String) -> [String: Any] {
         let voiceActivityDetectionEnabled =
             DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool
                 ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
@@ -146,9 +151,9 @@ class Bridge {
             "encoding": "pcm_s16le",
             "voiceActivityDetectionEnabled": voiceActivityDetectionEnabled,
             // Stamped per frame so a consumer that asked for a specific microphone can verify it
-            // rather than assume it. Read now, not captured: the point is which microphone is
-            // selected for this buffer. Empty when the SDK has not selected one.
-            "source": DeviceStore.shared.get("bluetooth", "currentMic") as? String ?? "",
+            // rather than assume it. The default overload reads the currently selected microphone;
+            // scripted simulated audio explicitly tags the source it is injecting.
+            "source": source,
         ]
     }
 

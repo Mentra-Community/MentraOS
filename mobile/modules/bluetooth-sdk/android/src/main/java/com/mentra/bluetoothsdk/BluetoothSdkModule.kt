@@ -556,7 +556,10 @@ class BluetoothSdkModule : Module() {
             )
         }
 
-        SdkAsyncFunction("connectSimulated") { -> sdk?.connectSimulated() }
+        SdkAsyncFunction("connectSimulated") { ->
+            sdk?.connectSimulated()
+            Unit
+        }
 
         SdkAsyncFunction("disconnect") { -> sdk?.disconnect() }
 
