@@ -26,7 +26,12 @@ Roles are cumulative: each holds everything the one before it holds.
   demote or remove Admins and Owners, on either side of the change.
 - A workspace keeps at least one Owner: the last Owner cannot leave, be demoted
   or be removed. Concurrent changes are serialized in a transaction on the
-  workspace, so two Owners demoting each other at once leave one Owner.
+  workspace, so two Owners demoting each other at once leave one Owner. A
+  workspace can still be without an Owner: one an organization administrator
+  made for an Owner who is invited next ([APIs](#apis)), and one whose last
+  Owner deleted their account. Organization Admins act as an Owner there, and
+  `/api/organization/workspaces/:workspaceId/owners` or an Owner invitation
+  gives it one.
 - Renaming, changing a role and removing a member carry the workspace revision
   the caller last saw (`expectedRevision`); a stale one answers
   `409 membership_changed`.
@@ -323,16 +328,24 @@ from deletion (`deletionHolds`), and `DELETE /:workspaceId` answers
 `409 workspace_has_holds` with those holds while there are any. `GET /api/organization` tells any
 caller, a key included, its organization capabilities and whether it may create
 a workspace for itself (a key never may). With `organization.workspaces.administer`,
-`GET /api/organization/workspaces` lists every workspace, `POST /api/organization/workspaces`
+`GET /api/organization/workspaces` lists every workspace (each with `owners`, how many live Owners
+it has; 0 means it has none now, as one still waiting for the Owner invited to it, or one whose
+last Owner deleted their account), `POST /api/organization/workspaces`
 `{name, owner: {email} | {mentraUserId}}` creates one whose first Owner is that person (the
-caller is not a member; the person's empty automatic workspace gives way), and
+caller is not a member; the person's empty automatic workspace gives way), or, with no `owner`,
+one with no members yet (`owner: null` in the answer), for a person who has no account: the
+caller then invites them as its Owner (`POST /api/workspaces/:workspaceId/invitations`,
+`role: "owner"`), and they sign up from the invitation. An `owner` that names nobody is still
+`404 user_not_found`, and
 `/api/organization/workspaces/:workspaceId/owners` makes a person (by Core user id, or on
 hosted Core by confirmed email) an Owner. With `organization.credentials.manage`,
 `/api/organization/credentials` lists and revokes operator keys; creating one is a person's
 only. A person or an operator key holding the capability may call each of them. With `organization.licenses.grant`,
 `POST /api/organization/workspaces/:workspaceId/license-grants` gives a workspace
 licenses of a product until a date without a sale
-([Granting licenses](licenses.md#granting-licenses)).
+([Granting licenses](licenses.md#granting-licenses)), and
+`POST /api/organization/workspaces/:workspaceId/license-grants/:product/end` ends
+such a grant before its date ([Ending a grant early](licenses.md#ending-a-grant-early)).
 
 `/api/admin/*` checks a capability per area: incidents
 (`organization.incidents.read`), support profiles

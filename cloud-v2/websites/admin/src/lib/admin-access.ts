@@ -70,6 +70,15 @@ export function visiblePages(me: Pick<AdminMe, "organization" | "user" | "licens
   });
 }
 
+/**
+ * The page a link asks for with `?page=<key>` (`/?page=workspaces`), or null when it names none. A page the
+ * caller may not open falls back to their first page, as any request does (`resolvePage`).
+ */
+export function pageFromSearch(search: string): AdminPageKey | null {
+  const asked = new URLSearchParams(search).get("page");
+  return PAGE_ORDER.find(page => page === asked) ?? null;
+}
+
 /** The page to show: the requested one if it is visible, otherwise the default (first visible) one, if any. */
 export function resolvePage(requested: AdminPageKey | null, visible: readonly AdminPageKey[]): AdminPageKey | null {
   return requested && visible.includes(requested) ? requested : (visible[0] ?? null);

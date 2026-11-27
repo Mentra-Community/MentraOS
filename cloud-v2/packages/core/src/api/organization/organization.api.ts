@@ -17,12 +17,16 @@
  *
  * Workspaces: `GET /workspaces` lists every workspace; `POST /workspaces`
  * creates one whose first Owner is the person the body names (`owner: {email}`
- * on hosted Core, or `owner: {mentraUserId}`), the caller not becoming a member;
+ * on hosted Core, or `owner: {mentraUserId}`), the caller not becoming a member,
+ * or, with no `owner`, one with no members yet, for a person who has no account:
+ * the caller then invites its Owner (`POST /api/workspaces/:workspaceId/invitations`,
+ * role `owner`), acting as an Owner there meanwhile;
  * `POST /workspaces/:workspaceId/owners` makes a person an Owner of an existing
  * one. All three need `organization.workspaces.administer`.
  *
  * Licenses: `POST /workspaces/:workspaceId/license-grants` gives a workspace licenses of a product until a date,
- * without a sale (`license-grants.api.ts`), with `organization.licenses.grant`.
+ * without a sale, and `POST /workspaces/:workspaceId/license-grants/:product/end` ends such a grant before its date
+ * (`license-grants.api.ts`), both with `organization.licenses.grant`.
  *
  * Conventions match `workspaces.api.ts`: lists are `{items}` (`next` where they
  * page), creating is 201 (a key with `cache-control: no-store` and the token in
@@ -65,7 +69,7 @@ import {
   requiredStringArray,
   type JsonObject,
 } from "../workspaces/request"
-import {grantLicenses} from "./license-grants.api"
+import {endLicenseGrant, grantLicenses} from "./license-grants.api"
 
 /** The organization routes, for mounting under a route group. */
 export function createOrganizationApi(): Hono<AppEnv> {
@@ -94,11 +98,16 @@ export function createOrganizationApi(): Hono<AppEnv> {
     return c.json({items, next: rows.length > size ? items[items.length - 1]!.workspaceId : null})
   })
 
-  // Create a workspace for someone: `{name, owner: {email} | {mentraUserId}}`. The person named becomes its
-  // first Owner; the caller is not a member. 404 `user_not_found` when no such person exists.
+  // Create a workspace for someone: `{name, owner?: {email} | {mentraUserId}}`. The person named becomes its
+  // first Owner; the caller is not a member. 404 `user_not_found` when no such person exists. With no `owner`
+  // the workspace has no members yet (`owner: null` in the answer): its Owner is invited next. An `owner` that
+  // is present is always checked, so a typo never quietly makes a workspace nobody owns.
   app.post("/workspaces", ...administersWorkspaces, async (c) => {
     const body = await readJsonObject(c)
     const name = requiredString(body, "name")
+    if (body.owner === undefined) {
+      return c.json(await createWorkspaceForOwner(requestActor(c), {name, owner: null}), 201)
+    }
     const owner = await namedPerson(ownerObject(body))
     if (!owner) return c.json({error: "user_not_found", error_description: "no such person"}, 404)
     const created = await createWorkspaceForOwner(requestActor(c), {name, owner})
@@ -118,14 +127,14 @@ export function createOrganizationApi(): Hono<AppEnv> {
     )
   })
 
-  // Give a workspace licenses of a product until a date, without a sale (`license-grants.api.ts`): a person or an
-  // operator key holding `organization.licenses.grant`.
-  app.post(
-    "/workspaces/:workspaceId/license-grants",
+  // Give a workspace licenses of a product until a date, without a sale, and end such a grant before its date
+  // (`license-grants.api.ts`): a person or an operator key holding `organization.licenses.grant`.
+  const grantsLicenses = [
     requirePersonOrOperatorKey(),
     requireOrganizationCapability("organization.licenses.grant"),
-    grantLicenses,
-  )
+  ] as const
+  app.post("/workspaces/:workspaceId/license-grants", ...grantsLicenses, grantLicenses)
+  app.post("/workspaces/:workspaceId/license-grants/:product/end", ...grantsLicenses, endLicenseGrant)
 
   // --- Operator keys ---------------------------------------------------------
 

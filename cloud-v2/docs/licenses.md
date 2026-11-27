@@ -135,7 +135,22 @@ charged. It needs `organization.licenses.grant`: an Organization Admin holds
 it, and so does an operator key created with it (a workspace key never may).
 Billing records a key's grant by the key's ID and name and the person who
 created it. It is also under `/api/admin/organization` for the admin portal's
-session.
+session: the admin portal's Workspaces page offers **Grant licenses** on each
+active workspace to a caller holding the capability, and sends the request with
+an idempotency key it keeps while the form asks for the same grant, so a retry
+after a timeout makes nothing new. The same page makes a workspace for a
+customer and invites its Owner ([Workspaces](workspaces.md#apis)), and an open
+workspace's Licenses tab lists what it holds, with **End grant** on each active
+license for a caller holding the capability
+([Ending a grant early](#ending-a-grant-early)).
+
+| Route | Does |
+| --- | --- |
+| `POST /api/organization/workspaces/:workspaceId/license-grants` | Gives the workspace licenses of a product until a date. |
+| `POST /api/organization/workspaces/:workspaceId/license-grants/:product/end` | Ends the workspace's grant of that product now, before its date. |
+
+Both need `organization.licenses.grant`, and both are also under
+`/api/admin/organization`.
 
 ```sh
 curl -X POST "$MENTRA_CORE_URL/api/organization/workspaces/ws_123/license-grants" \
@@ -195,9 +210,80 @@ action log (`workspace.licenses.granted`, by the caller, with the note).
 | `409 reset_in_progress` | On dev or staging, the workspace's licenses are being reset (a grant made meanwhile is cancelled); try again, with the same key. |
 | `503 billing_unavailable` | Billing is not installed on this Core, or did not answer. A repeat with the same key is safe. |
 
-A grant ends on its date. To end one sooner, or to change its licenses or its
-end, cancel it (the Store's billing runbook says how) and grant again, with a
-new key; the new grant is a new license, whose licenses are assigned again.
+A grant ends on its date, by itself. Its subscription is never edited at the
+payment processor: not its end, its number of licenses or its items. To change
+a grant's licenses or its end, end it early and grant again, with a new key;
+the new grant is a new license, whose licenses are assigned again. (A repeat of
+the ended grant's own key answers that grant, ended, and makes nothing.)
+
+### Ending a grant early
+
+`POST /api/organization/workspaces/:workspaceId/license-grants/:product/end`
+ends the workspace's grant of `product` now. It needs
+`organization.licenses.grant`, as the grant does, from a person or an operator
+key. The admin portal's **End grant**, on an open workspace's Licenses tab, asks
+first in a dialog that names the workspace and the product and says how many
+people lose it. The organization-wide Licenses page stays read-only.
+
+```sh
+curl -X POST "$MENTRA_CORE_URL/api/organization/workspaces/ws_123/license-grants/mentra.call.unlimited/end" \
+  -H "Authorization: Bearer $MENTRA_OPERATOR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"note": "The pilot ended early"}'
+```
+
+The body is optional: none, or `{"note"}`, why, in at most 500 characters. Core
+checks the product key and the note, and that the workspace is active, then
+forwards the request to billing's
+`POST /v1/portal/workspaces/:workspaceId/license-grants/:product/end`, signed as
+a grant is, with the caller as its principal and no body. Billing finds the
+workspace's live subscription of the product, cancels it at once and answers
+`200`:
+
+```json
+{
+  "workspaceId": "ws_123",
+  "product": "mentra.call.unlimited",
+  "subscriptionId": "sub_...",
+  "licenseId": "01J...",
+  "endedAt": "2026-11-26T12:00:00Z"
+}
+```
+
+Core records it in the admin action log (`workspace.licenses.grant_ended`, by
+the caller, with the note as its reason and the answer's fields). The note is
+kept there and nowhere else.
+
+**What becomes of the license.** Billing writes the license at once, as it
+writes any subscription cancelled before its period's end
+([Writing licenses](#writing-licenses)): `paidThrough` is the cancellation
+itself (`endedAt`), with none of the 3 days a license gets when its term runs
+its course, and the same write ends it (`endedReason: "lapsed"`), since that
+time has come. Core ends the license in that write's transaction: every seat of
+it is released (`seat.released`, reason `license_ended`) and `license.ended` is
+recorded ([Audit and the change feed](#audit-and-the-change-feed)). So the people
+it was assigned to are unassigned at once, and lose the product's features at
+their next miniapp token: a token already minted keeps them until it expires, an
+hour by default ([Features in miniapp tokens](#features-in-miniapp-tokens)). The
+license leaves the workspace's Licenses page. Nothing is refunded, because a
+grant is never charged. If billing's write cannot be made or delivered at once
+(Core or the payment processor not answering), billing tries again until it is,
+as for any license write, and the license ends when it arrives.
+
+Only a grant is ended this way, and only while it is still the grant it was
+made as:
+
+| Answer | When |
+| --- | --- |
+| `400 invalid_request` | The path's product is not a product key, the note is not a string or is over 500 characters, or the body is not a JSON object. |
+| `403 forbidden` | The caller does not hold `organization.licenses.grant`. |
+| `404 workspace_not_found` | The workspace is deleted or never existed. Deleting a workspace has already ended its licenses, and billing cancels its subscriptions then, so there is no grant left to end. |
+| `404 grant_not_found` | The workspace has no grant of the product running: it ended already (on its date, or by an earlier request), or there never was one. |
+| `409 not_a_grant` | The workspace holds the product by a purchase, not a grant. Its Admins and Owners cancel what it bought themselves, on the workspace's Licenses page. |
+| `409 grant_renewed` | The workspace renewed the grant (Renew, on its Licenses page, which undoes the grant's scheduled end so that a card is charged from then on). It is the workspace's own subscription now, and the workspace cancels it. |
+| `409 checkout_in_progress` | A purchase or a grant of the product is being set up in the workspace; try again in a minute. |
+| `409 reset_in_progress` | On dev or staging, the workspace's licenses are being reset; the reset ends the grant. |
+| `503 billing_unavailable` | Billing is not installed on this Core, did not answer, or answered something Core could not read. Asking again is safe: `grant_not_found` then means the grant had ended. |
 
 ## Assigning licenses
 
@@ -497,6 +583,9 @@ for what its viewer's view needs ([Who sees what](#who-sees-what)).
 
 - **Deleting a workspace** ends its licenses (`endedReason: "workspace_deleted"`)
   and frees their seats in the deletion's transaction.
+- **Ending a grant early** ends its license through billing's write
+  (`endedReason: "lapsed"`), which frees its seats in that write's transaction
+  ([Ending a grant early](#ending-a-grant-early)).
 - **Deleting an account** ends no license. The person's memberships end, and the
   licenses assigned to them are freed with them (`seat.released`, reason
   `account_deleted`), before its `user.deleted` tombstone.

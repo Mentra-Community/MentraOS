@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { WorkspaceSummary } from "@mentra/workspace-contract";
+import type { LicenseGrant, OrganizationWorkspaceListItem, WorkspaceSummary } from "@mentra/workspace-contract";
 import {
   Button,
   createWorkspaceApi,
@@ -17,6 +17,10 @@ import {
 import { useId, useRef, useState, type FormEvent } from "react";
 import { api, ApiError } from "../lib/api";
 import { fleetOverviewUrl, WORKSPACE_PORTAL_URL } from "../lib/config";
+import { LICENSES_QUERY_KEY } from "./licenses";
+import { CreateWorkspaceDialog, createdWorkspaceMessage, type CreatedWorkspace } from "./workspace-create";
+import { WorkspaceLicensesWithEnding } from "./workspace-license-end";
+import { grantedMessage, LicenseGrantDialog } from "./workspace-license-grant";
 import { WorkspaceLicenseReset } from "./workspace-license-reset";
 
 /** The shared workspace screens' card (Mentra's tokens, from @mentra/workspace-ui/mentra.css). */
@@ -43,14 +47,24 @@ const ALL_WORKSPACES_PAGE_SIZE = 50;
 export const STORE_DELETE_NOTICE =
   "A workspace that owns miniapps in the Mentra Miniapp Store can't be deleted. Delete its miniapps first.";
 
-type TabKey = "members" | "invitations" | "keys" | "settings" | "audit";
+type TabKey = "members" | "invitations" | "licenses" | "keys" | "settings" | "audit";
 const TABS: ReadonlyArray<readonly [TabKey, string]> = [
   ["members", "Members"],
   ["invitations", "Invitations"],
+  ["licenses", "Licenses"],
   ["keys", "Keys"],
   ["settings", "Settings"],
   ["audit", "Audit"],
 ];
+
+/**
+ * Whether the list should say a workspace has no Owner: an active one Core counts none for. One made here
+ * waits for the Owner invited to it, and an invitation that expires says nothing, so this is what shows it.
+ * A Core that does not send the count says nothing either way.
+ */
+export function hasNoOwner(workspace: Pick<OrganizationWorkspaceListItem, "status" | "owners">): boolean {
+  return workspace.status === "active" && workspace.owners === 0;
+}
 
 /** Who to make an owner: an account email, or a Mentra user id. */
 export type OwnerTarget = { email: string } | { mentraUserId: string };
@@ -82,26 +96,42 @@ export async function recoverWorkspaceOwnership(workspaceId: string, target: Own
 }
 
 /**
- * Every workspace in this organization, for Organization Admins: open one to manage it with the shared
- * workspace screens, or recover its ownership. A workspace's own people manage it in the workspace portal.
+ * Every workspace in this organization, for Organization Admins: make one for a customer and invite its
+ * owner, open one to manage it with the shared workspace screens, recover its ownership, or grant it
+ * licenses. A workspace's own people manage it in the workspace portal.
+ *
+ * `canGrantLicenses` offers the grant (the caller holds `organization.licenses.grant`), and `licensesReadable`
+ * the open workspace's Licenses tab (`organization.licenses.read`, with billing or a license on this Core). With
+ * both, that tab also offers End grant on each active license (`workspace-license-end.tsx`).
  */
-export function WorkspacesPage({ fleetInstalled = false, portalUrl = WORKSPACE_PORTAL_URL, resetEnabled = false }: { fleetInstalled?: boolean; portalUrl?: string | null; resetEnabled?: boolean } = {}) {
+export function WorkspacesPage({
+  fleetInstalled = false,
+  portalUrl = WORKSPACE_PORTAL_URL,
+  resetEnabled = false,
+  canGrantLicenses = false,
+  licensesReadable = false,
+}: { fleetInstalled?: boolean; portalUrl?: string | null; resetEnabled?: boolean; canGrantLicenses?: boolean; licensesReadable?: boolean } = {}) {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("members");
   const tabsTop = useRef<HTMLDivElement>(null);
   const tabsId = useId();
+  const tabs = TABS.filter(([key]) => key !== "licenses" || licensesReadable);
+
+  function open(id: string, to: TabKey = "members") {
+    setWorkspaceId(id);
+    setTab(to);
+    tabsTop.current?.scrollIntoView?.({ block: "start" });
+  }
 
   return (
     <div className="space-y-6">
       <AllWorkspaces
         resetEnabled={resetEnabled}
+        canGrantLicenses={canGrantLicenses}
         portalUrl={portalUrl}
         openWorkspaceId={workspaceId}
-        onOpen={id => {
-          setWorkspaceId(id);
-          setTab("members");
-          tabsTop.current?.scrollIntoView?.({ block: "start" });
-        }}
+        onOpen={id => open(id)}
+        onCreated={created => open(created.workspaceId, "invitations")}
       />
 
       <div ref={tabsTop} className="scroll-mt-24 space-y-4">
@@ -109,7 +139,7 @@ export function WorkspacesPage({ fleetInstalled = false, portalUrl = WORKSPACE_P
           <>
             <OpenWorkspaceHeading workspaceId={workspaceId} fleetUrl={fleetInstalled ? fleetOverviewUrl(portalUrl, workspaceId) : null} />
             <div role="tablist" aria-label="Workspace sections" className="bg-surface flex flex-wrap items-center gap-1 rounded-[22px] border p-1">
-              {TABS.map(([key, label]) => (
+              {tabs.map(([key, label]) => (
                 <button
                   key={key}
                   type="button"
@@ -132,6 +162,7 @@ export function WorkspacesPage({ fleetInstalled = false, portalUrl = WORKSPACE_P
                 <WorkspaceMembersPanel api={adminWorkspaceApi} workspaceId={workspaceId} showUserIds />
               ) : null}
               {tab === "invitations" ? <WorkspaceInvitationsPanel api={adminWorkspaceApi} workspaceId={workspaceId} /> : null}
+              {tab === "licenses" ? <OpenWorkspaceLicenses workspaceId={workspaceId} canGrantLicenses={canGrantLicenses} /> : null}
               {tab === "keys" ? <WorkspaceCredentialsPanel api={adminWorkspaceApi} workspaceId={workspaceId} /> : null}
               {tab === "settings" ? (
                 <WorkspaceSettingsPanel
@@ -146,7 +177,7 @@ export function WorkspacesPage({ fleetInstalled = false, portalUrl = WORKSPACE_P
             </div>
           </>
         ) : (
-          <p className="text-muted-foreground px-1 text-sm">Open a workspace to manage its members, invitations, keys and settings, or to read its audit log.</p>
+          <p className="text-muted-foreground px-1 text-sm">Open a workspace to manage its members, invitations, keys and settings, or to read its licenses and audit log.</p>
         )}
       </div>
     </div>
@@ -172,12 +203,36 @@ function OpenWorkspaceHeading({ workspaceId, fleetUrl }: { workspaceId: string; 
   );
 }
 
-function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl, resetEnabled }: { openWorkspaceId: string | null; onOpen(workspaceId: string): void; portalUrl: string | null; resetEnabled: boolean }) {
+/**
+ * The open workspace's licenses, with End grant for a caller who may grant. The dialog names the workspace, from
+ * the panels' cached detail query; until that has answered, by its id.
+ */
+function OpenWorkspaceLicenses({ workspaceId, canGrantLicenses }: { workspaceId: string; canGrantLicenses: boolean }) {
+  const detail = useQuery(workspaceDetailQuery(adminWorkspaceApi, workspaceId));
+  return <WorkspaceLicensesWithEnding workspace={{ workspaceId, name: detail.data?.name ?? workspaceId }} canEndGrants={canGrantLicenses} />;
+}
+
+function AllWorkspaces({
+  openWorkspaceId,
+  onOpen,
+  onCreated,
+  portalUrl,
+  resetEnabled,
+  canGrantLicenses,
+}: {
+  openWorkspaceId: string | null;
+  onOpen(workspaceId: string): void;
+  /** A workspace was made here: the page opens it on its invitations. */
+  onCreated(created: CreatedWorkspace): void;
+  portalUrl: string | null;
+  resetEnabled: boolean;
+  canGrantLicenses: boolean;
+}) {
   const client = useQueryClient();
   const all = useInfiniteQuery({
     queryKey: ORGANIZATION_WORKSPACES_KEY,
     queryFn: ({ pageParam }) =>
-      api<{ items: WorkspaceSummary[]; next: string | null }>(
+      api<{ items: OrganizationWorkspaceListItem[]; next: string | null }>(
         `/api/admin/organization/workspaces?limit=${ALL_WORKSPACES_PAGE_SIZE}${pageParam ? `&before=${encodeURIComponent(pageParam)}` : ""}`,
       ),
     initialPageParam: undefined as string | undefined,
@@ -187,6 +242,10 @@ function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl, resetEnabled }: { o
   const [recovered, setRecovered] = useState<string | null>(null);
   const [resetWorkspaceId, setResetWorkspaceId] = useState<string | null>(null);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<CreatedWorkspace | null>(null);
+  const [granting, setGranting] = useState<{ workspaceId: string; name: string } | null>(null);
+  const [granted, setGranted] = useState<string | null>(null);
 
   const recover = useMutation({
     mutationFn: (request: { workspace: WorkspaceSummary; target: OwnerTarget; label: string }) =>
@@ -214,10 +273,54 @@ function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl, resetEnabled }: { o
         void client.invalidateQueries({queryKey: workspaceKeys.list(adminWorkspaceApi)});
       }} /> : null}
       {resetMessage ? <p role="status" className="m-6 text-sm">{resetMessage}</p> : null}
-      <div className="border-b p-6">
-        <h2 className="text-xl font-semibold">All workspaces</h2>
-        <p className="text-muted-foreground mt-1 text-sm">Every workspace in this organization, newest first. You act as the owner of any of them.</p>
+      {creating ? (
+        <CreateWorkspaceDialog
+          onClose={() => setCreating(false)}
+          onCreated={workspace => {
+            setCreating(false);
+            setCreated(workspace);
+            void client.invalidateQueries({ queryKey: workspaceKeys.list(adminWorkspaceApi) });
+            onCreated(workspace);
+          }}
+        />
+      ) : null}
+      {granting ? (
+        <LicenseGrantDialog
+          key={granting.workspaceId}
+          workspace={granting}
+          onClose={() => setGranting(null)}
+          onGranted={(grant: LicenseGrant) => {
+            setGranted(grantedMessage(granting.name, grant));
+            setGranting(null);
+            void client.invalidateQueries({ queryKey: LICENSES_QUERY_KEY });
+          }}
+        />
+      ) : null}
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b p-6">
+        <div>
+          <h2 className="text-xl font-semibold">All workspaces</h2>
+          <p className="text-muted-foreground mt-1 text-sm">Every workspace in this organization, newest first. You act as the owner of any of them.</p>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => {
+            setCreated(null);
+            setCreating(true);
+          }}
+        >
+          New workspace
+        </Button>
       </div>
+      {created ? (
+        <p role="status" className={`rounded-notice m-6 px-4 py-3 text-sm ${created.invitationProblem === null ? "bg-info text-info-foreground" : "bg-error text-error-foreground"}`}>
+          {createdWorkspaceMessage(created)}
+        </p>
+      ) : null}
+      {granted ? (
+        <p role="status" className="rounded-notice bg-info text-info-foreground m-6 px-4 py-3 text-sm">
+          {granted}
+        </p>
+      ) : null}
       {rows === undefined && all.isError ? (
         <p role="alert" className="rounded-notice bg-error text-error-foreground m-6 px-4 py-3 text-sm">
           {all.error instanceof Error ? all.error.message : "Request failed"}
@@ -241,6 +344,14 @@ function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl, resetEnabled }: { o
                       {active ? null : (
                         <span className="bg-surface text-muted-foreground inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold">Deleted</span>
                       )}
+                      {hasNoOwner(workspace) ? (
+                        <span
+                          className="bg-error text-error-foreground inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold"
+                          title="Nobody owns this workspace. Invite an owner from its Invitations, or use Recover ownership for someone who has an account."
+                        >
+                          No owner
+                        </span>
+                      ) : null}
                       {openWorkspaceId === workspace.workspaceId ? (
                         <span className="bg-info text-info-foreground inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold">Open</span>
                       ) : null}
@@ -254,6 +365,19 @@ function AllWorkspaces({ openWorkspaceId, onOpen, portalUrl, resetEnabled }: { o
                           <a href={`${portalUrl}/?workspace=${encodeURIComponent(workspace.workspaceId)}`} target="_blank" rel="noreferrer" aria-label={`Manage workspace ${workspace.name}`}>
                             Manage workspace ↗
                           </a>
+                        </Button>
+                      ) : null}
+                      {canGrantLicenses ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          aria-label={`Grant licenses to ${workspace.name}`}
+                          onClick={() => {
+                            setGranted(null);
+                            setGranting({ workspaceId: workspace.workspaceId, name: workspace.name });
+                          }}
+                        >
+                          Grant licenses
                         </Button>
                       ) : null}
                       {resetEnabled ? <Button variant="destructive-secondary" size="sm" aria-label={`Reset licenses and billing for ${workspace.name}`} onClick={() => {setResetMessage(null); setResetWorkspaceId(workspace.workspaceId);}}>Reset licenses & billing</Button> : null}

@@ -40,6 +40,7 @@ import {
   WORKSPACE_ROLES,
   type OrganizationCapability,
   type OrganizationWorkspaceCreated,
+  type OrganizationWorkspaceListItem,
   type PrincipalResponse,
   type WorkspaceRole,
   type WorkspaceSummary,
@@ -158,9 +159,12 @@ export async function listWorkspacesForUser(
 /**
  * Every workspace in the organization, deleted ones included (their summary
  * carries `status`), newest first. `before` is the `workspaceId` of the last
- * item of the previous page.
+ * item of the previous page. Each says how many live Owners it has (`owners`,
+ * `countActiveOwners`'s count; 0 for a deleted workspace, whose memberships ended), so an
+ * administrator sees the one that has none: made for an Owner whose invitation is still pending
+ * or has expired, or left by its last Owner's account being deleted.
  */
-export async function listAllWorkspaces(opts: {limit: number; before?: string}): Promise<WorkspaceSummary[]> {
+export async function listAllWorkspaces(opts: {limit: number; before?: string}): Promise<OrganizationWorkspaceListItem[]> {
   const filter: Record<string, unknown> = {}
   if (opts.before) {
     const cursor = await WorkspaceModel.findOne({workspaceId: opts.before}).select({_id: 1}).lean()
@@ -168,7 +172,8 @@ export async function listAllWorkspaces(opts: {limit: number; before?: string}):
     filter._id = {$lt: cursor._id}
   }
   const rows = await WorkspaceModel.find(filter).sort({_id: -1}).limit(clampPageSize(opts.limit)).lean()
-  return rows.map(toSummary)
+  const owners = await countActiveOwnersOf(rows.map(row => row.workspaceId))
+  return rows.map(row => ({...toSummary(row), owners: owners.get(row.workspaceId) ?? 0}))
 }
 
 export async function getActiveMembership(workspaceId: string, mentraUserId: string): Promise<MembershipRow | null> {
@@ -218,21 +223,45 @@ export async function claimableLegacyUserIds(legacyUserIds: string[], session?: 
  * account that claimed it is deleted) nobody ever will, so it does not count.
  */
 export async function countActiveOwners(workspaceId: string, session?: ClientSession): Promise<number> {
-  const owners = await WorkspaceMembershipModel.find({workspaceId, role: "owner", status: "active"})
-    .select({_id: 0, mentraUserId: 1, pendingWorkosUserId: 1})
+  return (await countActiveOwnersOf([workspaceId], session)).get(workspaceId) ?? 0
+}
+
+/**
+ * {@link countActiveOwners} for several workspaces at once, in three reads whatever their number: each id's
+ * count of live Owners, 0 for one that has none (or that does not exist).
+ */
+export async function countActiveOwnersOf(
+  workspaceIds: readonly string[],
+  session?: ClientSession,
+): Promise<Map<string, number>> {
+  const counts = new Map(workspaceIds.map(workspaceId => [workspaceId, 0]))
+  if (counts.size === 0) return counts
+  const owners = await WorkspaceMembershipModel.find({workspaceId: {$in: [...counts.keys()]}, role: "owner", status: "active"})
+    .select({_id: 0, workspaceId: 1, mentraUserId: 1, pendingWorkosUserId: 1})
     .session(session ?? null)
-    .lean<Array<{mentraUserId?: string | null; pendingWorkosUserId?: string | null}>>()
-  const userIds = owners.flatMap(owner => (isId(owner.mentraUserId) ? [owner.mentraUserId] : []))
+    .lean<Array<{workspaceId: string; mentraUserId?: string | null; pendingWorkosUserId?: string | null}>>()
+  const userIds = [...new Set(owners.flatMap(owner => (isId(owner.mentraUserId) ? [owner.mentraUserId] : [])))]
   const waitingFor = owners.flatMap(owner =>
     !isId(owner.mentraUserId) && isId(owner.pendingWorkosUserId) ? [owner.pendingWorkosUserId] : [],
   )
-  const deleted = userIds.length
-    ? await UserModel.countDocuments({mentraUserId: {$in: userIds}, supportTelemetryDeletedAt: {$ne: null}}).session(
-        session ?? null,
-      )
-    : 0
+  const deleted = new Set(
+    userIds.length
+      ? (
+          await UserModel.find({mentraUserId: {$in: userIds}, supportTelemetryDeletedAt: {$ne: null}})
+            .select({_id: 0, mentraUserId: 1})
+            .session(session ?? null)
+            .lean<Array<{mentraUserId: string}>>()
+        ).map(user => user.mentraUserId)
+      : [],
+  )
   const claimable = await claimableLegacyUserIds(waitingFor, session)
-  return userIds.length - deleted + waitingFor.filter(legacyUserId => claimable.has(legacyUserId)).length
+  for (const owner of owners) {
+    const live = isId(owner.mentraUserId)
+      ? !deleted.has(owner.mentraUserId)
+      : isId(owner.pendingWorkosUserId) && claimable.has(owner.pendingWorkosUserId)
+    if (live) counts.set(owner.workspaceId, (counts.get(owner.workspaceId) ?? 0) + 1)
+  }
+  return counts
 }
 
 // --- Lifecycle -------------------------------------------------------------
@@ -306,15 +335,29 @@ export async function insertWorkspace(
  * requires. In the same transaction, the owner's own automatic workspace gives way when it holds nothing
  * (`yieldAutomaticWorkspace`), as it does whenever a person gains a workspace. `workspace.created` names
  * the owner in its target (`membershipId`, `mentraUserId`, `email`), so the audit log says whose it is.
+ *
+ * `owner: null` creates the workspace with no members, for a person who has no account yet: the caller
+ * invites them as its Owner next (`createInvitation`, which an organization administrator may do in any
+ * workspace), and acts as an Owner there until they accept. It answers `owner: null`, and
+ * `workspace.created` names no membership. A workspace with no Owner is nothing new to Core (deleting the
+ * last Owner's account leaves one), and nothing ends it: only its deletion does. The last-owner guard holds
+ * from its first Owner on.
  */
 export async function createWorkspaceForOwner(
   actor: Actor,
-  input: {name: string; owner: {mentraUserId: string; email?: string | null}},
+  input: {name: string; owner: {mentraUserId: string; email?: string | null} | null},
 ): Promise<OrganizationWorkspaceCreated> {
   if (!actsForOrganization(actor, "organization.workspaces.administer")) {
     fail("forbidden", "only an organization admin can create a workspace for someone else")
   }
   const name = validateName(input?.name)
+  // Only an explicit null means no owner: a caller that lost the owner it meant to name is refused.
+  if (input?.owner === null) {
+    return withTransaction(async session => {
+      const {workspace} = await insertOwnedWorkspace(session, actor, {name, automatic: false, owner: null})
+      return {...workspace, owner: null}
+    })
+  }
   if (!isId(input?.owner?.mentraUserId)) fail("invalid_request", "owner is required")
   const owner = {mentraUserId: input.owner.mentraUserId.trim(), email: input.owner.email?.trim() || null}
   return withTransaction(async session => {
@@ -331,18 +374,30 @@ export async function createWorkspaceForOwner(
 /**
  * Insert a workspace whose first Owner is `input.owner`, inside the caller's transaction, and record
  * `workspace.created` for `actor`. When the owner is not the actor, the event's target names them too.
+ * With `owner: null` it inserts no membership (`membershipId: null`), and the event names none: its target
+ * is the workspace alone and its `after` carries no role.
  */
 async function insertOwnedWorkspace(
   session: ClientSession,
   actor: Actor,
   input: {name: string; automatic: boolean; owner: {mentraUserId: string; email: string | null}},
-): Promise<{workspace: WorkspaceSummary; membershipId: string}> {
+): Promise<{workspace: WorkspaceSummary; membershipId: string}>
+async function insertOwnedWorkspace(
+  session: ClientSession,
+  actor: Actor,
+  input: {name: string; automatic: false; owner: null},
+): Promise<{workspace: WorkspaceSummary; membershipId: null}>
+async function insertOwnedWorkspace(
+  session: ClientSession,
+  actor: Actor,
+  input: {name: string; automatic: boolean; owner: {mentraUserId: string; email: string | null} | null},
+): Promise<{workspace: WorkspaceSummary; membershipId: string | null}> {
   const name = validateName(input.name)
   const {owner} = input
   const workspaceId = `ws_${ulid()}`
-  const membershipId = `wm_${ulid()}`
+  const membershipId = owner ? `wm_${ulid()}` : null
   const now = new Date()
-  const ownSelf = actor.kind === "user" && actor.mentraUserId === owner.mentraUserId
+  const ownSelf = owner !== null && actor.kind === "user" && actor.mentraUserId === owner.mentraUserId
   await WorkspaceModel.create(
     [
       {
@@ -357,29 +412,33 @@ async function insertOwnedWorkspace(
     ],
     {session},
   )
-  await WorkspaceMembershipModel.create(
-    [
-      {
-        membershipId,
-        workspaceId,
-        mentraUserId: owner.mentraUserId,
-        email: owner.email,
-        role: "owner",
-        roleHistory: [roleEntry("owner", now, 0)],
-        status: "active",
-        startedAt: now,
-      },
-    ],
-    {session},
-  )
+  if (owner) {
+    await WorkspaceMembershipModel.create(
+      [
+        {
+          membershipId,
+          workspaceId,
+          mentraUserId: owner.mentraUserId,
+          email: owner.email,
+          role: "owner",
+          roleHistory: [roleEntry("owner", now, 0)],
+          status: "active",
+          startedAt: now,
+        },
+      ],
+      {session},
+    )
+  }
   await recordWorkspaceEvent(session, {
     workspaceId,
     action: "workspace.created",
     actor: auditActor(actor),
-    target: ownSelf
-      ? {workspaceId, membershipId}
-      : {workspaceId, membershipId, mentraUserId: owner.mentraUserId, email: owner.email},
-    after: {name, role: "owner", ...(input.automatic ? {automatic: true} : {})},
+    target: !owner
+      ? {workspaceId}
+      : ownSelf
+        ? {workspaceId, membershipId}
+        : {workspaceId, membershipId, mentraUserId: owner.mentraUserId, email: owner.email},
+    after: {name, ...(owner ? {role: "owner"} : {}), ...(input.automatic ? {automatic: true} : {})},
   })
   return {workspace: {workspaceId, name, status: "active", authorizationRevision: 0}, membershipId}
 }

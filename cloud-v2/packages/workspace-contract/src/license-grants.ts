@@ -18,6 +18,18 @@
  * answers a {@link LicenseGrant}, which Core checks with {@link parseLicenseGrant} and relays. See Core's
  * `docs/licenses.md`.
  *
+ * The same caller ends a grant before its date:
+ *
+ *     POST /api/organization/workspaces/<workspaceId>/license-grants/<product>/end
+ *     {"note": "..."}
+ *
+ * The body is optional. Core checks the product key ({@link isLicenseGrantProduct}), the note
+ * ({@link checkLicenseGrantNote}, which Core keeps in its admin action log) and that the workspace is active, and asks
+ * billing's `POST /v1/portal/workspaces/<workspaceId>/license-grants/<product>/end`, signed the same way, with no body.
+ * Billing cancels the grant's subscription at once and answers a {@link LicenseGrantEnded}, which Core checks with
+ * {@link parseLicenseGrantEnded} and relays. The license ends with it, and everyone assigned it loses it. Billing ends
+ * only a grant that is still as it was made: not a purchase, and not a grant the workspace has renewed.
+ *
  * The checks live here so Core and billing make the same ones; billing makes them again, on its own clock. Nothing
  * here imports a Node built-in, so the package root may export it.
  */
@@ -81,8 +93,47 @@ export interface LicenseGrant {
   replayed: boolean
 }
 
+/**
+ * Billing's answer to ending a grant before its date: the grant's subscription is cancelled, and its license ends with
+ * it. Nothing was charged for the grant, so nothing is refunded.
+ */
+export interface LicenseGrantEnded {
+  workspaceId: string
+  product: string
+  /** The payment processor's ID of the grant's subscription, now cancelled. */
+  subscriptionId: string
+  /** The license in Core that ends with it; null when billing never made one of the subscription. */
+  licenseId: string | null
+  /** RFC 3339 in UTC, in whole seconds: when the payment processor cancelled it. The license is paid through this, and no later. */
+  endedAt: string
+}
+
 /** What {@link checkLicenseGrantRequest} says: the request as it is to be forwarded, or why it is refused. */
 export type LicenseGrantCheck = {ok: true; request: LicenseGrantRequest} | {ok: false; description: string}
+
+/**
+ * Whether `value` is a product key, as a grant names its product and as the route that ends one carries it in its
+ * path: a lowercase letter or digit, then up to 99 more of those, dots, underscores and hyphens
+ * (`mentra.call.unlimited`). Whether billing has such a product is billing's to say.
+ */
+export function isLicenseGrantProduct(value: unknown): value is string {
+  return typeof value === "string" && PRODUCT_KEY.test(value)
+}
+
+/** What {@link checkLicenseGrantNote} says: the note as it is kept (null for none), or why it is refused. */
+export type LicenseGrantNoteCheck = {ok: true; note: string | null} | {ok: false; description: string}
+
+/**
+ * The note `value` gives, for a grant or for ending one, as it is kept: trimmed, at most `maxNoteLength` (500)
+ * characters, and null when it is absent, null or blank. Anything that is not a string is refused.
+ */
+export function checkLicenseGrantNote(value: unknown): LicenseGrantNoteCheck {
+  if (value !== undefined && value !== null && typeof value !== "string") return {ok: false, description: "note must be a string"}
+  const note = typeof value === "string" ? value.trim() : ""
+  const {maxNoteLength} = LICENSE_GRANT_LIMITS
+  if (note.length > maxNoteLength) return {ok: false, description: `note must be at most ${maxNoteLength} characters`}
+  return {ok: true, note: note || null}
+}
 
 /** Whether `value` is an idempotency key a grant takes: 1 to 200 visible ASCII characters. */
 export function isLicenseGrantIdempotencyKey(value: unknown): value is string {
@@ -139,7 +190,7 @@ export function checkLicenseGrantRequest(value: unknown): LicenseGrantCheck {
   const body = value as Record<string, unknown>
   const product = typeof body.product === "string" ? body.product.trim() : ""
   if (!PRODUCT_KEY.test(product)) return {ok: false, description: "product must be a product key, such as mentra.call.unlimited"}
-  const {minSeats, maxSeats, maxNoteLength} = LICENSE_GRANT_LIMITS
+  const {minSeats, maxSeats} = LICENSE_GRANT_LIMITS
   const seats = body.seats
   if (typeof seats !== "number" || !Number.isSafeInteger(seats) || seats < minSeats || seats > maxSeats) {
     return {ok: false, description: `seats must be a whole number from ${minSeats} to ${maxSeats}`}
@@ -148,15 +199,14 @@ export function checkLicenseGrantRequest(value: unknown): LicenseGrantCheck {
   if (endsAtMs === null) {
     return {ok: false, description: "endsAt must be an RFC 3339 date-time with its offset (2027-11-17T00:00:00Z) or a date (2027-11-17)"}
   }
-  if (body.note !== undefined && body.note !== null && typeof body.note !== "string") return {ok: false, description: "note must be a string"}
-  const note = typeof body.note === "string" ? body.note.trim() : ""
-  if (note.length > maxNoteLength) return {ok: false, description: `note must be at most ${maxNoteLength} characters`}
+  const note = checkLicenseGrantNote(body.note)
+  if (!note.ok) return note
   if (!isLicenseGrantIdempotencyKey(body.idempotencyKey)) {
     return {ok: false, description: `an idempotency key of 1 to ${LICENSE_GRANT_LIMITS.maxIdempotencyKeyLength} visible ASCII characters is required`}
   }
   return {
     ok: true,
-    request: {product, seats, endsAt: licenseGrantTime(endsAtMs), note: note || null, idempotencyKey: body.idempotencyKey},
+    request: {product, seats, endsAt: licenseGrantTime(endsAtMs), note: note.note, idempotencyKey: body.idempotencyKey},
   }
 }
 
@@ -200,4 +250,16 @@ export function parseLicenseGrant(value: unknown): LicenseGrant | null {
     licenseId,
     replayed: v.replayed,
   }
+}
+
+/** `value` as a {@link LicenseGrantEnded}, holding only its documented fields, or null when it is not one. */
+export function parseLicenseGrantEnded(value: unknown): LicenseGrantEnded | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null
+  const v = value as Record<string, unknown>
+  const text = (field: unknown): field is string => typeof field === "string" && field.trim().length > 0
+  if (!text(v.workspaceId) || !isLicenseGrantProduct(v.product) || !text(v.subscriptionId)) return null
+  if (typeof v.endedAt !== "string" || parseLicenseGrantEnd(v.endedAt) === null) return null
+  const licenseId = v.licenseId === null ? null : text(v.licenseId) ? v.licenseId : undefined
+  if (licenseId === undefined) return null
+  return {workspaceId: v.workspaceId, product: v.product, subscriptionId: v.subscriptionId, licenseId, endedAt: v.endedAt}
 }

@@ -25,16 +25,39 @@
  *
  * The license reaches Core as any subscription's does, through billing's license writes, within seconds; the caller
  * then assigns its seats with the workspace's seat-assignment routes. See `docs/licenses.md`.
+ *
+ * Ending a grant early: `POST /api/organization/workspaces/:workspaceId/license-grants/:product/end`, behind the same
+ * two guards, ends the workspace's grant of `product` at once. The path's product is a product key
+ * (`isLicenseGrantProduct`; 400 `invalid_request` otherwise). The body is optional: none, or `{note?}`, a note of at
+ * most 500 characters as a grant's (`checkLicenseGrantNote`), kept in the admin action log and not sent to billing.
+ * The workspace must be active (404 `workspace_not_found` otherwise). A deleted workspace has no grant left to end:
+ * its deletion ends its licenses in Core, in the deletion's own transaction, and billing cancels every subscription of
+ * its customer when the change feed says so, so billing answers 404 for it too. Billing must be installed (503
+ * `billing_unavailable` otherwise). Core forwards to billing's
+ * `POST /v1/portal/workspaces/:workspaceId/license-grants/:product/end` as it forwards a grant, with the caller as
+ * its principal, the workspace as its scope and no body. Billing cancels the grant's subscription and answers a
+ * `LicenseGrantEnded`, which Core checks (`parseLicenseGrantEnded`, for this workspace and product; anything else is
+ * 503 `billing_unavailable`: asking again is safe, and `grant_not_found` then means it had ended), records
+ * (`workspace.licenses.grant_ended`, by `principalLabel`, with the note as its reason) and answers, 200. Billing's
+ * refusals reach the caller as billing gave them: 404 `grant_not_found` (the workspace has no grant of the product
+ * running), 409 `not_a_grant` (it bought the product, and cancels it itself), 409 `grant_renewed` (it renewed the
+ * grant, which is its own subscription now), 409 `checkout_in_progress` and `reset_in_progress`.
+ *
+ * The license ends in Core through billing's license write, as it lapses when a grant runs out, but at once: paid
+ * through the cancellation with no days added, ended, and every seat of it released.
  */
 
 import {
+  checkLicenseGrantNote,
   checkLicenseGrantRequest,
   isLicenseGrantIdempotencyKey,
+  isLicenseGrantProduct,
   LICENSE_GRANT_IDEMPOTENCY_HEADER,
   LICENSE_GRANT_LIMITS,
   licenseGrantEndProblem,
   parseLicenseGrant,
   parseLicenseGrantEnd,
+  parseLicenseGrantEnded,
 } from "@mentra/workspace-contract"
 import {AdminActionAuditLogModel} from "../../models/admin-action-audit-log.model"
 import {forwardedCredential, forwardedUser, forwardJson} from "../../services/forwarding/forward"
@@ -44,13 +67,42 @@ import {getWorkspace} from "../../services/workspaces/workspace.service"
 import type {AppContext} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
 import {principalLabel} from "../middleware/principal.middleware"
-import {readJsonObject} from "../workspaces/request"
+import {parseJsonObject, readJsonObject, type JsonObject} from "../workspaces/request"
 
 /**
  * How long Core waits for billing to make a grant: billing asks its payment processor several things, and a repeat
  * with the same key is safe.
  */
 export const LICENSE_GRANT_TIMEOUT_MS = 60_000
+
+/**
+ * Forwards a request about `workspaceId`'s grants to billing's `/v1/portal/workspaces/<workspaceId><path>`, signed,
+ * with the caller as its principal (the person, or the key) and the workspace as its scope, and `body` in place of
+ * whatever the caller sent.
+ */
+function forwardToBilling(
+  c: AppContext,
+  config: {baseUrl: URL; secret: string},
+  request: {label: string; workspaceId: string; path: string; body: string},
+): Promise<Response> {
+  const principal = c.get("principal")!
+  const scope = {kind: "workspace", workspaceId: request.workspaceId} as const
+  return forwardJson(c, {
+    upstream: {
+      service: "billing-license-grants",
+      label: request.label,
+      unavailableError: "billing_unavailable",
+      baseUrl: config.baseUrl,
+      secret: config.secret,
+      limits: {...DEFAULT_FORWARDING_LIMITS, timeoutMs: LICENSE_GRANT_TIMEOUT_MS},
+    },
+    path: `/v1/portal/workspaces/${encodeURIComponent(request.workspaceId)}${request.path}`,
+    query: "",
+    audience: "organization",
+    body: request.body,
+    principal: () => (principal.kind === "user" ? forwardedUser(principal, scope) : forwardedCredential(principal, scope)),
+  })
+}
 
 /** The route's handler. Mount it behind `requireOrganizationCapability("organization.licenses.grant")`. */
 export async function grantLicenses(c: AppContext): Promise<Response> {
@@ -78,21 +130,11 @@ export async function grantLicenses(c: AppContext): Promise<Response> {
     return c.json({error: "billing_unavailable", error_description: "billing is not available on this Core"}, 503)
   }
 
-  const scope = {kind: "workspace", workspaceId} as const
-  const response = await forwardJson(c, {
-    upstream: {
-      service: "billing-license-grants",
-      label: "License grant",
-      unavailableError: "billing_unavailable",
-      baseUrl: config.baseUrl,
-      secret: config.secret,
-      limits: {...DEFAULT_FORWARDING_LIMITS, timeoutMs: LICENSE_GRANT_TIMEOUT_MS},
-    },
-    path: `/v1/portal/workspaces/${encodeURIComponent(workspaceId)}/license-grants`,
-    query: "",
-    audience: "organization",
+  const response = await forwardToBilling(c, config, {
+    label: "License grant",
+    workspaceId,
+    path: "/license-grants",
     body: JSON.stringify(checked.request),
-    principal: () => (principal.kind === "user" ? forwardedUser(principal, scope) : forwardedCredential(principal, scope)),
   })
   if (!response.ok) return response
   const grant = parseLicenseGrant(await response.json().catch(() => null))
@@ -121,4 +163,66 @@ export async function grantLicenses(c: AppContext): Promise<Response> {
     c.get("logger")?.error({workspaceId, failure: (error as Error)?.name ?? "Error"}, "a license grant was made but not recorded in the admin action log")
   })
   return c.json(grant, response.status === 201 ? 201 : 200)
+}
+
+/** The request's body as a JSON object when it has one, and an empty object when it has none. Anything else is a 400. */
+async function readOptionalJsonObject(c: AppContext): Promise<JsonObject> {
+  const text = await c.req.text().catch(() => null)
+  if (text === null) throw new InvalidRequest("request body must be a JSON object")
+  return text.trim() === "" ? {} : parseJsonObject(text)
+}
+
+/**
+ * The handler that ends a workspace's grant of a product early (see the file header). Mount it behind
+ * `requireOrganizationCapability("organization.licenses.grant")`.
+ */
+export async function endLicenseGrant(c: AppContext): Promise<Response> {
+  const principal = c.get("principal")!
+  const workspaceId = c.req.param("workspaceId")!
+  const product = c.req.param("product")
+  if (!isLicenseGrantProduct(product)) throw new InvalidRequest("product must be a product key, such as mentra.call.unlimited")
+  const note = checkLicenseGrantNote((await readOptionalJsonObject(c)).note)
+  if (!note.ok) throw new InvalidRequest(note.description)
+
+  const workspace = await getWorkspace(workspaceId)
+  if (!workspace || workspace.status !== "active") {
+    return c.json({error: "workspace_not_found", error_description: "no active workspace has this ID"}, 404)
+  }
+  const config = portalModuleConfig("billing")
+  if (config.state !== "ready") {
+    return c.json({error: "billing_unavailable", error_description: "billing is not available on this Core"}, 503)
+  }
+
+  // The product as Core checked it, never as the path spelled it; the note stays in Core's admin action log.
+  const response = await forwardToBilling(c, config, {
+    label: "License grant end",
+    workspaceId,
+    path: `/license-grants/${encodeURIComponent(product)}/end`,
+    body: "",
+  })
+  if (!response.ok) return response
+  const ended = parseLicenseGrantEnded(await response.json().catch(() => null))
+  if (!ended || ended.workspaceId !== workspaceId || ended.product !== product) {
+    return c.json(
+      {error: "billing_unavailable", error_description: "billing did not confirm that the grant ended; ask again: grant_not_found then means it had"},
+      503,
+    )
+  }
+  // The grant has ended whatever becomes of its record here: billing's own log names the caller too.
+  await AdminActionAuditLogModel.create({
+    adminId: principalLabel(principal),
+    action: "workspace.licenses.grant_ended",
+    targetType: "workspace",
+    targetId: workspaceId,
+    reason: note.note,
+    metadata: {
+      product: ended.product,
+      subscriptionId: ended.subscriptionId,
+      licenseId: ended.licenseId,
+      endedAt: ended.endedAt,
+    },
+  }).catch((error: unknown) => {
+    c.get("logger")?.error({workspaceId, failure: (error as Error)?.name ?? "Error"}, "a license grant was ended but not recorded in the admin action log")
+  })
+  return c.json(ended, 200)
 }

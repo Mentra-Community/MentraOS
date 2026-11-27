@@ -195,15 +195,19 @@ The principal on every module route is a user:
  "scope": {"kind": "workspace", "workspaceId": "..."} /* or {"kind": "person"} */}
 ```
 
-`/v1/portal` receives user principals, but for one route. `organizationCapabilities` is
+`/v1/portal` receives user principals, but for two routes. `organizationCapabilities` is
 empty for anyone who is not an Organization Admin. A module's `email` is a display
 attribute: key records by `mentraUserId`.
 
-That route is billing's license grants, which Core forwards from the organization
+Those routes are billing's license grants, which Core forwards from the organization
 API rather than from `/api/portal`: `POST /api/organization/workspaces/:workspaceId/license-grants`
 goes to `${url}/v1/portal/workspaces/:workspaceId/license-grants`, with the
 workspace as its scope and the body Core checked in place of the caller's
-([Granting licenses](licenses.md#granting-licenses)). Its caller may be a key,
+([Granting licenses](licenses.md#granting-licenses)), and
+`POST /api/organization/workspaces/:workspaceId/license-grants/:product/end` goes to
+`${url}/v1/portal/workspaces/:workspaceId/license-grants/:product/end`, with the
+same scope, the product key as Core checked it and no body
+([Ending a grant early](licenses.md#ending-a-grant-early)). Their caller may be a key,
 which is forwarded as a `credential` principal and names no person:
 
 ```jsonc

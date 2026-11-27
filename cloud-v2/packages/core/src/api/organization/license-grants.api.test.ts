@@ -1,5 +1,5 @@
 import {afterEach, beforeEach, describe, expect, spyOn, test} from "bun:test"
-import {ORGANIZATION_CAPABILITIES, type LicenseGrant} from "@mentra/workspace-contract"
+import {ORGANIZATION_CAPABILITIES, type LicenseGrant, type LicenseGrantEnded} from "@mentra/workspace-contract"
 import {verifyForwardedPrincipal} from "@mentra/workspace-contract/server"
 import {Hono} from "hono"
 import {AdminActionAuditLogModel} from "../../models/admin-action-audit-log.model"
@@ -69,10 +69,12 @@ const post = (principal: CorePrincipal, payload: unknown = body(), key: string |
     body: JSON.stringify(payload),
   })
 
-/** What billing received: the path, the verified principal and the body. */
+/** What billing received: the method, the path, the verified principal, and the body as text and as JSON (`{}` for none). */
 interface Forwarded {
+  method: string
   path: string
   principal: ReturnType<typeof verifyForwardedPrincipal>
+  text: string
   body: Record<string, unknown>
 }
 
@@ -85,7 +87,7 @@ function billing(answer: (request: Forwarded) => Response): Forwarded[] {
       const url = new URL(request.url)
       const text = await request.text()
       const principal = verifyForwardedPrincipal({method: request.method, pathWithQuery: url.pathname + url.search, body: text, headers: request.headers}, [SECRET])
-      const forwarded = {path: url.pathname, principal, body: JSON.parse(text) as Record<string, unknown>}
+      const forwarded = {method: request.method, path: url.pathname, principal, text, body: (text ? JSON.parse(text) : {}) as Record<string, unknown>}
       received.push(forwarded)
       return answer(forwarded)
     }) as typeof fetch),
@@ -269,5 +271,184 @@ describe("billing's answer", () => {
     const response = await post(admin)
     expect(response.status).toBe(201)
     expect(await response.json()).toEqual(granted())
+  })
+})
+
+describe("ending a grant early", () => {
+  const CALL = "mentra.call.unlimited"
+  const END_PATH = `${PATH}/${CALL}/end`
+  const ended = (overrides: Partial<LicenseGrantEnded> = {}): LicenseGrantEnded => ({
+    workspaceId: WS,
+    product: CALL,
+    subscriptionId: "sub_granted",
+    licenseId: "01JZWY3V8N0F2E9GQ4T6KXH5RD",
+    endedAt: "2026-11-26T12:00:00Z",
+    ...overrides,
+  })
+  /** The request as a caller sends it: `payload` as its JSON body, a string as the body itself, or none at all. */
+  const end = (principal: CorePrincipal, payload?: unknown, path = END_PATH) =>
+    app(principal).request(path, {
+      method: "POST",
+      headers: {authorization: "Bearer test", ...(payload === undefined ? {} : {"content-type": "application/json"})},
+      ...(payload === undefined ? {} : {body: typeof payload === "string" ? payload : JSON.stringify(payload)}),
+    })
+
+  test("a person who is not an Organization Admin, a workspace key and an operator key without the capability are refused", async () => {
+    const received = billing(() => Response.json(ended()))
+    for (const principal of [member, operatorKey(["organization.licenses.read"])]) {
+      const response = await end(principal)
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({error: "forbidden", error_description: "organization.licenses.grant is required"})
+    }
+    const byWorkspaceKey = await end(workspaceKey)
+    expect(byWorkspaceKey.status).toBe(403)
+    expect(await byWorkspaceKey.json()).toEqual({error: "forbidden", error_description: "a signed-in person or an operator key is required"})
+    expect(received).toHaveLength(0)
+    expect(workspace).not.toHaveBeenCalled()
+    expect(audit).not.toHaveBeenCalled()
+  })
+
+  test("an Organization Admin's request reaches billing as the person, scoped to the workspace, with no body; the note stays in Core's record", async () => {
+    const received = billing(() => Response.json(ended()))
+    const response = await end(admin, {note: "  Sold through another reseller  ", product: "mentra.other", subscriptionId: "sub_other"})
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(ended())
+    expect(received).toHaveLength(1)
+    const [forwarded] = received
+    expect(forwarded!.method).toBe("POST")
+    expect(forwarded!.path).toBe(`/billing/v1/portal/workspaces/${WS}/license-grants/${CALL}/end`)
+    expect(forwarded!.text).toBe("")
+    expect(forwarded!.principal).toEqual({
+      kind: "user",
+      mentraUserId: "mu_admin",
+      email: "admin@example.test",
+      emailVerified: true,
+      isOrganizationAdmin: true,
+      organizationCapabilities: [...ORGANIZATION_CAPABILITIES],
+      scope: {kind: "workspace", workspaceId: WS},
+    })
+    expect(audit).toHaveBeenCalledTimes(1)
+    expect(audit).toHaveBeenCalledWith({
+      adminId: "admin@example.test",
+      action: "workspace.licenses.grant_ended",
+      targetType: "workspace",
+      targetId: WS,
+      reason: "Sold through another reseller",
+      metadata: {product: CALL, subscriptionId: "sub_granted", licenseId: "01JZWY3V8N0F2E9GQ4T6KXH5RD", endedAt: "2026-11-26T12:00:00Z"},
+    })
+  })
+
+  test("an operator key that carries the capability reaches billing as the key; a request with no body has no note", async () => {
+    const received = billing(() => Response.json(ended({licenseId: null})))
+    for (const payload of [undefined, "", {}, {note: "   "}, {note: null}]) {
+      const response = await end(operatorKey(["organization.licenses.grant"]), payload)
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual(ended({licenseId: null}))
+    }
+    expect(received).toHaveLength(5)
+    expect(received[0]!.principal).toEqual({
+      kind: "credential",
+      credentialId: "cred_sales",
+      label: "Sales tooling",
+      createdByEmail: "admin@example.test",
+      organizationCapabilities: ["organization.licenses.grant"],
+      scope: {kind: "workspace", workspaceId: WS},
+    })
+    for (const [record] of audit.mock.calls) {
+      expect(record).toMatchObject({
+        adminId: "credential:cred_sales (Sales tooling, created by admin@example.test)",
+        action: "workspace.licenses.grant_ended",
+        reason: null,
+        metadata: {licenseId: null},
+      })
+    }
+  })
+
+  test("a request Core refuses never reaches billing: each says why", async () => {
+    const received = billing(() => Response.json(ended()))
+    const product = "product must be a product key, such as mentra.call.unlimited"
+    const cases: Array<[string, unknown, string]> = [
+      [`${PATH}/Mentra%20Call/end`, {}, product],
+      [`${PATH}/.hidden/end`, {}, product],
+      [`${PATH}/${"m".repeat(101)}/end`, {}, product],
+      [END_PATH, {note: "x".repeat(501)}, "note must be at most 500 characters"],
+      [END_PATH, {note: 5}, "note must be a string"],
+      [END_PATH, [{note: "in a list"}], "request body must be a JSON object"],
+      [END_PATH, "not json", "request body must be a JSON object"],
+    ]
+    for (const [path, payload, description] of cases) {
+      const response = await end(admin, payload, path)
+      expect({status: response.status, body: await response.json()}).toEqual({status: 400, body: {error: "invalid_request", error_description: description}})
+    }
+    expect(received).toHaveLength(0)
+    expect(audit).not.toHaveBeenCalled()
+  })
+
+  test("the product reaches billing as Core checked it, however the path spelled it", async () => {
+    const received = billing(() => Response.json(ended()))
+    expect((await end(admin, undefined, `${PATH}/%6dentra.call.unlimited/end`)).status).toBe(200)
+    expect(received[0]!.path).toBe(`/billing/v1/portal/workspaces/${WS}/license-grants/${CALL}/end`)
+  })
+
+  test("a workspace that is deleted or unknown is 404, and a Core without billing 503", async () => {
+    const received = billing(() => Response.json(ended()))
+    workspace.mockResolvedValueOnce({workspaceId: WS, name: "Target", status: "deleted", authorizationRevision: 2})
+    expect((await end(admin)).status).toBe(404)
+    workspace.mockResolvedValueOnce(null)
+    const unknown = await end(admin)
+    expect(unknown.status).toBe(404)
+    expect(await unknown.json()).toMatchObject({error: "workspace_not_found"})
+    delete process.env.CLOUD_CORE_BILLING_URL
+    const response = await end(admin)
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({error: "billing_unavailable"})
+    expect(received).toHaveLength(0)
+    expect(audit).not.toHaveBeenCalled()
+  })
+
+  test("billing's refusals reach the caller as billing gave them, and record nothing", async () => {
+    const refusals: Array<[number, Record<string, string>]> = [
+      [404, {error: "grant_not_found", error_description: "the workspace has no grant of this product running"}],
+      [409, {error: "not_a_grant", error_description: "the workspace's license of this product is not a grant"}],
+      [409, {error: "grant_renewed", error_description: "the workspace renewed this grant"}],
+      [409, {error: "checkout_in_progress", error_description: "try again in a minute"}],
+      [404, {error: "workspace_not_found"}],
+    ]
+    let answer: Response = Response.json({})
+    billing(() => answer)
+    for (const [status, refusal] of refusals) {
+      answer = Response.json(refusal, {status})
+      const response = await end(admin, {note: "Ended at the customer's request"})
+      expect({status: response.status, body: await response.json()}).toEqual({status, body: refusal})
+    }
+    expect(audit).not.toHaveBeenCalled()
+  })
+
+  test("an answer that is not this workspace's grant of this product ended, or billing failing, is 503 and records nothing", async () => {
+    let answer: Response = Response.json(ended({workspaceId: "ws_other"}))
+    billing(() => answer)
+    expect((await end(admin)).status).toBe(503)
+    answer = Response.json(ended({product: "mentra.other"}))
+    expect((await end(admin)).status).toBe(503)
+    answer = Response.json({ok: true})
+    const unconfirmed = await end(admin)
+    expect(unconfirmed.status).toBe(503)
+    expect(await unconfirmed.json()).toEqual({
+      error: "billing_unavailable",
+      error_description: "billing did not confirm that the grant ended; ask again: grant_not_found then means it had",
+    })
+    answer = Response.json({error: "billing_unavailable"}, {status: 503})
+    const failed = await end(admin)
+    expect(failed.status).toBe(503)
+    expect(await failed.json()).toEqual({error: "billing_unavailable"})
+    expect(audit).not.toHaveBeenCalled()
+  })
+
+  test("a grant ended is answered even when its admin log record fails", async () => {
+    billing(() => Response.json(ended()))
+    audit.mockRejectedValueOnce(new Error("database down"))
+    const response = await end(admin)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(ended())
   })
 })

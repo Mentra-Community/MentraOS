@@ -9,7 +9,11 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, opts?: { method?: string; body?: unknown; signal?: AbortSignal; timeoutMs?: number }): Promise<T> {
+export async function api<T>(
+  path: string,
+  /** `headers` are sent beside the JSON ones, for a route that reads one (an `Idempotency-Key`, say). */
+  opts?: { method?: string; body?: unknown; signal?: AbortSignal; timeoutMs?: number; headers?: Record<string, string> },
+): Promise<T> {
   const timeout = opts?.timeoutMs === undefined ? undefined : AbortSignal.timeout(opts.timeoutMs);
   const signal = timeout && opts?.signal ? AbortSignal.any([timeout, opts.signal]) : timeout ?? opts?.signal;
   try {
@@ -18,6 +22,7 @@ export async function api<T>(path: string, opts?: { method?: string; body?: unkn
       headers: {
         accept: "application/json",
         ...(opts?.body ? { "content-type": "application/json" } : {}),
+        ...opts?.headers,
       },
       body: opts?.body ? JSON.stringify(opts.body) : undefined,
       signal,

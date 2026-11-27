@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
-import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./lib/admin-access";
+import { pageFromSearch, resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./lib/admin-access";
 import { api, ApiError } from "./lib/api";
 import { LicensesPage } from "./pages/licenses";
 import { OperatorKeysPage } from "./pages/operator-keys";
@@ -133,13 +133,16 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
+// A link to a page: /?page=workspaces opens on it (the Teammate portal links to Workspaces this way). It stays in
+// the address bar, which survives the sign-in round-trip as the report link does; it is only where the portal starts.
+const deepLinkPage = pageFromSearch(window.location.search);
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   // The page asked for, if any. What shows is `resolvePage(page, visible)`: a page this principal cannot
   // open (a deep link, say) falls back to their first visible page.
-  const [page, setPage] = useState<AdminPageKey | null>(() => pendingDeepLinkReportId ? "incidents" : null);
+  const [page, setPage] = useState<AdminPageKey | null>(() => pendingDeepLinkReportId ? "incidents" : deepLinkPage);
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   // Signing out, then on the way to Core's sign-out ("leaving"), or signed out here without one ("signed-out").
   const [signOutState, setSignOutState] = useState<"signing-out" | "leaving" | "signed-out" | null>(null);
@@ -174,7 +177,7 @@ function AdminPage() {
 
   const pageMeta: Record<AdminPageKey, { title: string; body: string }> = {
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
-    workspaces: { title: "Workspaces", body: "Every workspace in this organization: members, invitations, keys, settings, audit, and ownership recovery." },
+    workspaces: { title: "Workspaces", body: "Every workspace in this organization: make one and invite its owner, grant it licenses, and manage its members, invitations, keys, settings, audit and ownership." },
     licenses: { title: "Licenses", body: "Every product bought in this organization's workspaces: which workspace holds it, how many licenses are assigned and what it is paid through." },
     registry: { title: "Miniapp registry", body: "Every miniapp URL installed in the Mentra App. Archive a URL, a package, a domain or everything one account registered, and register URLs yourself." },
     websites: { title: "Miniapp websites", body: "The websites registered to sign people in with Mentra, each for one miniapp." },
@@ -222,7 +225,14 @@ function AdminPage() {
       signingOut={signingOut}
     >
       {active === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-      {active === "workspaces" ? <WorkspacesPage fleetInstalled={principal.fleet?.installed === true} resetEnabled={ENVIRONMENT === "staging" || ENVIRONMENT === "dev"} /> : null}
+      {active === "workspaces" ? (
+        <WorkspacesPage
+          fleetInstalled={principal.fleet?.installed === true}
+          resetEnabled={ENVIRONMENT === "staging" || ENVIRONMENT === "dev"}
+          canGrantLicenses={principal.organization.capabilities.includes("organization.licenses.grant")}
+          licensesReadable={visible.includes("licenses")}
+        />
+      ) : null}
       {active === "licenses" ? <LicensesPage /> : null}
       {active === "registry" ? <RegistryPage /> : null}
       {active === "websites" ? <WebsitesPage /> : null}

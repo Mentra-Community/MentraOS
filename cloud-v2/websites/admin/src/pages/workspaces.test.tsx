@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { WorkspaceSummary } from "@mentra/workspace-contract";
+import type { OrganizationWorkspaceListItem, WorkspaceSummary } from "@mentra/workspace-contract";
 import { WorkspaceSettingsPanel, workspaceKeys } from "@mentra/workspace-ui";
 import { capabilitiesForRole, type WorkspaceDetail } from "@mentra/workspace-contract";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -8,6 +8,7 @@ import type { ReactElement } from "react";
 import { ApiError } from "../lib/api";
 import {
   adminWorkspaceApi,
+  hasNoOwner,
   ORGANIZATION_WORKSPACES_KEY,
   parseOwnerTarget,
   recoverWorkspaceOwnership,
@@ -73,6 +74,31 @@ describe("the Workspaces page", () => {
     const markup = render(<WorkspacesPage resetEnabled />, {everyone});
     expect(markup).toContain('aria-label="Reset licenses and billing for Acme Robotics"');
     expect(markup).not.toContain('aria-label="Reset licenses and billing for Closed Down"');
+  });
+
+  test("offers a new workspace, and a grant only to a caller who may grant", () => {
+    const markup = render(<WorkspacesPage />, { everyone });
+    expect(markup).toMatch(/<button[^>]*>New workspace<\/button>/);
+    expect(markup).not.toContain("Grant licenses");
+    const granting = render(<WorkspacesPage canGrantLicenses />, { everyone });
+    expect(granting).toContain('aria-label="Grant licenses to Acme Robotics"');
+    expect(granting).not.toContain('aria-label="Grant licenses to Closed Down"');
+  });
+
+  test("marks an active workspace that has no owner, and only where Core counted none", () => {
+    const counted: OrganizationWorkspaceListItem[] = [
+      { ...everyone[0]!, owners: 2 },
+      { ...everyone[1]!, owners: 0 },
+      { ...everyone[2]!, owners: 0 },
+    ];
+    expect(counted.map(hasNoOwner)).toEqual([false, true, false]);
+    // A Core that sends no count says nothing either way.
+    expect(everyone.map(hasNoOwner)).toEqual([false, false, false]);
+    const markup = render(<WorkspacesPage />, { everyone: counted });
+    expect(markup.match(/>No owner</g)).toHaveLength(1);
+    expect(markup.indexOf("Orphaned Lab")).toBeLessThan(markup.indexOf(">No owner<"));
+    expect(markup.indexOf(">No owner<")).toBeLessThan(markup.indexOf("Closed Down"));
+    expect(render(<WorkspacesPage />, { everyone })).not.toContain("No owner");
   });
 
   test("a list still loading says so", () => {

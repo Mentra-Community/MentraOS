@@ -37,7 +37,7 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   "organization.licenses.read": "Read every license and the workspace that holds it.",
   "organization.registry.administer": "Search, export, register, archive and unarchive registry entries.",
   "organization.licenses.grant":
-    "Give a workspace licenses of a product until a date, without a sale, for one paid some other way. Nothing is charged.",
+    "Give a workspace licenses of a product until a date, without a sale, for one paid some other way, and end such a grant early. Nothing is charged.",
 };
 
 /** A scope this page does not know yet shows as it is rather than disappearing. */

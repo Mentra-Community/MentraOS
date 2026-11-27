@@ -2225,6 +2225,7 @@ describe("organization workspaces", () => {
       name: "Three",
       status: "active",
       authorizationRevision: 0,
+      owners: 1,
     })
 
     const firstPage = await call("GET", "/api/organization/workspaces?limit=2", {as: admin})
@@ -2327,7 +2328,7 @@ describe("organization workspaces", () => {
     const owner = await person("fine")
 
     for (const [body, status, error] of [
-      [{name: "X"}, 400, "invalid_request"],
+      [{name: "X", owner: null}, 400, "invalid_request"],
       [{name: "X", owner: "fine@example.test"}, 400, "invalid_request"],
       [{name: "X", owner: {}}, 400, "invalid_request"],
       [{name: "X", owner: {email: "not-an-email"}}, 400, "invalid_request"],
@@ -2343,6 +2344,67 @@ describe("organization workspaces", () => {
     }
     expect(await WorkspaceModel.countDocuments({})).toBe(0)
     expect(await WorkspaceMembershipModel.countDocuments({})).toBe(0)
+  })
+
+  test("POST /workspaces with no owner: an empty workspace, whose Owner an Organization Admin invites and who then holds it", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const invitee = await person("new-customer")
+
+    const created = await call("POST", "/api/admin/organization/workspaces", {as: await session("admin", admin), body: {name: "Northwind"}})
+    expect(created.status).toBe(201)
+    const workspaceId: string = created.json.workspaceId
+    expect(created.json).toEqual({workspaceId, name: "Northwind", status: "active", authorizationRevision: 0, owner: null})
+    // Nobody is in it, the admin included, and the event names no membership and no role.
+    expect(await WorkspaceMembershipModel.countDocuments({workspaceId})).toBe(0)
+    const event = await WorkspaceAuditEventModel.findOne({workspaceId, action: "workspace.created"}).lean()
+    expect(event).toMatchObject({actor: {kind: "user", email: ADMIN_EMAIL}, target: {workspaceId}, after: {name: "Northwind"}})
+    expect(event!.target).not.toHaveProperty("membershipId")
+    expect(event!.after).not.toHaveProperty("role")
+    // The organization's list shows it has no Owner.
+    const listedEmpty = await call("GET", "/api/organization/workspaces", {as: admin})
+    expect(listedEmpty.json.items.map((item: any) => [item.workspaceId, item.owners])).toEqual([[workspaceId, 0]])
+    // The admin acts as an Owner there meanwhile: reads it, and its members are none.
+    const detail = await call("GET", `/api/workspaces/${workspaceId}`, {as: admin})
+    expect(detail.status).toBe(200)
+    expect((await call("GET", `/api/workspaces/${workspaceId}/members`, {as: admin})).json.items).toEqual([])
+
+    // The Owner is invited by email and accepts: they are its only member, and the last-owner guard holds from then on.
+    const invited = await call("POST", `/api/workspaces/${workspaceId}/invitations`, {as: admin, body: {email: invitee.email, role: "owner"}})
+    expect(invited.status).toBe(201)
+    const accepted = await call("POST", "/api/workspaces/invitations/accept", {as: invitee, body: {token: (invited.json.inviteUrl as string).slice(INVITE_PREFIX.length)}})
+    expect(accepted.status).toBe(200)
+    const members = await WorkspaceMembershipModel.find({workspaceId, status: "active"}).lean()
+    expect(members.map(row => [row.mentraUserId, row.role])).toEqual([[invitee.mentraUserId, "owner"]])
+    expect((await call("GET", "/api/organization/workspaces", {as: admin})).json.items[0].owners).toBe(1)
+    const left = await call("POST", `/api/workspaces/${workspaceId}/leave`, {as: invitee})
+    expect({status: left.status, error: left.json.error}).toEqual({status: 409, error: "last_owner"})
+  })
+
+  test("POST /workspaces with no owner: an operator key makes one, and invites its Owner", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const key = await createOperatorKey(admin, ["organization.workspaces.administer"])
+    const invitee = await person("key-customer")
+
+    const created = await call("POST", "/api/organization/workspaces", {as: key.token, body: {name: "Tailspin"}})
+    expect(created.status).toBe(201)
+    expect(created.json.owner).toBeNull()
+    const workspaceId: string = created.json.workspaceId
+    expect((await WorkspaceModel.findOne({workspaceId}).lean())!.createdByMentraUserId).toBeNull()
+    const invited = await call("POST", `/api/workspaces/${workspaceId}/invitations`, {as: key.token, body: {email: invitee.email, role: "owner"}})
+    expect(invited.status).toBe(201)
+    expect((await call("POST", "/api/workspaces/invitations/accept", {as: invitee, body: {token: (invited.json.inviteUrl as string).slice(INVITE_PREFIX.length)}})).status).toBe(200)
+    expect((await call("GET", `/api/workspaces/${workspaceId}`, {as: invitee})).json.membership.role).toBe("owner")
+  })
+
+  test("POST /workspaces with no owner needs organization administration", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const key = await createOperatorKey(admin, ["organization.licenses.read"])
+    const someone = await person("someone")
+    for (const as of [key.token, someone]) {
+      const reply = await call("POST", "/api/organization/workspaces", {as, body: {name: "Nope"}})
+      expect(reply.status).toBe(403)
+    }
+    expect(await WorkspaceModel.countDocuments({})).toBe(0)
   })
 
   test("a reseller set up with a key alone: create the workspace, make a second Owner, as Core's own audit shows", async () => {

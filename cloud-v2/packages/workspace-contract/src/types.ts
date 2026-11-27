@@ -398,10 +398,20 @@ export interface MemberView {
 
 /**
  * What `POST /api/organization/workspaces` answers (201): the new workspace and the person who is its first
- * Owner. The caller, an Organization Admin or an operator key, is not a member of it.
+ * Owner. The caller, an Organization Admin or an operator key, is not a member of it. `owner` is null for a
+ * workspace made with no `owner`, which has no members until the Owner the caller invites accepts.
  */
 export interface OrganizationWorkspaceCreated extends WorkspaceSummary {
-  owner: {membershipId: string; mentraUserId: string; email: string | null}
+  owner: {membershipId: string; mentraUserId: string; email: string | null} | null
+}
+
+/**
+ * A workspace in `GET /api/organization/workspaces`: its summary and how many live Owners it has. 0 for one
+ * made with no `owner` until the Owner invited accepts, for one whose last Owner's account was deleted, and
+ * for a deleted workspace. Optional for a reader of an older Core, which does not send it.
+ */
+export interface OrganizationWorkspaceListItem extends WorkspaceSummary {
+  owners?: number
 }
 
 /** A pending invitation as listed to administrators. It never carries the token or its hash. */

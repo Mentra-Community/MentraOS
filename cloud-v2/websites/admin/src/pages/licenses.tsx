@@ -2,7 +2,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import type { AdminLicenseOwner, AdminLicenseView, AdminLicensesResponse, LicenseEndedReason } from "@mentra/workspace-contract";
 import { Button, Input, Label, Spinner } from "@mentra/workspace-ui";
 import { RefreshCcw } from "lucide-react";
-import { useId, useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "../lib/api";
 
 /** The shared workspace screens' card (Mentra's tokens, from @mentra/workspace-ui/mentra.css). */
@@ -149,18 +149,77 @@ export function LicenseListing({ query, onSearch }: { query: string; onSearch(qu
   );
 }
 
-function LicenseTable({ licenses }: { licenses: AdminLicenseView[] }) {
+/**
+ * One workspace's licenses, for the Workspaces page: the organization's list searched by the workspace's id,
+ * keeping only that workspace's (the search also matches names and products that contain the id's text).
+ * Read-only, like the list it comes from: a license is granted from the workspace's row and assigned by the
+ * workspace's Admins and Owners. `rowAction` draws what its caller offers on a license, at the end of its row
+ * (the Workspaces page's End grant, `workspace-license-end.tsx`); nothing here changes a license or asks Core to.
+ */
+export function WorkspaceLicenses({ workspaceId, rowAction }: { workspaceId: string; rowAction?: (license: AdminLicenseView) => ReactNode }) {
+  const licenses = useInfiniteQuery({
+    queryKey: [...LICENSES_QUERY_KEY, workspaceId],
+    queryFn: ({ pageParam }) => api<AdminLicensesResponse>(licensesPath(workspaceId, pageParam)),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: lastPage => lastPage.next ?? undefined,
+  });
+  const rows = licenses.data?.pages.flatMap(page => page.items).filter(license => license.owner.workspaceId === workspaceId);
+  return (
+    <section className={PANEL}>
+      <div className="border-b p-6">
+        <h2 className="text-xl font-semibold">Licenses</h2>
+        <p className="text-muted-foreground mt-1 text-sm">What this workspace holds, bought or granted. Its admins assign them to people in the workspace portal.</p>
+      </div>
+      {rows === undefined && licenses.isError ? (
+        <p role="alert" className="rounded-notice bg-error text-error-foreground m-6 px-4 py-3 text-sm">
+          {licenses.error instanceof Error ? licenses.error.message : "Request failed"}
+        </p>
+      ) : rows === undefined ? (
+        <div role="status" className="text-muted-foreground flex items-center gap-2.5 p-6 text-sm">
+          <Spinner /> Loading licenses
+        </div>
+      ) : rows.length === 0 ? (
+        <p className="text-muted-foreground p-6 text-sm">This workspace holds no licenses.</p>
+      ) : (
+        <LicenseTable licenses={rows} showWorkspace={false} rowAction={rowAction} />
+      )}
+      {licenses.hasNextPage ? (
+        <div className="border-t px-6 py-4">
+          <Button type="button" variant="secondary" size="sm" disabled={licenses.isFetchingNextPage} onClick={() => void licenses.fetchNextPage()}>
+            Load more
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function LicenseTable({
+  licenses,
+  showWorkspace = true,
+  rowAction,
+}: {
+  licenses: AdminLicenseView[];
+  showWorkspace?: boolean;
+  /** What the caller offers on a license, drawn in a last column; the table has none without it. */
+  rowAction?: (license: AdminLicenseView) => ReactNode;
+}) {
   const now = Date.now();
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead className="text-muted-foreground text-xs">
           <tr>
-            <th className="px-6 py-3 font-medium">Workspace</th>
-            <th className="py-3 pr-4 font-medium">Product</th>
+            {showWorkspace ? <th className="px-6 py-3 font-medium">Workspace</th> : null}
+            <th className={`py-3 pr-4 font-medium ${showWorkspace ? "" : "pl-6"}`}>Product</th>
             <th className="py-3 pr-4 font-medium">Assigned</th>
             <th className="py-3 pr-4 font-medium">Paid through</th>
-            <th className="py-3 pr-6 font-medium">Status</th>
+            <th className={`py-3 font-medium ${rowAction ? "pr-4" : "pr-6"}`}>Status</th>
+            {rowAction ? (
+              <th className="py-3 pr-6 font-medium">
+                <span className="sr-only">Actions</span>
+              </th>
+            ) : null}
           </tr>
         </thead>
         <tbody className="divide-y border-t">
@@ -168,10 +227,12 @@ function LicenseTable({ licenses }: { licenses: AdminLicenseView[] }) {
             const state = licenseState(license, now);
             return (
               <tr key={license.licenseId} className="align-top">
-                <td className="px-6 py-3">
-                  <Owner owner={license.owner} />
-                </td>
-                <td className="py-3 pr-4">
+                {showWorkspace ? (
+                  <td className="px-6 py-3">
+                    <Owner owner={license.owner} />
+                  </td>
+                ) : null}
+                <td className={`py-3 pr-4 ${showWorkspace ? "" : "pl-6"}`}>
                   <div>{license.product}</div>
                   <code className="text-muted-foreground text-xs">{license.licenseId}</code>
                 </td>
@@ -181,10 +242,11 @@ function LicenseTable({ licenses }: { licenses: AdminLicenseView[] }) {
                 <td className="py-3 pr-4" title={license.paidThrough}>
                   {formatDate(license.paidThrough)}
                 </td>
-                <td className="py-3 pr-6">
+                <td className={`py-3 ${rowAction ? "pr-4" : "pr-6"}`}>
                   <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold ${STATE_STYLE[state.kind]}`}>{state.label}</span>
                   {license.endedAt ? <div className="text-muted-foreground mt-1 text-xs">{formatDate(license.endedAt)}</div> : null}
                 </td>
+                {rowAction ? <td className="py-2 pr-6 text-right">{rowAction(license)}</td> : null}
               </tr>
             );
           })}

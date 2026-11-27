@@ -6,7 +6,7 @@ import { ORGANIZATION_CAPABILITIES, type AdminLicenseView } from "@mentra/worksp
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { visiblePages, type AdminMe } from "../lib/admin-access";
-import { LICENSES_QUERY_KEY, LicenseListing, licensesPath, licenseState } from "./licenses";
+import { LICENSES_QUERY_KEY, LicenseListing, licensesPath, licenseState, WorkspaceLicenses } from "./licenses";
 
 // Synthetic owners only. The query cache is seeded, so a server render never reaches the network.
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -194,6 +194,22 @@ describe("the Licenses page offers no license change or payment", () => {
   });
 });
 
+describe("ending a grant is not the Licenses page's", () => {
+  test("the list offers no End grant, on any license", () => {
+    const markup = render([{ items: everyLicense, next: null }]);
+    expect(markup).not.toMatch(/end grant/i);
+    expect(markup).not.toContain(">Actions<");
+  });
+
+  test("its source asks Core for nothing but the list, and knows nothing of the file that ends a grant", () => {
+    const source = readFileSync(join(import.meta.dir, "licenses.tsx"), "utf8");
+    expect(source).not.toMatch(/workspace-license-end["']/);
+    expect(source).not.toMatch(/method:/);
+    expect(source.match(/\bapi</g)).toHaveLength(2);
+    expect(source).not.toMatch(/useMutation/);
+  });
+});
+
 describe("the Licenses page's requests", () => {
   test("licensesPath carries the search and the cursor, URL-encoded, and nothing when empty", () => {
     expect(licensesPath("", undefined)).toBe("/api/admin/licenses");
@@ -309,5 +325,54 @@ describe("the admin portal says nothing about seats", () => {
     expect(all.length).toBeGreaterThan(300);
     expect(all.filter(entry => /\bseats?\b/i.test(entry.text)).map(entry => `${entry.file}:${entry.line} ${entry.text}`)).toEqual([]);
     expect(all.some(entry => entry.file === "App.tsx" && entry.text.includes("how many licenses are assigned"))).toBe(true);
+  });
+});
+
+describe("one workspace's licenses, on the Workspaces page", () => {
+  function renderFor(workspaceId: string, items?: AdminLicenseView[]): string {
+    const client = new QueryClient();
+    if (items) client.setQueryData([...LICENSES_QUERY_KEY, workspaceId], { pages: [{ items, next: null }], pageParams: [undefined] });
+    try {
+      return renderToStaticMarkup(
+        <QueryClientProvider client={client}>
+          <WorkspaceLicenses workspaceId={workspaceId} />
+        </QueryClientProvider>,
+      );
+    } finally {
+      client.clear();
+    }
+  }
+
+  test("lists that workspace's alone, without naming the workspace on each row", () => {
+    // The search by id can match another workspace whose name contains the same text.
+    const markup = renderFor("ws_acme", [workspaceLicense, otherWorkspace]);
+    expect(markup).toContain("lic_workspace");
+    expect(markup).toContain("4 of 10");
+    expect(markup).not.toContain("lic_globex");
+    expect(markup).not.toContain("Acme Robotics");
+    expect(markup).not.toContain(">Workspace<");
+  });
+
+  test("says when it holds none, and when it is still loading", () => {
+    expect(renderFor("ws_acme", [otherWorkspace])).toContain("This workspace holds no licenses.");
+    expect(renderFor("ws_acme")).toContain("Loading licenses");
+  });
+
+  test("offers nothing on a license by itself; a caller's row action is drawn at the end of each row, under a column of its own", () => {
+    expect(renderFor("ws_acme", [workspaceLicense])).not.toContain("<button");
+    const client = new QueryClient();
+    client.setQueryData([...LICENSES_QUERY_KEY, "ws_acme"], { pages: [{ items: [workspaceLicense, expired], next: null }], pageParams: [undefined] });
+    try {
+      const markup = renderToStaticMarkup(
+        <QueryClientProvider client={client}>
+          <WorkspaceLicenses workspaceId="ws_acme" rowAction={license => (license.licenseId === "lic_workspace" ? <button type="button">Offered</button> : null)} />
+        </QueryClientProvider>,
+      );
+      expect(markup).toContain(">Actions</span>");
+      expect(markup.match(/>Offered<\/button>/g)).toHaveLength(1);
+      expect(markup.match(/<td/g)).toHaveLength(10);
+    } finally {
+      client.clear();
+    }
   });
 });

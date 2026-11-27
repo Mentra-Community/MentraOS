@@ -1,6 +1,6 @@
 import { ORGANIZATION_CAPABILITIES, type OrganizationCapability } from "@mentra/workspace-contract";
 import { describe, expect, test } from "bun:test";
-import { PAGE_ORDER, resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./admin-access";
+import { PAGE_ORDER, pageFromSearch, resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./admin-access";
 
 function me(
   capabilities: readonly OrganizationCapability[],
@@ -104,5 +104,18 @@ describe("the admin portal's pages follow capabilities", () => {
     expect(resolvePage("audit", ["incidents", "workspaces"])).toBe("incidents");
     expect(resolvePage("incidents", ["incidents", "audit"])).toBe("incidents");
     expect(resolvePage(null, [])).toBeNull();
+  });
+});
+
+describe("a link to a page", () => {
+  test("?page= names one of the portal's pages, and anything else names none", () => {
+    expect(pageFromSearch("?page=workspaces")).toBe("workspaces");
+    expect(pageFromSearch("?report=rep_1&page=licenses")).toBe("licenses");
+    for (const search of ["", "?page=", "?page=fleet", "?page=Workspaces", "?other=workspaces"]) expect(pageFromSearch(search)).toBeNull();
+  });
+
+  test("a page the caller may not open falls back to their first page", () => {
+    expect(resolvePage(pageFromSearch("?page=workspaces"), ["incidents"])).toBe("incidents");
+    expect(resolvePage(pageFromSearch("?page=workspaces"), ["incidents", "workspaces"])).toBe("workspaces");
   });
 });

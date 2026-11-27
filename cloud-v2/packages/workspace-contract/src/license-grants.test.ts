@@ -1,13 +1,17 @@
 import {describe, expect, test} from "bun:test"
 import {
+  checkLicenseGrantNote,
   checkLicenseGrantRequest,
   isLicenseGrantIdempotencyKey,
+  isLicenseGrantProduct,
   LICENSE_GRANT_LIMITS,
   licenseGrantEndProblem,
   licenseGrantTime,
   parseLicenseGrant,
   parseLicenseGrantEnd,
+  parseLicenseGrantEnded,
   type LicenseGrant,
+  type LicenseGrantEnded,
   type LicenseGrantEndProblem,
 } from "./license-grants"
 
@@ -97,6 +101,24 @@ describe("the parts", () => {
     expect(isLicenseGrantIdempotencyKey("pilot-2026-11-17_a:b")).toBe(true)
     expect(isLicenseGrantIdempotencyKey("tab\there")).toBe(false)
   })
+
+  test("isLicenseGrantProduct takes a product key as a grant checks it, and nothing a path could misread", () => {
+    for (const product of ["mentra.call.unlimited", "a", "9lives", "mentra_call-2", `m${"x".repeat(99)}`]) {
+      expect(isLicenseGrantProduct(product)).toBe(true)
+      expect(checkLicenseGrantRequest({...valid, product}).ok).toBe(true)
+    }
+    for (const product of ["", " ", ".", "..", ".hidden", "-x", "Mentra.Call", "mentra call", "mentra/call", "mentra%2Ecall", " mentra.call.unlimited", `m${"x".repeat(100)}`, 7, null, undefined]) {
+      expect(isLicenseGrantProduct(product)).toBe(false)
+    }
+  })
+
+  test("checkLicenseGrantNote trims, takes at most 500 characters, and reads a blank or missing note as none", () => {
+    expect(checkLicenseGrantNote("  Sold to another reseller  ")).toEqual({ok: true, note: "Sold to another reseller"})
+    for (const none of [undefined, null, "", "   "]) expect(checkLicenseGrantNote(none)).toEqual({ok: true, note: null})
+    expect(checkLicenseGrantNote(`  ${"x".repeat(500)}  `)).toEqual({ok: true, note: "x".repeat(500)})
+    expect(checkLicenseGrantNote("x".repeat(501))).toEqual({ok: false, description: "note must be at most 500 characters"})
+    for (const value of [5, {}, ["note"], true]) expect(checkLicenseGrantNote(value)).toEqual({ok: false, description: "note must be a string"})
+  })
 })
 
 describe("parseLicenseGrant", () => {
@@ -128,6 +150,39 @@ describe("parseLicenseGrant", () => {
       [grant],
     ]) {
       expect(parseLicenseGrant(broken)).toBeNull()
+    }
+  })
+})
+
+describe("parseLicenseGrantEnded", () => {
+  const ended: LicenseGrantEnded = {
+    workspaceId: "ws_1",
+    product: "mentra.call.unlimited",
+    subscriptionId: "sub_1",
+    licenseId: "01JZWY3V8N0F2E9GQ4T6KXH5RD",
+    endedAt: "2026-11-17T12:00:00Z",
+  }
+
+  test("keeps the documented fields only", () => {
+    expect(parseLicenseGrantEnded({...ended, seats: 2, status: "canceled"})).toEqual(ended)
+    expect(parseLicenseGrantEnded({...ended, licenseId: null})).toEqual({...ended, licenseId: null})
+  })
+
+  test("refuses an answer that is missing a field or has one of the wrong type", () => {
+    for (const broken of [
+      {...ended, workspaceId: ""},
+      {...ended, product: "Mentra Call"},
+      {...ended, product: undefined},
+      {...ended, subscriptionId: null},
+      {...ended, licenseId: undefined},
+      {...ended, licenseId: ""},
+      {...ended, endedAt: "just now"},
+      {...ended, endedAt: 1794916800},
+      {error: "grant_not_found"},
+      null,
+      [ended],
+    ]) {
+      expect(parseLicenseGrantEnded(broken)).toBeNull()
     }
   })
 })

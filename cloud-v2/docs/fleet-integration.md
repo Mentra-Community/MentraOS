@@ -563,7 +563,7 @@ that was offline can catch up:
 
 | `action` | `target` | `before` | `after` |
 | --- | --- | --- | --- |
-| `workspace.created` | `{workspaceId, membershipId}` | null | `{name, role: "owner"}` (the creator's membership) |
+| `workspace.created` | `{workspaceId, membershipId}`; `{workspaceId}` for one made with no Owner | null | `{name, role: "owner"}` (the creator's membership); `{name}` for one made with no Owner, which has no membership until its Owner accepts an invitation (`membership.added`) |
 | `workspace.renamed` | `{workspaceId}` | `{name}` | `{name}` |
 | `workspace.deleted` | `{workspaceId}` | `{name, status: "active"}` | `{status: "deleted"}` |
 | `workspace.imported` | `{workspaceId}` | null | `{name, created, memberships, invitations, credentials}` (counts) |
