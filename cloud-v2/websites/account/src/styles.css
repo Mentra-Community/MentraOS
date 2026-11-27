@@ -35,8 +35,8 @@
   --brand: #00b869;
   --info-bg: #eaf9ef;
   --info: #006a3f;
-  /* Store focus and accent green. */
-  --focus: #00a814;
+  /* Keyboard focus: the text colour, not a green that reads as a status. */
+  --focus: var(--text);
   font-family: "Red Hat Display", system-ui, sans-serif;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
@@ -381,12 +381,14 @@ a:hover,
 }
 
 :focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 3px;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
-input:focus-visible {
-  outline-offset: 2px;
+/* A text field shows focus by its border, clicked or tabbed to, with no ring; a checkbox or radio keeps it. */
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]):focus-visible {
+  outline: none;
+  border-color: var(--focus);
 }
 
 @media (max-width: 480px) {

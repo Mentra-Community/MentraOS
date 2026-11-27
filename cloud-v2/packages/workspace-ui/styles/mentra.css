@@ -44,9 +44,10 @@
   --mentra-error: #8a4200;
   --mentra-info-bg: #eaf9ef;
   --mentra-info: #006a3f;
-  /* Mentra green (the Mentra App's primary), and the Store's focus green. */
+  /* Mentra green (the Mentra App's primary). */
   --mentra-brand: #00b869;
-  --mentra-focus: #00a814;
+  /* Keyboard focus: the text colour, so focus reads as part of the control and not as a status. */
+  --mentra-focus: var(--mentra-text);
   /* The Store's danger red, for actions that remove or end something. */
   --mentra-danger: #b63a29;
 
@@ -121,15 +122,20 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* The sign-in page's focus ring, on everything that takes keyboard focus. */
+  /* Keyboard focus: a 2px ring in the text colour, on everything that takes keyboard focus. */
   :focus-visible {
-    outline: 3px solid var(--mentra-focus);
-    outline-offset: 3px;
+    outline: 2px solid var(--mentra-focus);
+    outline-offset: 2px;
   }
 
-  input:focus-visible,
+  /* A text field shows focus by its border turning the text colour, whether it was clicked or tabbed to
+     (a field matches :focus-visible on click too), so it gets no ring. Input, Textarea and NativeSelect
+     say the same in their classes, which a utility would otherwise override. A checkbox, radio or switch
+     keeps the ring: it has no border of its own to show focus with. */
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]):focus-visible,
   select:focus-visible,
   textarea:focus-visible {
-    outline-offset: 2px;
+    outline: none;
+    border-color: var(--mentra-focus);
   }
 }

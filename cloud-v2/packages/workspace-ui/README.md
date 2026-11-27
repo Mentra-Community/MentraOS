@@ -135,7 +135,8 @@ screens a second React (and every hook a null dispatcher). Each site's
 
 The screens look like Mentra's sign-in page (`websites/account`): Red Hat Display, black and
 grey pill buttons, pill inputs and selects, bordered 24px cards on a plain background,
-the green focus ring, and amber and green notices. The tokens are defined once, in
+a focus ring in the text colour (a text field's border turns that colour instead), and amber
+and green notices. The tokens are defined once, in
 `styles/mentra.css` (exported as `@mentra/workspace-ui/mentra.css`): the sign-in page's
 palette as `--mentra-*` variables, mapped onto the shadcn theme names the components use
 (`background`, `foreground`, `primary`, `secondary`, `muted`, `destructive`, `border`,
