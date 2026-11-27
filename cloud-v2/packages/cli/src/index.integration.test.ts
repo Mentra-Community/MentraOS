@@ -115,7 +115,10 @@ describe("CLI targets and packing", () => {
       MENTRA_MINIAPP_SIGNING_KEY_JSON: "must-not-be-read",
       MENTRA_MINIAPP_SIGNING_KEY_FILE: join(f.cwd, "must-not-be-read.json"),
     });
-    const bundle = readFileSync(join(f.cwd, "build/com.example.fixture-1.0.0.zip"));
+    // The ZIP's name carries its hash; the served miniapp.json names it.
+    const served = JSON.parse(readFileSync(join(f.cwd, "build/miniapp.json"), "utf8")) as { bundle: { url: string } };
+    expect(served.bundle.url).toMatch(/^com\.example\.fixture-1\.0\.0-[0-9a-f]{8}\.zip$/);
+    const bundle = readFileSync(join(f.cwd, "build", served.bundle.url));
     expect((await JSZip.loadAsync(bundle)).file("META-INF/MENTRA.SIG")).toBeNull();
     expect(existsSync(join(f.cwd, "publisher-key-access.txt"))).toBe(false);
     expect(existsSync(join(f.cwd, "requests.txt"))).toBe(false);

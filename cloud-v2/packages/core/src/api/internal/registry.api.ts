@@ -9,11 +9,17 @@
  * | ------------------------ | ------- | ----------------------------------------------------- | ---------------------------------------- |
  * | `POST /check`            | fleet   | `{urls: [1..50], workspaceId, mentraUserId}`          | `{results}`; 403 `not_a_member`          |
  * | `POST /lookup`           | fleet   | `{workspaceId, packageNames: [1..500]}`               | `{entries}`                              |
+ * | `POST /versions`         | fleet   | `{url, workspaceId, mentraUserId}`                    | `RegistryVersionsResponse`; 403; 429     |
  * | `GET /entries?url=`      | store   |                                                       | `{entry}`; 404 `not_found`               |
  * | `POST /archive`          | store   | `{rule: {kind, value}, reason, actorEmail}`           | `{rule, created, entriesArchived}`       |
  *
+ * `POST /versions` reads the URL's `miniapp.json` for the request and never answers from the stored entry. It is
+ * 403 `not_a_member` as `check` is, and 429 `rate_limited` with `Retry-After` once the admin has used the hour's
+ * reads.
+ *
  * The shapes are `@mentra/workspace-contract`'s (`RegistryCheckResult`, `RegistryLookupEntry`,
- * `RegistryEntryDetail`, `RegistryArchiveResponse`), spoken by its `createCoreWorkspaceClient`.
+ * `RegistryVersionsResponse`, `RegistryEntryDetail`, `RegistryArchiveResponse`), spoken by its
+ * `createCoreWorkspaceClient`.
  */
 
 import {
@@ -21,10 +27,12 @@ import {
   REGISTRY_CHECK_MAX_URLS,
   REGISTRY_ENTRY_NOT_FOUND_ERROR,
   REGISTRY_LOOKUP_MAX_PACKAGES,
+  REGISTRY_RATE_LIMITED_ERROR,
   type RegistryArchiveResponse,
   type RegistryCheckResponse,
   type RegistryEntryResponse,
   type RegistryLookupResponse,
+  type RegistryVersionsResponse,
 } from "@mentra/workspace-contract"
 import {Hono} from "hono"
 import {z} from "zod"
@@ -34,11 +42,14 @@ import {
   archiveForDirectory,
   checkRegistryUrls,
   lookupRegistryPackages,
+  readMiniappVersions,
   RegistryCheckRefused,
   registryEntryForDirectory,
+  RegistryReadsExhausted,
 } from "../../services/registry/registry-service-api.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
+import {DEFAULT_MINIAPP_PACKAGES} from "../client/deployment.api"
 import {requireService, serviceAuth} from "../middleware/service-auth.middleware"
 import {parseJsonObject} from "../workspaces/request"
 
@@ -55,6 +66,11 @@ const CheckRequestSchema = z.object({
   workspaceId: Id,
   mentraUserId: Id,
 })
+
+const VersionsRequestSchema = z.object({url: z.string().min(1).max(MAX_URL_LENGTH), workspaceId: Id, mentraUserId: Id})
+
+/** The miniapps this deployment gives every phone: each keeps them current from the deployment's own host. */
+const DEPLOYMENT_DEFAULTS: ReadonlySet<string> = new Set(DEFAULT_MINIAPP_PACKAGES)
 
 const LookupRequestSchema = z.object({
   workspaceId: Id,
@@ -83,6 +99,12 @@ const app = new Hono<AppEnv>()
 // Every route is a service's. This also authenticates the request, so no route is open.
 app.use("*", serviceAuth)
 
+const notAMember = (c: AppContext) =>
+  c.json(
+    {error: NOT_A_MEMBER_ERROR, error_description: "workspaceId is not an active workspace, or mentraUserId is not a live account"},
+    403,
+  )
+
 app.post("/check", requireService("fleet"), async (c) => {
   const body = signedBody(
     c,
@@ -93,11 +115,22 @@ app.post("/check", requireService("fleet"), async (c) => {
     const answer: RegistryCheckResponse = {results: await checkRegistryUrls(body)}
     return c.json(answer)
   } catch (error) {
-    if (error instanceof RegistryCheckRefused) {
-      return c.json(
-        {error: NOT_A_MEMBER_ERROR, error_description: "workspaceId is not an active workspace, or mentraUserId is not a live account"},
-        403,
-      )
+    if (error instanceof RegistryCheckRefused) return notAMember(c)
+    throw error
+  }
+})
+
+app.post("/versions", requireService("fleet"), async (c) => {
+  const body = signedBody(c, VersionsRequestSchema, "{url: a miniapp URL, workspaceId, mentraUserId}")
+  try {
+    const answer: RegistryVersionsResponse = await readMiniappVersions(body, {deploymentDefaults: DEPLOYMENT_DEFAULTS})
+    c.header("cache-control", "no-store")
+    return c.json(answer)
+  } catch (error) {
+    if (error instanceof RegistryCheckRefused) return notAMember(c)
+    if (error instanceof RegistryReadsExhausted) {
+      c.header("retry-after", String(error.retryAfterSeconds))
+      return c.json({error: REGISTRY_RATE_LIMITED_ERROR, error_description: "too many miniapp URLs read for this account in the last hour"}, 429)
     }
     throw error
   }

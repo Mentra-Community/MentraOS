@@ -688,18 +688,15 @@ describe("MantleManager", () => {
     }
   })
 
-  it("checks the miniapps it starts for an update before they start, within a time limit", async () => {
+  it("leaves the update check of the miniapps it restores to the launcher, which checks before every start", async () => {
     const instance = mantle as unknown as {restoreMiniapps: () => Promise<void>}
     const start = jest.spyOn(miniappUpdateScheduler, "start").mockResolvedValue()
     const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockResolvedValue()
-    const checkBeforeStart = jest.fn(async () => {})
-    Object.assign(engine.miniapps, {checkBeforeStart})
     const autostart = miniappLauncher.autostartLocalMiniapps as jest.Mock
     try {
       await instance.restoreMiniapps()
-      const {beforeStart} = autostart.mock.calls.at(-1)![0] as {beforeStart: (names: string[]) => Promise<void>}
-      await beforeStart(["com.mentra.captions"])
-      expect(checkBeforeStart).toHaveBeenCalledWith(["com.mentra.captions"], {checkMs: 3_000, installMs: 30_000})
+      // No check of the host's own, and no limits of its own: the engine's are the only ones.
+      expect(autostart).toHaveBeenLastCalledWith()
     } finally {
       start.mockRestore()
       sync.mockRestore()

@@ -90,9 +90,8 @@ describe("miniapp diagnostics", () => {
       app({
         packageName: "com.example.dev",
         name: "Dev Miniapp",
-        version: undefined,
+        version: "dev-1800000000000",
         isMiniappDev: true,
-        devUrl: "http://192.168.1.2:3140",
       }),
     ]
     const runtimeSnapshot = runtime({
@@ -171,8 +170,9 @@ describe("miniapp diagnostics", () => {
     })
     expect(context.runningMiniapps[1]).toMatchObject({
       packageName: "com.example.dev",
-      version: "0.4.0",
-      executionMode: "dev_server",
+      // A development build's version is its own; its manifest says what it was built as.
+      version: "dev-1800000000000",
+      executionMode: "dev_snapshot",
       manifest: {
         packageName: "com.example.dev",
         version: "0.4.0",

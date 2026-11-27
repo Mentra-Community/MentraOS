@@ -301,4 +301,31 @@ describe("startDevSidecar: a save that touches both layers", () => {
     // way the screen reloads, which a lone respawn-bg never did.
     expect([...new Set(received)].sort()).toEqual(["reload", "respawn-bg"])
   }, 20_000)
+
+  test("with hot reload off, a save sends nothing, and the console connection still answers", async () => {
+    const port = 49_000 + Math.floor(Math.random() * 2_000)
+    sidecar = startDevSidecar({port, watchDir: dir, silent: true, hotReload: false})
+    const received: string[] = []
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/__mentra_dev`)
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve()
+      ws.onerror = () => reject(new Error("sidecar socket failed"))
+    })
+    ws.onmessage = (event) => received.push(JSON.parse(String(event.data)).type)
+    ws.send(JSON.stringify({type: "hello", protocol: "mentra-dev/1"}))
+    writeFileSync(join(dir, "src", "ui", "App.tsx"), "export const ui = 2\n")
+    writeFileSync(join(dir, "src", "background", "index.ts"), "export const bg = 2\n")
+    await Bun.sleep(1_500)
+    ws.close()
+    expect(received).toEqual(["hello-ack"])
+  }, 20_000)
+
+  test("serves the ZIP it is given at its own bundle path, in place of the project's", async () => {
+    const port = 51_000 + Math.floor(Math.random() * 2_000)
+    const production = new TextEncoder().encode("the production bundle")
+    sidecar = startDevSidecar({port, watchDir: dir, silent: true, hotReload: false, bundleZip: async () => production})
+    const response = await fetch(`http://127.0.0.1:${port}/__mentra_dev/bundle.zip`)
+    expect(response.headers.get("content-type")).toBe("application/zip")
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(production)
+  })
 })

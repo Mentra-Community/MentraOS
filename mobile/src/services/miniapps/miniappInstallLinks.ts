@@ -10,7 +10,8 @@
  *   the URL that serves it, and an address without a scheme means HTTPS.
  *
  * `apps.mentra.glass` and the Mentra App's own scheme (`com.mentra://open?url=…`, or the dev app's
- * `com.mentra.dev://open?url=…`) are read the same way.
+ * `com.mentra.dev://open?url=…`) are read the same way. So is an older CLI's QR code for its development server,
+ * `miniapp://dev?url=<miniapp URL>&…`: it names the URL that `mentra dev` prints today.
  */
 import {
   isMiniappLink,
@@ -33,7 +34,18 @@ export type MiniappInstallLink = MiniappLink
 
 /** Read what a person scanned, pasted or opened, or null when it names no miniapp. */
 export function parseMiniappInstallLink(input: string): MiniappInstallLink | null {
-  return parseMiniappLink(input, {schemes: MINIAPP_LINK_SCHEMES})
+  return parseMiniappLink(olderDevelopmentServerUrl(input) ?? input, {schemes: MINIAPP_LINK_SCHEMES})
+}
+
+/** The miniapp URL an older CLI's `miniapp://dev?url=…` QR code names, or null for anything else. */
+function olderDevelopmentServerUrl(input: string): string | null {
+  const text = input.trim()
+  if (!/^miniapp:\/\/dev\b/i.test(text)) return null
+  try {
+    return new URL(text).searchParams.get("url")?.trim() || null
+  } catch {
+    return null
+  }
 }
 
 /**

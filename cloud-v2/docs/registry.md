@@ -79,7 +79,11 @@ Fleet and the directory reach the registry through Core's signed service API at
 
 - **Fleet** checks the URLs an admin assigns (`POST /check`), registering the
   ones Core doesn't know as the admin's install would, and names miniapps in a
-  workspace's views (`POST /lookup`). See
+  workspace's views (`POST /lookup`). It also has Core read what a URL serves
+  now, for an admin choosing which version a workspace's phones stay on
+  (`POST /versions`): the latest build and the versions its `miniapp.json`
+  lists. That read is never answered from the registry's entry, which is as old
+  as Core's last read of the URL. See
   [Fleet integration](fleet-integration.md#the-miniapp-registry).
 - **The directory** reads an entry with Core's verified `miniapp.json`
   (`GET /entries?url=`) and archives for its staff (`POST /archive`). See

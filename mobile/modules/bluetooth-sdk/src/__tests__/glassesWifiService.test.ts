@@ -21,6 +21,8 @@ const mockState = {
   joinAnswers: [] as Array<string | Error | Promise<string>>,
   disconnects: 0,
   lostListeners: new Set<() => void>(),
+  // The link's wait after its last release ([RELEASE_LINGER_MS]); a test ends it with `lingerOut`.
+  lingers: [] as Array<() => void>,
 }
 
 jest.mock("../_private/BluetoothSdkModule", () => ({
@@ -65,7 +67,11 @@ jest.mock("../glasses-wifi/native", () => ({
     mockState.lostListeners.add(listener)
     return () => mockState.lostListeners.delete(listener)
   },
-  delay: () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+  delay: (ms: number) =>
+    new Promise<void>((resolve) => {
+      if (ms === 5_000) mockState.lingers.push(resolve)
+      else setTimeout(resolve, 0)
+    }),
 }))
 
 const setLink = (state: string, fullyBooted = state === "connected") => {
@@ -77,11 +83,25 @@ const hotspotReport = (state: string) => mockState.hotspotListeners.forEach((lis
 let now = 1_000_000
 const realNow = Date.now
 
-const {GlassesWifiError, glassesWifiUp, holdGlassesWifi, onGlassesWifiUp, LATE_ENABLE_WINDOW_MS, RESTORE_DEADLINE_MS} =
-  jest.requireActual<typeof import("../glasses-wifi/service")>("../glasses-wifi/service")
+const {
+  GlassesWifiError,
+  glassesWifiUp,
+  holdGlassesWifi,
+  holdGlassesWifiIfUp,
+  onGlassesWifiUp,
+  LATE_ENABLE_WINDOW_MS,
+  RELEASE_LINGER_MS,
+  RESTORE_DEADLINE_MS,
+} = jest.requireActual<typeof import("../glasses-wifi/service")>("../glasses-wifi/service")
 
 const settle = async () => {
   for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setTimeout(resolve, 0))
+}
+/** The wait after the last release runs out; the link goes down if nobody held it meanwhile. */
+const lingerOut = async () => {
+  await settle()
+  mockState.lingers.splice(0).forEach((resolve) => resolve())
+  await settle()
 }
 
 beforeEach(() => {
@@ -98,7 +118,9 @@ beforeEach(() => {
   now = 1_000_000
   Date.now = () => now
 })
-afterEach(() => {
+afterEach(async () => {
+  // A link still waiting out its last release would be up for the next test.
+  await lingerOut()
   Date.now = realNow
 })
 
@@ -118,9 +140,13 @@ describe("one shared link", () => {
     expect(mockState.joins).toBe(1)
 
     await gallery.release()
+
+    await lingerOut()
     expect(mockState.commands).toEqual([true])
     await call.release()
+    await lingerOut()
     await call.release()
+    await lingerOut()
     expect(mockState.commands).toEqual([true, false])
     expect(mockState.disconnects).toBe(1)
   })
@@ -137,7 +163,9 @@ describe("one shared link", () => {
     expect(b.binding.phoneIpv4).toBe("192.168.43.30")
     expect(mockState.joins).toBe(1)
     await a.release()
+    await lingerOut()
     await b.release()
+    await lingerOut()
   })
 
   test("a hold that fails gives the link back", async () => {
@@ -165,6 +193,7 @@ describe("bringing the link up", () => {
     const hold = await holdGlassesWifi({consumer: "call"})
     expect(mockState.commands).toEqual([true, true])
     await hold.release()
+    await lingerOut()
   })
 
   test("an enable answered 'disabled' is turned off and started once more", async () => {
@@ -172,6 +201,7 @@ describe("bringing the link up", () => {
     const hold = await holdGlassesWifi({consumer: "call"})
     expect(mockState.commands).toEqual([true, false, true])
     await hold.release()
+    await lingerOut()
   })
 
   test("a command a restarting ASG dropped is re-sent once", async () => {
@@ -179,6 +209,7 @@ describe("bringing the link up", () => {
     const hold = await holdGlassesWifi({consumer: "call"})
     expect(mockState.commands).toEqual([true, true])
     await hold.release()
+    await lingerOut()
   })
 
   test("an Unavailable join cycles the glasses hotspot and mockState.joins again", async () => {
@@ -187,6 +218,7 @@ describe("bringing the link up", () => {
     expect(mockState.commands).toEqual([true, false, true])
     expect(mockState.joins).toBe(2)
     await hold.release()
+    await lingerOut()
   })
 
   test("other join failures are not retried", async () => {
@@ -245,6 +277,7 @@ describe("the first holder's explanation", () => {
     expect(mockState.commands).toEqual([true, false])
     const next = await holdGlassesWifi({consumer: "ota"})
     await next.release()
+    await lingerOut()
   })
 
   test("cancelling it leaves another holder's join going", async () => {
@@ -266,6 +299,7 @@ describe("the first holder's explanation", () => {
     const held = await call
     expect(held.binding.phoneIpv4).toBe("192.168.43.20")
     await held.release()
+    await lingerOut()
   })
 })
 
@@ -279,6 +313,7 @@ describe("losing and restoring the link", () => {
     setLink("connected", true)
     await settle()
     await hold.release()
+    await lingerOut()
     stop()
     expect(heard).toEqual([true, false, true, false])
     expect(glassesWifiUp()).toBe(false)
@@ -303,6 +338,7 @@ describe("losing and restoring the link", () => {
     expect(hold.binding.phoneIpv4).toBe("192.168.43.40")
     expect(await hold.ready()).toEqual(hold.binding)
     await hold.release()
+    await lingerOut()
   })
 
   test("the phone leaving the network is a loss, and the link comes back while the glasses stay", async () => {
@@ -316,6 +352,7 @@ describe("losing and restoring the link", () => {
     await ready
     expect(mockState.joins).toBe(2)
     await hold.release()
+    await lingerOut()
   })
 
   test("glasses that turn their hotspot off are a loss", async () => {
@@ -326,6 +363,7 @@ describe("losing and restoring the link", () => {
     await settle()
     expect(events).toEqual(["lost", "restored"])
     await hold.release()
+    await lingerOut()
   })
 
   test("glasses that do not come back in time end the link", async () => {
@@ -340,6 +378,7 @@ describe("losing and restoring the link", () => {
     expect(events).toEqual(["lost", "ended"])
     expect(await ready).toBe("the glasses did not bring the link back")
     await hold.release()
+    await lingerOut()
   })
 
   test("glasses that stay away end the link at the deadline, and ready() then rejects", async () => {
@@ -352,12 +391,14 @@ describe("losing and restoring the link", () => {
     expect(events).toEqual(["lost", "ended"])
     await expect(hold.ready()).rejects.toThrow("did not bring the link back")
     await hold.release()
+    await lingerOut()
   })
 
   test("a released link is not restored", async () => {
     const hold = await holdGlassesWifi({consumer: "gallery"})
     setLink("disconnected")
     await hold.release()
+    await lingerOut()
     setLink("connected", true)
     await settle()
     expect(mockState.joins).toBe(1)
@@ -370,6 +411,7 @@ describe("a late hotspot", () => {
     hotspotReport("enabled")
     expect(mockState.commands).toEqual([true])
     await hold.release()
+    await lingerOut()
     mockState.commands.length = 0
     hotspotReport("enabled")
     await settle()
@@ -385,10 +427,16 @@ describe("the Wi-Fi Direct link", () => {
   test("glasses and a phone that can hold a group get it instead of the hotspot, and its release sends no hotspot command", async () => {
     mockState.wifiDirect = true
     const gallery = await holdGlassesWifi({consumer: "gallery"})
-    expect(gallery.binding).toEqual({ssid: "DIRECT-ML-abcd", password: "", gateway: "192.168.43.1", phoneIpv4: "192.168.43.50"})
+    expect(gallery.binding).toEqual({
+      ssid: "DIRECT-ML-abcd",
+      password: "",
+      gateway: "192.168.43.1",
+      phoneIpv4: "192.168.43.50",
+    })
     expect(mockState.commands).toEqual([])
     expect(mockState.joins).toBe(0)
     await gallery.release()
+    await lingerOut()
     expect(mockState.commands).toEqual([])
     expect(mockState.disconnects).toBe(1)
   })
@@ -402,6 +450,7 @@ describe("the Wi-Fi Direct link", () => {
     await settle()
     expect(events).toEqual([])
     await hold.release()
+    await lingerOut()
   })
 
   test("the radio is chosen again when the link comes back", async () => {
@@ -415,6 +464,76 @@ describe("the Wi-Fi Direct link", () => {
     expect(mockState.joins).toBe(1)
     expect(hold.binding.ssid).toBe("MentraLive_abc123")
     await hold.release()
+    await lingerOut()
   })
 })
 
+describe("the wait after the last release", () => {
+  test("the mock's wait is the service's", () => {
+    expect(RELEASE_LINGER_MS).toBe(5_000)
+  })
+
+  test("a hold during the wait takes the link as it is, and the link goes down after the last holder's wait", async () => {
+    const camera = await holdGlassesWifi({consumer: "miniapp camera"})
+    await camera.release()
+    await settle()
+    // Up for the wait: no command, no leave.
+    expect(glassesWifiUp()).toBe(true)
+    expect(mockState.commands).toEqual([true])
+    expect(mockState.disconnects).toBe(0)
+
+    // The miniapp restarted and opened its camera again: the same link, with no new join.
+    const again = await holdGlassesWifi({consumer: "miniapp camera"})
+    expect(again.binding.ssid).toBe("MentraLive_abc123")
+    expect(mockState.joins).toBe(1)
+    // The first wait ending changes nothing while someone holds the link.
+    await lingerOut()
+    expect(glassesWifiUp()).toBe(true)
+    expect(mockState.commands).toEqual([true])
+
+    await again.release()
+    await settle()
+    expect(mockState.commands).toEqual([true])
+    await lingerOut()
+    expect(glassesWifiUp()).toBe(false)
+    expect(mockState.commands).toEqual([true, false])
+    expect(mockState.disconnects).toBe(1)
+  })
+
+  test("a link lost during the wait goes down at once, and the next hold brings it up again", async () => {
+    const hold = await holdGlassesWifi({consumer: "gallery"})
+    await hold.release()
+    await settle()
+    mockState.lostListeners.forEach((listener) => listener())
+    await settle()
+    expect(glassesWifiUp()).toBe(false)
+    expect(mockState.commands).toEqual([true, false])
+
+    const next = await holdGlassesWifi({consumer: "gallery"})
+    expect(mockState.joins).toBe(2)
+    await next.release()
+    await lingerOut()
+  })
+
+  test("a fetch that only rides an up link can join it during the wait", async () => {
+    const camera = await holdGlassesWifi({consumer: "miniapp camera"})
+    await camera.release()
+    await settle()
+    const fetch = await holdGlassesWifiIfUp("photo fetch")
+    expect(fetch?.binding.ssid).toBe("MentraLive_abc123")
+    await fetch!.release()
+    await lingerOut()
+    expect(await holdGlassesWifiIfUp("photo fetch")).toBeNull()
+  })
+
+  test("the glasses reporting their hotspot enabled during the wait is not a late enable", async () => {
+    const hold = await holdGlassesWifi({consumer: "gallery"})
+    await hold.release()
+    await settle()
+    hotspotReport("enabled")
+    await settle()
+    expect(mockState.commands).toEqual([true])
+    await lingerOut()
+    expect(mockState.commands).toEqual([true, false])
+  })
+})

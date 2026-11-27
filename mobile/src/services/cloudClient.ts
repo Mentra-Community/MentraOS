@@ -15,7 +15,6 @@
 import {cloudClientService} from "@mentra/engine-host-internal"
 
 import {SETTINGS, engine} from "@mentra/engine"
-import {devServerHost} from "@/utils/cloudClient/devHost"
 import {deploymentStore, type ActiveDeployment} from "@/services/deployment"
 import {deploymentDebugScope, resolveDeploymentManifest} from "@/services/deployment/debugOverrides"
 
@@ -44,7 +43,6 @@ export function cloudConfigValues(): {
   coreUrl: string | null
   runtimeUrl: string | null
   audioFrameSizeBytes: number
-  devServerHost: () => string | undefined
   runtimeRealtimeSession?: boolean
   localMiniappAllowlist?: string[] | null
   localMiniappPolicy?: {
@@ -123,7 +121,6 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
       navigation: manifest.features.navigation,
     },
     audioFrameSizeBytes: lc3FrameSizeBytes(),
-    devServerHost,
   }
 }
 

@@ -259,6 +259,13 @@ function isLocalIpv6(words: number[]): boolean {
 export const MINIAPP_VERSION_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
 
+/** One build of a miniapp: its version, its ZIP's URL (relative to the miniapp URL, or absolute) and its SHA-256, in lowercase hex. */
+export interface MiniappBuild {
+  version: string
+  url: string
+  sha256: string
+}
+
 /** What a miniapp URL serves at `<url>/miniapp.json`: the manifest inside its current ZIP, plus `bundle`. */
 export interface ServedMiniappManifest {
   packageName: string
@@ -275,15 +282,46 @@ export interface ServedMiniappManifest {
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
   /** The directory's listing; the phone ignores it, so it isn't checked here. */
   listing?: unknown
-  /** The ZIP: its URL, relative to the miniapp URL or absolute, and its SHA-256, in lowercase hex. */
+  /** The latest build's ZIP: its URL, relative to the miniapp URL or absolute, and its SHA-256, in lowercase hex. */
   bundle: {url: string; sha256: string}
+  /**
+   * The versions a phone may be pinned to, one entry per version, highest first. Absent when the miniapp lists none,
+   * and when what it serves under `versions` isn't such a list ({@link parseMiniappVersions}): it then can't be
+   * pinned, and nothing else about it changes.
+   */
+  versions?: MiniappBuild[]
 }
 
 const NonBlankString = z.string().refine((value) => value.trim().length > 0, "must not be blank")
+const SHA256_HEX = /^[0-9a-fA-F]{64}$/
+const MAX_BUILD_URL_LENGTH = 2048
+
+/**
+ * The `versions` of a served `miniapp.json`, or undefined when it isn't a list of versions. Read leniently, so a
+ * publisher's mistake there costs the miniapp its pins and never its installs: anything but an array of
+ * `{version, url, sha256}` entries (a SemVer version, a non-blank URL, a SHA-256 in hex), each version once, reads as
+ * no list. Hashes come back in lowercase; an entry's other fields are kept as served.
+ */
+export function parseMiniappVersions(value: unknown): MiniappBuild[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const versions: MiniappBuild[] = []
+  const seen = new Set<string>()
+  for (const entry of value as unknown[]) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return undefined
+    const {version, url, sha256} = entry as Record<string, unknown>
+    if (typeof version !== "string" || !MINIAPP_VERSION_PATTERN.test(version) || seen.has(version)) return undefined
+    if (typeof url !== "string" || url.trim().length === 0 || url.length > MAX_BUILD_URL_LENGTH) return undefined
+    if (typeof sha256 !== "string" || !SHA256_HEX.test(sha256)) return undefined
+    seen.add(version)
+    versions.push({...(entry as Record<string, unknown>), version, url, sha256: sha256.toLowerCase()})
+  }
+  return versions
+}
 
 /**
  * The served `miniapp.json`. Fields this schema doesn't name, such as `entry` and `permissions`, are kept as served;
- * the engine checks them in the ZIP's own copy when it installs.
+ * the engine checks them in the ZIP's own copy when it installs. `versions` never fails it: what isn't a list of
+ * versions is left out ({@link parseMiniappVersions}).
  */
 export const ServedMiniappManifestSchema: z.ZodType<ServedMiniappManifest> = z
   .object({
@@ -304,9 +342,55 @@ export const ServedMiniappManifestSchema: z.ZodType<ServedMiniappManifest> = z
         url: NonBlankString,
         sha256: z
           .string()
-          .regex(/^[0-9a-fA-F]{64}$/)
+          .regex(SHA256_HEX)
           .transform((sha256) => sha256.toLowerCase()),
       })
       .passthrough(),
+    // Typed as the list it parses to, and given anything: what isn't a list is left out below, never refused.
+    versions: z.custom<MiniappBuild[] | undefined>(() => true).transform(parseMiniappVersions),
   })
   .passthrough()
+  .transform((manifest) => {
+    if (manifest.versions !== undefined) return manifest
+    const {versions: _notAList, ...rest} = manifest
+    return rest
+  })
+
+/** A choice to stay on one version: the version, and the hash it had when it was chosen (the seal). */
+export interface MiniappPin {
+  version: string
+  /** The pinned version's SHA-256 when it was chosen, in hex. */
+  sha256: string
+}
+
+/** Why a pin has no build to install: the miniapp no longer lists the version, or lists it with other bytes. */
+export const MINIAPP_PIN_UNMET_REASONS = ["pin_unlisted", "pin_hash_changed"] as const
+export type MiniappPinUnmetReason = (typeof MINIAPP_PIN_UNMET_REASONS)[number]
+
+export type MiniappTargetSelection = {ok: true; target: MiniappBuild} | {ok: false; reason: MiniappPinUnmetReason}
+
+/**
+ * The build a phone should hold of a miniapp, from what its URL serves now: the one place a pin is checked.
+ *
+ * - Without a pin: `bundle`, the latest build.
+ * - With a pin: the `versions` entry for the pinned version, and only while its hash is the pin's. A version that is
+ *   no longer listed (or a miniapp with no list) is `pin_unlisted`. A listed version whose hash differs is
+ *   `pin_hash_changed`: the publisher put other bytes under it, and a pin never moves a phone to code nobody chose.
+ *   Either way there is nothing to install, and the phone keeps what it has. `bundle` never stands in for an entry,
+ *   also when it is the pinned version.
+ *
+ * The target's `url` is as served: relative to the miniapp URL, or absolute. No version is compared with another.
+ */
+export function selectMiniappTarget(
+  served: Pick<ServedMiniappManifest, "version" | "bundle" | "versions">,
+  pin?: MiniappPin | null,
+): MiniappTargetSelection {
+  if (pin === undefined || pin === null) {
+    return {ok: true, target: {version: served.version, url: served.bundle.url, sha256: served.bundle.sha256.toLowerCase()}}
+  }
+  const entry = served.versions?.find((candidate) => candidate.version === pin.version)
+  if (entry === undefined) return {ok: false, reason: "pin_unlisted"}
+  const sha256 = entry.sha256.toLowerCase()
+  if (sha256 !== pin.sha256.toLowerCase()) return {ok: false, reason: "pin_hash_changed"}
+  return {ok: true, target: {version: entry.version, url: entry.url, sha256}}
+}

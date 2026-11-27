@@ -281,7 +281,7 @@ export class MentraUIRouter {
 
   /**
    * Re-announce the already-mounted WebView to the background JSContext.
-   * This covers dev background hot-reload, app resume, and thawed WebViews
+   * This covers app resume, and thawed WebViews
    * whose injected UI_SEND frames may have been missed while the host was
    * suspended. Re-emitting UI_OPEN flips `ui.bound` back to true if needed
    * and lets background code push a fresh snapshot via session.ui.onOpen.

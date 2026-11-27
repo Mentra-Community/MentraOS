@@ -2,13 +2,24 @@ import {describe, expect, test} from "bun:test"
 import {
   FLEET_ASSIGNMENT_REASONS,
   FLEET_ASSIGNMENT_STATES,
+  FLEET_DESIRED_STATE_PINS_PARAM,
+  FLEET_DESIRED_STATE_PINS_VALUE,
+  FLEET_INSTALL_FAILURE_REASONS,
   FLEET_INSTALL_REASONS,
+  FLEET_LIMITS,
+  FleetAssignmentPinSchema,
+  fleetDesiredStateAsksForPins,
   FleetDesiredStateSchema,
+  FleetDesiredStateWithPinsSchema,
+  fleetDesiredStateWithoutPins,
   FleetRecordSchema,
   FleetReportAckSchema,
 } from "./fleet"
+import {MINIAPP_PIN_UNMET_REASONS} from "./miniapp-url"
 
 const T = "2026-10-21T09:30:00Z"
+/** A pin: the version, and the hash it had when it was chosen. */
+const PIN = {version: "0.3.4", sha256: "41ab77c3".padEnd(64, "0")}
 
 const base = {
   schemaVersion: 1,
@@ -279,12 +290,19 @@ describe("desired state", () => {
     expect(FleetDesiredStateSchema.safeParse({status: "unmanaged", revision: -3, generatedAt: T}).success).toBe(false)
   })
 
-  test("rejects a selection other than latest and an entry revision of 0", () => {
+  // What a phone that did not ask for pins parses with, and what every released Mentra App parses with.
+  test("the answer to a phone that did not ask for pins has only latest entries: a pinned one, with or without its pin, is rejected", () => {
     const entry = {assignmentId: "asg_1", revision: 2, url: "https://example.com/p", packageName: "p", selection: "pinned"}
     expect(FleetDesiredStateSchema.safeParse(managed({entries: [entry]})).success).toBe(false)
-    expect(
-      FleetDesiredStateSchema.safeParse(managed({entries: [{...entry, selection: "latest", revision: 0}]})).success,
-    ).toBe(false)
+    expect(FleetDesiredStateSchema.safeParse(managed({entries: [{...entry, pin: PIN}]})).success).toBe(false)
+    // A latest entry may not carry a pin either: an unknown key stops a released phone.
+    expect(FleetDesiredStateSchema.safeParse(managed({entries: [{...entry, selection: "latest", pin: PIN}]})).success).toBe(false)
+    expect(FleetDesiredStateSchema.safeParse(managed({entries: [{...entry, selection: "latest"}]})).success).toBe(true)
+  })
+
+  test("rejects an entry revision of 0", () => {
+    const entry = {assignmentId: "asg_1", revision: 0, url: "https://example.com/p", packageName: "p", selection: "latest"}
+    expect(FleetDesiredStateSchema.safeParse(managed({entries: [entry]})).success).toBe(false)
   })
 
   test("an entry names a miniapp by an https URL: no other scheme, no credentials, no blank, no missing URL", () => {
@@ -306,6 +324,83 @@ describe("desired state", () => {
   })
 })
 
+describe("desired state with pins (a phone that asked with ?pins=1)", () => {
+  const latest = {assignmentId: "asg_1", revision: 2, url: "https://private.example.com/miniapp", packageName: "com.example.private", selection: "latest"}
+  const pinned = {assignmentId: "asg_2", revision: 4, url: "https://notes.example.com/", packageName: "com.example.notes", selection: "pinned", pin: PIN}
+  const managed = (entries: unknown[], overrides: Record<string, unknown> = {}) => ({
+    status: "managed",
+    revision: 5,
+    generatedAt: T,
+    workspace: {workspaceId: "ws_1", name: "Ridgeline Field Services"},
+    entries,
+    ...overrides,
+  })
+
+  test("the request parameter is pins=1, and nothing else asks", () => {
+    expect(`${FLEET_DESIRED_STATE_PINS_PARAM}=${FLEET_DESIRED_STATE_PINS_VALUE}`).toBe("pins=1")
+    expect(fleetDesiredStateAsksForPins("1")).toBe(true)
+    for (const value of [undefined, null, "", "0", "true", "yes", "2", "1 ", "01"]) expect(fleetDesiredStateAsksForPins(value)).toBe(false)
+  })
+
+  test("latest and pinned entries parse side by side, and so does everything the plain schema takes", () => {
+    const parsed = FleetDesiredStateWithPinsSchema.safeParse(managed([latest, pinned]))
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.status === "managed" && parsed.data.entries[1]).toEqual(pinned as never)
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed([])).success).toBe(true)
+    expect(FleetDesiredStateWithPinsSchema.safeParse({status: "unmanaged", revision: 6, generatedAt: T}).success).toBe(true)
+  })
+
+  test("a pin goes with a pinned entry, and only with it", () => {
+    const {pin: _pin, ...pinnedWithoutPin} = pinned
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed([pinnedWithoutPin])).success).toBe(false)
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed([{...latest, pin: PIN}])).success).toBe(false)
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed([{...pinned, selection: "exact"}])).success).toBe(false)
+  })
+
+  test("a pin is a SemVer version and a lowercase SHA-256, and nothing more", () => {
+    expect(FleetAssignmentPinSchema.safeParse(PIN).success).toBe(true)
+    for (const pin of [
+      {version: "0.3", sha256: PIN.sha256},
+      {version: "latest", sha256: PIN.sha256},
+      {version: "", sha256: PIN.sha256},
+      {version: PIN.version},
+      {sha256: PIN.sha256},
+      {version: PIN.version, sha256: "abc"},
+      {version: PIN.version, sha256: PIN.sha256.toUpperCase()},
+      {version: PIN.version, sha256: "z".repeat(64)},
+      {...PIN, url: "https://notes.example.com/notes-0.3.4.zip"},
+      null,
+    ]) {
+      expect(FleetAssignmentPinSchema.safeParse(pin).success).toBe(false)
+      expect(FleetDesiredStateWithPinsSchema.safeParse(managed([{...pinned, pin}])).success).toBe(false)
+    }
+  })
+
+  test("the rest is as strict as the plain schema: extra fields, statuses, URLs and limits", () => {
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed([pinned], {extra: 1})).success).toBe(false)
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed([{...pinned, extra: 1}])).success).toBe(false)
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed([pinned], {status: "paused"})).success).toBe(false)
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed([{...pinned, url: "http://notes.example.com/"}])).success).toBe(false)
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed([{...pinned, revision: 0}])).success).toBe(false)
+    const many = Array.from({length: FLEET_LIMITS.maxAssignmentEntries + 1}, (_, index) => ({...pinned, assignmentId: `asg_${index}`}))
+    expect(FleetDesiredStateWithPinsSchema.safeParse(managed(many)).success).toBe(false)
+  })
+
+  test("without pins, a pinned entry is the same entry as latest and the answer parses on a phone that did not ask", () => {
+    const withPins = FleetDesiredStateWithPinsSchema.parse(managed([latest, pinned]))
+    const plain = fleetDesiredStateWithoutPins(withPins)
+    expect(plain).toEqual({
+      ...managed([latest, {assignmentId: "asg_2", revision: 4, url: "https://notes.example.com/", packageName: "com.example.notes", selection: "latest"}]),
+    } as never)
+    expect(FleetDesiredStateSchema.safeParse(plain).success).toBe(true)
+    expect(JSON.stringify(plain)).not.toContain("pin")
+    // Nothing to change: an answer with no pinned entry, and an unmanaged one.
+    expect(fleetDesiredStateWithoutPins(FleetDesiredStateWithPinsSchema.parse(managed([latest])))).toEqual(managed([latest]) as never)
+    const unmanaged = {status: "unmanaged" as const, revision: 6, generatedAt: T}
+    expect(fleetDesiredStateWithoutPins(unmanaged)).toEqual(unmanaged)
+  })
+})
+
 describe("the spec's lists, exactly", () => {
   test("install reasons, outcome states and reasons are the provisioning and Fleet specs' sets", () => {
     expect([...FLEET_INSTALL_REASONS]).toEqual(["bundled", "explicit", "manifest", "assignment"])
@@ -316,15 +411,26 @@ describe("the spec's lists, exactly", () => {
       [
         "access_denied",
         "archived",
+        "development_build",
         "download_failed",
         "incompatible_host",
         "manifest_conflict",
         "newer_version_installed",
         "not_a_miniapp",
+        "pin_hash_changed",
+        "pin_unlisted",
         "signature_invalid",
         "storage_full",
       ].sort(),
     )
+  })
+
+  test("the two reasons a pin can't be met are assignment reasons, and install-failure reasons with them", () => {
+    for (const reason of MINIAPP_PIN_UNMET_REASONS) {
+      expect<readonly string[]>(FLEET_ASSIGNMENT_REASONS).toContain(reason)
+      expect<readonly string[]>(FLEET_INSTALL_FAILURE_REASONS).toContain(reason)
+      expect(FleetRecordSchema.safeParse(outcome({state: "blocked", reason, selectedVersion: "0.3.4", installedVersion: "0.3.5"})).success).toBe(true)
+    }
   })
 
   test("the record kinds are Phase 10's five, Phase 11's two and Phase 12's five, and nothing else parses", () => {

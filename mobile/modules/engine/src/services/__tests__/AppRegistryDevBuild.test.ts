@@ -4,17 +4,17 @@ import {result as Res} from "typesafe-ts"
 
 import type {MiniappReleaseIdentity} from "../AppRegistry"
 
-// A dev build of a package claims that package's name: the phone applies the
+// A development build of a package claims that package's name: the phone applies the
 // Android signer rule to it, and Core mints its token marked as a local build's.
 ;(globalThis as {__DEV__?: boolean}).__DEV__ = false
 const values = new Map<string, unknown>()
 const installationValues = new Map<string, string>()
 let candidateFingerprint: string | undefined
 let candidateApiLevel: number | undefined
-/** The dev icon's download, which a test may hold open. */
-let iconDownload: () => Promise<{uri: string}> = async () => {
-  throw new Error("no network in this test")
-}
+/** The version directories on disk, by package. */
+const onDisk = new Map<string, string[]>()
+/** Directories the registry deleted. */
+const deleted: string[] = []
 let developmentAllowed = true
 let installedAllowed = (_identity: MiniappReleaseIdentity | null) => true
 mock.module("../../utils/storage/storage", () => ({
@@ -28,6 +28,7 @@ mock.module("../../utils/storage/storage", () => ({
       values.delete(key)
       return Res.ok(undefined)
     },
+    getAllKeys: () => [...values.keys()],
   },
 }))
 mock.module("react-native-mmkv", () => ({
@@ -35,10 +36,10 @@ mock.module("react-native-mmkv", () => ({
     getString: (key: string) => installationValues.get(key),
     set: (key: string, value: string) => installationValues.set(key, value),
     remove: (key: string) => installationValues.delete(key),
+    getAllKeys: () => [...installationValues.keys()],
   }),
 }))
 mock.module("../../runtime/bootstrap", () => ({
-  assertMiniappDevelopmentAllowed: () => {},
   getConfigValues: () => ({}),
   isDevMiniappAllowed: () => developmentAllowed,
   isLocalMiniappPackageAllowed: () => true,
@@ -76,17 +77,26 @@ mock.module("expo/fetch", () => ({
 }))
 mock.module("expo-file-system", () => ({
   Directory: class {
-    exists = false
+    uri: string
+    constructor(...parts: Array<string | {uri?: string}>) {
+      this.uri = parts.map((part) => (typeof part === "string" ? part : (part.uri ?? ""))).join("/")
+    }
+    get name() {
+      return this.uri.split("/").at(-1)!
+    }
+    // Only the earlier app's folder of development icons is there.
+    get exists() {
+      return this.uri.endsWith("/dev-miniapp-icons")
+    }
     create() {}
-    delete() {}
+    delete() {
+      deleted.push(this.uri)
+    }
     list() {
       return []
     }
   },
   File: class {
-    static downloadFileAsync() {
-      return iconDownload()
-    }
     uri = "file:///test-cache/bundle.zip"
     exists = false
     write() {
@@ -124,17 +134,12 @@ mock.module("../validateInstallBundle", () => ({
   }),
 }))
 
-const {
-  default: registry,
-  assertDevBuildAllowed,
-  getDevAppRecords,
-  registerDevApp,
-  SignedMiniappDevBuildError,
-} = await import("../AppRegistry")
+const {default: registry, migrateDevelopmentRecords} = await import("../AppRegistry")
 const {isLocalBuildContext, recordMiniappBuild} = await import("../miniappBuildKind")
+// The version directories on disk are the test's.
+spyOn(registry, "getInstalledVersions").mockImplementation((name: string) => onDisk.get(name) ?? [])
 
 const packageName = "com.example.devbuild"
-const devRecord = {packageName, name: "Dev Build", iconUrl: "", devUrl: "http://192.168.1.20:3000", devPort: 3001}
 
 function install(version: string, identity: MiniappReleaseIdentity) {
   registry["finalizeInstall"](packageName, version, identity, () => {}).apply()
@@ -144,7 +149,7 @@ function installDevSnapshot() {
   return registry.installFromUrl("http://192.168.1.20:3000/bundle.zip", {
     expectedPackageName: packageName,
     versionOverride: "dev-1000",
-    releaseIdentity: {source: "dev_snapshot"},
+    releaseIdentity: {source: "local", sourceUrl: "http://192.168.1.20:3000/"},
   })
 }
 
@@ -175,9 +180,8 @@ beforeEach(() => {
   values.clear()
   installationValues.clear()
   recordMiniappBuild(packageName, {localBuild: false})
-  iconDownload = async () => {
-    throw new Error("no network in this test")
-  }
+  onDisk.clear()
+  deleted.length = 0
   candidateFingerprint = undefined
   candidateApiLevel = undefined
   developmentAllowed = true
@@ -192,31 +196,17 @@ test("a snapshot built with a newer Miniapp SDK API level is refused, though its
   expect(extractions).toBe(0)
 })
 
-describe("live dev builds follow the installed signer", () => {
-  test("run when the package is not installed", async () => {
-    await registerDevApp(devRecord)
-    expect(values.get(`${packageName}_dev_url`)).toBe(devRecord.devUrl)
-  })
-
-  test("unsigned installed X + unsigned dev X: allowed, marked as a dev build, token marked as a local build's", async () => {
+describe("a development build beside an installed release", () => {
+  test("runs as the package, marked as a development build, its token marked as a local build's", async () => {
     install("1.0.0", {source: "direct_download"})
-    expect(registry.getPublisherKeyFingerprint(packageName)).toBeNull()
-
-    await registerDevApp(devRecord)
-
-    // The phone keeps tracking X as a dev build: its record in the dev index,
-    // its per-package routing keys, and the dev badge on the projected tile.
-    expect(getDevAppRecords().map((record) => record.packageName)).toEqual([packageName])
-    expect(JSON.parse(values.get("dev_apps_index") as string)).toEqual([packageName])
-    expect(values.get(`${packageName}_dev_url`)).toBe(devRecord.devUrl)
-    expect(values.get(`${packageName}_dev_port`)).toBe(devRecord.devPort)
-    // Home merges the installed tile with the dev record; the dev build wins.
-    const installedTile = {packageName, version: "1.0.0", name: "Installed", running: false}
-    const tiles = registry["mergeProjectedApps"]([installedTile]).filter(
-      (app: {packageName: string}) => app.packageName === packageName,
-    )
-    expect(tiles).toHaveLength(1)
-    expect(tiles[0]).toMatchObject({packageName, isMiniappDev: true, devUrl: devRecord.devUrl})
+    install("dev-1000", {source: "local", sourceUrl: "http://192.168.1.20:3000/"})
+    onDisk.set(packageName, ["1.0.0", "dev-1000"])
+    expect(registry.isDevelopmentBuild(packageName)).toBe(true)
+    expect(await registry.getActiveVersion(packageName)).toBe("dev-1000")
+    // Home shows the one tile, the development build's, with its badge.
+    const tile = {packageName, version: "dev-1000", name: "Dev Build", running: false, isMiniappDev: true}
+    const tiles = registry["mergeProjectedApps"]([tile])
+    expect(tiles).toEqual([tile])
 
     // The router starts X's context as a development build: its token request names X, marked as a local build.
     recordMiniappBuild(packageName, {localBuild: true})
@@ -233,58 +223,90 @@ describe("live dev builds follow the installed signer", () => {
     expect(calls.at(-1)).toEqual([packageName, undefined])
   })
 
-  test("are refused over a signed install until it is uninstalled", async () => {
-    install("1.0.0", {source: "direct_download", publisherKeyFingerprint: "sha256:publisher"})
+  test("is the phone's, whichever account or workspace is signed in: nothing hides it", async () => {
+    install("dev-1000", {source: "local", sourceUrl: "http://192.168.1.20:3000/"})
+    onDisk.set(packageName, ["dev-1000"])
+    expect(await registry.getActiveVersion(packageName)).toBe("dev-1000")
+    expect(registry.getActiveReleaseVersion(packageName)).toBeNull()
+  })
 
-    const refused = registerDevApp(devRecord)
-    await expect(refused).rejects.toBeInstanceOf(SignedMiniappDevBuildError)
-    await expect(registerDevApp(devRecord)).rejects.toThrow(
-      `${packageName} is installed with a publisher signature. Uninstall it before running a development build.`,
-    )
-    expect(() => assertDevBuildAllowed(packageName)).toThrow(SignedMiniappDevBuildError)
-    expect(values.has(`${packageName}_dev_url`)).toBe(false)
-    expect(getDevAppRecords()).toEqual([])
-
-    // Uninstalling clears the recorded signer, so the dev build may run.
-    expect((await registry.uninstall(packageName)).is_ok()).toBe(true)
-    expect(registry.getPublisherKeyFingerprint(packageName)).toBeNull()
-    await registerDevApp(devRecord)
-    expect(values.get(`${packageName}_dev_url`)).toBe(devRecord.devUrl)
+  test("stands in only while the deployment allows development", async () => {
+    install("1.0.0", {source: "direct_download"})
+    install("dev-1000", {source: "local", sourceUrl: "http://192.168.1.20:3000/"})
+    onDisk.set(packageName, ["1.0.0", "dev-1000"])
+    developmentAllowed = false
+    expect(await registry.getActiveVersion(packageName)).toBe("1.0.0")
+    // It still holds the package: only the person replaces it.
+    expect(registry.isDevelopmentBuild(packageName)).toBe(true)
   })
 })
 
-describe("registering a dev build", () => {
-  test("whose session ends while its icon downloads writes no record or routing", async () => {
-    let finishDownload!: (file: {uri: string}) => void
-    iconDownload = () => new Promise((resolve) => (finishDownload = resolve))
-    let sessionEnded = false
-    const registering = registerDevApp(
-      {...devRecord, iconUrl: "http://192.168.1.20:3000/icon.png"},
-      {
-        assertCurrent: () => {
-          if (sessionEnded) throw new Error("the install's session ended")
-        },
-      },
-    )
-    await Promise.resolve()
-    sessionEnded = true
-    finishDownload({uri: "file:///test-documents/dev-miniapp-icons/icon.png"})
-    await expect(registering).rejects.toThrow("the install's session ended")
-    expect([...values.keys()].filter((key) => key.startsWith(packageName) || key === "dev_apps_index")).toEqual([])
-    expect(getDevAppRecords()).toEqual([])
+describe("the migration of development records from an earlier Mentra App", () => {
+  const server = "http://192.168.1.20:3000"
+
+  test("a record's newest development build takes its address and console, and every record goes", () => {
+    install("dev-1700000000000", {source: "dev_snapshot"})
+    install("dev-1800000000000", {source: "dev_snapshot", bundleSha256: "ab".repeat(32)})
+    onDisk.set(packageName, ["1.0.0", "dev-1700000000000", "dev-1800000000000"])
+    values.set(`${packageName}_dev_url`, server)
+    values.set(`${packageName}_dev_port`, 3001)
+    values.set(`${packageName}_dev_meta`, JSON.stringify({packageName, devUrl: server}))
+    values.set(`${packageName}_dev_selected_snapshot`, "dev-1700000000000")
+    values.set("dev_apps_index", JSON.stringify([packageName]))
+    values.set("com.example.other_running", true)
+    const legacy = () => [...values.keys()].filter((key) => key.includes("_dev_") || key === "dev_apps_index")
+
+    migrateDevelopmentRecords(registry)
+
+    expect(registry.getReleaseIdentity(packageName, "dev-1800000000000")).toEqual({
+      source: "local",
+      sourceUrl: `${server}/`,
+      bundleSha256: "ab".repeat(32),
+      reloadUrl: "ws://192.168.1.20:3001/__mentra_dev",
+    })
+    expect(registry.getReleaseIdentity(packageName, "dev-1700000000000")).toEqual({source: "dev_snapshot"})
+    expect(legacy()).toEqual([])
+    expect(values.get("com.example.other_running")).toBe(true)
+    expect(deleted).toContain("file:///test-documents/dev-miniapp-icons")
   })
 
-  test("still current after its icon downloads, writes its record and routing", async () => {
-    iconDownload = async () => ({uri: "file:///test-documents/dev-miniapp-icons/icon.png"})
-    await registerDevApp({...devRecord, iconUrl: "http://192.168.1.20:3000/icon.png"}, {assertCurrent: () => {}})
-    expect(values.get(`${packageName}_dev_url`)).toBe(devRecord.devUrl)
-    expect(getDevAppRecords().map((record) => record.iconUrl)).toEqual([
-      "file:///test-documents/dev-miniapp-icons/icon.png",
-    ])
+  test("runs once: nobody rescans, and a later start finds nothing to do", () => {
+    install("dev-1800000000000", {source: "dev_snapshot"})
+    onDisk.set(packageName, ["dev-1800000000000"])
+    values.set(`${packageName}_dev_url`, server)
+    migrateDevelopmentRecords(registry)
+    expect(registry.getReleaseIdentity(packageName, "dev-1800000000000")?.sourceUrl).toBe(`${server}/`)
+
+    install("dev-1800000000000", {source: "dev_snapshot"})
+    values.set(`${packageName}_dev_url`, "http://192.168.1.99:3000")
+    migrateDevelopmentRecords(registry)
+    expect(registry.getReleaseIdentity(packageName, "dev-1800000000000")).toEqual({source: "dev_snapshot"})
+  })
+
+  test("another account's or workspace's record migrates too, when the live one names none", () => {
+    install("dev-1800000000000", {source: "dev_snapshot"})
+    onDisk.set(packageName, ["dev-1800000000000"])
+    installationValues.set("devsel:ctx.other", JSON.stringify({[`${packageName}_dev_url`]: server}))
+    installationValues.set(`devowner:${packageName}:dev-1000`, "ctx.other")
+    migrateDevelopmentRecords(registry)
+    expect(registry.getReleaseIdentity(packageName, "dev-1800000000000")).toMatchObject({source: "local", sourceUrl: `${server}/`})
+    expect([...installationValues.keys()].filter((key) => key.startsWith("devsel") || key.startsWith("devowner"))).toEqual(
+      [],
+    )
+  })
+
+  test("a record whose build is gone, or whose address isn't local, leaves nothing behind", () => {
+    values.set(`${packageName}_dev_url`, server)
+    values.set("com.example.public_dev_url", "https://example.com")
+    install("dev-1800000000000", {source: "dev_snapshot"})
+    onDisk.set("com.example.public", ["dev-1800000000000"])
+    migrateDevelopmentRecords(registry)
+    expect([...values.keys()].filter((key) => key.includes("_dev_"))).toEqual([])
+    expect(registry.getReleaseIdentity("com.example.public", "dev-1800000000000")).toBeNull()
   })
 })
 
-describe("dev snapshots are installs like any other", () => {
+describe("development builds are installs like any other", () => {
   test("an unsigned snapshot cannot replace a signed install", async () => {
     install("1.0.0", {source: "direct_download", publisherKeyFingerprint: "sha256:publisher"})
     const result = await installDevSnapshot()
@@ -313,14 +335,16 @@ describe("dev snapshots are installs like any other", () => {
     install("1.0.0", {source: "direct_download"})
     await installDevSnapshot()
     expect(extractions).toBe(1)
-    install("dev-1000", {source: "dev_snapshot"})
+    install("dev-1000", {source: "local", sourceUrl: "http://192.168.1.20:3000/"})
     expect(registry.getPublisherKeyFingerprint(packageName)).toBeNull()
   })
 
-  test("a signed snapshot pins the package it installs", () => {
-    install("dev-1000", {source: "dev_snapshot", publisherKeyFingerprint: "sha256:publisher"})
+  test("a signed snapshot pins the package it installs", async () => {
+    install("dev-1000", {source: "local", publisherKeyFingerprint: "sha256:publisher"})
     expect(registry.getPublisherKeyFingerprint(packageName)).toBe("sha256:publisher")
-    expect(() => assertDevBuildAllowed(packageName)).toThrow(SignedMiniappDevBuildError)
+    // An unsigned build of it is refused from then on.
+    const result = await installDevSnapshot()
+    expect(result.is_error() && result.error.message).toContain("Unsigned bundle cannot replace signed miniapp")
   })
 })
 
@@ -338,7 +362,7 @@ describe("the active version follows the deployment's policy", () => {
     // The workspace allows its managed release, and release-QR installs only while development is on.
     installedAllowed = (identity) =>
       identity?.source === "deployment_manifest" || (developmentAllowed && identity?.source === "direct_download")
-    const versions = spyOn(registry, "getInstalledVersions").mockReturnValue(["1.2.0", "1.3.0", "1.4.0"])
+    onDisk.set(packageName, ["1.2.0", "1.3.0", "1.4.0"])
     let notified = 0
     const unsubscribe = registry.subscribe(() => notified++)
     try {
@@ -351,7 +375,6 @@ describe("the active version follows the deployment's policy", () => {
       expect(notified).toBeGreaterThan(0)
     } finally {
       unsubscribe()
-      versions.mockRestore()
     }
   })
 })

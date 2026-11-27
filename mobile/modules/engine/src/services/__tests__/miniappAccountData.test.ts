@@ -208,9 +208,6 @@ describe("deleting an account", () => {
     expect(partitions.lastMiniappDataSession()).toEqual(BOB)
     signIn(ALICE)
     await simpleStorage.get(pkg, "reports")
-    partitions.syncDevelopmentSelections()
-    storage.save(`${pkg}_dev_url`, "http://192.168.1.4:8081")
-    storage.save("dev_apps_index", JSON.stringify([pkg]))
     session = null
     deleteMiniappDataOfAccount()
 
@@ -220,7 +217,6 @@ describe("deleting an account", () => {
     expect(fs.existsSync(personalDir)).toBe(false)
     expect(fs.existsSync(aliceDir)).toBe(false)
     expect(partitions.getFleetWorkspace(ALICE)).toBeNull()
-    expect(storage.getAllKeys().filter(partitions.isDevelopmentSelectionKey)).toEqual([])
 
     signIn(ALICE)
     expect(await documentationData()).toEqual({storage: {}, blobs: [], web: {}})

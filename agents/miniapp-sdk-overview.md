@@ -7,7 +7,7 @@ The SDK lives across four packages in `sdk/`:
 | Package                                  | Role                                                                                         |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `@mentra/miniapp`                        | Runtime SDK consumed by miniapp authors. Session, modules, transports, React hooks.          |
-| `@mentra/miniapp-cli` (`mentra-miniapp`) | Author-facing CLI. `dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`. |
+| `@mentra/miniapp-cli` (`mentra-miniapp`) | Author-facing CLI. `dev`, `pack`, `manifest`, `permission`, `hardware`, `schema`. |
 | `create-mentra-miniapp`                  | Project scaffolder. `bunx create-mentra-miniapp my-app` → a working starter.                 |
 | `examples/miniapp`                        | Reference miniapp ("Live Captions" + a tester for every module). What we build against.      |
 
@@ -238,7 +238,7 @@ When ready to ship:
 bun run build       # whatever bundler — outputs to dist/
 bun run pack        # mentra-miniapp pack — produces the distributable ZIP
 # or:
-mentra-miniapp release   # build + pack + serve a QR to install on a phone
+mentra-miniapp dev --production   # build the production bundle and serve a QR to try it on a phone
 ```
 
 `mentra-miniapp pack`:
@@ -247,7 +247,7 @@ mentra-miniapp release   # build + pack + serve a QR to install on a phone
 2. Copies `miniapp.json` and `icon.png` into `dist/`.
 3. Zips `dist/` to `<packageName>-<version>.zip` using JSZip.
 
-`mentra-miniapp release` is the all-in-one verb: it builds, packs, and serves the resulting ZIP behind a QR code so you can sideload it onto a phone over LAN. Pass `--no-cache` to skip the build cache.
+`mentra-miniapp dev --production` builds the production bundle and serves it from your computer at a local-network miniapp URL, behind a QR code, so you can try it on a phone over LAN. `mentra-miniapp release` is its former name, kept for one release.
 
 That ZIP is the artifact you'd upload to the miniapp store (store backend lives in the `miniapp-store-backend-plan.md` planning doc — not in this PR yet).
 

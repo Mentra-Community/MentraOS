@@ -3,12 +3,16 @@
  * background running in the engine.
  *
  * Mounting it opens the miniapp: the launcher starts its background context
- * (idempotent; a context that already runs is reused) and the view loads the
- * screen the launcher resolves, from the package's own origin. The view injects
- * the miniapp globals and the mentra-ui shim, binds the WebView to the UI
- * router, keeps the binding fresh across app resumes, and gates `ready` on the
- * page's own `mentra.ready()`. Unmounting it closes the screen only: the
- * background keeps running until `engine.miniapps.stop()`.
+ * (idempotent; a context that already runs is reused, and one that doesn't run
+ * yet waits for its update check first, see `engine.miniapps.startWait`) and
+ * the view loads the screen the launcher resolves, from the package's own
+ * origin. The view injects the miniapp globals and the mentra-ui shim, binds
+ * the WebView to the UI router, keeps the binding fresh across app resumes,
+ * and gates `ready` on the page's own `mentra.ready()`. Unmounting it closes
+ * the screen only: the background keeps running until
+ * `engine.miniapps.stop()`. The screen follows the registry: once another build
+ * of the package installs (an update, or a developer's save), it opens from
+ * that build.
  *
  * Installed screens need the patched react-native-webview the Mentra App ships
  * (its `miniappOrigin` prop serves the bundle from the package's own origin).
@@ -18,6 +22,7 @@ import {AppState, Linking, Platform, type AppStateStatus} from "react-native"
 import {WebView, type WebViewMessageEvent, type WebViewProps} from "react-native-webview"
 
 import {getConfigValues} from "../runtime/bootstrap"
+import appRegistry from "../services/AppRegistry"
 import devServerBridge from "../services/DevServerBridge"
 import {fleetEvents} from "../services/fleet/fleetEvents"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
@@ -51,7 +56,7 @@ export interface MiniappScreen {
    * /.mentra/files/. Null when it can't be opened.
    */
   uiFilesDir: string | null
-  /** A development build: a snapshot of what a development server serves. */
+  /** A development build: one installed from a local address. */
   devBuild: boolean
 }
 
@@ -60,7 +65,10 @@ export type MiniappViewStatus =
   | {state: "loading"; attempt: number}
   /** The page called `mentra.ready()` and its background released it. */
   | {state: "ready"}
-  /** The launch threw (the launcher's error, such as an age gate or a build this host can't run). */
+  /**
+   * The launch threw (the launcher's error, such as an age gate, a build this host can't run, or a miniapp stopped
+   * while its start waited for its update check).
+   */
   | {state: "failed"; reason: "launch"; error: Error}
   /**
    * `no_screen`: the miniapp has no screen to load. `never_ready`: the page loaded but never called
@@ -76,9 +84,6 @@ export interface MiniappViewHandle {
 export interface MiniappViewProps {
   packageName: string
   version?: string
-  /** A development build's server, and its port. */
-  devUrl?: string
-  devPort?: string
   colorScheme?: MiniappColorScheme
   /** Insets the page should keep clear; the WebView fills the view edge to edge. */
   safeAreaInsets?: MiniappSafeArea
@@ -107,8 +112,6 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
   {
     packageName,
     version,
-    devUrl,
-    devPort,
     colorScheme = "light",
     safeAreaInsets = NO_INSETS,
     onStatus,
@@ -134,11 +137,11 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
   const spaDepth = useRef(0)
   const nativeCanGoBack = useRef(false)
   const [screen, setScreen] = useState<MiniappScreen | null>(null)
-  // The bundle root the screen shows, for a dev reload to tell whether its bundle changed.
+  // The bundle root the screen shows, to tell whether another build installed.
   const screenRootRef = useRef<string | null>(null)
   screenRootRef.current = screen?.uiRootDir ?? null
-  // Bumped when a development build's bundle changed, to open the screen from the new one.
-  const [devRevision, setDevRevision] = useState(0)
+  // Bumped when another build of the package installed, to open the screen from it.
+  const [buildRevision, setBuildRevision] = useState(0)
 
   // ----- Load-state tracking -------------------------------------------------
   //
@@ -215,7 +218,7 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
     [packageName],
   )
 
-  // Fresh handshake + retry budget — used on (re)launch and dev hot-reload.
+  // Fresh handshake + retry budget — used on every (re)launch, a new build's included.
   const resetLoadState = useCallback(() => {
     connectedRef.current = false
     setConnected(false)
@@ -280,11 +283,10 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       checkpoint()
       // The launcher resolves the bundle, reads the manifest and spawns the
-      // background context (dev HTTP vs released file:// snapshot); it is
-      // idempotent, so a re-foreground of a live miniapp only rebuilds this
-      // WebView half. A context this spawns is the person opening the
-      // miniapp's screen: a user launch to Fleet.
-      const result = await miniappLauncher.ensureRunning(packageName, {devUrl, version, devPort}, {trigger: "user"})
+      // background context; it is idempotent, so a re-foreground of a live
+      // miniapp only rebuilds this WebView half. A context this spawns is the
+      // person opening the miniapp's screen: a user launch to Fleet.
+      const result = await miniappLauncher.ensureRunning(packageName, {version}, {trigger: "user"})
       // Superseded while spawning: leave the context alive (it keeps running
       // across UI close) but don't touch UI state for a view we no longer show.
       checkpoint()
@@ -324,7 +326,7 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
       clearReadyTimer()
       getMiniappEngine()?.uiRouter.unbindWebView(packageName)
     }
-  }, [packageName, version, devUrl, devPort, devRevision, resetLoadState, clearReadyTimer, fail])
+  }, [packageName, version, buildRevision, resetLoadState, clearReadyTimer, fail])
 
   useEffect(
     () =>
@@ -416,7 +418,7 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
     [setCanGoBack],
   )
 
-  // A new document (a reload, a dev reload, the held source arriving) has not
+  // A new document (a reload, a new build, the held source arriving) has not
   // heard from its own shim yet.
   const handleLoadStart = useCallback(() => {
     pageLoadedRef.current = false
@@ -491,21 +493,22 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
     [packageName],
   )
 
-  // Dev hot-reload: when the dev server signals a reload for THIS miniapp, fetch its new bundle into a snapshot and
-  // open the screen from it, as an update to an installed bundle does: the launch below reruns and the new bundle
-  // root remounts the WebView. A signal that changed nothing (the bundle a background respawn already fetched) keeps
-  // the screen. The background respawn for src/background/ changes is the MiniappEngine's.
-  useEffect(() => {
-    if (!devUrl) return
-    devServerBridge.onReload(async (pkg) => {
-      if (pkg !== packageName) return
-      const resolved = await miniappLauncher.resolveBundle(packageName, {devUrl, version, devPort})
-      if (!resolved?.uiRootDir || resolved.uiRootDir === screenRootRef.current) return
-      setDevRevision((revision) => revision + 1)
-    })
-  }, [packageName, devUrl, version, devPort])
+  // What is installed is what runs: when another build of the package commits (an update, or a developer's save,
+  // which restarts the background too), the launch above reruns and opens the screen from the new build; its bundle
+  // root remounts the WebView. An install that left this package's build as it was keeps the screen.
+  useEffect(
+    () =>
+      appRegistry.subscribe(() => {
+        const version = appRegistry.peekActiveVersion(packageName)
+        const root = version ? appRegistry.getBundleDir(packageName, version) : undefined
+        if (!root || !screenRootRef.current || root === screenRootRef.current) return
+        setBuildRevision((revision) => revision + 1)
+      }),
+    [packageName],
+  )
 
   const {top, bottom, left, right} = safeAreaInsets
+  const devBuild = screen?.devBuild === true
   const injectedJS = useMemo(
     () =>
       [
@@ -514,7 +517,7 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
         buildMiniappGlobalsScript({
           packageName,
           miniappLocal: true,
-          miniappDeveloperMode: !!devUrl,
+          miniappDeveloperMode: devBuild,
           safeAreaInsets: {top, bottom, left, right},
           webviewFillsStatusBar: true,
           colorScheme,
@@ -522,7 +525,7 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
         buildMentraUiShim({packageName}),
         Platform.OS === "android" ? miniappHistoryBridge : "",
       ].join("\n"),
-    [beforeContentScript, packageName, devUrl, top, bottom, left, right, colorScheme],
+    [beforeContentScript, packageName, devBuild, top, bottom, left, right, colorScheme],
   )
 
   if (!screen) return null
@@ -578,12 +581,13 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
       // stays stuck in zoom mode. See flutter#182828,
       // react-native-webview#1649, manuelstofer/pinchzoom#115.
       nestedScrollEnabled={true}
-      // A miniapp served by `mentra-miniapp dev` is inspectable from desktop
-      // Chrome (chrome://inspect) or Safari in any app build, so its developer
-      // can see the live page. On Android the switch is process-wide: once a
-      // dev miniapp opens, the app's other web views are inspectable too until
-      // it restarts, which needs adb (or a Mac the iPhone trusts) anyway.
-      webviewDebuggingEnabled={__DEV__ || !!devUrl}
+      // A development build (one installed from a local address, such as the
+      // URL `mentra-miniapp dev` prints) is inspectable from desktop Chrome
+      // (chrome://inspect) or Safari in any app build, so its developer can see
+      // the live page. On Android the switch is process-wide: once a
+      // development build opens, the app's other web views are inspectable too
+      // until it restarts, which needs adb (or a Mac the iPhone trusts) anyway.
+      webviewDebuggingEnabled={__DEV__ || devBuild}
       style={{flex: 1}}
     />
   )

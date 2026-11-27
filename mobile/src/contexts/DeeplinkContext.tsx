@@ -222,22 +222,6 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     requiresAuth: true,
   },
 
-  {
-    pattern: "/applet/local",
-    handler: async (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      const routeParams = new URLSearchParams()
-      for (const key of ["packageName", "appName", "version", "devUrl", "iconUrl", "devPort"]) {
-        const value = params[key]
-        if (value) routeParams.set(key, value)
-      }
-
-      await waitForActive()
-      nav.push(`/applet/local?${routeParams.toString()}` as any)
-    },
-    requiresAuth: true,
-  },
-
   // Authentication routes
   {
     pattern: "/auth/start",

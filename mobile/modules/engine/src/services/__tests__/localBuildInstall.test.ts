@@ -5,53 +5,39 @@ import {result as Res} from "typesafe-ts"
 
 import "./reactNativeTestMock"
 import {configure, resetForTests} from "../../runtime/bootstrap"
-import {createDevSnapshotRequest} from "../../utils/devSnapshotRequests"
 
 class CancelledError extends Error {}
 let events: string[]
 let installOptions: Record<string, unknown> | undefined
-let failInstall: Error | undefined
-let fingerprint: string | null
+/** Fails the download, before anything is staged. */
+let failDownload: Error | undefined
+/** Fails once the build is staged, as the installer's checks inside its queue can. */
+let failActivation: Error | undefined
 let running: boolean
 let developmentAllowed: boolean
-/** Runs once the snapshot's files have activated. */
+/** Runs once the build's files have activated. */
 let afterActivate: (() => void) | undefined
-const selected: Array<[string, string | null]> = []
-const registered: Array<Record<string, unknown>> = []
-/** What `registerDevApp` is handed to check, after its icon download, before it writes. */
-let registeredAssertCurrent: Array<(() => void) | undefined>
 
 mock.module("../AppRegistry", () => ({
   default: {
     installFromUrl: async (url: string, options: Record<string, unknown>) => {
-      events.push(`install ${url}`)
+      events.push(`download ${url}`)
       installOptions = options
-      if (failInstall) return Res.error(failInstall)
-      ;(options.beforeActivate as (() => void) | undefined)?.()
+      if (failDownload) return Res.error(failDownload)
+      events.push("staged")
+      try {
+        await (options.whenStaged as (() => Promise<void>) | undefined)?.()
+        ;(options.beforeActivate as (() => void) | undefined)?.()
+      } catch (error) {
+        return Res.error(error as Error)
+      }
+      if (failActivation) return Res.error(failActivation)
       events.push(`activate ${String(options.versionOverride)}`)
       afterActivate?.()
       return Res.ok(undefined)
     },
-    getPublisherKeyFingerprint: () => fingerprint,
-    selectDevSnapshot: (packageName: string, version: string | null) => {
-      events.push("select")
-      selected.push([packageName, version])
-    },
     gcDevVersions: (_packageName: string, keep: number) => events.push(`gc ${keep}`),
-    clearDevelopmentSelection: async (_packageName: string, options?: {assertCurrent?: () => void}) => {
-      // The real one runs the check once it holds the install queue.
-      options?.assertCurrent?.()
-      events.push("clear development")
-      return true
-    },
   },
-  registerDevApp: async (record: Record<string, unknown>, options?: {assertCurrent?: () => void}) => {
-    registeredAssertCurrent.push(options?.assertCurrent)
-    options?.assertCurrent?.()
-    events.push("register")
-    registered.push(record)
-  },
-  unregisterDevApp: () => events.push("unregister"),
 }))
 mock.module("../MiniappLauncher", () => ({
   miniappLauncher: {
@@ -73,7 +59,10 @@ mock.module("../MiniappLauncher", () => ({
 mock.module("../../stores/apps", () => ({
   useAppStatusStore: {
     getState: () => ({
-      runUpdate: async (_packageName: string, update: () => Promise<unknown>) => update(),
+      beginUpdate: () => {
+        events.push("updating")
+        return () => events.push("updated")
+      },
       refresh: async () => {
         events.push("refresh")
       },
@@ -82,18 +71,11 @@ mock.module("../../stores/apps", () => ({
 }))
 mock.module("../miniappReleaseInstall", () => ({MiniappInstallCancelledError: CancelledError}))
 
-const {installLocalBuild, restoreInstalledRelease} = await import("../localBuildInstall")
+const {installLocalBuild} = await import("../localBuildInstall")
 type LocalBuildInstall = import("../localBuildInstall").LocalBuildInstall
 
 const pkg = "com.mentra.notes"
-const bundleUrl = "http://192.168.1.20:8080/bundle.zip"
-const server = {
-  name: "Notes (dev)",
-  iconUrl: "http://192.168.1.20:8080/icon.png",
-  devUrl: "http://192.168.1.20:8080",
-  devPort: 8081,
-  mdnsHost: "laptop.local",
-}
+const bundleUrl = "http://192.168.1.20:8080/bundle-abababab.zip"
 
 function local(overrides: Partial<LocalBuildInstall> = {}): LocalBuildInstall {
   return {
@@ -101,6 +83,7 @@ function local(overrides: Partial<LocalBuildInstall> = {}): LocalBuildInstall {
     version: "1.0.0",
     sourceUrl: "http://192.168.1.20:8080/",
     sha256: "ab".repeat(32),
+    reloadUrl: "ws://192.168.1.20:8081/__mentra_dev",
     ...overrides,
   }
 }
@@ -113,18 +96,15 @@ afterAll(resetForTests)
 beforeEach(() => {
   events = []
   installOptions = undefined
-  failInstall = undefined
-  fingerprint = null
+  failDownload = undefined
+  failActivation = undefined
   running = false
   developmentAllowed = true
-  selected.length = 0
-  registered.length = 0
-  registeredAssertCurrent = []
   afterActivate = undefined
 })
 
-describe("a local-network build", () => {
-  test("installs as a development snapshot of its package, recorded as a local build at its address", async () => {
+describe("a local build", () => {
+  test("installs as a development build of its package, recorded with its address, hash and console", async () => {
     await installLocalBuild(bundleUrl, local())
     const version = installOptions?.versionOverride as string
     expect(version).toMatch(/^dev-\d+$/)
@@ -132,49 +112,59 @@ describe("a local-network build", () => {
       expectedPackageName: pkg,
       expectedVersion: "1.0.0",
       expectedBundleSha256: "ab".repeat(32),
-      releaseIdentity: {source: "local", sourceUrl: "http://192.168.1.20:8080/", bundleSha256: "ab".repeat(32)},
+      releaseIdentity: {
+        source: "local",
+        sourceUrl: "http://192.168.1.20:8080/",
+        bundleSha256: "ab".repeat(32),
+        reloadUrl: "ws://192.168.1.20:8081/__mentra_dev",
+      },
     })
-    // No development server: the snapshot is the selected build, over any earlier scan of the package.
-    expect(selected).toEqual([[pkg, version]])
+    // Not running: nothing stops or starts, and the tile shows as updating only while the files commit.
     expect(events).toEqual([
+      `download ${bundleUrl}`,
+      "staged",
+      "updating",
       "pause",
-      `install ${bundleUrl}`,
       `activate ${version}`,
-      "unregister",
-      "select",
       "gc 1",
       "resume",
+      "updated",
       "refresh",
     ])
   })
 
-  test("with a development server, loads live from it and reloads over its channel", async () => {
-    await installLocalBuild(bundleUrl, local({server}))
-    expect(registered).toEqual([{...server, packageName: pkg}])
-    expect(selected).toEqual([])
-    expect(events).toContain("register")
-    expect(events).not.toContain("unregister")
-  })
-
-  test("signed, it runs its snapshot: live code from its server is unsigned", async () => {
-    // The snapshot's signature recorded the package's publisher.
-    fingerprint = "sha256:publisher"
-    await installLocalBuild(bundleUrl, local({server}))
-    expect(registered).toEqual([])
-    expect(selected.map(([name]) => name)).toEqual([pkg])
-  })
-
-  test("stops a running copy of the package and starts it again on the new build", async () => {
+  test("stops a running copy only once the new build is staged, then starts it again on it, without asking", async () => {
     running = true
     await installLocalBuild(bundleUrl, local())
-    expect(events.slice(0, 3)).toEqual(["pause", "stop", `install ${bundleUrl}`])
-    expect(events.slice(-3)).toEqual(["resume", "launch", "refresh"])
+    const version = installOptions?.versionOverride as string
+    expect(events).toEqual([
+      `download ${bundleUrl}`,
+      "staged",
+      "updating",
+      "pause",
+      "stop",
+      `activate ${version}`,
+      "gc 1",
+      "resume",
+      "updated",
+      "launch",
+      "refresh",
+    ])
   })
 
-  test("supersedes a snapshot download an earlier development launch started", async () => {
-    const earlier = createDevSnapshotRequest(pkg)
-    await installLocalBuild(bundleUrl, local())
-    expect(earlier.isCurrent()).toBe(false)
+  test("whose download fails leaves a running copy running what it ran", async () => {
+    running = true
+    failDownload = new Error("bundle SHA-256 mismatch")
+    await expect(installLocalBuild(bundleUrl, local())).rejects.toThrow("SHA-256 mismatch")
+    expect(events).toEqual([`download ${bundleUrl}`])
+    expect(running).toBe(true)
+  })
+
+  test("that the installer refuses once staged starts the running copy again on the build it had", async () => {
+    running = true
+    failActivation = new Error("Unsigned bundle cannot replace signed miniapp com.mentra.notes; uninstall it first")
+    await expect(installLocalBuild(bundleUrl, local())).rejects.toThrow("Unsigned bundle cannot replace")
+    expect(events).toEqual([`download ${bundleUrl}`, "staged", "updating", "pause", "stop", "resume", "updated", "launch"])
   })
 
   test("is refused, before any download, where the deployment doesn't allow development", async () => {
@@ -183,93 +173,43 @@ describe("a local-network build", () => {
     expect(events).toEqual([])
   })
 
-  test("that the installer refuses leaves the package's routing alone", async () => {
+  test("cancelled before its files activate, installs nothing and stops nothing", async () => {
     running = true
-    failInstall = new Error("Unsigned bundle cannot replace signed miniapp com.mentra.notes; uninstall it first")
-    await expect(installLocalBuild(bundleUrl, local({server}))).rejects.toThrow("Unsigned bundle cannot replace")
-    expect(registered).toEqual([])
-    expect(selected).toEqual([])
-    expect(events).toEqual(["pause", "stop", `install ${bundleUrl}`, "resume", "launch"])
-  })
-
-  test("cancelled before its files activate, installs nothing", async () => {
     await expect(installLocalBuild(bundleUrl, local({isCancelled: () => true}))).rejects.toBeInstanceOf(CancelledError)
     expect(events.some((event) => event.startsWith("activate"))).toBe(false)
-    expect(selected).toEqual([])
+    expect(events).not.toContain("stop")
   })
 
-  test.each([
-    ["with a development server", true],
-    ["without one", false],
-  ])("whose session ends after its files activate selects nothing (%s)", async (_name, withServer) => {
+  test("whose session ends after its files activate doesn't start the miniapp again into it", async () => {
+    running = true
     let cancelled = false
     afterActivate = () => {
       cancelled = true
     }
-    const installing = installLocalBuild(
-      bundleUrl,
-      local({...(withServer ? {server} : {}), isCancelled: () => cancelled}),
-    )
-    await expect(installing).rejects.toBeInstanceOf(CancelledError)
-    expect(registered).toEqual([])
-    expect(selected).toEqual([])
-    expect(events).not.toContain("unregister")
+    await installLocalBuild(bundleUrl, local({isCancelled: () => cancelled}))
+    expect(events).toContain("stop")
+    expect(events).not.toContain("launch")
   })
 
-  test("hands its session check to the dev record, which runs it after its icon download", async () => {
-    let cancelled = false
-    await installLocalBuild(bundleUrl, local({server, isCancelled: () => cancelled}))
-    const check = registeredAssertCurrent[0]!
-    expect(check).toBeInstanceOf(Function)
-    cancelled = true
-    expect(check).toThrow(CancelledError)
-  })
-
-  test("without a hash in its miniapp.json, binds the ZIP to its package and version only", async () => {
-    await installLocalBuild(bundleUrl, local({sha256: undefined}))
+  test("from an older CLI's release QR, without an address or a hash, binds the ZIP to its package and version", async () => {
+    await installLocalBuild(bundleUrl, {packageName: pkg, version: "1.0.0"})
     expect(installOptions).not.toHaveProperty("expectedBundleSha256")
-    expect(installOptions?.releaseIdentity).toEqual({source: "local", sourceUrl: "http://192.168.1.20:8080/"})
+    expect(installOptions?.releaseIdentity).toEqual({source: "local"})
   })
 })
 
 describe("a local build's updates", () => {
-  test("never come from a URL, its own address included", async () => {
+  test("come from its own address only, whatever package it claims", async () => {
     const {miniappUpdateUrl} = await import("../miniappUrlUpdates")
     const deps = {
       isSystemPackage: () => true,
       firstPartyUrl: () => "https://miniapps.mentraglass.com/com.mentra.notes/",
     }
-    expect(miniappUpdateUrl(pkg, {source: "local", sourceUrl: "http://192.168.1.20:8080/"}, deps)).toBeUndefined()
+    expect(miniappUpdateUrl(pkg, {source: "local", sourceUrl: "http://192.168.1.20:8080/"}, deps)).toBe(
+      "http://192.168.1.20:8080/",
+    )
+    // A release QR's build, and one an earlier Mentra App installed without its address, don't update.
+    expect(miniappUpdateUrl(pkg, {source: "local"}, deps)).toBeUndefined()
     expect(miniappUpdateUrl(pkg, {source: "dev_snapshot"}, deps)).toBeUndefined()
-  })
-})
-
-describe("restoring the installed release over a development build", () => {
-  test("clears the development build and restarts a running copy on the release", async () => {
-    running = true
-    await restoreInstalledRelease(pkg)
-    expect(events).toEqual(["pause", "stop", "clear development", "resume", "launch", "refresh"])
-  })
-
-  test("hands its session check to the queued clear", async () => {
-    let cancelled = false
-    await restoreInstalledRelease(pkg, {isCancelled: () => cancelled})
-    expect(events).toContain("clear development")
-    events = []
-    // A session that ends between the restore's own check and the queued clear.
-    const restoring = restoreInstalledRelease(pkg, {
-      isCancelled: () => {
-        const ended = cancelled
-        cancelled = true
-        return ended
-      },
-    })
-    await expect(restoring).rejects.toBeInstanceOf(CancelledError)
-    expect(events).not.toContain("clear development")
-  })
-
-  test("whose session ended clears nothing", async () => {
-    await expect(restoreInstalledRelease(pkg, {isCancelled: () => true})).rejects.toBeInstanceOf(CancelledError)
-    expect(events).not.toContain("clear development")
   })
 })

@@ -765,7 +765,9 @@ stop()
 `state.fast` whether the fast link is up. The SDK picks the radio (Wi-Fi Direct
 on Android with glasses that support it, the glasses' hotspot otherwise) and
 shares the one link with its other users: `closeFast()` gives your hold back,
-and the link goes down once nobody else holds it. Both calls are idempotent.
+and the link goes down 5 seconds after nobody else holds it, so an app that
+opens it again at once, such as a miniapp restarting, finds it still up. Both
+calls are idempotent.
 `openFast()` rejects if the link can't come up; photos keep going over
 Bluetooth. While it is held, the SDK brings the link back after the glasses
 restart, and `onChange` reports fast `"down"` meanwhile (photos go over

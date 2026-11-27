@@ -16,6 +16,14 @@
  * installed it. Core reads at most 8 URLs at once and answers within 10 seconds; a URL it hasn't finished is
  * `unknown`, and its read finishes in the background.
  *
+ * **Versions (Fleet).** An admin choosing which version of an assigned miniapp a workspace's phones stay on. Core
+ * reads the URL's `miniapp.json` for the request, with the fetcher and the token rule of a check, and answers the
+ * latest build and the versions it lists. It never answers from the stored entry, which is as old as the last read,
+ * and it writes nothing: the hash an admin seals has to be the one served now. The read counts against the admin's
+ * hourly allowance like a registration. A URL an archive rule covers, one that serves no miniapp, one whose server
+ * asks for sign-in and refuses the admin's token, and one Core can't reach (or hasn't read within 10 seconds) each
+ * say so instead of a list.
+ *
  * **Lookup (Fleet).** Names for a workspace's views: per package, the most recently verified active entry (a
  * phone-reported one when none is verified), or the most recent archived one when every entry is archived. A private
  * miniapp is named only for a workspace whose assigned set (Fleet's last push) holds the package.
@@ -41,6 +49,9 @@ import type {
   RegistryEntryView,
   RegistryLookupEntry,
   RegistryManifest,
+  RegistryMiniappBuild,
+  RegistryVersionsResponse,
+  RegistryVersionsUnreadableReason,
 } from "@mentra/workspace-contract"
 import {AdminActionAuditLogModel} from "../../models/admin-action-audit-log.model"
 import {MiniappRegistryEntryModel} from "../../models/miniapp-registry.model"
@@ -57,7 +68,9 @@ import {
   isArchived,
   registerMiniappUrl,
   RegistryRequestError,
+  verifyMiniappUrl,
   type ChallengeTokenSource,
+  type MiniappVerification,
   type RegisterMiniappUrlResult,
   type RegistryEntryRow,
   type RegistryRegistrant,
@@ -110,16 +123,7 @@ export async function checkRegistryUrls(
 ): Promise<RegistryCheckResult[]> {
   const startedAt = Date.now()
   const {registrant, member} = await assigningAdmin(input.workspaceId, input.mentraUserId)
-  const tokenFor: ChallengeTokenSource = async (packageName) =>
-    (
-      await mintMiniappTokenFor({
-        mentraUserId: registrant.mentraUserId,
-        tenantId: registrant.tenantId,
-        packageName,
-        // Only a member's token names the workspace: a claim is never false.
-        ...(member ? {assigningWorkspaceId: input.workspaceId} : {}),
-      })
-    ).token
+  const tokenFor = challengeTokens(registrant, member, input.workspaceId)
 
   // Each distinct registry key once; anything that can't be one is never read.
   const keys = input.urls.map((url) => {
@@ -169,6 +173,22 @@ async function assigningAdmin(
   ])
   if (workspace?.status !== "active" || deleted || !user) throw new RegistryCheckRefused()
   return {registrant: {mentraUserId, tenantId: user.tenantId}, member: membership !== null}
+}
+
+/**
+ * The admin's miniapp token for a sign-in challenge's package. Only a member's token names the workspace: a claim is
+ * never false.
+ */
+function challengeTokens(registrant: RegistryRegistrant, member: boolean, workspaceId: string): ChallengeTokenSource {
+  return async (packageName) =>
+    (
+      await mintMiniappTokenFor({
+        mentraUserId: registrant.mentraUserId,
+        tenantId: registrant.tenantId,
+        packageName,
+        ...(member ? {assigningWorkspaceId: workspaceId} : {}),
+      })
+    ).token
 }
 
 /**
@@ -274,6 +294,94 @@ function blank(status: RegistryCheckStatus): CheckAnswer {
 }
 
 const notAMiniapp = () => blank("not_a_miniapp")
+
+// --- Versions ----------------------------------------------------------------
+
+/** The admin has had Core read too many URLs this hour. Answered `429 rate_limited` with `Retry-After`. */
+export class RegistryReadsExhausted extends Error {
+  constructor(readonly retryAfterSeconds: number) {
+    super("too many miniapp URLs read for this account in the last hour")
+    this.name = "RegistryReadsExhausted"
+  }
+}
+
+/**
+ * What the miniapp at `url` serves now, for an admin of `workspaceId` choosing a version of it: its latest build and
+ * the versions its `miniapp.json` lists, or why Core has none to list (see the file comment). Core reads the URL for
+ * this call. Throws `RegistryCheckRefused` as `checkRegistryUrls` does, and `RegistryReadsExhausted` when the admin
+ * has used this hour's reads.
+ */
+export async function readMiniappVersions(
+  input: {url: string; workspaceId: string; mentraUserId: string},
+  options: {deadlineMs?: number; deploymentDefaults?: ReadonlySet<string>} = {},
+): Promise<RegistryVersionsResponse> {
+  const {registrant, member} = await assigningAdmin(input.workspaceId, input.mentraUserId)
+  const unreadable = (reason: RegistryVersionsUnreadableReason): RegistryVersionsResponse => ({
+    url: input.url,
+    status: "unreadable",
+    reason,
+    readAt: new Date().toISOString(),
+  })
+
+  const normalized = normalizeMiniappUrl(input.url)
+  if (normalized?.kind !== "public") return unreadable("not_a_miniapp")
+  const key = normalized.url
+  try {
+    const early = await answerWithoutReading({url: key, registrant})
+    if (early) return unreadable(early.result === "archived" ? "archived" : "not_a_miniapp")
+  } catch (error) {
+    if (error instanceof RegistryRequestError) return unreadable("not_a_miniapp")
+    throw error
+  }
+  const retryAfter = await consumeRegistration(registrant.mentraUserId)
+  if (retryAfter !== null) {
+    logger.info({url: key, mentraUserId: registrant.mentraUserId}, "registry: versions read over the hourly registration allowance")
+    throw new RegistryReadsExhausted(retryAfter)
+  }
+
+  const reading = verifyMiniappUrl(key, challengeTokens(registrant, member, input.workspaceId))
+  // The read is waited for until the deadline; past it, it finishes on its own and the answer is "couldn't read".
+  const settled = reading.then(
+    () => {},
+    (error) => logger.warn({url: key, error: (error as Error)?.message}, "registry: could not read a URL's versions"),
+  )
+  backgroundReads.add(settled)
+  void settled.finally(() => backgroundReads.delete(settled))
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), options.deadlineMs ?? REGISTRY_CHECK_DEADLINE_MS)
+  })
+  let outcome: MiniappVerification | null
+  try {
+    outcome = await Promise.race([reading, deadline])
+  } finally {
+    clearTimeout(timer)
+  }
+  if (outcome === null) return unreadable("unreachable")
+
+  switch (outcome.kind) {
+    case "unreachable":
+      return unreadable("unreachable")
+    case "private_refused":
+      return unreadable("sign_in_required")
+    case "not_a_miniapp":
+      return unreadable("not_a_miniapp")
+    case "verified": {
+      const manifest = outcome.manifest
+      const build = ({version, url, sha256}: RegistryMiniappBuild): RegistryMiniappBuild => ({version, url, sha256})
+      return {
+        url: input.url,
+        status: "read",
+        packageName: manifest.packageName,
+        private: outcome.private,
+        deploymentDefault: options.deploymentDefaults?.has(manifest.packageName) ?? false,
+        latest: {version: manifest.version, url: manifest.bundle.url, sha256: manifest.bundle.sha256},
+        versions: manifest.versions ? manifest.versions.map(build) : null,
+        readAt: new Date().toISOString(),
+      }
+    }
+  }
+}
 
 // --- Lookup ------------------------------------------------------------------
 

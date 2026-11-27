@@ -130,7 +130,7 @@ import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore, visibleMiniappPackage} from "../stores/apps"
-import appRegistry, {getDevAppRecords} from "./AppRegistry"
+import appRegistry from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
@@ -140,7 +140,6 @@ import {
   configureMiniappDataPartitions,
   miniappDataSessionOf,
   resolveMiniappDataPartition,
-  syncDevelopmentSelections,
 } from "./miniappDataPartition"
 import {sameCoreUrl} from "./fleet/coreUrl"
 import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
@@ -460,8 +459,6 @@ configureMiniappDataPartitions({
       : null
   },
 })
-// Signing out leaves the development selections in place: the next account to sign in swaps in its own at once.
-cloudClientService.onCoreSessionChanged(() => syncDevelopmentSelections())
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)
@@ -7245,15 +7242,6 @@ class LocalMiniappRuntime {
     )
   }
 
-  /** A QR-selected build or snapshot is the user's choice; automatic updates leave it alone. */
-  public hasDevelopmentSelection(packageName: string): boolean {
-    return (
-      this.interopApps().some((app) => app.packageName === packageName && app.isMiniappDev) ||
-      getDevAppRecords().some((record) => record.packageName === packageName) ||
-      appRegistry.getSelectedDevSnapshot(packageName) !== null
-    )
-  }
-
   /**
    * Install the miniapp at a miniapp URL through `installMiniapp`, headlessly: the system miniapp asks the person
    * first, in its own conversation. It registers the URL like every install.
@@ -7315,7 +7303,7 @@ class LocalMiniappRuntime {
     if (!version) return {code: MiniappErrorCode.APP_NOT_FOUND, message: `${target} is not installed`}
     const identity = appRegistry.getReleaseIdentity(target, version)
     const fromUrlOnly = appRegistry.getInstallReasons(target).every((reason) => reason === "explicit")
-    if (identity?.source !== "url" || !fromUrlOnly || this.hasDevelopmentSelection(target)) {
+    if (identity?.source !== "url" || !fromUrlOnly || appRegistry.isDevelopmentBuild(target)) {
       return {code: MiniappErrorCode.NOT_PERMITTED, message: `${target} wasn't installed from a miniapp URL`}
     }
     return null

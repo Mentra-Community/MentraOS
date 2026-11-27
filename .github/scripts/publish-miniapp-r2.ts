@@ -4,15 +4,30 @@
  * Mentra hosts its miniapps the way any developer can: as plain files at
  * `https://<host>/<packageName>/`. This uploads one ZIP to an R2 bucket:
  *
- *   <packageName>/<packageName>-<version>.zip   the ZIP, first, never overwritten
- *   <packageName>/<icon>                          the icon from the ZIP
- *   <packageName>/miniapp.json                    the ZIP's miniapp.json plus
- *                                                 bundle: {url, sha256}, last
+ *   <packageName>/<packageName>-<version>-<hash>.zip   the ZIP, first, never overwritten;
+ *                                                      <hash> is the first 8 hex of its SHA-256
+ *   <packageName>/<icon>                               the icon from the ZIP
+ *   <packageName>/miniapp.json                         the ZIP's miniapp.json plus
+ *                                                      bundle: {url, sha256} and versions, last
  *
- * The Mentra App checks <packageName>/miniapp.json and installs a newer release.
- * A version the host already has is skipped, so publishing happens when
- * miniapp.json's version is bumped; an older version never replaces a newer one.
- * Running it again finishes an interrupted publish from the stored ZIP.
+ * The Mentra App checks <packageName>/miniapp.json and installs the ZIP it names
+ * when that ZIP's SHA-256 is not the installed build's. So a build is published
+ * whenever its SHA-256 differs from the one the host serves, on every host
+ * alike: a changed build under an unchanged version, and one with a lower
+ * version (a rollback), are published like any other. The build the host
+ * already serves is nothing to do. Running it again finishes an interrupted
+ * publish: the ZIP it stored is kept, and the rest is written.
+ *
+ * `versions` lists the versions a phone can be pinned to, as `mentra pack`
+ * writes it: one {version, url, sha256} per version, highest version first, at
+ * most 50. Each publish reads the list the host serves, puts this build's entry
+ * in place of one for the same version, and keeps the others; their ZIPs stay
+ * on the host, since nothing here deletes or overwrites a ZIP. Publishing a
+ * version again with other bytes gives its entry the new hash, so a phone
+ * pinned to that version keeps the build it has. A miniapp.json published
+ * before the list existed gains one, starting with the build it serves, on its
+ * next publish, including a publish of that same build. The list is read and
+ * then written, so two publishes of one miniapp must never run at once.
  *
  * Usage: bun publish-miniapp-r2.ts <path to ZIP>
  * Environment: MINIAPPS_R2_ENDPOINT, MINIAPPS_R2_ACCESS_KEY_ID,
@@ -24,9 +39,7 @@
  */
 import {S3Client} from "bun"
 import {createHash} from "node:crypto"
-import {mkdtempSync, readFileSync, writeFileSync} from "node:fs"
-import {tmpdir} from "node:os"
-import {join} from "node:path"
+import {readFileSync} from "node:fs"
 
 export interface ObjectStore {
   exists(key: string): Promise<boolean>
@@ -47,21 +60,116 @@ export interface PublishResult {
   version: string
   sha256: string
   zipKey: string
-  /** What happened: published, or skipped because the host has this version or a newer one. */
-  manifest: "published" | "already-published" | "kept-newer"
+  /**
+   * What happened: published; nothing, because the host already serves this build; or, for a build the host
+   * already serves, only its miniapp.json written again, to list its versions.
+   */
+  manifest: "published" | "already-published" | "versions-listed"
+}
+
+/** One version a phone can be pinned to: its ZIP, relative to the miniapp's URL, and that ZIP's SHA-256. */
+export interface VersionEntry {
+  version: string
+  url: string
+  sha256: string
 }
 
 const FIRST_PARTY_PACKAGE = /^com\.mentra\.[a-z0-9]+(\.[a-z0-9]+)*$/
 const RELEASE_VERSION = /^\d+\.\d+\.\d+$/
 const SAFE_RELATIVE_PATH = /^(?!\/)(?!.*\.\.)[A-Za-z0-9._/-]+$/
 
-function compareVersions(a: string, b: string): number {
-  const left = a.split(".").map(Number)
-  const right = b.split(".").map(Number)
-  for (let i = 0; i < 3; i++) {
-    if (left[i] !== right[i]) return left[i] - right[i]
+/** How many hex digits of its SHA-256 a ZIP's name carries, as `mentra pack` names one. */
+const ZIP_NAME_HASH_LENGTH = 8
+
+/** How many versions a served miniapp.json lists. */
+const MAX_VERSIONS = 50
+
+/**
+ * The `versions` rules below are `mentra pack`'s (sdk/miniapp-cli/src/versions.ts). This script is copied whole
+ * into other repositories, so it carries its own copy; the CLI's tests hold the two to the same answers.
+ */
+const SEMVER =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
+
+const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+
+/** Two runs of digits without leading zeros, as numbers of any size. */
+const compareDigits = (a: string, b: string): number => a.length - b.length || compareText(a, b)
+
+/** Prerelease identifiers: numbers in number order, below any with a letter; those in ASCII order. */
+function compareIdentifiers(a: string, b: string): number {
+  const aIsNumber = /^\d+$/.test(a)
+  const bIsNumber = /^\d+$/.test(b)
+  if (aIsNumber && bIsNumber) return compareDigits(a, b)
+  if (aIsNumber !== bIsNumber) return aIsNumber ? -1 : 1
+  return compareText(a, b)
+}
+
+/**
+ * SemVer precedence: above zero when `a` is the higher version. A prerelease sorts below its release. Build
+ * metadata has no precedence, so two versions that differ only there are put in plain text order.
+ */
+export function compareVersions(a: string, b: string): number {
+  const [, ...x] = SEMVER.exec(a) ?? []
+  const [, ...y] = SEMVER.exec(b) ?? []
+  for (let part = 0; part < 3; part++) {
+    const order = compareDigits(x[part] ?? "", y[part] ?? "")
+    if (order) return order
   }
-  return 0
+  const pre = x[3]?.split(".")
+  const other = y[3]?.split(".")
+  if (pre && !other) return -1
+  if (!pre && other) return 1
+  if (pre && other) {
+    for (let index = 0; index < Math.max(pre.length, other.length); index++) {
+      const left = pre[index]
+      const right = other[index]
+      if (left === undefined) return -1
+      if (right === undefined) return 1
+      const order = compareIdentifiers(left, right)
+      if (order) return order
+    }
+  }
+  return compareText(a, b)
+}
+
+/**
+ * The list with `entry` in it: in place of an entry for the same version, with the others kept, highest version
+ * first. Past 50 the lowest are dropped, but never `entry`: the build miniapp.json serves can always be pinned.
+ */
+export function mergeVersions(existing: VersionEntry[], entry: VersionEntry): VersionEntry[] {
+  const seen = new Set([entry.version])
+  const others = existing.filter((other) => !seen.has(other.version) && seen.add(other.version))
+  others.sort((a, b) => compareVersions(b.version, a.version))
+  return [entry, ...others.slice(0, MAX_VERSIONS - 1)].sort((a, b) => compareVersions(b.version, a.version))
+}
+
+function entryOf(value: unknown): VersionEntry | null {
+  if (typeof value !== "object" || value === null) return null
+  const {version, url, sha256} = value as Record<string, unknown>
+  if (typeof version !== "string" || !SEMVER.test(version)) return null
+  if (typeof url !== "string" || url.trim() === "") return null
+  if (typeof sha256 !== "string" || !/^[0-9a-fA-F]{64}$/.test(sha256)) return null
+  return {version, url, sha256: sha256.toLowerCase()}
+}
+
+/**
+ * The versions a served miniapp.json lists. One written before the list existed offers the build it serves. Throws
+ * for a list that can't be read: writing a shorter one in its place would leave phones pinned to a version that
+ * is no longer listed.
+ */
+export function listedVersions(served: Record<string, unknown>): VersionEntry[] {
+  if (!("versions" in served)) {
+    const bundle = served.bundle as Record<string, unknown> | undefined
+    const entry = entryOf({version: served.version, url: bundle?.url, sha256: bundle?.sha256})
+    return entry ? [entry] : []
+  }
+  if (!Array.isArray(served.versions)) throw new Error("versions is not a list")
+  return served.versions.map((value, index) => {
+    const entry = entryOf(value)
+    if (!entry) throw new Error(`versions[${index}] is not {version, url, sha256} with a SemVer version and a SHA-256`)
+    return entry
+  })
 }
 
 function contentTypeFor(path: string): string {
@@ -83,57 +191,61 @@ function releaseOf(archive: MiniappArchive): {manifest: Record<string, unknown>;
     throw new Error(`Expected a MAJOR.MINOR.PATCH version, got ${String(version)}`)
   }
   if ("bundle" in manifest) throw new Error("The ZIP's miniapp.json must not declare a bundle")
+  if ("versions" in manifest) throw new Error("The ZIP's miniapp.json must not declare versions")
   return {manifest, packageName, version}
 }
 
 const sha256Of = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
 
-export async function publishMiniapp(
-  archive: MiniappArchive,
-  store: ObjectStore,
-  openStored: (bytes: Uint8Array) => MiniappArchive = archiveFromBytes,
-): Promise<PublishResult> {
-  const {packageName, version} = releaseOf(archive)
-  const zipName = `${packageName}-${version}.zip`
+export async function publishMiniapp(archive: MiniappArchive, store: ObjectStore): Promise<PublishResult> {
+  const {manifest, packageName, version} = releaseOf(archive)
+  const sha256 = sha256Of(archive.bytes)
+  // The name carries the hash: no build ever takes the place of another's ZIP, whatever their versions.
+  const zipName = `${packageName}-${version}-${sha256.slice(0, ZIP_NAME_HASH_LENGTH)}.zip`
   const zipKey = `${packageName}/${zipName}`
   const manifestKey = `${packageName}/miniapp.json`
 
-  // miniapp.json is written last, so a version it names is completely published.
-  // A rebuild of that version is skipped: publishing happens when it is bumped.
+  // miniapp.json is written last, so a build it names is completely published.
+  // Only that build is skipped. Versions are not compared.
+  let listed: VersionEntry[] = []
   if (await store.exists(manifestKey)) {
-    const current = JSON.parse(new TextDecoder().decode(await store.read(manifestKey))) as {
-      version?: string
-      bundle?: {sha256?: string}
+    const current = JSON.parse(new TextDecoder().decode(await store.read(manifestKey))) as Record<string, unknown>
+    try {
+      listed = listedVersions(current)
+    } catch (error) {
+      throw new Error(`${manifestKey}: ${(error as Error).message}. Fix the list on the host before publishing.`)
     }
-    if (typeof current.version === "string" && RELEASE_VERSION.test(current.version)) {
-      const order = compareVersions(current.version, version)
-      if (order > 0) return {packageName, version, sha256: sha256Of(archive.bytes), zipKey, manifest: "kept-newer"}
-      if (order === 0) {
-        const sha256 = current.bundle?.sha256 ?? sha256Of(archive.bytes)
-        return {packageName, version, sha256, zipKey, manifest: "already-published"}
+    const bundle = current.bundle as {url?: unknown; sha256?: unknown} | undefined
+    if (typeof bundle?.sha256 === "string" && bundle.sha256.toLowerCase() === sha256) {
+      // The ZIP stays under the name the host has it by, which an earlier publisher chose.
+      const url = typeof bundle.url === "string" && SAFE_RELATIVE_PATH.test(bundle.url) ? bundle.url : zipName
+      const result = {packageName, version, sha256, zipKey: `${packageName}/${url}`}
+      const versions = mergeVersions(listed, {version, url, sha256})
+      if (JSON.stringify(versions) === JSON.stringify(current.versions)) {
+        return {...result, manifest: "already-published"}
       }
+      // The build is the same, so no phone updates: only the list is new. A miniapp published before the list
+      // existed is listed now, not at its next change, so its current version can be pinned before that change.
+      await store.write(manifestKey, `${JSON.stringify({...current, versions}, null, 2)}\n`, "application/json")
+      return {...result, manifest: "versions-listed"}
     }
   }
 
-  // A stored ZIP never changes. One left by an interrupted publish is finished
-  // from its own bytes and manifest, never replaced by a rebuild.
-  let release = archive
+  // A stored ZIP never changes. One already at this build's key is this build,
+  // left by an interrupted publish: it stays, and the publish is finished.
   if (await store.exists(zipKey)) {
-    release = openStored(await store.read(zipKey))
-    const stored = releaseOf(release)
-    if (stored.packageName !== packageName || stored.version !== version) {
-      throw new Error(`${zipKey} holds ${stored.packageName}@${stored.version}`)
+    if (sha256Of(await store.read(zipKey)) !== sha256) {
+      throw new Error(`${zipKey} holds another build, which this one would replace`)
     }
   } else {
     await store.write(zipKey, archive.bytes, "application/zip")
   }
-  const {manifest} = releaseOf(release)
-  const sha256 = sha256Of(release.bytes)
   if (typeof manifest.icon === "string" && SAFE_RELATIVE_PATH.test(manifest.icon)) {
-    const icon = release.file(manifest.icon)
+    const icon = archive.file(manifest.icon)
     if (icon) await store.write(`${packageName}/${manifest.icon}`, icon, contentTypeFor(manifest.icon))
   }
-  const hosted = {...manifest, bundle: {url: zipName, sha256}}
+  const versions = mergeVersions(listed, {version, url: zipName, sha256})
+  const hosted = {...manifest, bundle: {url: zipName, sha256}, versions}
   await store.write(manifestKey, `${JSON.stringify(hosted, null, 2)}\n`, "application/json")
   return {packageName, version, sha256, zipKey, manifest: "published"}
 }
@@ -148,14 +260,6 @@ export function readArchive(path: string): MiniappArchive {
   const manifest = file("miniapp.json")
   if (!manifest) throw new Error(`${path} has no miniapp.json at its root`)
   return {bytes, manifest: new TextDecoder().decode(manifest), file}
-}
-
-/** Reads a ZIP held in memory, such as one already stored on the host. */
-export function archiveFromBytes(bytes: Uint8Array): MiniappArchive {
-  const directory = mkdtempSync(join(tmpdir(), "stored-miniapp-"))
-  const path = join(directory, "bundle.zip")
-  writeFileSync(path, bytes)
-  return readArchive(path)
 }
 
 const STORAGE_TIMEOUT_MS = 60_000
@@ -217,14 +321,28 @@ async function main(): Promise<void> {
     `${result.packageName}@${result.version} (${result.sha256}): miniapp.json ${result.manifest}` +
       (where ? ` at ${where}${result.packageName}/` : ""),
   )
-  if (where && result.manifest === "published") {
+  if (where && result.manifest !== "already-published") {
     const response = await fetch(`${where}${result.packageName}/miniapp.json`, {
       headers: {"Cache-Control": "no-cache"},
       signal: AbortSignal.timeout(30_000),
     })
-    const served = (await response.json()) as {version?: string; bundle?: {sha256?: string}}
+    const served = (await response.json()) as {
+      version?: string
+      bundle?: {sha256?: string}
+      versions?: Array<{version?: string; sha256?: string}>
+    }
     if (served.version !== result.version || served.bundle?.sha256 !== result.sha256) {
-      throw new Error(`The public miniapp.json shows ${served.version}, not ${result.version}`)
+      throw new Error(
+        `The public miniapp.json shows ${served.version} (${served.bundle?.sha256}), not ${result.version} (${result.sha256})`,
+      )
+    }
+    const entry = Array.isArray(served.versions)
+      ? served.versions.find((listed) => listed?.version === result.version)
+      : undefined
+    if (entry?.sha256 !== result.sha256) {
+      throw new Error(
+        `The public miniapp.json lists ${result.version} as ${entry?.sha256 ?? "nothing"}, not ${result.sha256}`,
+      )
     }
   }
 }

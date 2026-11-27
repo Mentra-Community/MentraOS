@@ -172,7 +172,12 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
 
   clearHistoryAndGoHome: (params) => {
     console.info("NAV: clearHistoryAndGoHome()")
-    const {clearHistory, _resetAnimationDelayed} = get()
+    const {history, clearHistory, _resetAnimationDelayed} = get()
+    // Already on Home with nothing above it: it stays. Replacing it with a new Home would remove the screen in
+    // place, and react-native-screens holds every view of a removed screen in its removal transition: a view in it
+    // that moves to another parent in that frame (an app switcher card swapping its icon for a screenshot) can't
+    // be added there, and the app crashes ("The specified child already has a parent").
+    if (history.length === 1 && history[0] === "/home") return
     clearHistory()
     try {
       if (params?.transition) set({animation: params.transition})

@@ -110,6 +110,8 @@ export interface FetchMiniappJsonOptions {
    * carries a token follows none either way.
    */
   redirect?: "follow" | "manual"
+  /** How long the request may take, reading the body included; 15 seconds by default. */
+  timeoutMs?: number
   /** Tests replace the network. */
   transport?: MiniappFetchTransport
 }
@@ -166,12 +168,13 @@ export async function fetchMiniappJson(url: string, options: FetchMiniappJsonOpt
     ...(options.etag ? {"If-None-Match": options.etag} : {}),
   }
   const transport = options.transport ?? defaultTransport
-  const first = await sendJson(transport, url, headers, false, options.redirect ?? "follow")
+  const timeoutMs = options.timeoutMs ?? JSON_TIMEOUT_MS
+  const first = await sendJson(transport, url, headers, false, options.redirect ?? "follow", timeoutMs)
   const challenge = first.status === 401 ? first.challenge : undefined
   if (!challenge || options.packageForChallenge === undefined) return first
   const expected = options.packageForChallenge === true ? undefined : options.packageForChallenge
   const authorization = await answerChallenge(challenge, first.url, expected)
-  const second = await sendJson(transport, first.url, {...headers, Authorization: authorization}, true, "follow")
+  const second = await sendJson(transport, first.url, {...headers, Authorization: authorization}, true, "follow", timeoutMs)
   return {...second, challenge}
 }
 
@@ -293,6 +296,7 @@ function sendJson(
   headers: Record<string, string>,
   withToken: boolean,
   redirect: "follow" | "manual",
+  timeoutMs: number,
 ): Promise<MiniappJsonResult> {
   const read = async ({response, status, url: servedFrom}: SentResponse): Promise<MiniappJsonResult> => {
     const retryAfter = Number(response.headers.get("retry-after"))
@@ -318,7 +322,7 @@ function sendJson(
     }
     return {...result, body}
   }
-  return send(transport, url, headers, withToken, JSON_TIMEOUT_MS, read, redirect)
+  return send(transport, url, headers, withToken, timeoutMs, read, redirect)
 }
 
 /** A redirect's `Location`, resolved against the URL that answered, or null when it names no usable URL. */

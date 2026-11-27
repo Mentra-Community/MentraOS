@@ -22,7 +22,7 @@ export interface GlassesLink {
    * held waits for the same one.
    */
   openFast(): Promise<void>
-  /** Give the fast link back; it goes down once nobody else holds it. Idempotent. */
+  /** Give the fast link back; it goes down 5 s after nobody else holds it, unless someone holds it again. Idempotent. */
   closeFast(): Promise<void>
 }
 

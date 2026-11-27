@@ -718,14 +718,16 @@ GET /api/internal/workspaces/users/:mentraUserId/managing-workspace
 ## The miniapp registry
 
 A workspace may receive any miniapp URL that [Core's registry](registry.md)
-hasn't archived. Fleet asks the registry when an admin assigns a URL, and for
-the names its views show. It never asks the Store. Both calls are Fleet's only,
+hasn't archived. Fleet asks the registry when an admin assigns a URL, for the
+names its views show, and for the versions a miniapp lists when an admin picks
+one. It never asks the Store. These calls are Fleet's only,
 signed as service `fleet` like the calls above: any other service is
 `403 {"error":"forbidden"}`, a missing or bad signature is
 `401 {"error":"service_unauthorized"}`, a body over 64 KiB is
 `413 {"error":"payload_too_large"}`, and a body that isn't what the call takes
 is `400 {"error":"invalid_request"}`. The types and the client methods
-(`checkRegistry`, `lookupRegistry`) are in `@mentra/workspace-contract`.
+(`checkRegistry`, `lookupRegistry`, `readRegistryVersions`) are in
+`@mentra/workspace-contract`.
 
 ### Checking URLs
 
@@ -794,6 +796,48 @@ POST /api/internal/registry/lookup
 - A private miniapp's `name` and `iconUrl` are null unless the workspace's
   assigned set, as Fleet last pushed it ([Assigned miniapps](#assigned-miniapps)),
   holds the package. Everywhere else it is a "Private miniapp".
+
+### Reading a miniapp's versions
+
+```http
+POST /api/internal/registry/versions
+{"url": "https://miniapps.acme.example/com.acme.tools/", "workspaceId": "ws_...", "mentraUserId": "mu_..."}
+
+200 {"url": "https://miniapps.acme.example/com.acme.tools/", "status": "read",
+     "packageName": "com.acme.tools", "private": false, "deploymentDefault": false,
+     "latest": {"version": "0.3.5", "url": "com.acme.tools-0.3.5-9f2c0e1a.zip", "sha256": "9f2c0e1a..."},
+     "versions": [{"version": "0.3.5", "url": "com.acme.tools-0.3.5-9f2c0e1a.zip", "sha256": "9f2c0e1a..."},
+                  {"version": "0.3.4", "url": "com.acme.tools-0.3.4-41ab77c3.zip", "sha256": "41ab77c3..."}],
+     "readAt": "2026-10-24T08:00:00.000Z"}
+200 {"url": "...", "status": "unreadable", "reason": "sign_in_required", "readAt": "..."}
+```
+
+An admin is choosing which version of an assigned miniapp a workspace's phones
+stay on. Fleet records that version's hash with the choice, so the answer has
+to be what the URL serves now.
+
+- **A read every time.** Core fetches the URL's `miniapp.json` for the call,
+  through its fetcher and under the token rule of a check: a sign-in challenge
+  gets the admin's miniapp token, which names `workspaceId` only when the admin
+  is an active member of it. Core never answers from the registry's entry, and
+  the call changes no entry.
+- **The answer.** `latest` is the `bundle`; `versions` is the list the
+  `miniapp.json` serves, each entry's version, ZIP URL as served and SHA-256.
+  It is `null` when the miniapp lists none, or lists something that isn't a
+  list of versions. `private` says the server asked for sign-in and admitted
+  the admin. `deploymentDefault` says the package is one of the miniapps this
+  deployment gives every phone (`GET /api/client/deployment`): phones keep
+  those current from the deployment's own host, whatever URL a workspace
+  assigns.
+- **No list.** `unreadable` names why: `sign_in_required` (its server refused
+  the admin's token), `unreachable` (Core couldn't read it, or didn't within 10
+  seconds), `not_a_miniapp`, or `archived` (not read).
+- **Who and how often.** The workspace must be active and the admin a live
+  account, or the call is `403 {"error":"not_a_member"}`. Each read counts
+  against the admin's 120 registrations an hour; past them the call is
+  `429 {"error":"rate_limited"}` with `Retry-After`, and nothing is read.
+- The client method is `readRegistryVersions`. It answers `null` from a Core
+  that predates the route.
 
 ## Not installed versus unavailable
 

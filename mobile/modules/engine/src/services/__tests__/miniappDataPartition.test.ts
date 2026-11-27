@@ -1,12 +1,11 @@
 /// <reference types="bun-types" />
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
-import {fakeCreateMMKV, mmkvInstances, resetFakeMmkv} from "../fleet/__tests__/fakeMmkv"
+import {fakeCreateMMKV, resetFakeMmkv} from "../fleet/__tests__/fakeMmkv"
 
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
 const partitions = await import("../miniappDataPartition")
 const builds = await import("../miniappBuildKind")
-const {storage} = await import("../../utils/storage/storage")
 const {miniappContextRegistry, miniappRunningRegistry} = await import("../MiniappRunningRegistry")
 
 const CORE = "https://core.mentra.glass"
@@ -30,11 +29,6 @@ function startRunning(packageName: string): void {
 function stopRunning(packageName: string): void {
   miniappRunningRegistry.remove(packageName)
   miniappContextRegistry.remove(packageName)
-}
-
-function load(key: string): unknown {
-  const value = storage.load<unknown>(key)
-  return value.is_ok() ? value.value : undefined
 }
 
 beforeEach(() => {
@@ -153,163 +147,23 @@ describe("data partition of a package", () => {
   })
 })
 
-describe("development selections", () => {
-  test("of workspace A are invisible in workspace B, and come back in A", () => {
-    partitions.setFleetWorkspace(session!, "ws_A")
-    storage.save(`${pkg}_dev_url`, "http://192.168.1.5:5173")
-    storage.save(`${pkg}_dev_selected_snapshot`, "dev-1")
-    storage.save("dev_apps_index", JSON.stringify([pkg]))
-    storage.save("unrelated_setting", "kept")
+describe("development selections an earlier Mentra App kept", () => {
+  test("are handed over once, for the migration of development records, and every record of them goes", () => {
+    const store = fakeCreateMMKV({id: partitions.MINIAPP_PARTITION_STORE_ID})
+    store.set("devsel:ctx.a", JSON.stringify({[`${pkg}_dev_url`]: "http://192.168.1.5:3000", [`${pkg}_dev_port`]: 3001}))
+    store.set("devsel:ctx.b", "not json")
+    store.set("devsel.active", "ctx.c")
+    store.set("devsel.held", JSON.stringify({[pkg]: "ctx.a"}))
+    store.set(`devowner:${pkg}:dev-100`, "ctx.a")
+    partitions.setFleetWorkspace(session!, "ws_1")
 
-    partitions.setFleetWorkspace(session!, null)
-    partitions.setFleetWorkspace(session!, "ws_B")
-    expect(load(`${pkg}_dev_url`)).toBeUndefined()
-    expect(load(`${pkg}_dev_selected_snapshot`)).toBeUndefined()
-    expect(load("dev_apps_index")).toBeUndefined()
-    expect(load("unrelated_setting")).toBe("kept")
-
-    storage.save(`${pkg}_dev_url`, "http://10.0.0.9:5173")
-    partitions.setFleetWorkspace(session!, "ws_A")
-    expect(load(`${pkg}_dev_url`)).toBe("http://192.168.1.5:5173")
-    expect(load(`${pkg}_dev_selected_snapshot`)).toBe("dev-1")
-    partitions.setFleetWorkspace(session!, "ws_B")
-    expect(load(`${pkg}_dev_url`)).toBe("http://10.0.0.9:5173")
-  })
-
-  test("follow the account: another account never sees them", () => {
-    storage.save(`${pkg}_dev_url`, "http://192.168.1.5:5173")
-    session = {coreUrl: CORE, mentraUserId: "mu_2"}
-    partitions.syncDevelopmentSelections()
-    expect(load(`${pkg}_dev_url`)).toBeUndefined()
-    session = {coreUrl: CORE, mentraUserId: "mu_1"}
-    partitions.syncDevelopmentSelections()
-    expect(load(`${pkg}_dev_url`)).toBe("http://192.168.1.5:5173")
-  })
-
-  test("wait for a running package to stop before switching", () => {
-    storage.save(`${pkg}_dev_url`, "http://192.168.1.5:5173")
-    startRunning(pkg)
-    partitions.setFleetWorkspace(session!, "ws_B")
-    expect(load(`${pkg}_dev_url`)).toBe("http://192.168.1.5:5173")
-    stopRunning(pkg)
-    expect(load(`${pkg}_dev_url`)).toBeUndefined()
-  })
-
-  test("of a stopped package switch at once while another package's live context keeps its own", () => {
-    const other = "com.acme.other"
-    partitions.setFleetWorkspace(session!, "ws_A")
-    storage.save(`${pkg}_dev_url`, "A's notes")
-    storage.save(`${other}_dev_url`, "A's other")
-    storage.save("dev_apps_index", JSON.stringify([pkg, other]))
-    partitions.setFleetWorkspace(session!, "ws_B")
-    storage.save(`${pkg}_dev_url`, "B's notes")
-    storage.save("dev_apps_index", JSON.stringify([pkg]))
-    partitions.setFleetWorkspace(session!, "ws_A")
-    expect(load(`${pkg}_dev_url`)).toBe("A's notes")
-
-    startRunning(other)
-    partitions.setFleetWorkspace(session!, "ws_B")
-    // notes is stopped: B's at once. other runs: A's, held, and not current.
-    expect(load(`${pkg}_dev_url`)).toBe("B's notes")
-    expect(load(`${other}_dev_url`)).toBe("A's other")
-    expect(JSON.parse(load("dev_apps_index") as string)).toEqual([other, pkg])
-    expect(partitions.isDevelopmentSelectionCurrent(pkg)).toBe(true)
-    expect(partitions.isDevelopmentSelectionCurrent(other)).toBe(false)
-    // Clearing notes in B leaves A's selections alone.
-    storage.remove(`${pkg}_dev_url`)
-    stopRunning(other)
-    expect(load(`${other}_dev_url`)).toBeUndefined()
-    expect(partitions.isDevelopmentSelectionCurrent(other)).toBe(true)
-    expect(JSON.parse(load("dev_apps_index") as string)).toEqual([pkg])
-
-    partitions.setFleetWorkspace(session!, "ws_A")
-    expect(load(`${pkg}_dev_url`)).toBe("A's notes")
-    expect(load(`${other}_dev_url`)).toBe("A's other")
-    expect([...JSON.parse(load("dev_apps_index") as string)].sort()).toEqual([other, pkg].sort())
-  })
-
-  test("held for a running package come back unchanged when its context returns first", () => {
-    partitions.setFleetWorkspace(session!, "ws_A")
-    storage.save(`${pkg}_dev_url`, "A's")
-    startRunning(pkg)
-    partitions.setFleetWorkspace(session!, "ws_B")
-    partitions.setFleetWorkspace(session!, "ws_A")
-    expect(partitions.isDevelopmentSelectionCurrent(pkg)).toBe(true)
-    stopRunning(pkg)
-    expect(load(`${pkg}_dev_url`)).toBe("A's")
-  })
-
-  test("of a running package's own new snapshot belong to the context it holds", () => {
-    partitions.setFleetWorkspace(session!, "ws_A")
-    storage.save(`${pkg}_dev_url`, "A's")
-    startRunning(pkg)
-    partitions.setFleetWorkspace(session!, "ws_B")
-    partitions.recordDevSnapshotOwner(pkg, "dev-200")
-    expect(partitions.isDevSnapshotVisible(pkg, "dev-200")).toBe(true)
-    stopRunning(pkg)
-    expect(partitions.isDevSnapshotVisible(pkg, "dev-200")).toBe(false)
-    partitions.setFleetWorkspace(session!, "ws_A")
-    expect(partitions.isDevSnapshotVisible(pkg, "dev-200")).toBe(true)
-  })
-
-  test("a per-package switch interrupted midway finishes on the next sync", () => {
-    const other = "com.acme.other"
-    const store = mmkvInstances.get(partitions.MINIAPP_PARTITION_STORE_ID)!
-    const from = store.getString("devsel.active")!
-    const to = partitions.partitionIdOf({coreUrl: CORE, mentraUserId: "mu_1", workspaceId: "ws_B"})
-    // other's live context holds A's selection; notes was stashed and the marker written before B's was restored.
-    store.set(`devsel:${from}`, JSON.stringify({[`${pkg}_dev_url`]: "A's"}))
-    store.set(`devsel:${to}`, JSON.stringify({[`${pkg}_dev_url`]: "B's", [`${other}_dev_url`]: "B's other"}))
-    store.set("devsel.swap", JSON.stringify({to, packages: [pkg], held: {[other]: from}}))
-    storage.save(`${pkg}_dev_url`, "half-written")
-    storage.save(`${other}_dev_url`, "A's other")
-    startRunning(other)
-    store.set(`fleetws:${to.split(".").slice(0, 2).join(".")}`, "ws_B")
-    partitions.syncDevelopmentSelections()
-    expect(load(`${pkg}_dev_url`)).toBe("B's")
-    expect(load(`${other}_dev_url`)).toBe("A's other")
-    expect(store.getString("devsel.active")).toBe(to)
-    stopRunning(other)
-    expect(load(`${other}_dev_url`)).toBe("B's other")
-    expect(JSON.parse(store.getString(`devsel:${from}`)!)).toEqual({
-      [`${pkg}_dev_url`]: "A's",
-      [`${other}_dev_url`]: "A's other",
-    })
-  })
-
-  test("wait for a hidden context to stop before switching", () => {
-    storage.save(`${pkg}_dev_url`, "http://192.168.1.5:5173")
-    miniappContextRegistry.add(pkg)
-    partitions.setFleetWorkspace(session!, "ws_B")
-    expect(load(`${pkg}_dev_url`)).toBe("http://192.168.1.5:5173")
-    miniappContextRegistry.remove(pkg)
-    expect(load(`${pkg}_dev_url`)).toBeUndefined()
-  })
-
-  test("a switch interrupted midway finishes on the next sync", () => {
-    storage.save(`${pkg}_dev_url`, "A's")
-    const store = mmkvInstances.get(partitions.MINIAPP_PARTITION_STORE_ID)!
-    const from = store.getString("devsel.active")!
-    const to = partitions.partitionIdOf({coreUrl: CORE, mentraUserId: "mu_1", workspaceId: "ws_B"})
-    // The process died after stashing A and writing the swap marker, before restoring B.
-    store.set(`devsel:${from}`, JSON.stringify({[`${pkg}_dev_url`]: "A's"}))
-    store.set(`devsel:${to}`, JSON.stringify({[`${pkg}_dev_url`]: "B's"}))
-    store.set("devsel.swap", JSON.stringify({from, to}))
-    storage.save(`${pkg}_dev_url`, "half-written")
-    store.set(`fleetws:${to.split(".").slice(0, 2).join(".")}`, "ws_B")
-    partitions.syncDevelopmentSelections()
-    expect(load(`${pkg}_dev_url`)).toBe("B's")
-    expect(store.getString("devsel.active")).toBe(to)
-  })
-
-  test("dev snapshots on disk belong to the context that installed them", () => {
-    partitions.recordDevSnapshotOwner(pkg, "dev-100")
-    expect(partitions.isDevSnapshotVisible(pkg, "dev-100")).toBe(true)
-    partitions.setFleetWorkspace(session!, "ws_B")
-    expect(partitions.isDevSnapshotVisible(pkg, "dev-100")).toBe(false)
-    expect(partitions.isDevSnapshotVisible(pkg, "1.0.0")).toBe(true)
-    partitions.setFleetWorkspace(session!, null)
-    expect(partitions.isDevSnapshotVisible(pkg, "dev-100")).toBe(true)
+    expect(partitions.takeLegacyDevelopmentSelections()).toEqual([
+      {[`${pkg}_dev_url`]: "http://192.168.1.5:3000", [`${pkg}_dev_port`]: 3001},
+    ])
+    expect(store.getAllKeys().filter((key) => key.startsWith("devsel") || key.startsWith("devowner:"))).toEqual([])
+    // What partitions record stays.
+    expect(partitions.getFleetWorkspace(session!)).toBe("ws_1")
+    expect(partitions.takeLegacyDevelopmentSelections()).toEqual([])
   })
 })
 

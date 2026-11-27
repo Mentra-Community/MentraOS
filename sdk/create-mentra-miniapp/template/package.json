@@ -5,7 +5,7 @@
     "dev": "mentra-miniapp dev",
     "build": "bun run build.ts",
     "typecheck": "tsc --noEmit",
-    "release": "mentra-miniapp release",
+    "dev:production": "mentra-miniapp dev --production",
     "pack": "mentra-miniapp pack"
   },
   "dependencies": {

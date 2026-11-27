@@ -11,7 +11,6 @@ function harness(checkAll: () => Promise<unknown> = async () => undefined) {
     deferred: null,
     interval: null,
   }
-  let opened: ((packageName: string) => void) | null = null
   let intervalMs = 0
   const subscribe = (name: Exclude<TriggerName, "interval">) => (handler: () => void) => {
     triggers[name] = handler
@@ -24,18 +23,9 @@ function harness(checkAll: () => Promise<unknown> = async () => undefined) {
       calls.push("all")
       return checkAll()
     },
-    checkOpened: async (packageName) => {
-      calls.push(packageName)
-    },
     subscribeForeground: subscribe("foreground"),
     subscribeReconnect: subscribe("reconnect"),
     subscribeDeferredUpdateReady: subscribe("deferred"),
-    subscribeOpened: (handler) => {
-      opened = handler
-      return () => {
-        opened = null
-      }
-    },
     setInterval: (handler, ms) => {
       triggers.interval = handler
       intervalMs = ms
@@ -47,16 +37,13 @@ function harness(checkAll: () => Promise<unknown> = async () => undefined) {
     warn: (message) => warnings.push(message),
   })
   const fire = (name: TriggerName) => triggers[name]?.()
-  const open = (packageName: string) => opened?.(packageName)
   return {
     scheduler,
     calls,
     warnings,
     fire,
-    open,
     intervalMs: () => intervalMs,
     triggers,
-    isOpenSubscribed: () => !!opened,
   }
 }
 
@@ -72,14 +59,6 @@ describe("MiniappUpdateSchedulerCore", () => {
       await h.scheduler.waitForIdle()
     }
     expect(h.calls).toEqual(["all", "all", "all", "all", "all"])
-  })
-
-  it("checks a miniapp on its own when it opens", async () => {
-    const h = harness()
-    await h.scheduler.start()
-    h.open("com.mentra.captions")
-    await Promise.resolve()
-    expect(h.calls).toEqual(["all", "com.mentra.captions"])
   })
 
   it("coalesces triggers that arrive during a pass into one more pass", async () => {
@@ -117,12 +96,11 @@ describe("MiniappUpdateSchedulerCore", () => {
     expect(h.calls).toEqual(["all", "all"])
   })
 
-  it("stops responding after teardown, including to opened miniapps", async () => {
+  it("stops responding after teardown", async () => {
     const h = harness()
     await h.scheduler.start()
     h.scheduler.stop()
     expect(Object.values(h.triggers).every((trigger) => trigger === null)).toBe(true)
-    expect(h.isOpenSubscribed()).toBe(false)
     await h.scheduler.trigger()
     expect(h.calls).toEqual(["all"])
   })

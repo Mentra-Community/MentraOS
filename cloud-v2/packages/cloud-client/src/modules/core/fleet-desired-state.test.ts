@@ -24,7 +24,7 @@ const instantTimers: CloudClientTimers = {
   clearInterval: () => undefined,
 }
 
-const URL_ = "https://core.test/api/client/fleet/desired-state"
+const URL_ = "https://core.test/api/client/fleet/desired-state?pins=1"
 const T = "2026-10-21T09:30:00Z"
 
 function jwt(sub: string): string {
@@ -99,7 +99,7 @@ const managed = (overrides: Record<string, unknown> = {}) => ({
 const unmanaged = {status: "unmanaged", revision: 6, generatedAt: T}
 
 describe("Fleet.desiredState request", () => {
-  test("is GET /api/client/fleet/desired-state with the signed-in account's token", async () => {
+  test("is GET /api/client/fleet/desired-state?pins=1 with the signed-in account's token", async () => {
     const {fleet, requests, auth} = setup(() => json(200, managed()))
     await fleet.desiredState()
     expect(requests).toEqual([{url: URL_, method: "GET", authorization: `Bearer ${auth.tokenOf("account-a")}`}])
@@ -168,6 +168,27 @@ describe("Fleet.desiredState accepts only valid desired state", () => {
   test("unmanaged", async () => {
     const {fleet} = setup(() => json(200, unmanaged))
     await expect(fleet.desiredState()).resolves.toEqual(unmanaged as never)
+  })
+
+  const pin = {version: "0.3.4", sha256: "ab".repeat(32)}
+
+  test("a pinned entry keeps its pin, beside a latest one", async () => {
+    const pinned = {...entry, assignmentId: "asg_2", packageName: "com.example.pinned", selection: "pinned", pin}
+    const {fleet} = setup(() => json(200, managed({entries: [entry, pinned]})))
+    await expect(fleet.desiredState()).resolves.toEqual(managed({entries: [entry, pinned]}) as never)
+  })
+
+  test("a pin goes with selection pinned only, and a pinned entry carries one", async () => {
+    expect((await rejection(managed({entries: [{...entry, pin}]}))).reason).toBe("invalid_shape")
+    expect((await rejection(managed({entries: [{...entry, selection: "pinned"}]}))).reason).toBe("invalid_shape")
+  })
+
+  test("a pin whose version or hash is malformed is invalid", async () => {
+    for (const bad of [{...pin, version: "v0.3.4"}, {...pin, sha256: "AB".repeat(32)}, {version: pin.version}]) {
+      expect((await rejection(managed({entries: [{...entry, selection: "pinned", pin: bad}]}))).reason).toBe(
+        "invalid_shape",
+      )
+    }
   })
 
   async function rejection(body: unknown): Promise<CoreResponseError> {

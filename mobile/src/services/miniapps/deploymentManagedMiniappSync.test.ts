@@ -4,13 +4,8 @@ import {createMMKV} from "react-native-mmkv"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import {storage} from "@/utils/storage"
 import {configure, resetForTests} from "../../../modules/engine/src/runtime/bootstrap"
-import registry, {
-  assertDevBuildAllowed,
-  getDevAppRecords,
-  registerDevApp,
-  SignedMiniappDevBuildError,
-  type InstallBundleOptions,
-} from "../../../modules/engine/src/services/AppRegistry"
+import registry, {type InstallBundleOptions} from "../../../modules/engine/src/services/AppRegistry"
+import {DevelopmentBuildInstalledError} from "../../../modules/engine/src/services/miniappInstallIdentity"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import {deploymentStore} from "@/services/deployment/store"
 import type {ActiveDeployment, WorkspaceDeployment} from "@/services/deployment/types"
@@ -529,10 +524,9 @@ it("rolls back only its own partially moved bundle and permits a retry", async (
 })
 
 describe("one installer for every install source", () => {
-  type Source = "manual" | "bundled" | "dev snapshot"
-  const devRecord = {packageName: pkg, name: "Local Call", devUrl: "http://localhost:8081", iconUrl: ""}
+  type Source = "manual" | "bundled" | "development build"
 
-  /** The entry points QR/manual, bundled and dev snapshot installs use. */
+  /** The entry points QR/manual, bundled and development build installs use. */
   function install(source: Source, options?: InstallBundleOptions) {
     if (source === "bundled") {
       return registry.installFromLocalZip("bundle.zip", {
@@ -541,11 +535,11 @@ describe("one installer for every install source", () => {
         ...options,
       })
     }
-    if (source === "dev snapshot") {
+    if (source === "development build") {
       return registry.installFromUrl("http://localhost:8081/bundle.zip", {
         expectedPackageName: pkg,
         versionOverride: `dev-${Date.now()}`,
-        releaseIdentity: {source: "dev_snapshot"},
+        releaseIdentity: {source: "local", sourceUrl: "http://localhost:8081/"},
         ...options,
       })
     }
@@ -563,14 +557,10 @@ describe("one installer for every install source", () => {
 
   beforeEach(() => {
     selectDeployment(consumer)
-    for (const key of ["url", "meta", "port", "mdns", "last_reachable", "selected_snapshot"]) {
-      storage.remove(`${pkg}_dev_${key}`)
-    }
-    storage.remove("dev_apps_index")
   })
 
   it.each(["manual", "bundled"] as const)(
-    "%s installs accept equal and newer versions and reject older ones",
+    "%s installs accept equal, newer and older versions: versions are never compared",
     async (source) => {
       mockScript = "equal-version replacement"
       expect((await install(source)).is_ok()).toBe(true)
@@ -578,21 +568,28 @@ describe("one installer for every install source", () => {
       mockVersion = "2.1.30"
       mockScript = "upgrade"
       expect((await install(source)).is_ok()).toBe(true)
+      expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
       mockVersion = "2.1.28"
       mockScript = "downgrade"
       const result = await install(source)
-      expect(errorOf(result)).toContain("2.1.30 is already installed")
-      expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
+      expect(errorOf(result)).toBe("")
+      // The last release to install is the active one, whatever its version; the higher one stays on disk until
+      // its source cleans it up.
+      expect(await registry.getActiveVersion(pkg)).toBe("2.1.28")
+      expect(new File(registry.getBundleDir(pkg, "2.1.28"), "call.js").textSync()).toBe("downgrade")
       expect(new File(registry.getBundleDir(pkg, "2.1.30"), "call.js").textSync()).toBe("upgrade")
-      expect(registry.getInstalledVersions(pkg)).not.toContain("2.1.28")
     },
   )
 
-  it("refuses a lower version at the shared preflight before any download", () => {
-    mockVersion = "2.1.30"
-    expect(() => registry.assertCanInstallVersion(pkg, "2.1.28")).toThrow("2.1.29 is already installed")
-    expect(() => registry.assertCanInstallVersion(pkg, "2.1.29")).not.toThrow()
-    expect(() => registry.assertCanInstallVersion(pkg, "dev-123")).not.toThrow()
+  it("keeps running a lower release it installed while a higher one is on disk", async () => {
+    mockVersion = "2.1.28"
+    mockScript = "rolled back"
+    expect((await install("manual")).is_ok()).toBe(true)
+    expect(registry.getInstalledVersions(pkg).sort()).toEqual(["2.1.28", version])
+    expect(await registry.getActiveVersion(pkg)).toBe("2.1.28")
+    expect(registry.getActiveReleaseVersion(pkg)).toBe("2.1.28")
+    expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe("2.1.28")
+    expect(registry.getReleaseIdentity(pkg, "2.1.28")?.bundleSha256).toMatch(/^[0-9a-f]{64}$/)
   })
 
   it("reinstalls a same-version manual archive and commits its bytes and provenance", async () => {
@@ -612,7 +609,7 @@ describe("one installer for every install source", () => {
     expect(installedScript()).toBe("verified call")
   })
 
-  it.each(["manual", "bundled", "dev snapshot"] as const)(
+  it.each(["manual", "bundled", "development build"] as const)(
     "%s installs refuse a bundle signed by another publisher",
     async (source) => {
       mockPublisherFingerprint = "sha256:publisher-a"
@@ -632,7 +629,7 @@ describe("one installer for every install source", () => {
     },
   )
 
-  it.each(["manual", "bundled", "dev snapshot"] as const)(
+  it.each(["manual", "bundled", "development build"] as const)(
     "%s installs never let an unsigned bundle replace a signed install",
     async (source) => {
       mockPublisherFingerprint = "sha256:publisher-a"
@@ -685,40 +682,54 @@ describe("one installer for every install source", () => {
     expect(registry.getReleaseIdentity(pkg, version)?.publisherKeyFingerprint).toBeUndefined()
   })
 
-  it("holds dev builds to the installed signer, and allows them again after uninstall", async () => {
-    // Unsigned install + unsigned dev build: the dev build runs as the package.
-    await registerDevApp(devRecord)
-    expect(getDevAppRecords().map((record) => record.packageName)).toEqual([pkg])
-
-    // A signed release pins the package and replaces the dev registration.
+  it("holds development builds to the installed signer, and allows them again after uninstall", async () => {
+    // A signed release pins the package: an unsigned development build can't replace it.
     mockPublisherFingerprint = "sha256:publisher-a"
     mockVersion = "2.1.30"
     expect((await install("manual")).is_ok()).toBe(true)
-    expect(getDevAppRecords()).toEqual([])
-    await expect(registerDevApp(devRecord)).rejects.toBeInstanceOf(SignedMiniappDevBuildError)
-    expect(() => assertDevBuildAllowed(pkg)).toThrow("Uninstall it before running a development build")
-    expect(storage.load(`${pkg}_dev_url`).is_error()).toBe(true)
+    mockPublisherFingerprint = undefined
+    expect(errorOf(await install("development build"))).toContain("Unsigned bundle cannot replace signed miniapp")
+    expect(registry.isDevelopmentBuild(pkg)).toBe(false)
 
     expect((await registry.uninstall(pkg)).is_ok()).toBe(true)
-    expect(() => assertDevBuildAllowed(pkg)).not.toThrow()
-    await registerDevApp(devRecord)
-    expect(getDevAppRecords().map((record) => record.packageName)).toEqual([pkg])
+    expect((await install("development build")).is_ok()).toBe(true)
+    expect(registry.isDevelopmentBuild(pkg)).toBe(true)
   })
 
-  it("clears development state only after a release installation commits", async () => {
-    await registerDevApp(devRecord)
-    expect((await install("dev snapshot")).is_ok()).toBe(true)
-    expect(registry.hasDevSnapshot(pkg)).toBe(true)
+  it("replaces a development build only with the person's own release install", async () => {
+    expect((await install("development build")).is_ok()).toBe(true)
+    const development = await registry.getActiveVersion(pkg)
+    expect(development).toMatch(/^dev-/)
     mockVersion = "2.1.30"
-    expect((await install("manual")).is_ok()).toBe(true)
-    expect(getDevAppRecords()).toEqual([])
-    expect(storage.load(`${pkg}_dev_url`).is_error()).toBe(true)
-    expect(registry.hasDevSnapshot(pkg)).toBe(false)
+    // An automatic update, a deployment manifest's install and a Fleet assignment are refused; the build stays.
+    for (const installReason of [undefined, "manifest", "assignment"] as const) {
+      const result = await install("manual", {
+        ...(installReason ? {installReason} : {}),
+        ...(installReason === "assignment"
+          ? {
+              assignment: {
+                assignmentId: "asg_1",
+                assignmentRevision: 1,
+                workspaceId: "ws_1",
+                coreUrl: "https://core.example",
+                mentraUserId: "mu_1",
+                url: "https://call.example/",
+              },
+            }
+          : {}),
+      })
+      expect(result.is_error() && result.error).toBeInstanceOf(DevelopmentBuildInstalledError)
+      expect(await registry.getActiveVersion(pkg)).toBe(development)
+    }
+    expect(registry.getInstalledVersions(pkg)).not.toContain("2.1.30")
+
+    // The person's own install replaces it, once it commits.
+    expect((await install("manual", {installReason: "explicit"})).is_ok()).toBe(true)
+    expect(registry.isDevelopmentBuild(pkg)).toBe(false)
     expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
   })
 
-  it("restores old same-version bytes, provenance and dev routing when a replacement cannot commit", async () => {
-    await registerDevApp(devRecord)
+  it("restores old same-version bytes and provenance when a replacement cannot commit", async () => {
     mockScript = "replacement"
     mockPublisherFingerprint = "sha256:publisher-a"
     mockFailNextActiveWrite = true
@@ -727,8 +738,6 @@ describe("one installer for every install source", () => {
     expect(installedScript()).toBe("verified call")
     expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
     expect(registry.getPublisherKeyFingerprint(pkg)).toBeNull()
-    expect(storage.load(`${pkg}_dev_url`)).toMatchObject({value: devRecord.devUrl})
-    expect(getDevAppRecords().map((record) => record.packageName)).toEqual([pkg])
     expect(new Directory(Paths.document, "lmas", pkg).list().map((entry) => entry.name)).toEqual([version])
   })
 
@@ -740,7 +749,7 @@ describe("one installer for every install source", () => {
     expect(registry.getReleaseIdentity(pkg, version)).toBeNull()
   })
 
-  it("rejects a delayed download after a newer release installs", async () => {
+  it("installs a delayed download of a lower version after a higher release: the last install is the active one", async () => {
     const entered = deferred()
     const release = deferred()
     mockRemoteRead.mockImplementationOnce(() => {
@@ -755,8 +764,9 @@ describe("one installer for every install source", () => {
     mockVersion = "2.1.30"
     mockScript = "late older release"
     release.resolve()
-    expect((await pending).is_error()).toBe(true)
-    expect(await registry.getActiveVersion(pkg)).toBe("2.1.31")
+    expect((await pending).is_ok()).toBe(true)
+    expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
+    expect(new File(registry.getBundleDir(pkg, "2.1.30"), "call.js").textSync()).toBe("late older release")
     expect(new File(registry.getBundleDir(pkg, "2.1.31"), "call.js").textSync()).toBe("newer release")
   })
 
@@ -800,8 +810,7 @@ describe("one installer for every install source", () => {
     expect(new File(extractedFrom!).exists).toBe(false)
   })
 
-  it("refuses a release whose download finishes after a dev build replacement started", async () => {
-    await registerDevApp(devRecord)
+  it("refuses a release whose download finishes after a development build installed", async () => {
     const entered = deferred()
     const download = deferred()
     mockRemoteRead.mockImplementationOnce(() => {
@@ -811,36 +820,25 @@ describe("one installer for every install source", () => {
     mockVersion = "2.1.30"
     const pending = install("manual")
     await entered.promise
-    const releaseReplacement = registry.retainDevVersions(pkg, ["dev-1"])
-    try {
-      download.resolve()
-      expect(errorOf(await pending)).toContain("during miniapp replacement")
-      expect(mockUnzip).toHaveBeenCalledTimes(1) // beforeEach only
-      expect(registry.getInstalledVersions(pkg)).toEqual([version])
-      expect(storage.load(`${pkg}_dev_url`)).toMatchObject({value: devRecord.devUrl})
-    } finally {
-      releaseReplacement()
-    }
+    mockVersion = version
+    expect((await install("development build")).is_ok()).toBe(true)
+    const development = await registry.getActiveVersion(pkg)
+    mockVersion = "2.1.30"
+    download.resolve()
+    expect((await pending).is_error()).toBe(true)
+    expect(registry.getInstalledVersions(pkg)).not.toContain("2.1.30")
+    expect(await registry.getActiveVersion(pkg)).toBe(development)
   })
 
-  it("rechecks the dev build replacement guard at the commit point", async () => {
-    await registerDevApp(devRecord)
-    let releaseReplacement: (() => void) | undefined
+  it("checks for a development build again at the commit point", async () => {
     mockScript = "release"
     const result = await install("manual", {
-      // The replacement begins after the queue's checks, right before activation.
-      beforeActivate: () => {
-        releaseReplacement = registry.retainDevVersions(pkg, [])
-      },
+      // A development build appears after the queue's checks, right before activation.
+      beforeActivate: () => new Directory(Paths.document, "lmas", pkg, "dev-1").create(),
     })
-    try {
-      expect(errorOf(result)).toContain("during miniapp replacement")
-      expect(installedScript()).toBe("verified call")
-      expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
-      expect(storage.load(`${pkg}_dev_url`)).toMatchObject({value: devRecord.devUrl})
-    } finally {
-      releaseReplacement?.()
-    }
+    expect(result.is_error() && result.error).toBeInstanceOf(DevelopmentBuildInstalledError)
+    expect(installedScript()).toBe("verified call")
+    expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
   })
 
   it("recovers an activation interrupted before commit on the next launch", async () => {
@@ -931,13 +929,16 @@ describe("staged updates", () => {
     expect(cache.list().filter((entry) => entry.name.startsWith("lma_unzip"))).toEqual([])
   })
 
-  it("refuses a release before unpacking it when the version rule fails", async () => {
+  it("stages a release with a lower version like any other", async () => {
     mockVersion = "2.1.28"
+    mockScript = "rolled back"
     const whenStaged = jest.fn(async () => {})
     const result = await stagedInstall(whenStaged)
-    expect(result.is_error()).toBe(true)
-    expect(mockUnzip).not.toHaveBeenCalled()
-    expect(whenStaged).not.toHaveBeenCalled()
+    expect(result.is_ok()).toBe(true)
+    expect(mockUnzip).toHaveBeenCalledTimes(1)
+    expect(whenStaged).toHaveBeenCalledTimes(1)
+    expect(await registry.getActiveVersion(pkg)).toBe("2.1.28")
+    expect(new File(registry.getBundleDir(pkg, "2.1.28"), "call.js").textSync()).toBe("rolled back")
   })
 })
 
@@ -1005,6 +1006,25 @@ describe("workspace updates while a managed miniapp may be open", () => {
     expect(registry.getReleaseIdentity(pkg, nextVersion)).toMatchObject({source: "deployment_manifest"})
   })
 
+  it("moves an idle miniapp to a lower version its manifest names: the pin decides, not the order of versions", async () => {
+    const earlier = "2.1.28"
+    const rolledBack = withManaged([
+      {
+        packageName: pkg,
+        version: earlier,
+        bundleUrl: "https://enterprise.example/miniapps/call-2.1.28.zip",
+        sha256: "a".repeat(64),
+      },
+    ])
+    await ownCurrentRelease()
+    mockVersion = earlier
+    selectDeployment(rolledBack)
+    await deploymentManagedMiniappSync.sync(rolledBack)
+    expect(registry.getInstalledVersions(pkg)).toEqual([earlier])
+    expect(await registry.getActiveVersion(pkg)).toBe(earlier)
+    expect(registry.getReleaseIdentity(pkg, earlier)).toMatchObject({source: "deployment_manifest"})
+  })
+
   it("keeps an open miniapp on its version after Not now, and updates it once it closes", async () => {
     await ownCurrentRelease()
     mockRunning.add(pkg)
@@ -1051,6 +1071,23 @@ describe("workspace updates while a managed miniapp may be open", () => {
     mockRunning.delete(pkg)
     await deploymentManagedMiniappSync.sync(dropped)
     expect(registry.getInstalledVersions(pkg)).toEqual([])
+  })
+
+  it("never replaces a development build of a managed package", async () => {
+    await ownCurrentRelease()
+    // The person installed a development build of the package from their computer.
+    mockVersion = version
+    const local = await registry.installFromUrl("http://192.168.1.5:3000/bundle.zip", {
+      expectedPackageName: pkg,
+      versionOverride: "dev-1800000000000",
+      releaseIdentity: {source: "local", sourceUrl: "http://192.168.1.5:3000/"},
+    })
+    expect(local.is_ok()).toBe(true)
+    mockVersion = nextVersion
+    await deploymentManagedMiniappSync.sync(updated)
+    expect(registry.getInstalledVersions(pkg)).not.toContain(nextVersion)
+    expect(await registry.getActiveVersion(pkg)).toBe("dev-1800000000000")
+    expect(registry.isDevelopmentBuild(pkg)).toBe(true)
   })
 
   it("installs a first release without the update prompt path", async () => {

@@ -10,8 +10,7 @@
  *   - `start()` can actually spawn an app even when nothing foregrounds it
  *     (e.g. a system app launching another miniapp via `session.miniapps`).
  *   - the action broker can wake a stopped target headlessly — no UI at all.
- *   - the dev hot-reload respawn path and the WebView mount path share one
- *     resolve+spawn recipe instead of three copies.
+ *   - every launch path shares one resolve+spawn recipe.
  *
  * The launcher is **headless**: no React, no RN components. The engine-owned
  * MiniappEngine hands it the {@link MentraJSRouter} instance once during
@@ -30,6 +29,10 @@
  * (`fleetEvents.claimLaunch`); a context already executing, or one a hidden
  * action wake keeps out of the running tray, is no launch.
  *
+ * Updates: every launch path comes through here, so this is where a miniapp that isn't running waits for its update
+ * check before it starts ({@link MiniappLauncher.waitForUpdate}): another build installs while the miniapp is still
+ * stopped, instead of asking to restart it once it runs.
+ *
  * Age ratings: every launch path comes through here, so this is where a miniapp rated above the host app's own
  * rating meets the age gate as it opens, whether it was installed with the sheet or headlessly (a Fleet assignment,
  * a system miniapp). A launch the person makes in front of the app may ask their age once; any other launch needs it
@@ -46,8 +49,6 @@ import {
   isMiniappAvailable,
   type MiniappAvailabilityMode,
 } from "../runtime/bootstrap"
-import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
-import {storage} from "../utils/storage/storage"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
 import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
 import devServerBridge from "./DevServerBridge"
@@ -74,10 +75,7 @@ export class MiniappAccessRevokedError extends Error {
  * {@link AgeGateVerdict}). A person opening it in front of the app was asked their age, or told why.
  */
 export class MiniappAgeRestrictedError extends Error {
-  constructor(
-    readonly packageName: string,
-    readonly verdict: Exclude<AgeGateVerdict, "allowed">,
-  ) {
+  constructor(readonly packageName: string, readonly verdict: Exclude<AgeGateVerdict, "allowed">) {
     super(`MiniappLauncher: ${packageName} is age-rated and did not open (${verdict})`)
     this.name = "MiniappAgeRestrictedError"
   }
@@ -90,14 +88,36 @@ export class MiniappAgeRestrictedError extends Error {
  * is for logs; a screen explains it in the person's language, as an install refused by the same rule does.
  */
 export class MiniappIncompatibleHostError extends Error {
-  constructor(
-    readonly packageName: string,
-    readonly miniappName: string,
-    readonly reason: string,
-  ) {
+  constructor(readonly packageName: string, readonly miniappName: string, readonly reason: string) {
     super(`${miniappName} can't run on this phone: ${reason}`)
     this.name = "MiniappIncompatibleHostError"
   }
+}
+
+/** Stopped while its start waited for its update check: nothing started. */
+export class MiniappStartCancelledError extends Error {
+  constructor(readonly packageName: string) {
+    super(`MiniappLauncher: ${packageName} was stopped before it started`)
+    this.name = "MiniappStartCancelledError"
+  }
+}
+
+/** What a start waits for before the miniapp runs: its update check, or the update that check found, installing. */
+export type MiniappStartWait = "check" | "update"
+
+/**
+ * The check a start waits for (the URL updater's `checkBeforeStart`). Resolves once the start may go on: the check
+ * is done or its time is up. Calls `onInstalling` when it found another build and waits for that to install.
+ */
+export type UpdateCheckBeforeStart = (packageName: string, onInstalling: () => void) => Promise<void>
+
+/** One wait before a start, shared by every start of the package meanwhile. */
+interface PendingStartWait {
+  phase: MiniappStartWait
+  cancelled: boolean
+  cancel(): void
+  /** Settles when the start may go on, or was cancelled. Never rejects. */
+  done: Promise<void>
 }
 
 interface LauncherDeps {
@@ -107,10 +127,8 @@ interface LauncherDeps {
 
 /** Hints the host may pass from a view's props to avoid re-deriving them. */
 export interface LaunchHints {
-  devUrl?: string
-  /** Retained for caller compatibility; released launches use the committed active version. */
+  /** Retained for caller compatibility; launches use the committed active version. */
   version?: string
-  devPort?: string
 }
 
 export interface RuntimeLaunchOptions {
@@ -121,6 +139,11 @@ export interface RuntimeLaunchOptions {
    * or the platform (a restore, another miniapp, a restart). Defaults to automatic.
    */
   trigger?: "user" | "automatic"
+  /**
+   * False for a launch that doesn't wait for the package's update check: its caller waited already
+   * ({@link MiniappLauncher.waitForUpdate}), or it restarts a miniapp around an install.
+   */
+  checkForUpdate?: boolean
 }
 
 function availabilityMode(options?: RuntimeLaunchOptions): MiniappAvailabilityMode {
@@ -138,7 +161,7 @@ export interface ResolvedBundle {
   uiRootDir: string | null
   /** The name the origin is for. See {@link LaunchResult.uiOriginName}. */
   uiOriginName: string | null
-  /** A development build: a snapshot of what a development server serves. */
+  /** A development build: one installed from a local address. */
   devBuild: boolean
   declaredPermissions: string[]
   installedManifest?: InstalledMiniappManifest
@@ -146,17 +169,13 @@ export interface ResolvedBundle {
   ageRating: unknown
   /** Build-owned SYSTEM trust derived from install provenance, never the manifest. */
   hostTrustedSystem: boolean
-  /** The development server a development build's snapshot came from, while it answers; null otherwise. */
-  devUrl: string | null
-  devPort: number | null
-  /** The bundle's version directory: a release's version, or a development build's `dev-<ms>` snapshot. */
+  /** The bundle's version directory: a release's version, or a development build's `dev-<ms>`. */
   version: string
   /**
-   * The development server to listen to for changes: {@link devUrl} when it answered, or the stored one when it
-   * didn't and the build fell back to its last snapshot. When the server answers again, the bridge brings the
-   * build up to date (`devServerBridge.onCatchUp`). Null for a release.
+   * A local build's console connection (`reloadUrl` in its release identity): it gets the miniapp's logs and says
+   * when a new build is ready (`DevServerBridge`). Null for any other build.
    */
-  watchDevUrl: string | null
+  reloadUrl: string | null
 }
 
 /** What the host needs back to render the UI layer. */
@@ -184,7 +203,7 @@ export interface LaunchResult {
    * `uiRootDir`.
    */
   uiOriginName: string | null
-  /** A development build: a snapshot of what a development server serves. */
+  /** A development build: one installed from a local address. */
   devBuild: boolean
 }
 
@@ -232,8 +251,6 @@ class MiniappLauncher {
    * callers share the same promise.
    */
   private readonly inFlight = new Map<string, Promise<LaunchResult>>()
-  /** The bundle version each running context was spawned from. */
-  private readonly runningVersions = new Map<string, string>()
   /** In-flight launches that keep their context out of the running tray (a hidden action wake). */
   private readonly hiddenInFlight = new Set<string>()
 
@@ -243,6 +260,12 @@ class MiniappLauncher {
    * their files change.
    */
   private readonly installing = new Map<string, Promise<void>>()
+
+  /** The update check a start waits for; null until the engine wires the URL updater in. */
+  private updateCheck: UpdateCheckBeforeStart | null = null
+  /** The starts waiting for their update check, by package. */
+  private readonly startWaits = new Map<string, PendingStartWait>()
+  private readonly startWaitListeners = new Set<() => void>()
 
   /**
    * Run an automatic update only while the miniapp is idle. `install` prepares
@@ -292,9 +315,8 @@ class MiniappLauncher {
 
   /**
    * The name and age rating of the installed bundle a launch of `packageName` runs (the version `getActiveVersion`
-   * chooses, a development snapshot included), read without waiting. The apps store checks it before it opens the
-   * screen or stops other miniapps, so a refusal changes nothing. A live development server's rating is read when
-   * its context spawns, where every launch is checked again.
+   * chooses, a development build included), read without waiting. The apps store checks it before it opens the
+   * screen or stops other miniapps, so a refusal changes nothing.
    */
   installedAgeRating(packageName: string): AgeRatedMiniapp {
     const version = appRegistry.peekActiveVersion(packageName)
@@ -308,6 +330,120 @@ class MiniappLauncher {
   /** Wire the router in. Called once from MiniappEngine construction. */
   configure(deps: LauncherDeps): void {
     this.deps = deps
+  }
+
+  /** Wire in the update check a start waits for. Called once, where the URL updater is built. */
+  setUpdateCheck(check: UpdateCheckBeforeStart | null): void {
+    this.updateCheck = check
+  }
+
+  /**
+   * Before a miniapp that isn't running starts: wait for its update check, so that another build installs while it
+   * is still stopped, silently, instead of asking to restart it once it runs. The check bounds the wait (the
+   * updater's `START_UPDATE_LIMITS`) and skips it when there is nothing to learn; past it, the miniapp starts as it
+   * is. Starts of one package share one wait. A miniapp already running, launching or being installed doesn't wait.
+   *
+   * Resolves false when the start was cancelled meanwhile ({@link cancelStart}): nothing starts. Never throws.
+   */
+  async waitForUpdate(packageName: string): Promise<boolean> {
+    const check = this.updateCheck
+    if (!check || !this.waitsForUpdate(packageName)) return true
+    let wait = this.startWaits.get(packageName)
+    if (!wait) {
+      let cancel!: () => void
+      // When the check found an update and began installing it: logged with how long it took, as the splash's
+      // "Updating…" can be too brief to see.
+      let updateFoundAt: number | null = null
+      const cancelled = new Promise<void>((resolve) => {
+        cancel = resolve
+      })
+      const pending: PendingStartWait = {
+        phase: "check",
+        cancelled: false,
+        cancel: () => {
+          pending.cancelled = true
+          cancel()
+        },
+        done: Promise.resolve(),
+      }
+      const checked = Promise.resolve()
+        .then(() =>
+          check(packageName, () => {
+            if (this.startWaits.get(packageName) !== pending) return
+            pending.phase = "update"
+            updateFoundAt = Date.now()
+            console.log(`MiniappLauncher: installing an update to ${packageName} before it starts`)
+            this.notifyStartWait()
+          }),
+        )
+        .catch((error) => console.warn(`MiniappLauncher: the update check before ${packageName} starts failed`, error))
+      pending.done = Promise.race([checked, cancelled]).then(() => {
+        if (updateFoundAt !== null) {
+          // The updater's wait ends when the install does, or at its limit: the start goes on either way.
+          const outcome = pending.cancelled ? "was cancelled" : "ended"
+          console.log(
+            `MiniappLauncher: the wait for ${packageName}'s update ${outcome} after ${Date.now() - updateFoundAt} ms`,
+          )
+        }
+        if (this.startWaits.get(packageName) !== pending) return
+        this.startWaits.delete(packageName)
+        this.notifyStartWait()
+      })
+      this.startWaits.set(packageName, pending)
+      this.notifyStartWait()
+      wait = pending
+    }
+    await wait.done
+    return !wait.cancelled
+  }
+
+  /**
+   * Whether a start of the package has a check to wait for: it isn't running or launching yet, and no install is
+   * putting its files in place (the launch waits for that one instead).
+   */
+  private waitsForUpdate(packageName: string): boolean {
+    return (
+      this.updateCheck !== null &&
+      !this.isRunning(packageName) &&
+      !this.inFlight.has(packageName) &&
+      !this.installing.has(packageName)
+    )
+  }
+
+  /**
+   * The miniapp was stopped, or the person left it, before it started: starts of it still waiting for their update
+   * check ({@link waitForUpdate}) start nothing. The check itself carries on, as any check does.
+   */
+  cancelStart(packageName: string): void {
+    const wait = this.startWaits.get(packageName)
+    if (!wait) return
+    // Removed now, so a start that follows the stop at once begins a wait of its own.
+    this.startWaits.delete(packageName)
+    wait.cancel()
+    this.notifyStartWait()
+  }
+
+  /** What a start of `packageName` waits for right now, or null when none waits. */
+  startWait(packageName: string): MiniappStartWait | null {
+    return this.startWaits.get(packageName)?.phase ?? null
+  }
+
+  /** Called whenever {@link startWait} changes for any package. Returns an unsubscribe. */
+  onStartWaitChanged(listener: () => void): () => void {
+    this.startWaitListeners.add(listener)
+    return () => {
+      this.startWaitListeners.delete(listener)
+    }
+  }
+
+  private notifyStartWait(): void {
+    for (const listener of [...this.startWaitListeners]) {
+      try {
+        listener()
+      } catch (error) {
+        console.warn("MiniappLauncher: start wait listener threw", error)
+      }
+    }
   }
 
   private requireRouter(): MentraJSRouter {
@@ -329,50 +465,16 @@ class MiniappLauncher {
 
   /**
    * Resolve the background JS source + UI entry + declared permissions for a
-   * package. Every build runs from a bundle on disk: a release from its
-   * installed version, a development build from the snapshot of what its dev
-   * server serves now (fetched when it changed), or its last snapshot once the
-   * server is gone. Reads disk/network/storage; does
-   * NOT spawn. Returns null when the bundle can't be resolved (dev server
-   * unreachable with no on-disk snapshot, missing entry, no installed version).
+   * package: the active installed version, a release or a development build,
+   * from disk. Reads disk/storage; does NOT spawn. Returns null when the bundle
+   * can't be resolved (missing entry, no installed version).
    */
   async resolveBundle(
     packageName: string,
-    hints?: LaunchHints,
+    _hints?: LaunchHints,
     runtimeOptions?: RuntimeLaunchOptions,
   ): Promise<ResolvedBundle | null> {
     if (!isMiniappAvailable(packageName, availabilityMode(runtimeOptions))) return null
-    const devAllowed = isDevMiniappAllowed(packageName)
-    // Live dev code is unsigned, so it never runs under a package installed with
-    // a publisher signature; that package runs its installed bundle instead.
-    const liveDevAllowed = devAllowed && !appRegistry.getPublisherKeyFingerprint(packageName)
-    const devUrl = liveDevAllowed ? (hints?.devUrl ?? this.storedDevUrl(packageName)) : undefined
-
-    const selectedSnapshot = devAllowed ? appRegistry.getSelectedDevSnapshot(packageName) : null
-    if (selectedSnapshot) return this.resolveInstalledBundle(packageName, selectedSnapshot)
-
-    // --- Dev: the server's current bundle, or the last snapshot of it once the laptop is gone. ---
-    // Either one runs from disk like an installed bundle, its screen on the development origin.
-    // A stored URL from a scan that this workspace will not run must fall
-    // through to the released bundle, or the home tile disappears.
-    if (devUrl && devAllowed) {
-      const source = await resolveDevBundleSource(packageName, devUrl)
-      if (source.kind === "none") return null
-      const snapshot = await this.resolveInstalledBundle(packageName, source.version)
-      if (!snapshot) return snapshot
-      const devPort = this.resolveDevPort(hints?.devPort, packageName)
-      if (source.kind === "snapshot") {
-        // The server didn't answer: the last snapshot runs, and the bridge keeps listening for the server, so the
-        // build catches up as soon as it answers instead of staying on old code until the next save.
-        console.warn(`MiniappLauncher: ${packageName}'s dev server didn't answer; running its last snapshot`)
-        return {...snapshot, devPort, watchDevUrl: devUrl}
-      }
-      // The server answered: keep its URL for hot reload and log forwarding. Use the host that actually
-      // answered, which may differ from the stored IP after a laptop Wi-Fi change.
-      return {...snapshot, devUrl: source.resolvedUrl, devPort, watchDevUrl: source.resolvedUrl}
-    }
-
-    // --- Released: resolve from the installed snapshot on disk. ---
     // A view can retain its old version prop across an install or rollback.
     // Resolve the committed pointer here, including after an installation wait.
     const version = await appRegistry.getActiveVersion(packageName)
@@ -435,7 +537,7 @@ class MiniappLauncher {
     }
 
     // The screen loads from the package's own origin, which serves only this
-    // version's bundle and never grants file access. A development snapshot
+    // version's bundle and never grants file access. A development build
     // claims its name without proof, so it loads from a development origin of
     // that name instead and never sees a release's web storage. A package name
     // that can't have an origin gets no screen rather than a file:// page.
@@ -459,11 +561,8 @@ class MiniappLauncher {
       ageRating: manifest?.ageRating ?? null,
       // A development build never runs with the build's privileges, whatever name it claims.
       hostTrustedSystem: !devBuild && isHostTrustedSystemMiniapp(packageName, releaseIdentity),
-      // A snapshot on disk — do not wire the sidecar; the laptop is gone.
-      devUrl: null,
-      devPort: null,
       version,
-      watchDevUrl: null,
+      reloadUrl: devBuild && releaseIdentity?.source === "local" ? releaseIdentity.reloadUrl ?? null : null,
     }
   }
 
@@ -491,34 +590,27 @@ class MiniappLauncher {
     hints?: LaunchHints,
     runtimeOptions?: RuntimeLaunchOptions,
   ): Promise<LaunchResult> {
+    const projectRunning = runtimeOptions?.projectRunning ?? true
+    // A miniapp that isn't running is checked for an update before it starts, whoever starts it. A hidden action
+    // wake is not an open and doesn't wait, nor does a package that won't launch anyway. With nothing to wait for
+    // there is no await here: a launch still begins in the call that asked for it.
+    if (projectRunning && runtimeOptions?.checkForUpdate !== false && this.waitsForUpdate(packageName)) {
+      this.assertMayLaunch(packageName, runtimeOptions)
+      if (!(await this.waitForUpdate(packageName))) throw new MiniappStartCancelledError(packageName)
+    }
     // An install holds launches until its files and metadata commit or roll
     // back; the launch then resolves whichever bundle is active.
     const installation = this.installing.get(packageName)
     if (installation) await installation
-    if (
-      !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
-      !appRegistry.isPackageAllowed(packageName)
-    ) {
-      throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
-    }
-    if (appRegistry.isMiniappAccessRevoked(packageName)) throw new MiniappAccessRevokedError(packageName)
+    this.assertMayLaunch(packageName, runtimeOptions)
     const router = this.requireRouter()
-    const projectRunning = runtimeOptions?.projectRunning ?? true
 
-    // Already spawned: best-effort resolve for the UI entry, never throw —
-    // a headless caller that doesn't need UI gets {null, null} fast even if
-    // the dev server has since dropped. A user launch promotes a context a
-    // transient action woke.
+    // Already spawned: best-effort resolve for the UI entry, never throw.
+    // A user launch promotes a context a transient action woke.
     if (router.registeredPackages().includes(packageName)) {
       const promoted = projectRunning && this.promote(packageName)
       const existing = await this.resolveBundle(packageName, hints, runtimeOptions).catch(() => null)
       if (promoted) this.reportLaunch(packageName, "started", runtimeOptions, existing?.installedManifest)
-      // Opened again while its context still runs older code than its dev server serves (saves made while the phone
-      // wasn't listening): restart it on the current snapshot, as a save would, so the screen and the background
-      // run the same, current code.
-      if (projectRunning && existing && this.isOutdatedDevBuild(packageName, existing)) {
-        await devServerBridge.respawn(packageName)
-      }
       return launchResultOf(existing)
     }
 
@@ -552,6 +644,17 @@ class MiniappLauncher {
       this.inFlight.delete(packageName)
       this.hiddenInFlight.delete(packageName)
     }
+  }
+
+  /** Throws when deployment policy or a revoked access keeps the package from launching. */
+  private assertMayLaunch(packageName: string, runtimeOptions?: RuntimeLaunchOptions): void {
+    if (
+      !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
+      !appRegistry.isPackageAllowed(packageName)
+    ) {
+      throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
+    }
+    if (appRegistry.isMiniappAccessRevoked(packageName)) throw new MiniappAccessRevokedError(packageName)
   }
 
   /** Projects a context already spawned as user activity: true if this made it so. */
@@ -602,14 +705,10 @@ class MiniappLauncher {
       {interactive: projectRunning && AppState.currentState === "active"},
     )
     if (verdict !== "allowed") throw new MiniappAgeRestrictedError(packageName, verdict)
-    // A live dev server sets devUrl. A snapshot keeps the directory name `dev-*`
-    // as the active version. Either one is the scanned build; a release fallback is neither.
-    const activeVersion = await appRegistry.getActiveVersion(packageName)
-    const devBuild = Boolean(resolved.devUrl) || Boolean(activeVersion?.startsWith("dev-"))
     if (
       // Availability may change while the bundle resolves.
       !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
-      (devBuild ? !isDevMiniappAllowed(packageName) : !appRegistry.isReleaseAllowed(packageName, version))
+      (resolved.devBuild ? !isDevMiniappAllowed(packageName) : !appRegistry.isReleaseAllowed(packageName, version))
     ) {
       throw new Error(`MiniappLauncher: ${packageName} bundle is not authorized by deployment policy`)
     }
@@ -621,6 +720,9 @@ class MiniappLauncher {
         this.reportLaunch(packageName, "started", runtimeOptions, resolved.installedManifest)
       }
     } else {
+      // A local build's console gets its logs from the first line it runs, and says when a new build is ready.
+      if (resolved.reloadUrl) devServerBridge.connect(packageName, resolved.reloadUrl)
+      else devServerBridge.disconnect(packageName)
       const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
         permissions: resolved.declaredPermissions,
         installedManifest: resolved.installedManifest,
@@ -629,19 +731,8 @@ class MiniappLauncher {
         developmentBuild: resolved.devBuild,
       })
       if (!ok) {
+        devServerBridge.disconnect(packageName)
         throw new Error(`MiniappLauncher: spawn failed for ${packageName}`)
-      }
-      this.noteRunningVersion(packageName, resolved.version)
-
-      // Dev: wire the hot-reload + log-forwarding sidecar. No-op in prod
-      // (devServerBridge silently drops when no sidecar is up).
-      if (resolved.watchDevUrl && resolved.devPort != null) {
-        devServerBridge.connect(packageName, resolved.watchDevUrl, resolved.devPort)
-      } else if (resolved.devUrl) {
-        // Dev miniapp with no resolvable port — it still launches, but hot
-        // reload + log forwarding won't connect. Surface it instead of failing
-        // silently (the old inline path hard-failed with "no dev port").
-        console.warn(`MiniappLauncher: ${packageName} has no dev port — hot reload + log forwarding disabled`)
       }
       if (projectRunning) this.reportLaunch(packageName, "started", runtimeOptions, resolved.installedManifest)
     }
@@ -667,6 +758,9 @@ class MiniappLauncher {
    * tray/switcher project it as running, exactly as a normal start would. The
    * WebView, if any, re-attaches lazily when the user opens the app.
    *
+   * Before they start, each is checked for an update, all at once ({@link waitForUpdate}): one found installs while
+   * its miniapp is still stopped, silently. Offline or on a slow host, they start as they are.
+   *
    * Idempotent and best-effort: skips already-spawned contexts and clears the
    * persisted running flag if ensureRunning fails (for example, bundle resolution,
    * deployment policy, or context spawning) so it does not retry every boot.
@@ -676,7 +770,7 @@ class MiniappLauncher {
    * resumes when they reconnect, same as mid-session. A release this Mentra App
    * can't run is refused like any launch (see {@link assertRunsOnPhone}).
    */
-  async autostartLocalMiniapps(options: {beforeStart?: (packageNames: string[]) => Promise<void>} = {}): Promise<void> {
+  async autostartLocalMiniapps(): Promise<void> {
     const apps = await appRegistry.getInstalledMiniapps()
     // Only phone-hosted miniapps have a JSContext to re-spawn. Offline
     // built-ins (`local:false, offline:true`) restore their native running
@@ -685,19 +779,14 @@ class MiniappLauncher {
       (app) => app.local && getLocalAppRunningState(app.packageName) && !this.isRunning(app.packageName),
     )
     if (toStart.length === 0) return
-    // The host's chance to update them while they are still stopped (`beforeStart`), so an update installs silently
-    // instead of asking to restart a miniapp that is running. Its failure never keeps them from starting.
-    if (options.beforeStart) {
-      await options.beforeStart(toStart.map((app) => app.packageName)).catch((e) => {
-        console.warn("MiniappLauncher: the check before autostart failed", e)
-      })
-    }
+    // Checked together, so that one slow host doesn't hold the others up for its whole limit.
+    await Promise.all(toStart.map((app) => this.waitForUpdate(app.packageName)))
     for (const app of toStart) {
       // The person may have started or stopped it while it was checked: what they did stands.
       if (this.isRunning(app.packageName) || !getLocalAppRunningState(app.packageName)) continue
       try {
         // Restoring what was running is the platform's doing, never the user's.
-        await this.ensureRunning(app.packageName, undefined, {trigger: "automatic"})
+        await this.ensureRunning(app.packageName, undefined, {trigger: "automatic", checkForUpdate: false})
       } catch (e) {
         console.warn(`MiniappLauncher: autostart failed for ${app.packageName} — clearing stale running flag`, e)
         saveLocalAppRunningState(app.packageName, false)
@@ -734,47 +823,8 @@ class MiniappLauncher {
       }
     }
     await this.deps?.router.unregister(packageName)
-    this.runningVersions.delete(packageName)
+    devServerBridge.disconnect(packageName)
     console.log(`MiniappLauncher: stopped ${packageName}`)
-  }
-
-  /** Record the bundle version a context of the package was just spawned from (a launch or a dev respawn). */
-  noteRunningVersion(packageName: string, version: string): void {
-    this.runningVersions.set(packageName, version)
-  }
-
-  /**
-   * True when the package's running context is a development build whose dev server, answering now, serves other
-   * code than the snapshot the context was spawned from. Fetches the server's current snapshot when it changed.
-   */
-  async runsOutdatedDevBuild(packageName: string): Promise<boolean> {
-    if (!this.isRunning(packageName)) return false
-    const resolved = await this.resolveBundle(packageName).catch(() => null)
-    return !!resolved && this.isOutdatedDevBuild(packageName, resolved)
-  }
-
-  private isOutdatedDevBuild(packageName: string, resolved: ResolvedBundle): boolean {
-    const running = this.runningVersions.get(packageName)
-    // Only a server that answered proves newer code; a snapshot fallback is the newest the phone has.
-    return resolved.devBuild && resolved.devUrl !== null && running !== undefined && running !== resolved.version
-  }
-
-  // --- internals -----------------------------------------------------------
-
-  private storedDevUrl(packageName: string): string | undefined {
-    const r = storage.load<string>(`${packageName}_dev_url`)
-    return r.is_ok() ? r.value : undefined
-  }
-
-  /** resolveDevPort — moved verbatim from the old LocalMiniappView helper. */
-  private resolveDevPort(searchParam: string | undefined, packageName: string): number | null {
-    if (searchParam) {
-      const n = parseInt(searchParam, 10)
-      if (Number.isFinite(n)) return n
-    }
-    const stored = storage.load<number>(`${packageName}_dev_port`)
-    if (stored.is_ok()) return stored.value
-    return null
   }
 }
 

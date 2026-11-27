@@ -19,9 +19,9 @@
 import {createHash} from "node:crypto"
 import {readdirSync, readFileSync, statSync, watch} from "fs"
 import {join, relative, sep} from "path"
-import JSZip from "jszip"
 import {withApiLevel} from "./manifest.js"
 import type {ServerWebSocket} from "bun"
+import {buildReproducibleZip, type ZipFile} from "./reproducible-zip.js"
 
 export interface DevServerOptions {
   port: number
@@ -43,6 +43,12 @@ export interface DevServerOptions {
    * fresh code. Rejection is caught + logged; the broadcast still fires.
    */
   onBeforeBroadcast?: (type: "reload" | "respawn-bg") => Promise<void>
+  /**
+   * The ZIP `/__mentra_dev/bundle.zip` serves. Default: a snapshot of the
+   * project in `watchDir`. `dev --production` passes its production bundle,
+   * so both servers serve the one build.
+   */
+  bundleZip?: () => Promise<Uint8Array>
 }
 
 interface ClientWsData {
@@ -207,7 +213,7 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
         // Files are placed at the zip root (no enclosing folder). The
         // unpacker on the phone side requires miniapp.json to be at the
         // top level. Flat structure makes that contract clean.
-        return buildProjectZip(options.watchDir).then((buf) => {
+        return (options.bundleZip ?? (() => buildProjectZip(options.watchDir)))().then((buf) => {
           // `bun-types` typed Response body as ArrayBuffer / Blob / etc.
           // — but NOT a raw Uint8Array view. Pass the underlying buffer
           // slice instead so the response stream gets the exact bytes.
@@ -483,14 +489,6 @@ export function listProjectFiles(rootDir: string): ProjectFile[] {
   return out
 }
 
-/**
- * Every entry's timestamp, folders included: the earliest a ZIP can record.
- * With the entries in a fixed order too, the same files always make the same
- * ZIP, so the SHA-256 a served miniapp.json names still matches when the phone
- * fetches the ZIP a moment later.
- */
-const ZIP_ENTRY_DATE = new Date(Date.UTC(1980, 0, 1))
-
 /** The project as a phone installs it from the dev server. */
 export interface ProjectSnapshot {
   zip: Uint8Array
@@ -508,36 +506,38 @@ export interface ProjectSnapshot {
  * to be at the zip's top level. Flat structure keeps the contract clean
  * — the unpacker can fail loudly if the zip is malformed instead of
  * tolerating multiple shapes.
+ *
+ * The same files always make the same ZIP (`buildReproducibleZip`, as `pack`
+ * uses), so the SHA-256 a served miniapp.json names still matches when the
+ * phone fetches the ZIP a moment later.
  */
 export async function buildProjectSnapshot(rootDir: string): Promise<ProjectSnapshot> {
-  const zip = new JSZip()
   let manifest: string | null = null
-  const files = listProjectFiles(rootDir).sort((a, b) => (a.entry < b.entry ? -1 : a.entry > b.entry ? 1 : 0))
-  for (const {disk, entry} of files) {
+  const files: ZipFile[] = []
+  for (const {disk, entry} of listProjectFiles(rootDir)) {
     const abs = join(rootDir, disk)
     try {
-      let buf: Buffer | string = readFileSync(abs)
+      let buf: Buffer = readFileSync(abs)
       if (entry === "miniapp.json") {
         // The SDK's API level, as `pack` writes it: a development build is refused where its release would be.
         // One that doesn't parse ships as it is, for the dev server to refuse.
-        manifest = buf = buf.toString("utf-8")
+        manifest = buf.toString("utf-8")
         try {
           const parsed = JSON.parse(manifest) as Record<string, unknown>
           const stamped = withApiLevel(parsed, rootDir)
-          if (stamped !== parsed) manifest = buf = `${JSON.stringify(stamped, null, 2)}\n`
+          if (stamped !== parsed) {
+            manifest = `${JSON.stringify(stamped, null, 2)}\n`
+            buf = Buffer.from(manifest, "utf-8")
+          }
         } catch {}
       }
-      zip.file(entry, buf, {date: ZIP_ENTRY_DATE})
+      files.push({entry, bytes: buf})
     } catch (err) {
       console.warn(`[__mentra_dev] failed to read ${disk}, skipping:`, err)
     }
   }
-  // JSZip dates the folders it adds for nested entries with the current time.
-  zip.forEach((_path, file) => {
-    file.date = ZIP_ENTRY_DATE
-  })
-  // STORE (no compression) — small project trees, deterministic, fast.
-  const bytes = await zip.generateAsync({type: "uint8array", compression: "STORE"})
+  // STORE (no compression) — small project trees, fast.
+  const bytes = await buildReproducibleZip(files, "STORE")
   return {zip: bytes, sha256: createHash("sha256").update(bytes).digest("hex"), manifest}
 }
 

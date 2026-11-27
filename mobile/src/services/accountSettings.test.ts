@@ -234,8 +234,6 @@ describe("an account's data beyond its settings", () => {
   /** Kept with the phone, whoever is signed in. */
   const PHONE_STATE: Record<string, unknown> = {
     "com.mentra.notes_active_version": "1.1.0",
-    "com.mentra.notes_dev_url": "http://192.168.1.4:8081",
-    "dev_apps_index": JSON.stringify(["com.mentra.notes"]),
     "deployment_default_miniapps:v1": {coreUrl: CORE, defaults: ["com.mentra.notes"]},
   }
   /** The session's own, gone at sign-out. */

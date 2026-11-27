@@ -1,5 +1,5 @@
 import {engine} from "@mentra/engine"
-import {appRegistry, firstPartyMiniappUrl, getDevAppRecords, InstallMiniappError} from "@mentra/engine-host-internal"
+import {appRegistry, firstPartyMiniappUrl, InstallMiniappError} from "@mentra/engine-host-internal"
 
 import {resolvedEndpoints} from "@/services/cloudClient"
 import type {ActiveDeployment} from "@/services/deployment"
@@ -75,10 +75,8 @@ function isMissing(deployment: ActiveDeployment, packageName: string): boolean {
   const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
   if (approved !== null && !approved.includes(packageName)) return false
   if (shouldSkipMiniappInstall(packageName)) return false
-  // Any release stays: the updater keeps it current, and never replaces a newer one.
-  if (appRegistry.getInstalledVersions(packageName).length > 0) return false
-  // A QR-selected development build stays the user's choice.
-  return !getDevAppRecords().some((app) => app.packageName === packageName)
+  // Any release stays: the updater moves it to what its URL serves. So does a development build, the person's own.
+  return appRegistry.getInstalledVersions(packageName).length === 0
 }
 
 /** Where a default installs from: `<firstPartyMiniappsUrl><packageName>/` on the deployment's miniapp host. */

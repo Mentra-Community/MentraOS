@@ -8,6 +8,8 @@ import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
 import {captureScreenshotForLater} from "@/effects/CapsuleMenu"
 
 let mockForegroundApp: ClientApp | null = null
+/** The miniapps whose start still waits for its update check, as the engine reports it. */
+let mockStartWaits: Record<string, "check" | "update"> = {}
 const mockStop = jest.fn()
 const mockMount = jest.fn()
 jest.mock("@mentra/engine", () => ({
@@ -21,14 +23,25 @@ jest.mock("@mentra/engine", () => ({
         mockForegroundApp = null
       },
       stop: (...args: unknown[]) => mockStop(...args),
+      startWait: (packageName: string) => mockStartWaits[packageName] ?? null,
     },
   },
 }))
 jest.mock("@/components/miniapp/LocalMiniappView", () => {
   const {Pressable} = require("react-native")
   const {useEffect} = require("react")
-  return ({onClose, onMinimize, onExit}: {onClose: () => void; onMinimize: () => void; onExit: () => void}) => {
-    useEffect(() => {mockMount()}, [])
+  return ({
+    onClose,
+    onMinimize,
+    onExit,
+    version,
+  }: {
+    onClose: () => void
+    onMinimize: () => void
+    onExit: () => void
+    version?: string
+  }) => {
+    useEffect(() => {mockMount(version)}, [])
     return (
       <>
         <Pressable testID="close-miniapp" onPress={onClose} />
@@ -69,6 +82,8 @@ beforeEach(() => {
   mockMount.mockClear()
   mockForegroundApp = {packageName: "one", name: "One", foregrounded: true, running: true} as ClientApp
   mockStop.mockReset()
+  mockStop.mockResolvedValue(undefined)
+  mockStartWaits = {}
   jest.mocked(captureScreenshotForLater).mockReset()
 })
 
@@ -130,6 +145,38 @@ test("repacking the same version remounts its WebView; ordinary store refresh do
   expect(mockMount).toHaveBeenCalledTimes(2)
 })
 
+test.each([
+  ["the same version, whose new files are in the same folder", "1.0.0"],
+  ["another version", "0.9.0"],
+])(
+  "a miniapp its update restarted before its surface finished sliding out mounts a new surface: %s",
+  (_name, updatedVersion) => {
+    // The slide-out never finishes: the restart brings the miniapp back to the front first.
+    jest.spyOn(reanimated, "withTiming").mockImplementation((value: unknown) => value)
+    mockForegroundApp = {...mockForegroundApp!, version: "1.0.0"}
+    const view = render(<Compositor />)
+    expect(mockMount).toHaveBeenCalledTimes(1)
+
+    // The update stops the miniapp: it leaves the front, and its surface starts to slide out.
+    const stopped = mockForegroundApp
+    mockForegroundApp = null
+    view.rerender(<Compositor />)
+    expect(view.queryByTestId("close-miniapp")).not.toBeNull()
+    expect(mockMount).toHaveBeenCalledTimes(1)
+
+    // The update restarts it. The surface that loaded the files it replaced does not stay.
+    mockForegroundApp = {...stopped, version: updatedVersion}
+    view.rerender(<Compositor />)
+    expect(mockMount).toHaveBeenCalledTimes(2)
+    expect(mockMount).toHaveBeenLastCalledWith(updatedVersion)
+
+    // A store refresh while it stays in front keeps that surface.
+    mockForegroundApp = {...mockForegroundApp}
+    view.rerender(<Compositor />)
+    expect(mockMount).toHaveBeenCalledTimes(2)
+  },
+)
+
 test.each(["back-miniapp", "minimize-miniapp"])(
   "%s keeps the surface mounted until pixel capture completes",
   async (control) => {
@@ -159,3 +206,31 @@ test.each(["back-miniapp", "minimize-miniapp"])(
     expect(mockStop).not.toHaveBeenCalled()
   },
 )
+
+test.each([
+  ["its update check", "check"],
+  ["the update that check found", "update"],
+] as const)("leaving a miniapp whose start still waits for %s cancels the open", (_name, wait) => {
+  mockStartWaits = {one: wait}
+  const view = render(<Compositor />)
+  expect(mockStop).not.toHaveBeenCalled()
+
+  // The person goes back from its splash, however they do: it is no longer in front.
+  mockForegroundApp = null
+  view.rerender(<Compositor />)
+  expect(mockStop).toHaveBeenCalledTimes(1)
+  expect(mockStop).toHaveBeenCalledWith("one")
+})
+
+test("another miniapp taking the front cancels it too, and leaving one that has started stops nothing", () => {
+  mockStartWaits = {one: "check"}
+  const view = render(<Compositor />)
+  mockForegroundApp = {packageName: "two", name: "Two", foregrounded: true, running: true} as ClientApp
+  view.rerender(<Compositor />)
+  expect(mockStop.mock.calls).toEqual([["one"]])
+
+  // Two runs: leaving it minimizes it.
+  mockForegroundApp = null
+  view.rerender(<Compositor />)
+  expect(mockStop).toHaveBeenCalledTimes(1)
+})

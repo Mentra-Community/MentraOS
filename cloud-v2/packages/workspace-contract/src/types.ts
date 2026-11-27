@@ -781,6 +781,65 @@ export interface RegistryLookupResponse {
   entries: Record<string, RegistryLookupEntry | null>
 }
 
+/** `429` from `versions`: the admin has had Core read too many URLs this hour. `Retry-After` says when to ask again. */
+export const REGISTRY_RATE_LIMITED_ERROR = "rate_limited"
+
+/** `POST /api/internal/registry/versions` (Fleet): the miniapp URL an admin is choosing a version of. */
+export interface RegistryVersionsRequest {
+  /** A miniapp URL, normalized as `normalizeMiniappUrl` does. */
+  url: string
+  /** The workspace that assigns it: a private miniapp's token names it, as for `check`. */
+  workspaceId: string
+  /** The admin choosing: the person the read is made for and counted against. */
+  mentraUserId: string
+}
+
+/** One build a `miniapp.json` names: a version, its ZIP's URL as served (relative to the miniapp URL, or absolute) and its SHA-256 in lowercase hex. */
+export interface RegistryMiniappBuild {
+  version: string
+  url: string
+  sha256: string
+}
+
+/**
+ * Why Core has no `miniapp.json` to list versions from:
+ * - `sign_in_required`: the URL's server asks for sign-in and didn't serve the miniapp to the admin's token;
+ * - `unreachable`: Core couldn't read the URL (a host only phones reach, a timeout, a server that turns Core away);
+ * - `not_a_miniapp`: an invalid `miniapp.json`, a package name its domain doesn't own, or not a public HTTPS URL;
+ * - `archived`: an archive rule covers it.
+ */
+export type RegistryVersionsUnreadableReason = "sign_in_required" | "unreachable" | "not_a_miniapp" | "archived"
+
+export const REGISTRY_VERSIONS_UNREADABLE_REASONS: readonly RegistryVersionsUnreadableReason[] = [
+  "sign_in_required",
+  "unreachable",
+  "not_a_miniapp",
+  "archived",
+]
+
+/**
+ * What a miniapp URL serves now, read by Core for this request and never answered from its stored entry:
+ * - `read`: its package, the latest build (`bundle`) and the versions it lists, highest first as served. `versions`
+ *   is null when its `miniapp.json` lists none, or lists something that isn't a list of versions. `private` says its
+ *   server asked for sign-in and admitted the admin. `deploymentDefault` says the package is one of the miniapps this
+ *   Core's deployment gives every phone (`GET /api/client/deployment`), which phones keep current from the
+ *   deployment's own host whatever URL a workspace assigns;
+ * - `unreadable`: Core has nothing to list, and why.
+ * `readAt` is when Core answered, ISO 8601.
+ */
+export type RegistryVersionsResponse =
+  | {
+      url: string
+      status: "read"
+      packageName: string
+      private: boolean
+      deploymentDefault: boolean
+      latest: RegistryMiniappBuild
+      versions: RegistryMiniappBuild[] | null
+      readAt: string
+    }
+  | {url: string; status: "unreadable"; reason: RegistryVersionsUnreadableReason; readAt: string}
+
 /** What an archive rule names: a miniapp URL, a package name, a registrable domain, or a `mentraUserId`. */
 export type RegistryArchiveRuleKind = "url" | "package" | "domain" | "account"
 

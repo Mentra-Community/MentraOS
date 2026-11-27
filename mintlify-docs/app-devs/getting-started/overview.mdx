@@ -74,7 +74,7 @@ Three npm packages, but you only ever invoke one of them directly:
 |---|---|---|
 | [`create-mentra-miniapp`](https://www.npmjs.com/package/create-mentra-miniapp) | Scaffolds a new project. Run once via `bunx`, never installed. | N/A |
 | [`@mentra/miniapp`](https://www.npmjs.com/package/@mentra/miniapp) | The runtime SDK you `import` (`session.*`, React hooks). | your `dependencies` |
-| [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli) | The `mentra-miniapp` CLI (`dev` / `pack` / `release`). | your `devDependencies` |
+| [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli) | The `mentra-miniapp` CLI (`dev` / `pack`). | your `devDependencies` |
 
 `create-mentra-miniapp` writes a `package.json` that already pins the other two,
 so a single `bun install` brings everything down.

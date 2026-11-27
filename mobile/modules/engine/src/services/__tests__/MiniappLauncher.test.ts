@@ -28,9 +28,8 @@ let releaseSource = "bundled_asset"
 /** The account's current workspace assigned the package through Fleet. */
 let assignedHere = false
 let releaseStorePackageName: string | undefined
-let selectedSnapshot: string | null = null
-let storedDevUrl: string | null = null
-let publisherFingerprint: string | null = null
+/** A local build's console connection, as its release identity records it. */
+let releaseReloadUrl: string | undefined
 let snapshotVersions: string[] = []
 let uiPath = "ui/index.html"
 /** The installed bundle's own `ageRating`; undefined declares none. */
@@ -45,8 +44,6 @@ mock.module("../AppRegistry", () => ({
     isMiniappAccessRevoked: (packageName: string) => revoked.has(packageName),
     getActiveVersion: async () => activeVersion,
     peekActiveVersion: () => activeVersion || undefined,
-    getPublisherKeyFingerprint: () => publisherFingerprint,
-    getSelectedDevSnapshot: () => selectedSnapshot,
     getMiniappEntryPaths: (_package: string, version: string) => {
       snapshotVersions.push(version)
       return {
@@ -64,7 +61,11 @@ mock.module("../AppRegistry", () => ({
       ...(manifestMinHostVersion === undefined ? {} : {minHostVersion: manifestMinHostVersion}),
       ...(manifestApiLevel === undefined ? {} : {minApiLevel: manifestApiLevel}),
     }),
-    getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
+    getReleaseIdentity: () => ({
+      source: releaseSource,
+      storePackageName: releaseStorePackageName,
+      ...(releaseReloadUrl ? {reloadUrl: releaseReloadUrl} : {}),
+    }),
     // AppRegistry asks the deployment's policy, knowing whether the current workspace assigned the package.
     isPackageAllowed: (packageName: string) => isLocalMiniappPackageAllowed(packageName, {assigned: assignedHere}),
     isReleaseAllowed: (packageName: string, version: string | undefined) =>
@@ -74,8 +75,6 @@ mock.module("../AppRegistry", () => ({
         {source: releaseSource, storePackageName: releaseStorePackageName},
         {assigned: releaseSource === "url" && assignedHere},
       ),
-    getLatestDevSnapshotVersion: () => null,
-    hasDevSnapshot: () => false,
     installFromUrl: async () => ({is_ok: () => true, is_error: () => false}),
     gcDevVersions: () => {},
   },
@@ -85,7 +84,14 @@ mock.module("../AppRegistry", () => ({
   getLocalAppRunningState: () => false,
   saveLocalAppRunningState: () => {},
 }))
-mock.module("../DevServerBridge", () => ({default: {connect: () => {}}}))
+/** The console connections the launcher opened and closed, in order. */
+let bridgeCalls: string[] = []
+mock.module("../DevServerBridge", () => ({
+  default: {
+    connect: (packageName: string, url: string) => bridgeCalls.push(`connect ${packageName} ${url}`),
+    disconnect: (packageName: string) => bridgeCalls.push(`disconnect ${packageName}`),
+  },
+}))
 
 let waitForConnectCalls: string[] = []
 mock.module("../LocalMiniappRuntime", () => ({
@@ -95,13 +101,9 @@ mock.module("../LocalMiniappRuntime", () => ({
     },
   },
 }))
-// No dev url stored → released (file://) path; resolveDevPort also misses.
-// Because there's no dev url, decideDevLaunchRoute is never reached here, so we
-// deliberately do NOT mock.module("../../utils/devMiniappLaunch"): that mock is
-// process-global in Bun and would leak into devMiniappLaunch.test.ts.
 mock.module("../../utils/storage/storage", () => ({
   storage: {
-    load: (key: string) => ({is_ok: () => key.endsWith("_dev_url") && !!storedDevUrl, value: storedDevUrl}),
+    load: () => ({is_ok: () => false}),
     save: () => ({is_ok: () => true}),
   },
 }))
@@ -198,9 +200,8 @@ describe("MiniappLauncher", () => {
     releaseSource = "bundled_asset"
     assignedHere = false
     releaseStorePackageName = undefined
-    selectedSnapshot = null
-    storedDevUrl = null
-    publisherFingerprint = null
+    releaseReloadUrl = undefined
+    bridgeCalls = []
     snapshotVersions = []
     uiPath = "ui/index.html"
     manifestAgeRating = undefined
@@ -344,28 +345,23 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls[1].hostTrustedSystem).toBe(false)
   })
 
-  test("runs a dev URL's bundle from a snapshot on the development origin, without SYSTEM trust", async () => {
-    const originalFetch = globalThis.fetch
-    const fetched: string[] = []
-    globalThis.fetch = (async (url: string) => {
-      fetched.push(url)
-      return new Response(JSON.stringify({packageName: "com.mentra.notes", entry: {background: "bg.js", ui: "ui.html"}}))
-    }) as typeof fetch
-    try {
-      const resolved = await miniappLauncher.resolveBundle("com.mentra.notes", {devUrl: "http://localhost:8081"})
-      // The server's address stays for hot reload and log forwarding; the code runs from the snapshot on disk.
-      expect(resolved?.devUrl).toBe("http://localhost:8081")
-      expect(resolved?.bgSource).toBe("BG SOURCE")
-      expect(resolved?.hostTrustedSystem).toBe(false)
-      expect(resolved?.devBuild).toBe(true)
-      expect(resolved?.uiRootDir).toMatch(/^file:\/\/\/bundle\/dev-\d+\/$/)
-      expect(resolved?.uiOriginName).toBe("invalid.dev.com.mentra.notes")
-      expect(resolved?.uiUri?.startsWith(resolved?.uiOrigin ?? "-")).toBe(true)
-      // Only the manifest comes off the server; nothing loads a file from it.
-      expect(fetched).toEqual(["http://localhost:8081/miniapp.json"])
-    } finally {
-      globalThis.fetch = originalFetch
-    }
+  test("a local build connects to its console as it spawns, and disconnects when it stops", async () => {
+    activeVersion = "dev-1234"
+    releaseSource = "local"
+    releaseReloadUrl = "ws://192.168.1.20:8081/__mentra_dev"
+    await miniappLauncher.ensureRunning("com.x")
+    // Before the context runs its first line, so none of its logs are lost.
+    expect(bridgeCalls).toEqual(["connect com.x ws://192.168.1.20:8081/__mentra_dev"])
+    await miniappLauncher.stop("com.x")
+    expect(bridgeCalls.at(-1)).toBe("disconnect com.x")
+
+    // Any other build has no console: a connection a local build left is closed.
+    bridgeCalls = []
+    activeVersion = "1.0.0"
+    releaseSource = "url"
+    releaseReloadUrl = undefined
+    await miniappLauncher.ensureRunning("com.x")
+    expect(bridgeCalls).toEqual(["disconnect com.x"])
   })
 
   test("launches a workspace's Fleet assignment where the deployment's developer tools are off", async () => {
@@ -423,16 +419,6 @@ describe("MiniappLauncher", () => {
     expect(miniappLauncher.isProjectedRunning("com.x")).toBe(true)
   })
 
-  test.each(["http://reachable.local:3000", "http://unreachable.local:3000"])(
-    "explicit packed snapshot wins over scanned URL %s",
-    async (url) => {
-      selectedSnapshot = "dev-1234-a"
-      storedDevUrl = url
-      await miniappLauncher.resolveBundle("com.x", {devUrl: url})
-      expect(snapshotVersions).toEqual([selectedSnapshot])
-    },
-  )
-
   test("ensureRunning spawns the background context when not registered", async () => {
     const result = await miniappLauncher.ensureRunning("com.x")
     expect(mockRouter.spawnCalls.length).toBe(1)
@@ -458,9 +444,9 @@ describe("MiniappLauncher", () => {
     await miniappLauncher.ensureRunning("com.x")
     expect(miniappFileUrl("com.x", "photo-1.jpg")).toBe("https://com.x.miniapp.invalid/.mentra/files/photo-1.jpg")
 
-    // A development snapshot's screen is on its development origin, and so are its files.
+    // A development build's screen is on its development origin, and so are its files.
     await miniappLauncher.stop("com.x")
-    selectedSnapshot = "dev-1234-a"
+    activeVersion = "dev-1234-a"
     await miniappLauncher.ensureRunning("com.x")
     expect(miniappFileUrl("com.x", "photo-1.jpg")).toBe(
       "https://invalid.dev.com.x.miniapp.invalid/.mentra/files/photo-1.jpg",
@@ -470,16 +456,11 @@ describe("MiniappLauncher", () => {
   test("a development build's screen origin serves the package's files, as an installed one does", async () => {
     const {miniappFileUrl, resetMiniappScreenOriginsForTests} = await import("../miniappScreenOrigin")
     resetMiniappScreenOriginsForTests()
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({packageName: "com.mentra.notes", entry: {background: "bg.js", ui: "ui.html"}}))) as typeof fetch
-    try {
-      const result = await miniappLauncher.ensureRunning("com.mentra.notes", {devUrl: "http://localhost:8081"})
-      expect(result.uiOrigin).not.toBeNull()
-      expect(miniappFileUrl("com.mentra.notes", "photo-1.jpg")).toBe(`${result.uiOrigin}/.mentra/files/photo-1.jpg`)
-    } finally {
-      globalThis.fetch = originalFetch
-    }
+    activeVersion = "dev-1234"
+    releaseSource = "local"
+    const result = await miniappLauncher.ensureRunning("com.mentra.notes")
+    expect(result.uiOrigin).toBe("https://invalid.dev.com.mentra.notes.miniapp.invalid")
+    expect(miniappFileUrl("com.mentra.notes", "photo-1.jpg")).toBe(`${result.uiOrigin}/.mentra/files/photo-1.jpg`)
   })
 
   test("loads an installed screen from the package's own origin on iOS", async () => {
@@ -528,8 +509,8 @@ describe("MiniappLauncher", () => {
     }
   })
 
-  test("a development snapshot loads from its development origin, never the package's, and is marked a development build", async () => {
-    selectedSnapshot = "dev-1234-a"
+  test("a development build loads from its development origin, never the package's, and is marked a development build", async () => {
+    activeVersion = "dev-1234-a"
     const resolved = await miniappLauncher.resolveBundle("com.x")
     expect(resolved?.uiUri).toBe("https://invalid.dev.com.x.miniapp.invalid/ui/index.html")
     expect(resolved?.uiOrigin).toBe("https://invalid.dev.com.x.miniapp.invalid")
@@ -538,9 +519,9 @@ describe("MiniappLauncher", () => {
     expect(resolved?.devBuild).toBe(true)
   })
 
-  test("a development snapshot of a system package spawns as a development build, with no system trust", async () => {
+  test("a development build of a system package spawns as a development build, with no system trust", async () => {
     ;(reactNative.Platform as {OS: string}).OS = "ios"
-    selectedSnapshot = "dev-1234-a"
+    activeVersion = "dev-1234-a"
     // Even under an identity that would be trusted for a release of the name.
     releaseSource = "bundled_asset"
     const result = await miniappLauncher.ensureRunning("com.mentra.notes")
@@ -562,25 +543,6 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls.length).toBe(1)
     expect(a.uiUri).toBe("https://com.x.miniapp.invalid/ui/index.html")
     expect(b.uiUri).toBe("https://com.x.miniapp.invalid/ui/index.html")
-  })
-
-  test("runs the installed bundle instead of live dev code for a package with a publisher signature", async () => {
-    publisherFingerprint = "sha256:publisher"
-    storedDevUrl = "http://localhost:8081"
-    const originalFetch = globalThis.fetch
-    const fetched: string[] = []
-    globalThis.fetch = (async (url: string) => {
-      fetched.push(url)
-      return new Response("DEV SOURCE")
-    }) as typeof fetch
-    try {
-      const resolved = await miniappLauncher.resolveBundle("com.example.signed", {devUrl: "http://localhost:8081"})
-      expect(fetched).toEqual([])
-      expect(resolved?.devUrl).toBeNull()
-      expect(resolved?.bgSource).toBe("BG SOURCE")
-    } finally {
-      globalThis.fetch = originalFetch
-    }
   })
 
   test.each([false, true])("explicit installs hold launches through install/rollback (failure=%s)", async (fail) => {
@@ -692,9 +654,8 @@ describe("MiniappLauncher", () => {
 
   test("ensureRunning returns null UI for an already-registered package whose resolve fails", async () => {
     // First launch succeeds and registers the package. Later the bundle becomes
-    // unresolvable (e.g. the mentra-miniapp dev server dropped). Headless
-    // callers must not throw — LocalMiniappView routes null uiUri + devUrl to
-    // /applet/dev-offline instead.
+    // unresolvable (e.g. it was uninstalled meanwhile). Headless callers must not
+    // throw; a screen says it has no screen to show.
     await miniappLauncher.ensureRunning("com.x")
     expect(mockRouter.spawnCalls.length).toBe(1)
     activeVersion = ""
@@ -845,7 +806,7 @@ describe("MiniappLauncher", () => {
         name: "Night Club",
         ageRating: "18+",
       })
-      // The version a launch runs, a development snapshot nobody selected included.
+      // The version a launch runs, a development build included.
       activeVersion = "dev-5"
       expect(miniappLauncher.installedAgeRating("com.club").ageRating).toBe("18+")
       manifestAgeRating = undefined
@@ -860,10 +821,10 @@ describe("MiniappLauncher", () => {
       expect(gateCalls).toEqual([])
     })
 
-    test("a development snapshot that declares a rating meets it too", async () => {
+    test("a development build that declares a rating meets it too", async () => {
       manifestAgeRating = "18+"
       declared = {declaredAge: 15, declaredAgeAt: new Date().toISOString()}
-      selectedSnapshot = "dev-1"
+      activeVersion = "dev-1"
       await expect(miniappLauncher.ensureRunning("com.club")).rejects.toMatchObject({verdict: "too_young"})
       expect(mockRouter.spawnCalls).toHaveLength(0)
     })

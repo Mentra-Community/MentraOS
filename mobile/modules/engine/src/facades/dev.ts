@@ -16,8 +16,7 @@ import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {cloudClientService} from "../services/CloudClientService"
 import {getConfigValues} from "../runtime/bootstrap"
-import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
-import {assertDevBuildAllowed, registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "../services/AppRegistry"
+import {installMiniapp, isLocalNetworkMiniappUrl} from "../services/installMiniapp"
 import {useAppStatusStore} from "../stores/apps"
 import {scopeCloudUrlOverrides} from "../services/cloudEndpointPolicy"
 
@@ -155,67 +154,31 @@ export const dev = {
   },
 
   /**
-   * Side-load a miniapp being served from a dev machine (the `mentra dev` / CLI
-   * flow) by its URL: probes `<url>/miniapp.json`, and on a reachable manifest
-   * registers it under its manifest package so it appears in `engine.miniapps`
-   * and can coexist with other dev miniapps. This is the OEM-host equivalent
-   * of the first-party
-   * developer-URL screen — the registration itself is engine-internal, so a
-   * host reaches it here rather than the internal registry. Rendering still
-   * flows through the normal display path once the miniapp is started.
+   * Install the miniapp a developer's computer serves at a local address (the URL `mentra dev` prints), without
+   * asking: the same install as scanning that URL (`engine.miniapps.install(url, {source: "local"})`). It installs as
+   * a development build of the package its `miniapp.json` names, updates from that address, and appears in
+   * `engine.miniapps`; a build installed from that address already, with what it serves now, stays as it is.
    *
-   * A dev build is unsigned code under the manifest package name, so it is
-   * refused (`ok: false`) while that package is installed with a publisher
-   * signature; the user uninstalls it first.
+   * It follows the rules of every development build: refused (`ok: false`) where the deployment doesn't allow
+   * development, and while the package is installed with a publisher signature its build doesn't carry. `name` is
+   * returned when given; otherwise the name its `miniapp.json` declares.
    */
   loadDevMiniapp: async (
     url: string,
     name?: string,
   ): Promise<{ok: true; packageName: string; name: string} | {ok: false; error: string}> => {
-    const devUrl = url.trim().replace(/\/+$/, "")
-    if (!devUrl) return {ok: false, error: "empty url"}
-    const result = await decideDevLaunchRoute("", devUrl)
-    if (result.decision !== "live") {
-      return {ok: false, error: "dev server unreachable, or no miniapp.json served there"}
-    }
-    const manifest = result.manifest
-    const appName = name ?? manifest.name ?? "Dev Miniapp"
-    const packageName = (manifest.packageName as string | undefined) ?? DEV_APP_PACKAGE_NAME
-    // Persist the host that answered — not the stale input IP — so home-tile
-    // relaunches skip a dead LAN address after mDNS/Metro failover.
-    const resolvedUrl = result.resolvedUrl || devUrl
-    // The `mentra-miniapp dev` server puts the hot-reload/log sidecar on the
-    // user port PLUS ONE — same convention as the first-party developer-URL
-    // screen's deriveDevPort.
-    let devPort: number | undefined
+    const trimmed = url.trim()
+    if (!trimmed) return {ok: false, error: "empty url"}
+    const address = trimmed.endsWith("/") ? trimmed : `${trimmed}/`
+    if (!isLocalNetworkMiniappUrl(address)) return {ok: false, error: `${trimmed} is not a local address`}
     try {
-      const parsed = Number(new URL(resolvedUrl).port)
-      devPort = Number.isFinite(parsed) && parsed > 0 ? parsed + 1 : undefined
-    } catch {
-      devPort = undefined
-    }
-    try {
-      // Refuse before stopping a running signed install that the dev build may not replace.
-      assertDevBuildAllowed(packageName)
-      const existing = useAppStatusStore.getState().apps.find((app) => app.packageName === packageName)
-      if (existing?.running) await useAppStatusStore.getState().stop(packageName)
-      await registerDevApp({
-        packageName,
-        name: appName,
-        iconUrl: manifest.icon ? new URL(manifest.icon, `${resolvedUrl}/`).toString() : `${resolvedUrl}/icon.png`,
-        // Persist the host that answered — not the stale input IP.
-        devUrl: resolvedUrl,
-        devPort,
-        type: manifest.type as DevAppRecord["type"],
-        permissions: manifest.permissions as DevAppRecord["permissions"],
-        hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
-        actions: manifest.actions as DevAppRecord["actions"],
-      })
+      const result = await installMiniapp(address, {source: "local"})
+      await useAppStatusStore.getState().refresh()
+      const installed = useAppStatusStore.getState().apps.find((app) => app.packageName === result.packageName)
+      return {ok: true, packageName: result.packageName, name: name ?? installed?.name ?? result.packageName}
     } catch (error) {
       return {ok: false, error: error instanceof Error ? error.message : String(error)}
     }
-    await useAppStatusStore.getState().refresh()
-    return {ok: true, packageName, name: appName}
   },
 
   /** Current engine runtime status for engine-owned debug surfaces. */

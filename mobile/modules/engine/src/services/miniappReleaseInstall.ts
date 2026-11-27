@@ -1,6 +1,5 @@
 import type {FleetAssignmentReason} from "@mentra/cloud-protocol"
 import {launchesWithPairedGlasses, useAppStatusStore} from "../stores/apps"
-import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInstallRuntime"
 import appRegistry, {
   type InstallBundleOptions,
@@ -8,6 +7,7 @@ import appRegistry, {
   type MiniappInstallReason,
 } from "./AppRegistry"
 import {markMiniappUpdateDeferred} from "./deferredMiniappUpdates"
+import {DevelopmentBuildInstalledError} from "./miniappInstallIdentity"
 import {miniappLauncher} from "./MiniappLauncher"
 import {
   canShowRunningUpdatePrompt,
@@ -85,8 +85,9 @@ export class MiniappInstallCancelledError extends Error {
 /**
  * Shared release installation for QR, URL and workspace callers. The caller
  * authorizes the source; the archive goes through the one AppRegistry installer, which
- * binds it to the expected package and version and applies the signer and
- * version rules again inside its serialized transaction.
+ * binds it to the expected package and version and applies the signer rule
+ * again inside its serialized transaction. A release with a lower version than
+ * the installed one installs like any other.
  *
  * - Explicit installs stop a running miniapp, install, and restart it; its
  *   launches wait until the install commits or rolls back.
@@ -126,18 +127,10 @@ export async function installMiniappRelease(
       }
     : reasonOptions
   assertCurrent()
-  // An early check avoids stopping or reserving an app for a known downgrade.
-  // AppRegistry checks again in its serialized filesystem transaction.
-  appRegistry.assertCanInstallVersion(packageName, options.expectedVersion)
 
   if (!onlyIfStopped) {
     await useAppStatusStore.getState().runUpdate(packageName, () =>
-      installWithRuntimeReload(miniappLauncher, packageName, async () => {
-        // A dev probe or snapshot started before this release must not
-        // reactivate development code after it commits.
-        invalidateDevSnapshotRequests(packageName)
-        await install(installOptions)
-      }),
+      installWithRuntimeReload(miniappLauncher, packageName, () => install(installOptions)),
     )
     await useAppStatusStore.getState().refresh()
     return
@@ -247,7 +240,7 @@ async function installRunningUpdate(
       whenStaged: async (staged) => {
         assertCurrent()
         await options.whenStaged?.(staged)
-        // The download, signer, version and compatibility checks have passed
+        // The download, signer and compatibility checks have passed
         // and the files are unpacked; nothing is reserved yet. If the user
         // closed the miniapp meanwhile, it updates like an idle one.
         if (miniappLauncher.isRunning(packageName)) {
@@ -302,7 +295,10 @@ async function restartAfterUpdate(packageName: string, reopen: boolean): Promise
     await useAppStatusStore.getState().refresh()
     const app = useAppStatusStore.getState().apps.find((candidate) => candidate.packageName === packageName)
     if (!app) return
-    const started = await useAppStatusStore.getState().start(app, {skipNavigation: true, trigger: "automatic"})
+    // The update just installed, or was put back: the restart doesn't wait for another check.
+    const started = await useAppStatusStore
+      .getState()
+      .start(app, {skipNavigation: true, trigger: "automatic", checkForUpdate: false})
     if (started && reopen) await useAppStatusStore.getState().setForeground(packageName)
   } catch (error) {
     // A launch error is reported by the runtime; it does not undo a committed release.
@@ -319,11 +315,12 @@ export type ManagedInstallFailure = FleetAssignmentReason | "running" | "cancell
 export function classifyManagedInstallError(error: unknown): {kind: ManagedInstallFailure; retryable: boolean} {
   if (error instanceof MiniappRunningError) return {kind: "running", retryable: true}
   if (error instanceof MiniappInstallCancelledError) return {kind: "cancelled", retryable: true}
+  // The person's development build holds the package: only they replace it.
+  if (error instanceof DevelopmentBuildInstalledError) return {kind: "development_build", retryable: false}
   const message = error instanceof Error ? error.message : String(error)
   if (/ENOSPC|no space|not enough space|disk is full|storage (is )?full|quota/i.test(message))
     return {kind: "storage_full", retryable: true}
   if (/signature|signer|unsigned bundle|publisher/i.test(message)) return {kind: "signature_invalid", retryable: false}
-  if (/is already installed/.test(message)) return {kind: "newer_version_installed", retryable: false}
   if (/Requires Mentra App|Built for SDK|Mentra App version|Miniapp SDK version|not compatible/i.test(message))
     return {kind: "incompatible_host", retryable: false}
   if (/bundle version mismatch|SHA-256 mismatch/i.test(message)) return {kind: "download_failed", retryable: true}

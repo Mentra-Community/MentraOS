@@ -38,7 +38,6 @@ mock.module("../AppRegistry", () => ({
     isMiniappAccessRevoked: () => false,
     getActiveVersion: async (packageName: string) => MANIFESTS[packageName]?.version ?? "1.0.0",
     getPublisherKeyFingerprint: () => null,
-    getSelectedDevSnapshot: () => null,
     getMiniappEntryPaths: (packageName: string, version: string) =>
       missingBundles.has(packageName)
         ? null
@@ -59,7 +58,7 @@ mock.module("../AppRegistry", () => ({
   getLocalAppRunningState: (packageName: string) => runningFlags.has(packageName),
   saveLocalAppRunningState: (packageName: string, running: boolean) => savedRunningState.push([packageName, running]),
 }))
-mock.module("../DevServerBridge", () => ({default: {connect: () => {}}}))
+mock.module("../DevServerBridge", () => ({default: {connect: () => {}, disconnect: () => {}}}))
 mock.module("../LocalMiniappRuntime", () => ({default: {waitForConnect: async () => {}}}))
 mock.module("../../utils/storage/storage", () => ({
   storage: {load: () => ({is_ok: () => false}), save: () => ({is_ok: () => true})},
@@ -149,7 +148,16 @@ beforeEach(() => {
 afterEach(() => {
   stopListening()
   warn.mockRestore()
+  miniappLauncher.setUpdateCheck(null)
 })
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return {promise, resolve}
+}
 
 describe("a restore after a process death", () => {
   test("is one automatic launch for each miniapp restored, named as installed", async () => {
@@ -188,53 +196,55 @@ describe("a restore after a process death", () => {
     expect(savedRunningState).toEqual([[NOTES, false]])
   })
 
-  test("first hands the host every miniapp it is about to start, and starts them once it is done", async () => {
-    const order: string[] = []
-    await miniappLauncher.autostartLocalMiniapps({
-      beforeStart: async (packageNames) => {
-        order.push(`before ${packageNames.join(", ")}`)
-        expect(launches).toEqual([])
-      },
+  test("first checks every miniapp it is about to start for an update, all at once, and starts them once that is done", async () => {
+    const checked: string[] = []
+    const checks = deferred()
+    miniappLauncher.setUpdateCheck(async (packageName) => {
+      checked.push(packageName)
+      await checks.promise
     })
-    expect(order).toEqual([`before ${NOTES}, ${MAPS}`])
+    const restore = miniappLauncher.autostartLocalMiniapps()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // Both are being checked, and neither has started.
+    expect(checked).toEqual([NOTES, MAPS])
+    expect(launches).toEqual([])
+    checks.resolve()
+    await restore
+    // Each was checked once: its start doesn't wait for a second check.
+    expect(checked).toEqual([NOTES, MAPS])
     expect(launches.map((launch) => [launch.packageName, launch.outcome])).toEqual([
       [NOTES, "started"],
       [MAPS, "started"],
     ])
   })
 
-  test("starts them all the same when the host's check before the start fails", async () => {
-    const warn = spyOn(console, "warn").mockImplementation(() => {})
-    await miniappLauncher.autostartLocalMiniapps({
-      beforeStart: async () => {
-        throw new Error("offline")
-      },
+  test("starts them all the same when the check before the start fails", async () => {
+    miniappLauncher.setUpdateCheck(async () => {
+      throw new Error("offline")
     })
+    await miniappLauncher.autostartLocalMiniapps()
     expect(launches.map((launch) => [launch.packageName, launch.outcome])).toEqual([
       [NOTES, "started"],
       [MAPS, "started"],
     ])
-    warn.mockRestore()
   })
 
   test("doesn't start one the person stopped while it was checked", async () => {
-    await miniappLauncher.autostartLocalMiniapps({
-      beforeStart: async () => {
-        runningFlags.delete(NOTES)
-      },
+    miniappLauncher.setUpdateCheck(async (packageName) => {
+      if (packageName === NOTES) runningFlags.delete(NOTES)
     })
+    await miniappLauncher.autostartLocalMiniapps()
     expect(launches.map((launch) => launch.packageName)).toEqual([MAPS])
   })
 
-  test("asks the host about nothing when nothing is to start", async () => {
+  test("checks nothing when nothing is to start", async () => {
     runningFlags = new Set()
-    let asked = false
-    await miniappLauncher.autostartLocalMiniapps({
-      beforeStart: async () => {
-        asked = true
-      },
+    let checked = false
+    miniappLauncher.setUpdateCheck(async () => {
+      checked = true
     })
-    expect(asked).toBe(false)
+    await miniappLauncher.autostartLocalMiniapps()
+    expect(checked).toBe(false)
   })
 
   test("skips miniapps that were not running, that already run, or that have no context", async () => {
@@ -336,6 +346,122 @@ describe("starts outside the apps store", () => {
     expect(launches.map((launch) => [launch.packageName, launch.start, launch.outcome])).toEqual([
       [NOTES, "user", "failed"],
     ])
+  })
+})
+
+describe("a start waits for its update check", () => {
+  test("a miniapp that isn't running starts once its check is done, whoever starts it", async () => {
+    const check = deferred()
+    const checked: string[] = []
+    miniappLauncher.setUpdateCheck(async (packageName) => {
+      checked.push(packageName)
+      await check.promise
+    })
+    // Another miniapp starting it (LocalMiniappRuntime.startInteropApp), and its screen opening (MiniappView).
+    const starts = Promise.all([
+      miniappLauncher.ensureConnected(NOTES),
+      miniappLauncher.ensureRunning(NOTES, {}, {trigger: "user"}),
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // Both wait for the one check, and nothing has started.
+    expect(checked).toEqual([NOTES])
+    expect(miniappLauncher.startWait(NOTES)).toBe("check")
+    expect(miniappLauncher.isRunning(NOTES)).toBe(false)
+    expect(launches).toEqual([])
+    check.resolve()
+    await starts
+    expect(miniappLauncher.startWait(NOTES)).toBeNull()
+    expect(miniappLauncher.isProjectedRunning(NOTES)).toBe(true)
+    expect(launchesOf(NOTES)).toHaveLength(1)
+  })
+
+  test("says what it waits for: the check, then the update the check found, then nothing", async () => {
+    const installed = deferred()
+    let found!: () => void
+    miniappLauncher.setUpdateCheck(async (_packageName, onInstalling) => {
+      found = onInstalling
+      await installed.promise
+    })
+    const seen: Array<string | null> = []
+    const unsubscribe = miniappLauncher.onStartWaitChanged(() => seen.push(miniappLauncher.startWait(NOTES)))
+    const start = miniappLauncher.ensureRunning(NOTES, {}, {trigger: "user"})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    found()
+    expect(miniappLauncher.startWait(NOTES)).toBe("update")
+    installed.resolve()
+    await start
+    unsubscribe()
+    expect(seen).toEqual(["check", "update", null])
+    expect(miniappLauncher.startWait(MAPS)).toBeNull()
+  })
+
+  test("starts the miniapp as it is when the check fails", async () => {
+    miniappLauncher.setUpdateCheck(async () => {
+      throw new Error("offline")
+    })
+    await miniappLauncher.ensureRunning(NOTES, {}, {trigger: "user"})
+    expect(miniappLauncher.isProjectedRunning(NOTES)).toBe(true)
+  })
+
+  test("a miniapp that already runs, a hidden action wake and a restart around an install don't wait", async () => {
+    const checked: string[] = []
+    miniappLauncher.setUpdateCheck(async (packageName) => {
+      checked.push(packageName)
+      await new Promise(() => {})
+    })
+    // A hidden action wake is not an open.
+    await miniappLauncher.ensureConnected(NOTES, 10_000, undefined, {projectRunning: false})
+    // It runs now: becoming user activity, and opening its screen again, start nothing.
+    await miniappLauncher.ensureConnected(NOTES)
+    await miniappLauncher.ensureRunning(NOTES, {}, {trigger: "user"})
+    // An install stops it and starts it again.
+    await installWithRuntimeReload(miniappLauncher, NOTES, async () => {})
+    expect(checked).toEqual([])
+    expect(miniappLauncher.isProjectedRunning(NOTES)).toBe(true)
+  })
+
+  test("a miniapp the deployment doesn't make available is refused without a check", async () => {
+    unavailable.add(NOTES)
+    let checked = false
+    miniappLauncher.setUpdateCheck(async () => {
+      checked = true
+    })
+    await expect(miniappLauncher.ensureRunning(NOTES, {}, {trigger: "user"})).rejects.toThrow("deployment policy")
+    expect(checked).toBe(false)
+  })
+
+  test("cancelled while it waits, it starts nothing and is no launch", async () => {
+    miniappLauncher.setUpdateCheck(() => new Promise(() => {}))
+    const starts = Promise.allSettled([
+      miniappLauncher.ensureRunning(NOTES, {}, {trigger: "user"}),
+      miniappLauncher.ensureConnected(NOTES),
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    miniappLauncher.cancelStart(NOTES)
+    expect(miniappLauncher.startWait(NOTES)).toBeNull()
+    const settled = await starts
+    expect(settled.map((result) => result.status)).toEqual(["rejected", "rejected"])
+    expect((settled[0] as PromiseRejectedResult).reason).toMatchObject({name: "MiniappStartCancelledError"})
+    expect(miniappLauncher.isRunning(NOTES)).toBe(false)
+    expect(launches).toEqual([])
+  })
+
+  test("a start after a cancelled one waits for a check of its own", async () => {
+    let checks = 0
+    const check = deferred()
+    miniappLauncher.setUpdateCheck(async () => {
+      checks++
+      await check.promise
+    })
+    const first = miniappLauncher.ensureRunning(NOTES, {}, {trigger: "user"})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    miniappLauncher.cancelStart(NOTES)
+    const second = miniappLauncher.ensureRunning(NOTES, {}, {trigger: "user"})
+    await expect(first).rejects.toMatchObject({name: "MiniappStartCancelledError"})
+    check.resolve()
+    await second
+    expect(checks).toBe(2)
+    expect(miniappLauncher.isProjectedRunning(NOTES)).toBe(true)
   })
 })
 

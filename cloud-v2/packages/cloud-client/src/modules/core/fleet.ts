@@ -1,8 +1,10 @@
 import {
+  FLEET_DESIRED_STATE_PINS_PARAM,
+  FLEET_DESIRED_STATE_PINS_VALUE,
   FLEET_NOT_INSTALLED,
   FLEET_SCHEMA_VERSION,
-  FleetDesiredStateSchema,
-  type FleetDesiredState,
+  FleetDesiredStateWithPinsSchema,
+  type FleetDesiredStateWithPins,
   type FleetReport,
 } from "@mentra/cloud-protocol"
 import {AuthExpiredError, HttpError} from "../../errors"
@@ -10,7 +12,11 @@ import type {HttpClient} from "../../http"
 import {AccountCaller, CoreResponseError, type AccountCallOptions, type CoreTokenSource} from "./account-call"
 
 const FLEET_REPORT_PATH = "/api/client/fleet/report"
-const FLEET_DESIRED_STATE_PATH = "/api/client/fleet/desired-state"
+/**
+ * This client holds pins, so it asks for them: an answer to a request without `pins=1` names every pinned entry as
+ * `latest`, for released phones that would reject a pinned one.
+ */
+const FLEET_DESIRED_STATE_PATH = `/api/client/fleet/desired-state?${FLEET_DESIRED_STATE_PINS_PARAM}=${FLEET_DESIRED_STATE_PINS_VALUE}`
 
 /** Core's whole-response error codes are short snake_case words; anything else is not safe to surface. */
 const ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
@@ -116,8 +122,9 @@ export class Fleet {
   }
 
   /**
-   * Fetches the account's desired state (`GET /api/client/fleet/desired-state`), validated against
-   * `FleetDesiredStateSchema`.
+   * Fetches the account's desired state, pins included (`GET /api/client/fleet/desired-state?pins=1`), validated
+   * against `FleetDesiredStateWithPinsSchema`: each entry is `latest`, or `pinned` with its pin. A Fleet from before
+   * pins ignores the parameter and answers every entry as `latest`, which parses the same.
    *
    * Resolves only with a complete, valid `managed` or `unmanaged` answer. Everything else rejects, so a failure can
    * never be read as "nothing assigned" or "unmanaged" and make the phone drop what it holds:
@@ -132,13 +139,13 @@ export class Fleet {
    * A 401 refreshes the Core token once and sends again. `opts.expectedAccount` refuses the call when the client
    * holds another account's token.
    */
-  async desiredState(opts?: AccountCallOptions): Promise<FleetDesiredState> {
+  async desiredState(opts?: AccountCallOptions): Promise<FleetDesiredStateWithPins> {
     const body = await this.caller.run(
       bearer =>
         this.http.get<unknown>(FLEET_DESIRED_STATE_PATH, {bearer, ...(opts?.signal ? {signal: opts.signal} : {})}),
       opts,
     )
-    const parsed = FleetDesiredStateSchema.safeParse(body)
+    const parsed = FleetDesiredStateWithPinsSchema.safeParse(body)
     if (parsed.success) return parsed.data
     const status = typeof body === "object" && body !== null && "status" in body ? body.status : undefined
     throw new CoreResponseError(

@@ -85,12 +85,14 @@ sockets.
 ## Public surface
 
 ```ts
-import {engine, decideDevLaunchRoute} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 import BluetoothSdk from "@mentra/engine/bluetooth-sdk"
 ```
 
-- `decideDevLaunchRoute` — pre-flight a dev URL's `miniapp.json` to decide
-  whether to mount live or take the user to the offline screen.
+- `engine.dev.loadDevMiniapp(url)` — install the miniapp a developer's computer
+  serves at a local address (the URL `mentra dev` prints) without asking, as a
+  development build. It updates from that address like any miniapp from its
+  URL: when it opens, and when `mentra dev` signals a save.
 
 ### Miniapps
 

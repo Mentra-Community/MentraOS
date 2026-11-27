@@ -8,10 +8,11 @@
  * MentraJS router) are exported from `@mentra/engine` directly; the host mounts a
  * `<WebView>` wired to them. This facade is the lifecycle half.
  */
-import {getConfigValues} from "../runtime/bootstrap"
+import {getConfigValues, isDevMiniappAllowed} from "../runtime/bootstrap"
 import appRegistry from "../services/AppRegistry"
 import {cloudClientService} from "../services/CloudClientService"
 import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
+import devServerBridge from "../services/DevServerBridge"
 import {normalizeCoreUrl} from "../services/fleet/coreUrl"
 import {
   installMiniapp,
@@ -20,11 +21,14 @@ import {
   type InstallMiniappResult,
 } from "../services/installMiniapp"
 import {installMiniappFromLink, type InstallMiniappFromLinkOptions} from "../services/installMiniappFromLink"
+import {installLocalBuild} from "../services/localBuildInstall"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
 import {fetchMiniappBundle, fetchMiniappJson} from "../services/miniappFetch"
+import {miniappPins} from "../services/miniappPins"
 import {registryStatusStore} from "../services/miniappRegistryStatusStore"
 import {installMiniappRelease} from "../services/miniappReleaseInstall"
-import {MiniappUrlUpdater} from "../services/miniappUrlUpdates"
+import {miniappLauncher, type MiniappStartWait} from "../services/MiniappLauncher"
+import {LOCAL_CHECK_TIMEOUT_MS, MiniappUrlUpdater, START_UPDATE_LIMITS} from "../services/miniappUrlUpdates"
 import {
   onRunningUpdateFailed,
   onRunningUpdatePrompt,
@@ -34,9 +38,10 @@ import {
 } from "../services/runningUpdatePrompt"
 import {isSystemMiniappPackage} from "../services/SystemMiniappPolicy"
 import {firstPartyMiniappUrl} from "../services/systemMiniappTrust"
-import {launchesWithPairedGlasses, onMiniappOpenedByUser, useAppStatusStore} from "../stores/apps"
+import {launchesWithPairedGlasses, useAppStatusStore} from "../stores/apps"
 import type {ClientApp} from "../types"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
+import {BgTimer} from "../utils/timers"
 
 type AppsState = ReturnType<typeof useAppStatusStore.getState>
 
@@ -53,14 +58,23 @@ const urlUpdater = new MiniappUrlUpdater({
   releaseIdentity: (packageName, version) => appRegistry.getReleaseIdentity(packageName, version),
   isSystemPackage: isSystemMiniappPackage,
   firstPartyUrl: (packageName) => firstPartyMiniappUrl(getConfigValues(), packageName),
-  hasDevelopmentSelection: (packageName) => localMiniappRuntime.hasDevelopmentSelection(packageName),
+  isDevelopmentBuild: (packageName) => appRegistry.isDevelopmentBuild(packageName),
+  developmentAllowed: (packageName) => isDevMiniappAllowed(packageName),
+  pinFor: miniappPins.pinFor,
   compatibilityPolicy: () => ({hostVersion: getConfigValues().hostVersion}),
   launchesWithPairedGlasses,
-  // Redirects come back to the updater, which follows moves itself.
-  fetchManifest: (url, {etag, packageName}) =>
-    fetchMiniappJson(url, {...(etag ? {etag} : {}), packageForChallenge: packageName, redirect: "manual"}),
-  fetchBundle: (url, options) => fetchMiniappBundle(url, options),
+  // Redirects come back to the updater, which follows moves itself. A local address is asked nothing more than its
+  // files, and has a short time to answer.
+  fetchManifest: (url, {etag, packageName, local}) =>
+    fetchMiniappJson(url, {
+      ...(etag ? {etag} : {}),
+      ...(local ? {timeoutMs: LOCAL_CHECK_TIMEOUT_MS} : {packageForChallenge: packageName}),
+      redirect: "manual",
+    }),
+  fetchBundle: (url, {local, ...options}) =>
+    fetchMiniappBundle(url, {...options, ...(local ? {answerChallenge: false} : {})}),
   install: installMiniappRelease,
+  installLocal: installLocalBuild,
   keepVersions: (packageName, versions) => appRegistry.gcReleaseVersions(packageName, versions),
   isRunningError: (error) => error instanceof MiniappRunningError,
   installSession: () => localMiniappRuntime.installSession(),
@@ -80,9 +94,18 @@ const urlUpdater = new MiniappUrlUpdater({
   setReleaseSourceUrl: (packageName, version, fromUrl, sourceUrl) =>
     appRegistry.setReleaseSourceUrl(packageName, version, fromUrl, sourceUrl),
   now: () => Date.now(),
+  setTimeout: (callback, ms) => BgTimer.setTimeout(callback, ms),
+  clearTimeout: (handle) => BgTimer.clearTimeout(handle as number),
   log: (message) => console.log(`MiniappUpdates: ${message}`),
   warn: (message, error) => console.warn(`MiniappUpdates: ${message}`, error ?? ""),
 })
+
+// Every start of a miniapp that isn't running waits for this check first, in the launcher.
+miniappLauncher.setUpdateCheck((packageName, onInstalling) =>
+  urlUpdater.checkBeforeStart(packageName, START_UPDATE_LIMITS, onInstalling),
+)
+// A local build's server says a new build is ready, or its console connection opened: check its address now.
+devServerBridge.onCheck((packageName) => urlUpdater.checkNow(packageName))
 
 export const miniapps = {
   /** All installed miniapps (snapshot). */
@@ -128,36 +151,21 @@ export const miniapps = {
     timeoutMs?: number,
   ): Promise<unknown> => localMiniappRuntime.invokeActionFromHost(packageName, actionId, params, timeoutMs),
   /**
-   * Check every installed miniapp's own URL and install newer releases,
-   * silently. A running miniapp's update waits until it stops.
+   * Check every installed miniapp's own URL and install what it serves when
+   * that is another build than the one installed, silently. A running
+   * miniapp's update is asked about (`onUpdatePrompt`), or waits until it stops.
    */
   checkForUpdates: (): Promise<void> => urlUpdater.checkAll(),
   /**
-   * Check a miniapp a person just opened, unless it was checked within the
-   * last minute. Its update is staged and asked about.
+   * What a start of the miniapp waits for before it runs, or null when none waits. A miniapp that isn't running is
+   * checked for an update before it starts, so that another build installs while it is stopped instead of asking
+   * to restart it: `"check"` while its URL is checked, for 5 seconds at most, then `"update"` while the build that
+   * check found installs, for 30 seconds at most. The host shows the miniapp's splash meanwhile, and says it is
+   * updating during `"update"`. `stop` cancels a start that still waits: nothing starts.
    */
-  checkOpenedForUpdate: (packageName: string): Promise<void> => urlUpdater.checkOpened(packageName),
-  /**
-   * Check miniapps that are about to start for a newer release, all at once, so that one found installs while they
-   * are stopped, silently, instead of asking to restart a running miniapp. Waits `checkMs` at most for each to find
-   * one, and once found, `installMs` more at most for its install. Never throws.
-   */
-  checkBeforeStart: (packageNames: string[], limits: {checkMs: number; installMs: number}): Promise<void> =>
-    Promise.all(
-      packageNames.map((packageName) => urlUpdater.checkBeforeStart(packageName, limits).catch(() => {})),
-    ).then(() => {}),
-  /**
-   * A person opened a miniapp: started it themselves, or opened one again after answering Not now to its update.
-   * Automatic starts (restoring what ran before, an update's restart) are not announced. Returns an unsubscribe.
-   */
-  onOpened: (listener: (packageName: string) => void): (() => void) => {
-    const unsubscribeStarted = onMiniappOpenedByUser(listener)
-    const unsubscribeDue = onRunningUpdatePromptDue(listener)
-    return () => {
-      unsubscribeStarted()
-      unsubscribeDue()
-    }
-  },
+  startWait: (packageName: string): MiniappStartWait | null => miniappLauncher.startWait(packageName),
+  /** Called whenever `startWait` changes for any miniapp. Returns an unsubscribe. */
+  onStartWaitChanged: (listener: () => void): (() => void) => miniappLauncher.onStartWaitChanged(listener),
   /**
    * Render "update now?" prompts for running miniapps and answer each one. The
    * engine decides when one may appear (foreground, one at a time; after Not

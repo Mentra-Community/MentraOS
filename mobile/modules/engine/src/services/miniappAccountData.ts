@@ -13,7 +13,6 @@ import {storage} from "../utils/storage/storage"
 import {sanitizeSegment} from "./blobPaths"
 import {
   forgetMiniappDataAccount,
-  isDevelopmentSelectionKey,
   lastMiniappDataSession,
   partitionIdOf,
   type MiniappDataSession,
@@ -35,7 +34,6 @@ const ACTIVE_VERSION_SUFFIX = "_active_version"
  *
  * - data in an account's partitions, or kept for one account by its user id (from before partitions, and the
  *   markers of its move);
- * - development selections, which `miniappDataPartition.ts` swaps per account and workspace when the account changes;
  * - the installed version each package runs, as the installs themselves stay on the phone.
  */
 export function isMiniappKeyKeptAtSignOut(key: string): boolean {
@@ -43,7 +41,6 @@ export function isMiniappKeyKeptAtSignOut(key: string): boolean {
     PARTITIONED_KEY_ROOTS.some((root) => key.startsWith(root)) ||
     LEGACY_KEY_ROOTS.some((root) => key.startsWith(root)) ||
     MIGRATED_KEY_ROOTS.some((root) => key.startsWith(root)) ||
-    isDevelopmentSelectionKey(key) ||
     key.endsWith(ACTIVE_VERSION_SUFFIX)
   )
 }

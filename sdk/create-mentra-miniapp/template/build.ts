@@ -25,7 +25,7 @@
  *     const tailwind = (await import("bun-plugin-tailwind")).default
  *     uiBuild.plugins.push(tailwind)
  *
- * Output goes to ./dist with the shape `mentra-miniapp release` expects.
+ * Output goes to ./dist with the shape `mentra-miniapp pack` expects.
  */
 
 import {rm} from "fs/promises"

@@ -1,5 +1,5 @@
 import {engine} from "@mentra/engine"
-import {appRegistry, getDevAppRecords} from "@mentra/engine-host-internal"
+import {appRegistry} from "@mentra/engine-host-internal"
 
 import {devMachineHost} from "@/utils/cloudClient/devHost"
 
@@ -20,23 +20,20 @@ function servedDevMiniapps(): {packageName: string; url: string}[] {
 }
 
 /**
- * Whether the current account or workspace runs the package's build from its dev server, as a debug build does: live
- * from the server, or, for a package with a recorded publisher, as the snapshot the server served
- * (localBuildInstall.ts).
+ * Whether the package's build is the one its dev server serves, as a debug build installs it: a local build installed
+ * from that server's address, which updates from it on every open and every save (`miniappUrlUpdates.ts`).
  */
 export function runsDevMiniapp(packageName: string): boolean {
   const served = servedDevMiniapps().find((app) => app.packageName === packageName)
   if (!served) return false
-  const fromServer = (url: string | undefined) => !!url && withoutSlash(url) === withoutSlash(served.url)
-  if (getDevAppRecords().some((record) => record.packageName === packageName && fromServer(record.devUrl))) return true
   const version = engine.miniapps.list().find((app) => app.packageName === packageName)?.version
   const identity = version?.startsWith("dev-") ? appRegistry.getReleaseIdentity(packageName, version) : null
-  return identity?.source === "local" && fromServer(identity.sourceUrl)
+  return identity?.source === "local" && !!identity.sourceUrl && withoutSlash(identity.sourceUrl) === withoutSlash(served.url)
 }
 
 /**
- * Install the package from its dev server, as a local build that reloads on every save, unless the current account
- * or workspace already runs it from there. False when this build serves no such miniapp, or it didn't install.
+ * Install the package from its dev server, as a local build that updates on every save, unless it runs from there
+ * already. False when this build serves no such miniapp, or it didn't install.
  */
 export async function installDevMiniapp(packageName: string, isCurrent: () => boolean = () => true): Promise<boolean> {
   const served = servedDevMiniapps().find((app) => app.packageName === packageName)

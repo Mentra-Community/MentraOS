@@ -74,7 +74,8 @@ The Mentra App installs it as it installs from a link: it fetches
 `miniapp.json`, checks the package name against the URL's domain, registers the
 URL with Mentra, checks the phone can run the miniapp, and downloads, verifies
 and installs its bundle. `status` is `installed`, `opened` (it was installed from
-that URL already, or a newer release of it is) or `deferred` (the miniapp is
+that URL already; older Mentra Apps also answer this when a release with a
+higher version is installed) or `deferred` (the miniapp is
 running, so its update waits until it stops or the person answers the Mentra
 App's update prompt).
 

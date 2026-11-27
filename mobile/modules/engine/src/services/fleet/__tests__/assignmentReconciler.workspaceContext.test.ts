@@ -24,7 +24,6 @@ const CORE = "https://core.mentra.glass"
 const A = "ws_A"
 const B = "ws_B"
 const notes = "com.acme.notes"
-const other = "com.acme.other"
 const urlA = "https://notes.acme.example/a/"
 const urlB = "https://notes.acme.example/b/"
 const session = {coreUrl: CORE, mentraUserId: "mu_1"}
@@ -92,12 +91,6 @@ function serve(url: string, version = "1.0.0", packageName = notes) {
   served.set(url, {ok: true, packageName, version, bundleUrl: `${url}bundle.zip`, bundleSha256: "c".repeat(64)})
 }
 
-/** What the app's registry answers for a live-development selection: a dev URL in the live keys. */
-const devUrl = (packageName: string) => {
-  const value = storage.load<string>(`${packageName}_dev_url`)
-  return value.is_ok() ? value.value : undefined
-}
-
 function start(): AssignmentReconciler {
   const listeners = new Set<(packageName: string) => void>()
   miniappContextRegistry.onRemoved((packageName) => {
@@ -120,21 +113,18 @@ function start(): AssignmentReconciler {
     random: () => 0,
     miniapps: {
       resolve: async (url) => served.get(url) ?? {ok: false, reason: "access_denied"},
+      fleetPinnedPackages: () => [],
+      setFleetPin: () => {},
       installedRelease: async (pkg) =>
         installed.has(pkg) ? {version: installed.get(pkg)!, bundleSha256: "c".repeat(64)} : null,
+      updatesFromAnotherUrl: () => false,
       hasOtherReason: () => false,
       assignment: (pkg) => assignments.get(pkg) ?? null,
       assignedPackages: () => [...assignments.keys()],
-      hasDevelopmentSelection: (pkg) => devUrl(pkg) !== undefined || !partitions.isDevelopmentSelectionCurrent(pkg),
-      clearDevelopmentSelection: async (pkg) => {
-        if (!partitions.isDevelopmentSelectionCurrent(pkg)) return false
-        storage.remove(`${pkg}_dev_url`)
-        return true
-      },
+      isDevelopmentBuild: () => false,
       allowsRelease: () => true,
       install: async ({resolution, assignment}) => {
         installed.set(resolution.packageName, resolution.version)
-        storage.remove(`${resolution.packageName}_dev_url`)
         assignments.set(resolution.packageName, assignment)
         return {version: resolution.version}
       },
@@ -241,28 +231,5 @@ describe("a workspace change with the same package assigned", () => {
     reconciler!.trigger("leave")
     await timers.advance(0)
     expect(freshPartition()).toBe(partitionIn(null))
-  })
-})
-
-describe("development selections across a workspace change", () => {
-  test("B's managed release clears only B's selection of an idle package, even while another package runs", async () => {
-    // In A, the developer selected live builds of notes (idle) and of another package that keeps running.
-    storage.save(`${notes}_dev_url`, "http://192.168.1.5:5173")
-    storage.save(`${other}_dev_url`, "http://192.168.1.5:5174")
-    miniappContextRegistry.add(other)
-
-    await reconcile(managed(2, B, [{id: "asg_b", url: urlA}]))
-    // In B, notes has no selection of its own: the cached release satisfies B, with nothing to clear.
-    expect(outcomeOf("asg_b")?.state).toBe("installed")
-    expect(devUrl(notes)).toBeUndefined()
-    // The running package keeps A's selection until it stops.
-    expect(devUrl(other)).toBe("http://192.168.1.5:5174")
-    miniappContextRegistry.remove(other)
-    expect(devUrl(other)).toBeUndefined()
-
-    // Back in A, both selections are A's again.
-    partitions.setFleetWorkspace(session, A)
-    expect(devUrl(notes)).toBe("http://192.168.1.5:5173")
-    expect(devUrl(other)).toBe("http://192.168.1.5:5174")
   })
 })

@@ -1,6 +1,6 @@
 ---
 title: "CLI reference (mentra-miniapp)"
-description: "The author CLI for developing, packing, and releasing Mentra miniapps."
+description: "The author CLI for developing and packing Mentra miniapps."
 icon: "terminal"
 ---
 
@@ -25,8 +25,7 @@ The CLI is **Bun-only**: it ships as TypeScript and runs under Bun. Use `bun`
 
 | Command | What it does |
 |---|---|
-| [`dev`](#dev) | Dev server with hot reload; prints a QR to load the miniapp on a phone. |
-| [`release`](#release) | Builds, packs, and serves a QR to install a release on phones over LAN. |
+| [`dev`](#dev) | Dev server: prints a QR to install the miniapp on a phone, which takes each saved change. With [`--production`](#production-build), serves the production build instead. |
 | [`pack`](#pack) | Writes `build/`, a folder ready to upload to your miniapp's URL. |
 | [`keys`](#keys) | Creates, shows, imports and exports publisher signing keys. |
 | [`manifest`](#manifest) | Interactive wizard for editing `miniapp.json`. |
@@ -42,10 +41,11 @@ mentra-miniapp dev
 
 Validates `miniapp.json`, builds both layers, serves them over your LAN, and
 prints a QR of its local-network miniapp URL, `http://<lan-ip>:<port>/`. That
-URL serves `miniapp.json` like any miniapp URL, naming `bundle.zip` and its
-SHA-256. It also runs a **dev sidecar** WebSocket on the next port up for live
-reload and console-log forwarding back to your terminal (non-fatal if it can't
-start). It watches for Wi-Fi/LAN-IP changes
+URL serves `miniapp.json` like any miniapp URL, naming the build's ZIP,
+`<pkg>-<version>-<hash>.zip`, and its SHA-256. `<hash>` is the first 8 hex digits
+of that SHA-256, so every build has its own file name. It also runs a **dev sidecar** WebSocket on the next port up, which tells the
+phone when a saved change is built and forwards the miniapp's console back to
+your terminal (non-fatal if it can't start). It watches for Wi-Fi/LAN-IP changes
 every 10 seconds and reprints the QR.
 
 The starting port comes from `"port"` in `miniapp.json` (default `3000`); if it or
@@ -55,45 +55,56 @@ its sidecar neighbor is busy, the CLI scans upward for a free adjacent pair.
 → Scan Miniapp QR Code**. Phone and laptop must share Wi-Fi. `Ctrl+C` stops
 everything.
 
-`dev` runs your miniapp the way an installed one runs: the Mentra App downloads
-`bundle.zip` and runs it from the phone, screen included, so everything your
+`dev` runs your miniapp the way an installed one runs: the Mentra App installs
+it from the URL and runs it from the phone, screen included, so everything your
 miniapp does in development (its storage, `photo.url`) works as it will once
 installed. Your screen can't load files from the LAN server by relative URL,
-just as an installed one can't. Each saved change downloads the new `bundle.zip`
-and reopens the screen from it.
+just as an installed one can't. On each saved change the CLI tells the phone,
+which installs the new build and restarts the miniapp, screen and background.
+The phone also checks the URL each time the miniapp opens. It never asks your
+computer in the background.
 
 <Warning>
-`dev` is live and temporary. Keep the CLI and computer running for hot reload;
-the phone keeps the last bundle it downloaded, so the miniapp still opens from it
-while the computer is away. Dev miniapps are keyed by their
-manifest package name, so you can scan and test several side by side; rescanning
-the same package updates only that entry. The Mentra App caches each entry's name
-and icon. Use `bun run release` for an installed miniapp that works without the
-computer.
+Keep the CLI and computer running to get your changes. The phone keeps the
+build it installed, so the miniapp still opens from it while the computer is
+away, after a check of at most 5 seconds; start `dev` again and save, and the
+phone takes the change. You scan again only when the URL changes. A dev build
+is the package named in its `miniapp.json`, one tile per package, so you can
+scan several miniapps side by side. It stands in for an installed copy of its
+package until you uninstall it or install the release yourself: updates from
+another URL, a workspace and Fleet never replace it. Use `dev --production` to
+try the build users will get.
 </Warning>
 
-## `release`
+### Production build
 
 ```bash
-mentra-miniapp release
-mentra-miniapp release --no-cache            # force rebuild even if the cached zip is fresh
-mentra-miniapp release --sign                # sign with the package's stored publisher key
-mentra-miniapp release --signing-key key.json  # sign with a key file (not stored)
+mentra-miniapp dev --production
+mentra-miniapp dev --production --sign                  # sign with the package's stored publisher key
+mentra-miniapp dev --production --signing-key key.json  # sign with a key file (not stored)
 ```
 
-The all-in-one path for putting a build on real devices: validate → build → pack
-→ serve behind a QR so you can install on as many phones as you want.
+Serves the production build from your computer: how you try what users will get
+before you upload it. It builds as [`pack`](#pack) builds, with
+`NODE_ENV=production`, and serves that ZIP at the same kind of URL as `dev`, with
+the same plain-URL QR. `miniapp.json` names the ZIP `pack` would write and its
+SHA-256.
 
-It reuses a cached `build/<pkg>-<version>.zip` when every source file is older
-than the zip, otherwise rebuilds (auto-detecting your package manager from the
-lockfile). It serves the bundle, manifest, and icon over HTTP on `0.0.0.0` and
-prints a `miniapp://release?...` QR, then stays up so multiple devices can
-install. Each install logs a line. Installed miniapps run offline and persist
-across restarts; no laptop needed after install.
+Nothing is watched: a saved change neither rebuilds nor reloads. After a change,
+stop it and run it again. The Mentra App takes the new build from the same URL
+the next time it opens the miniapp, so you scan again only when the address
+changed. The phone keeps the build it downloaded, so the miniapp opens with your
+computer away.
 
 The bundle is unsigned unless you pass `--sign` or `--signing-key`; see
-[Signing](#signing). A cached ZIP is reused only when it matches the signing you
-asked for.
+[Signing](#signing). `--usb` and `--device` work as they do for `dev`. It writes
+nothing to `build/`.
+
+<Note>
+`mentra-miniapp release` is the former name of `dev --production`. It still runs
+for one more release of the CLI and says so. Its QR code is now a plain URL, not
+a `miniapp://release` one. Change scripts that call it to `dev --production`.
+</Note>
 
 ## `pack`
 
@@ -102,34 +113,51 @@ mentra-miniapp pack
 mentra-miniapp pack --no-build                # zip the existing dist/ as-is
 mentra-miniapp pack --sign                    # sign with the package's stored publisher key
 mentra-miniapp pack --signing-key key.json    # sign with a key file (not stored)
+mentra-miniapp pack --url https://notes.example.com/   # keep the versions published there; use it in CI
 ```
 
-Writes `build/`, a folder ready to upload as is to your miniapp's URL (`release`
-calls `pack` internally). It builds with `NODE_ENV=production`, verifies `dist/`,
+Writes `build/`, a folder ready to upload as is to your miniapp's URL
+([`dev --production`](#production-build) serves the same ZIP from your computer). It builds with `NODE_ENV=production`, verifies `dist/`,
 validates the manifest, copies `miniapp.json` + `icon.png` into `dist/`, and zips
-to `build/<pkg>-<version>.zip`, replacing an older ZIP of the same version only
-after the new one is complete. It prints the bundle's SHA-256 and its publisher
-key, or `unsigned`.
+to `build/<pkg>-<version>-<hash>.zip`, where `<hash>` is the first 8 hex digits
+of the ZIP's SHA-256. The same files always pack to the same ZIP, whenever and
+wherever you pack them, and with the same key to the same signed ZIP. It prints
+the bundle's SHA-256 and its publisher key, or `unsigned`.
 
 `build/` then holds what a miniapp URL serves:
 
 | File | What it is |
 |---|---|
-| `miniapp.json` | Your `miniapp.json` plus `bundle: {url: "<pkg>-<version>.zip", sha256}`, naming the ZIP and its SHA-256. |
-| `<pkg>-<version>.zip` | The bundle. ZIPs of earlier versions stay beside it. |
+| `miniapp.json` | Your `miniapp.json` plus `bundle: {url: "<pkg>-<version>-<hash>.zip", sha256}`, naming the ZIP and its SHA-256, and `versions`, the versions a phone can be pinned to. |
+| `<pkg>-<version>-<hash>.zip` | The bundle. ZIPs of earlier builds stay beside it, and no build replaces another's file. |
 | The icon, such as `icon.png` | The file `miniapp.json`'s `icon` names, taken from the ZIP. An icon URL on another host is left to that host. |
 
-Your `miniapp.json` must not declare `bundle` itself; `pack` fills it in. Upload
+Your `miniapp.json` must not declare `bundle` or `versions` itself; `pack` fills
+them in. Upload
 the folder to any static host, such as GitHub Pages, Cloudflare Pages or R2, or
-S3. For each release, bump `version`, and upload the ZIP before `miniapp.json`, so
-your URL never names a ZIP that isn't there yet.
+S3. For each release, upload the ZIP before `miniapp.json`, so your URL never
+names a ZIP that isn't there yet. Phones update when the ZIP's SHA-256 changes,
+with or without a new `version`.
 See [Publish your miniapp](/app-devs/getting-started/publish) for hosting, the
 domain rule and getting listed.
 
+`versions` has one `{version, url, sha256}` entry per version, highest version
+first, at most 50. Each pack adds the version it packed, or replaces that
+version's entry, and keeps the others:
+
+- With `--url <your miniapp URL>`, the ones the `miniapp.json` published there
+  lists. Use it in CI: a clean checkout has no `build/`, and without `--url` it
+  would write a list with one version. A URL that can't be reached, or whose
+  list can't be read, stops the pack. Only a `404`, nothing published yet,
+  starts a new list.
+- Without `--url`, the ones in `build/miniapp.json` from the last pack whose
+  ZIPs are still in `build/`.
+
+See [Versions people can pin](/app-devs/getting-started/publish#versions-people-can-pin).
+
 <Note>
-`pack` requires the `zip` binary on `PATH` (preinstalled on macOS and most Linux;
-on Windows use WSL). `build/` self-ignores from git with its own `.gitignore`;
-leave that file out if you deploy the folder by committing it to git.
+`build/` self-ignores from git with its own `.gitignore`; leave that file out
+if you deploy the folder by committing it to git.
 </Note>
 
 ### Signing

@@ -19,7 +19,7 @@
 import type { HttpClient } from "../../http";
 import type {
   DeclaredAge,
-  FleetDesiredState,
+  FleetDesiredStateWithPins,
   FleetReport,
   RegistryRegisterRequest,
   RegistryRegisterResponse,
@@ -145,11 +145,11 @@ export class Core {
      */
     report(batch: FleetReport, opts?: { signal?: AbortSignal; bearer?: string }): Promise<FleetReportOutcome>;
     /**
-     * `GET /api/client/fleet/desired-state`, validated. Resolves only with a complete `managed` or `unmanaged` answer;
+     * `GET /api/client/fleet/desired-state?pins=1`, validated; entries may be pinned. Resolves only with a complete `managed` or `unmanaged` answer;
      * every failure rejects (`CoreRequestError`, `CoreResponseError`, `SessionChangedError`, auth errors, abort), so
      * none can be read as an empty set.
      */
-    desiredState(opts?: AccountCallOptions): Promise<FleetDesiredState>;
+    desiredState(opts?: AccountCallOptions): Promise<FleetDesiredStateWithPins>;
   };
   readonly workspaces: {
     /** `GET /api/client/workspaces/mine`. */

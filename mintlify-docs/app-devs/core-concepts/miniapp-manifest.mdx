@@ -10,7 +10,7 @@ import BetaNote from '/snippets/beta-note.mdx'
 
 Every miniapp has a `miniapp.json` at its root. It declares who the miniapp is,
 where its two layers are built to, what permissions it needs, and what hardware
-it requires. The CLI validates it on every `dev`, `pack`, and `release`: bad
+it requires. The CLI validates it on every `dev` and `pack`: bad
 values fail on your laptop, not on the phone.
 
 ```json miniapp.json
@@ -56,12 +56,13 @@ else is optional.
 | `entry` | object | `{ "background": "background/index.js", "ui": "ui/index.html" }`: built output paths for the two layers. Declaring `entry.background` is what makes a miniapp two-layer (and gives you `session.ui`). |
 | `ageRating` | string | `4+`, `9+`, `13+`, `16+` or `18+`. A rating above the Mentra App's own App Store rating gates install and open on the person's declared age. Without it a miniapp is never gated; an unrecognized value counts as `18+`. |
 | `listing` | object | For the Mentra Miniapp Store: `{ "category": "productivity" }`. The phone ignores it. There are no screenshots. |
-| `port` | number | Dev-server starting port (default `3000`). Used only by `dev`; `release` picks its own port. |
+| `port` | number | Dev-server starting port (default `3000`). Used only by `dev`, with or without `--production`. |
 | `permissions` | array | Runtime permissions you request. See below. |
 | `actions` | array | Capabilities other miniapps / Mentra AI can invoke. See [Interop & Actions](/app-devs/core-concepts/miniapp-interop). |
 
-Don't write `bundle` yourself: `mentra-miniapp pack` adds `bundle: {url, sha256}`
-to the `miniapp.json` it serves, naming the ZIP and its SHA-256. See
+Don't write `bundle` or `versions` yourself: `mentra-miniapp pack` adds them to
+the `miniapp.json` it serves. `bundle: {url, sha256}` names the ZIP and its
+SHA-256, and `versions` lists the versions a phone can be pinned to. See
 [Publish your miniapp](/app-devs/getting-started/publish).
 
 The `$schema` line points editors at the JSON Schema shipped with the CLI, so you

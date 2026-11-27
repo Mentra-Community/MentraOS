@@ -14,7 +14,7 @@ import NetInfo from "@react-native-community/netinfo"
 import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
 import {AppState} from "react-native"
 
-import {isInstalledMiniappAllowed} from "../../runtime/bootstrap"
+import {getConfigValues, isInstalledMiniappAllowed} from "../../runtime/bootstrap"
 import {MiniappRunningError} from "../../utils/storeInstallRuntime"
 import {BgTimer} from "../../utils/timers"
 import appRegistry from "../AppRegistry"
@@ -23,9 +23,13 @@ import {installMiniapp, InstallMiniappError} from "../installMiniapp"
 import {setFleetWorkspace} from "../miniappDataPartition"
 import {miniappLauncher} from "../MiniappLauncher"
 import {classifyManagedInstallError, stopMiniappForRevocation, uninstallManagedMiniapp} from "../miniappReleaseInstall"
+import {miniappPins} from "../miniappPins"
 import {resolveMiniappUrl} from "../miniappUrlResolution"
+import {miniappUpdateUrl} from "../miniappUrlUpdates"
 import {miniappContextRegistry, miniappRunningRegistry} from "../MiniappRunningRegistry"
 import {dismissRunningUpdatePrompt, onRunningUpdatePromptDue} from "../runningUpdatePrompt"
+import {isSystemMiniappPackage} from "../SystemMiniappPolicy"
+import {firstPartyMiniappUrl} from "../systemMiniappTrust"
 import {
   createAssignmentReconciler,
   type AssignmentReconciler,
@@ -43,15 +47,29 @@ function currentSession(): ReconcilerSession | null {
   return session?.mentraUserId ? {coreUrl: session.coreUrl, mentraUserId: session.mentraUserId} : null
 }
 
-/**
- * The active installed release (not a development build): what an assignment is compared with. The installer still
- * refuses a version below any release on disk.
- */
+/** The active installed release (not a development build): what an assignment is compared with. */
 function installedRelease(packageName: string): {version: string; bundleSha256?: string} | null {
   const version = appRegistry.getActiveReleaseVersion(packageName)
   if (!version) return null
   const sha = appRegistry.getReleaseIdentity(packageName, version)?.bundleSha256
   return sha ? {version, bundleSha256: sha} : {version}
+}
+
+/**
+ * An installed system miniapp updates from its deployment's own miniapp host (`miniappUrlUpdates.ts`), not from the
+ * URL that assigned it. When the two differ, an install from the assignment's URL would be replaced by the updater's
+ * at its next check, and that one by the reconciler's, without end: each installs what its URL serves when the bytes
+ * differ. The updater's URL decides, so the assignment is satisfied by what is installed.
+ */
+function updatesFromAnotherUrl(packageName: string, url: string): boolean {
+  if (!isSystemMiniappPackage(packageName)) return false
+  const version = appRegistry.getActiveReleaseVersion(packageName)
+  if (!version) return false
+  const from = miniappUpdateUrl(packageName, appRegistry.getReleaseIdentity(packageName, version), {
+    isSystemPackage: isSystemMiniappPackage,
+    firstPartyUrl: (name) => firstPartyMiniappUrl(getConfigValues(), name),
+  })
+  return from !== undefined && normalizeMiniappUrl(from)?.url !== (normalizeMiniappUrl(url)?.url ?? url)
 }
 
 /**
@@ -65,14 +83,6 @@ function allowsRelease(packageName: string, version: string, bundleSha256: strin
   const sameBytes = onDisk && (!onDisk.bundleSha256 || onDisk.bundleSha256 === bundleSha256)
   const fromUrl = {source: "url", sourceUrl: normalizeMiniappUrl(url)?.url ?? url, bundleSha256}
   return isInstalledMiniappAllowed(packageName, version, sameBytes ? onDisk : fromUrl, {assigned: true})
-}
-
-/** `installMiniapp` kept a newer release of the package, installed since the reconciler compared versions. */
-class NewerReleaseInstalled extends Error {
-  constructor(packageName: string, version: string) {
-    super(`${packageName} ${version} is installed already, newer than its assignment's release`)
-    this.name = "NewerReleaseInstalled"
-  }
 }
 
 /**
@@ -93,13 +103,12 @@ export async function installAssignment({
     ...(onAsking ? {onAsking} : {}),
   })
   if (result.status === "deferred") throw new MiniappRunningError(result.packageName)
-  if (result.status === "opened") throw new NewerReleaseInstalled(result.packageName, result.version)
+  // An assignment install never answers `opened`: what the URL serves replaces what is installed.
   return {version: result.version}
 }
 
 /** Map an assignment install's failure to its assignment reason. Never error text. */
 export function classifyAssignmentInstallError(error: unknown): {kind: ManagedInstallFailure; retryable: boolean} {
-  if (error instanceof NewerReleaseInstalled) return {kind: "newer_version_installed", retryable: false}
   if (!(error instanceof InstallMiniappError)) return classifyManagedInstallError(error)
   switch (error.code) {
     case "archived":
@@ -116,6 +125,14 @@ export function classifyAssignmentInstallError(error: unknown): {kind: ManagedIn
       return {kind: "incompatible_host", retryable: false}
     case "signature_invalid":
       return {kind: "signature_invalid", retryable: false}
+    // The pin can't be met (the URL changed its list since the reconciler resolved it): nothing installs until it
+    // serves the pinned build again or the pin changes.
+    case "pin_unlisted":
+    case "pin_hash_changed":
+      return {kind: error.code, retryable: false}
+    // The person installed a development build meanwhile: only they replace it.
+    case "development_build":
+      return {kind: "development_build", retryable: false}
     case "integrity":
       return {kind: "download_failed", retryable: true}
     case "cancelled":
@@ -129,13 +146,16 @@ export function classifyAssignmentInstallError(error: unknown): {kind: ManagedIn
 }
 
 const miniapps: ManagedMiniappPort = {
-  resolve: (url) => resolveMiniappUrl(url),
+  // The resolution reads the package's pin, which the reconciler writes before it resolves.
+  resolve: (url) => resolveMiniappUrl(url, undefined, miniappPins.pinFor),
+  fleetPinnedPackages: () => miniappPins.fleetPinnedPackages(),
+  setFleetPin: (packageName, pin) => miniappPins.setFleetPin(packageName, pin),
   installedRelease: async (packageName) => installedRelease(packageName),
+  updatesFromAnotherUrl,
   hasOtherReason: (packageName) => appRegistry.getInstallReasons(packageName).some((reason) => reason !== "assignment"),
   assignment: (packageName) => appRegistry.getMiniappAssignment(packageName),
   assignedPackages: () => appRegistry.getAssignedPackages(),
-  hasDevelopmentSelection: (packageName) => appRegistry.hasDevelopmentSelection(packageName),
-  clearDevelopmentSelection: (packageName) => appRegistry.clearDevelopmentSelection(packageName),
+  isDevelopmentBuild: (packageName) => appRegistry.isDevelopmentBuild(packageName),
   allowsRelease,
   install: installAssignment,
   classify: classifyAssignmentInstallError,

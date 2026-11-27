@@ -11,9 +11,11 @@ import type {
 import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
 
 import type {MiniappReleaseIdentity} from "../AppRegistry"
+import type {LocalBuildInstall} from "../localBuildInstall"
 import type {ReleaseInstallOptions} from "../miniappReleaseInstall"
 import {
   BASE_BACKOFF_MS,
+  developmentReloadUrl,
   isPackageNameAllowedForUrl,
   type ManifestFetchResult,
   MAX_MANIFEST_REDIRECTS,
@@ -22,6 +24,7 @@ import {
   parseHostedManifest,
   REGISTRY_STATUS_KEY,
   REGISTRY_STATUS_RETRY_MS,
+  START_UPDATE_LIMITS,
 } from "../miniappUrlUpdates"
 import {cloudClientService} from "./cloudClientServiceTestMock"
 import {domainRuleVectors} from "./miniappUrlVectors"
@@ -56,7 +59,11 @@ let fetched: Array<{url: string; etag?: string}>
 let installs: Install[]
 let installError: unknown
 let kept: Array<{packageName: string; versions: string[]}>
-let devSelected: Set<string>
+let developmentBuilds: Set<string>
+let developmentAllowed: boolean
+let localInstalls: Array<{bundleUrl: string; install: LocalBuildInstall}>
+let localInstallError: unknown
+let localFetches: Array<{url: string; local?: boolean}>
 let warnings: string[]
 let session: number
 let hostVersion: string
@@ -72,6 +79,8 @@ let statusAnswer: (request: RegistryStatusRequest) => Promise<RegistryStatusResp
 let registrations: RegistryRegisterRequest[]
 let registerAnswer: (request: RegistryRegisterRequest) => Promise<RegistryRegisterResponse>
 let moves: Array<{packageName: string; version: string; fromUrl: string; sourceUrl: string}>
+/** The pins the phone holds, by package. */
+let pins: Map<string, {version: string; sha256: string}>
 
 function served(manifest: Record<string, unknown>, extra: Partial<ManifestFetchResult> = {}): ManifestFetchResult {
   return {status: 200, url: `${sourceUrl}miniapp.json`, body: JSON.stringify(manifest), ...extra}
@@ -96,7 +105,9 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
     releaseIdentity: (packageName) => identities[packageName] ?? null,
     isSystemPackage: (packageName) => packageName.startsWith("com.mentra."),
     firstPartyUrl: (packageName) => `${host}${packageName}/`,
-    hasDevelopmentSelection: (packageName) => devSelected.has(packageName),
+    isDevelopmentBuild: (packageName) => developmentBuilds.has(packageName),
+    developmentAllowed: () => developmentAllowed,
+    pinFor: (packageName) => pins.get(packageName) ?? null,
     compatibilityPolicy: () => ({
       hostVersion,
     }),
@@ -104,8 +115,9 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
       glassesAsked.push(hardwareRequirements)
       return glassesLaunch
     },
-    fetchManifest: async (url, {etag}) => {
+    fetchManifest: async (url, {etag, local}) => {
       fetched.push({url, etag})
+      localFetches.push({url, ...(local ? {local} : {})})
       const next = responses.shift()
       if (!next) throw new Error("no response queued")
       return next
@@ -118,7 +130,23 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
       duringInstall?.(options)
       if (options.isCancelled?.()) throw new Error("cancelled")
       if (installError) throw installError
+      // As the installer: the release is the active one, recorded with the identity it was installed with.
       active[options.expectedPackageName] = options.expectedVersion
+      if (options.releaseIdentity) identities[options.expectedPackageName] = {...options.releaseIdentity}
+    },
+    installLocal: async (bundleUrl, install) => {
+      localInstalls.push({bundleUrl, install})
+      if (install.isCancelled?.()) throw new Error("cancelled")
+      if (localInstallError) throw localInstallError
+      // As the installer: a new development build, recorded with its address and hash.
+      const version = `dev-${now + localInstalls.length}`
+      active[install.packageName] = version
+      identities[install.packageName] = {
+        source: "local",
+        sourceUrl: install.sourceUrl,
+        bundleSha256: install.sha256,
+        ...(install.reloadUrl ? {reloadUrl: install.reloadUrl} : {}),
+      }
     },
     keepVersions: async (packageName, versions) => {
       kept.push({packageName, versions})
@@ -150,6 +178,8 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
       return true
     },
     now: () => now,
+    setTimeout: (callback, ms) => setTimeout(callback, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     log: () => {},
     warn: (message) => warnings.push(message),
   }
@@ -168,7 +198,11 @@ beforeEach(() => {
   installs = []
   installError = undefined
   kept = []
-  devSelected = new Set()
+  developmentBuilds = new Set()
+  developmentAllowed = true
+  localInstalls = []
+  localInstallError = undefined
+  localFetches = []
   warnings = []
   session = 1
   hostVersion = "3.3.0"
@@ -189,6 +223,7 @@ beforeEach(() => {
     throw new Error("Core can't be reached")
   }
   moves = []
+  pins = new Map()
 })
 
 describe("the domain rule", () => {
@@ -301,6 +336,163 @@ describe("a check before a miniapp starts", () => {
     await stuck.checkBeforeStart(pkg, {checkMs: 20, installMs: 40})
     expect(performance.now() - started).toBeLessThan(1000)
   })
+
+  test("waits 5 seconds at most to find another build, and 30 more for it to install", () => {
+    expect(START_UPDATE_LIMITS).toEqual({checkMs: 5_000, installMs: 30_000})
+  })
+
+  test("says when it found another build and waits for it to install, and says nothing for a check that finds none", async () => {
+    let found = 0
+    responses = [served(manifest("1.0.0"))]
+    await updater().checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000}, () => found++)
+    expect(found).toBe(0)
+    responses = [served(manifest("1.1.0"))]
+    await updater().checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000}, () => found++)
+    expect(found).toBe(1)
+    expect(active[pkg]).toBe("1.1.0")
+  })
+
+  test("a check past its limit carries on: the build installs once the host answers", async () => {
+    let answer!: (result: ManifestFetchResult) => void
+    const u = new MiniappUrlUpdater({
+      ...updaterDeps(),
+      fetchManifest: () =>
+        new Promise<ManifestFetchResult>((resolve) => {
+          answer = resolve
+        }),
+    })
+    await u.checkBeforeStart(pkg, {checkMs: 20, installMs: 5000})
+    expect(installs).toHaveLength(0)
+    answer(served(manifest("1.1.0")))
+    await u.check(pkg)
+    expect(installs).toHaveLength(1)
+    expect(active[pkg]).toBe("1.1.0")
+  })
+
+  test.each([
+    ["a miniapp with no URL to update from", () => ({firstPartyUrl: () => undefined})],
+    ["a release while the person's development build of it is installed", () => ({isDevelopmentBuild: () => true})],
+    [
+      "a miniapp whose release a deployment manifest manages",
+      () => ({
+        isSystemPackage: () => false,
+        releaseIdentity: () => ({source: "deployment_manifest"} as MiniappReleaseIdentity),
+      }),
+    ],
+  ])("has nothing to wait for with %s: it asks its host nothing", async (_name, overrides) => {
+    let requests = 0
+    const u = new MiniappUrlUpdater({
+      ...updaterDeps(),
+      ...overrides(),
+      fetchManifest: () => {
+        requests++
+        return new Promise(() => {})
+      },
+    })
+    const started = performance.now()
+    await u.checkBeforeStart(pkg, {checkMs: 5000, installMs: 5000})
+    expect(performance.now() - started).toBeLessThan(500)
+    expect(requests).toBe(0)
+  })
+
+  test("doesn't wait for a second check within a minute", async () => {
+    responses = [served(manifest("1.0.0")), served(manifest("1.0.0"))]
+    const u = updater()
+    await u.checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    await u.checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    expect(fetched).toHaveLength(1)
+    now += OPEN_CHECK_INTERVAL_MS
+    await u.checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    expect(fetched).toHaveLength(2)
+  })
+
+  test("doesn't wait either when a background pass checked it within the minute", async () => {
+    responses = [served(manifest("1.0.0"))]
+    const u = updater()
+    await u.checkAll()
+    await u.checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    expect(fetched).toHaveLength(1)
+  })
+
+  test("doesn't wait while its last check failed and the retry time hasn't come", async () => {
+    let requests = 0
+    let hang = false
+    const u = new MiniappUrlUpdater({
+      ...updaterDeps(),
+      fetchManifest: async () => {
+        requests++
+        if (hang) await new Promise(() => {})
+        throw new Error("offline")
+      },
+    })
+    await u.checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    expect(requests).toBe(1)
+    expect(warnings).toHaveLength(1)
+
+    // A minute later the host is still down: a start costs nothing, where a new check would hang for its limit.
+    hang = true
+    now += OPEN_CHECK_INTERVAL_MS
+    const started = performance.now()
+    await u.checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    expect(performance.now() - started).toBeLessThan(500)
+    expect(requests).toBe(1)
+
+    // Once the retry time has come, a start waits for a check again.
+    hang = false
+    now += BASE_BACKOFF_MS
+    await u.checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    expect(requests).toBe(2)
+  })
+
+  test("joins a background check under way, and waits for the build it is installing", async () => {
+    responses = [served(manifest("1.1.0"), {etag: '"v2"'})]
+    let finish!: () => void
+    const u = new MiniappUrlUpdater({
+      ...updaterDeps(),
+      install: async (bundleUrl, options) => {
+        installs.push({bundleUrl, options})
+        await new Promise<void>((resolve) => {
+          finish = resolve
+        })
+        active[options.expectedPackageName] = options.expectedVersion
+      },
+    })
+    const pass = u.checkAll()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(installs).toHaveLength(1)
+    let found = 0
+    let started = false
+    const start = u
+      .checkBeforeStart(pkg, {checkMs: 1000, installMs: 5000}, () => found++)
+      .then(() => {
+        started = true
+      })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(found).toBe(1)
+    expect(started).toBe(false)
+    finish()
+    await Promise.all([pass, start])
+    expect(active[pkg]).toBe("1.1.0")
+    expect(fetched).toHaveLength(1)
+    expect(installs).toHaveLength(1)
+  })
+
+  test("keeps the build it has when the paired glasses can't launch the served one, which installs on a later check", async () => {
+    glassesLaunch = false
+    responses = [served(manifest("1.1.0", {hardwareRequirements: [{type: "DISPLAY", level: "REQUIRED"}]}))]
+    const u = updater()
+    let found = 0
+    await u.checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000}, () => found++)
+    expect(found).toBe(0)
+    expect(installs).toHaveLength(0)
+    expect(warnings).toHaveLength(0)
+
+    // Not about to start any more: hardware requirements never stop an update of a miniapp that is stopped.
+    responses = [served(manifest("1.1.0", {hardwareRequirements: [{type: "DISPLAY", level: "REQUIRED"}]}))]
+    await u.check(pkg)
+    expect(installs).toHaveLength(1)
+    expect(active[pkg]).toBe("1.1.0")
+  })
 })
 
 describe("updates from a miniapp's own URL", () => {
@@ -321,13 +513,13 @@ describe("updates from a miniapp's own URL", () => {
     expect(kept).toEqual([{packageName: pkg, versions: ["1.1.0", "1.0.0"]}])
   })
 
-  test("background checks and opens alike ask about a running miniapp whose release launches with the paired glasses", async () => {
+  test("a pass and a check of one miniapp alike ask about a running miniapp whose release launches with the paired glasses", async () => {
     responses = [served(manifest("1.1.0", {hardwareRequirements: [{type: "CAMERA", level: "REQUIRED"}]}))]
     responses.push(responses[0]!)
     installError = new RunningError("running")
     const u = updater()
     await u.checkAll()
-    await u.checkOpened(pkg)
+    await u.check(pkg)
     expect(installs.map((install) => install.options.askIfRunning)).toEqual([true, true])
     expect(glassesAsked).toEqual([[{type: "CAMERA", level: "REQUIRED"}], [{type: "CAMERA", level: "REQUIRED"}]])
   })
@@ -341,19 +533,52 @@ describe("updates from a miniapp's own URL", () => {
     expect(warnings).toHaveLength(0)
   })
 
-  test("an open during a background check of the same miniapp shares it", async () => {
+  test("a check of one miniapp during a background pass's check of it shares that check", async () => {
     installError = new RunningError("running")
     responses = [served(manifest("1.1.0"), {etag: '"v2"'})]
     const u = updater()
-    let opened: Promise<void> | undefined
+    let second: Promise<void> | undefined
     duringInstall = () => {
       duringInstall = undefined
-      opened = u.checkOpened(pkg)
+      second = u.check(pkg)
     }
     await u.checkAll()
-    await opened
+    await second
     expect(fetched).toHaveLength(1)
     expect(installs).toHaveLength(1)
+  })
+
+  test("a pass checks first the miniapp whose update waited for it to stop, or for an answer", async () => {
+    const notes = "com.mentra.notes"
+    active = {[pkg]: "1.0.0", [notes]: "1.0.0"}
+    identities = {[pkg]: {source: "bundled_asset"}, [notes]: {source: "bundled_asset"}}
+    const servedNotes = () =>
+      served(manifest("1.1.0", {packageName: notes, bundle: {url: `${notes}-1.1.0.zip`, sha256: sha}}), {
+        url: `${host}${notes}/miniapp.json`,
+      })
+    const u = new MiniappUrlUpdater({
+      ...updaterDeps(),
+      fetchManifest: async (url) => {
+        fetched.push({url})
+        return url.includes(notes) ? servedNotes() : served(manifest("1.0.0"))
+      },
+    })
+    // Notes runs: its update waits.
+    installError = new RunningError("running")
+    await u.checkAll()
+    expect(fetched.map((call) => call.url)).toEqual([`${sourceUrl}miniapp.json`, `${host}${notes}/miniapp.json`])
+
+    // It stopped, or was opened again after Not now: the pass that follows starts with it.
+    fetched = []
+    installError = undefined
+    await u.checkAll()
+    expect(fetched.map((call) => call.url)).toEqual([`${host}${notes}/miniapp.json`, `${sourceUrl}miniapp.json`])
+    expect(active[notes]).toBe("1.1.0")
+
+    // Updated, it is checked in its turn again.
+    fetched = []
+    await u.checkAll()
+    expect(fetched.map((call) => call.url)).toEqual([`${sourceUrl}miniapp.json`, `${host}${notes}/miniapp.json`])
   })
 
   test("a pass moves on while a prompt waits for the person's answer", async () => {
@@ -387,14 +612,17 @@ describe("updates from a miniapp's own URL", () => {
     expect(active[pkg]).toBe("1.1.0")
   })
 
-  test("a running miniapp's waiting update is checked again the next time it opens, even within a minute", async () => {
+  test("an update that waited for a running miniapp is checked again the next time it starts, even within a minute", async () => {
     installError = new RunningError("running")
     responses = [served(manifest("1.1.0"), {etag: '"v2"'}), {status: 304, url: `${sourceUrl}miniapp.json`}]
     const u = updater()
-    await u.checkOpened(pkg)
-    await u.checkOpened(pkg)
+    await u.check(pkg)
+    // It has stopped since, and starts again: the start waits for the update that waited for it.
+    installError = undefined
+    await u.checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
     expect(fetched).toHaveLength(2)
-    expect(installs.map((install) => install.options.askIfRunning)).toEqual([true, true])
+    expect(installs).toHaveLength(2)
+    expect(active[pkg]).toBe("1.1.0")
   })
 
   test("a bundled miniapp updated from one host follows the host its deployment names now", async () => {
@@ -517,12 +745,83 @@ describe("updates from a miniapp's own URL", () => {
     expect(installs).toHaveLength(3)
   })
 
-  test("never downgrades or reinstalls the same version", async () => {
-    responses = [served(manifest("0.9.0")), served(manifest("1.0.0"))]
+  test("other bytes under the installed version install, with no version bump", async () => {
+    identities[pkg] = {source: "url", sourceUrl, bundleSha256: "a".repeat(64)}
+    responses = [served(manifest("1.0.0"))]
+    await updater().checkAll()
+    expect(installs).toHaveLength(1)
+    expect(installs[0].options).toMatchObject({expectedVersion: "1.0.0", expectedBundleSha256: sha})
+    expect(identities[pkg]?.bundleSha256).toBe(sha)
+    // The build replaces its own version's files: nothing else is kept.
+    expect(kept).toEqual([{packageName: pkg, versions: ["1.0.0", "1.0.0"]}])
+  })
+
+  test("a lower version installs like any other: the publisher rolled back", async () => {
+    active[pkg] = "1.1.0"
+    identities[pkg] = {source: "url", sourceUrl, bundleSha256: "a".repeat(64)}
+    responses = [served(manifest("1.0.0"))]
+    await updater().checkAll()
+    expect(installs).toHaveLength(1)
+    expect(installs[0].options).toMatchObject({expectedVersion: "1.0.0", expectedBundleSha256: sha})
+    expect(active[pkg]).toBe("1.0.0")
+    expect(kept).toEqual([{packageName: pkg, versions: ["1.0.0", "1.1.0"]}])
+  })
+
+  test("the build already installed never installs again, whatever version the URL says it is", async () => {
+    identities[pkg] = {source: "url", sourceUrl, bundleSha256: sha}
+    responses = [served(manifest("1.0.0")), served(manifest("0.9.0")), served(manifest("1.1.0"))]
     const u = updater()
     await u.checkAll()
     await u.checkAll()
+    await u.checkAll()
+    expect(fetched).toHaveLength(3)
     expect(installs).toHaveLength(0)
+  })
+
+  test("an update installs once: the next check finds the build it installed", async () => {
+    identities[pkg] = {source: "url", sourceUrl, bundleSha256: "a".repeat(64)}
+    responses = [served(manifest("1.0.0")), served(manifest("1.0.0"))]
+    const u = updater()
+    await u.checkAll()
+    await u.checkAll()
+    expect(fetched).toHaveLength(2)
+    expect(installs).toHaveLength(1)
+  })
+
+  test("a release with no recorded hash counts as what its URL serves at the same version", async () => {
+    identities[pkg] = {source: "url", sourceUrl}
+    responses = [served(manifest("1.0.0"))]
+    await updater().checkAll()
+    expect(installs).toHaveLength(0)
+  })
+
+  test("a release with no recorded hash updates when the served version differs, up or down", async () => {
+    identities[pkg] = {source: "bundled_asset"}
+    responses = [served(manifest("0.9.0"))]
+    await updater().checkAll()
+    expect(installs.map((install) => install.options.expectedVersion)).toEqual(["0.9.0"])
+
+    installs = []
+    active[pkg] = "1.0.0"
+    identities[pkg] = {source: "bundled_asset"}
+    responses = [served(manifest("1.1.0"))]
+    await updater().checkAll()
+    expect(installs.map((install) => install.options.expectedVersion)).toEqual(["1.1.0"])
+  })
+
+  test("a failed install of other bytes under the installed version backs off, and is retried", async () => {
+    identities[pkg] = {source: "url", sourceUrl, bundleSha256: "a".repeat(64)}
+    installError = new Error("download failed")
+    const u = updater()
+    responses = [served(manifest("1.0.0")), served(manifest("1.0.0"))]
+    await u.check(pkg)
+    await u.check(pkg)
+    expect(installs).toHaveLength(1)
+    installError = undefined
+    now += BASE_BACKOFF_MS
+    await u.check(pkg)
+    expect(installs).toHaveLength(2)
+    expect(identities[pkg]?.bundleSha256).toBe(sha)
   })
 
   test("skips a release this phone can't run", async () => {
@@ -550,7 +849,7 @@ describe("updates from a miniapp's own URL", () => {
       "com.mentra.call": {source: "deployment_manifest"},
       "com.acme.tool": {source: "bundled_asset"},
     }
-    devSelected.add(pkg)
+    developmentBuilds.add(pkg)
     await updater().checkAll()
     expect(fetched).toEqual([])
   })
@@ -616,17 +915,6 @@ describe("updates from a miniapp's own URL", () => {
     expect(installs).toHaveLength(1)
   })
 
-  test("a miniapp that just opened is checked, but not twice within a minute", async () => {
-    responses = [served(manifest("1.0.0")), served(manifest("1.0.0"))]
-    const u = updater()
-    await u.checkOpened(pkg)
-    await u.checkOpened(pkg)
-    expect(fetched).toHaveLength(1)
-    now += OPEN_CHECK_INTERVAL_MS
-    await u.checkOpened(pkg)
-    expect(fetched).toHaveLength(2)
-  })
-
   test("concurrent checks of one miniapp share one request", async () => {
     responses = [served(manifest("1.0.0"))]
     const u = updater()
@@ -661,6 +949,104 @@ function answer(statuses: Record<string, "active" | "archived" | "unknown">, val
     validForSeconds,
   })
 }
+
+describe("a pinned miniapp", () => {
+  const OLD = "0".repeat(64)
+  const OTHER = "e".repeat(64)
+  const listed = (latest: string, latestSha = sha) => [
+    {version: latest, url: `${pkg}-${latest}.zip`, sha256: latestSha},
+    {version: "1.0.0", url: `old/${pkg}-1.0.0.zip`, sha256: OLD},
+  ]
+  // A miniapp that updates from its own recorded URL: the one an assignment's pin is sealed against.
+  const ownUrl = () => new MiniappUrlUpdater({...updaterDeps(), isSystemPackage: () => false})
+
+  beforeEach(() => {
+    active[pkg] = "1.1.0"
+    identities[pkg] = {source: "url", sourceUrl, bundleSha256: "a".repeat(64)}
+    pins.set(pkg, {version: "1.0.0", sha256: OLD})
+  })
+
+  test("installs the pinned version's entry, older than what is installed, and its hash is checked", async () => {
+    responses = [served(manifest("1.2.0", {versions: listed("1.2.0")}))]
+    await ownUrl().checkAll()
+    expect(installs).toHaveLength(1)
+    expect(installs[0].bundleUrl).toBe(`${sourceUrl}old/${pkg}-1.0.0.zip`)
+    expect(installs[0].options).toMatchObject({
+      expectedVersion: "1.0.0",
+      expectedBundleSha256: OLD,
+      releaseIdentity: {source: "url", sourceUrl, bundleSha256: OLD},
+    })
+    expect(active[pkg]).toBe("1.0.0")
+    expect(kept).toEqual([{packageName: pkg, versions: ["1.0.0", "1.1.0"]}])
+  })
+
+  test("stays on the pinned build while latest changes", async () => {
+    active[pkg] = "1.0.0"
+    identities[pkg] = {source: "url", sourceUrl, bundleSha256: OLD}
+    responses = [
+      served(manifest("1.2.0", {versions: listed("1.2.0")})),
+      served(manifest("1.3.0", {bundle: {url: "x.zip", sha256: OTHER}, versions: listed("1.3.0", OTHER)})),
+    ]
+    const u = ownUrl()
+    await u.checkAll()
+    await u.checkAll()
+    expect(fetched).toHaveLength(2)
+    expect(installs).toHaveLength(0)
+  })
+
+  test.each([
+    ["no longer lists the version", () => [{version: "1.2.0", url: "x.zip", sha256: sha}]],
+    ["lists it with other bytes", () => [{version: "1.0.0", url: "x.zip", sha256: OTHER}]],
+    ["lists no versions", () => undefined],
+  ])("installs nothing and keeps the installed build when the URL %s, and doesn't back off", async (_why, versions) => {
+    responses = [served(manifest("1.2.0", {versions: versions()})), served(manifest("1.2.0", {versions: versions()}))]
+    const u = ownUrl()
+    await u.checkAll()
+    expect(installs).toHaveLength(0)
+    expect(active[pkg]).toBe("1.1.0")
+    expect(warnings).toEqual([])
+    // Not a failure: the next check asks again at once.
+    await u.check(pkg)
+    expect(fetched).toHaveLength(2)
+  })
+
+  test("the served file's compatibility and hardware fields describe latest, so they don't hold the pinned build back", async () => {
+    glassesLaunch = false
+    hostVersion = "3.0.0"
+    const latestNeeds = {minHostVersion: "9.0.0", hardwareRequirements: [{type: "DISPLAY", level: "REQUIRED"}]}
+    responses = [served(manifest("1.2.0", {...latestNeeds, versions: listed("1.2.0")}))]
+    await ownUrl().checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000})
+    expect(installs).toHaveLength(1)
+    // The installer checks the ZIP's own manifest, and asks a running miniapp only once that passes.
+    expect(installs[0].options).toMatchObject({expectedVersion: "1.0.0", askIfRunning: true})
+    expect(glassesAsked).toEqual([])
+  })
+
+  test("opening it waits for the check, which installs the pinned build, not latest", async () => {
+    responses = [served(manifest("1.2.0", {versions: listed("1.2.0")}))]
+    let found = 0
+    await ownUrl().checkBeforeStart(pkg, {checkMs: 1000, installMs: 1000}, () => found++)
+    expect(found).toBe(1)
+    expect(active[pkg]).toBe("1.0.0")
+    expect(installs[0].options.expectedBundleSha256).toBe(OLD)
+  })
+
+  test("once the pin is removed, the next check installs latest", async () => {
+    active[pkg] = "1.0.0"
+    identities[pkg] = {source: "url", sourceUrl, bundleSha256: OLD}
+    pins.delete(pkg)
+    responses = [served(manifest("1.2.0", {versions: listed("1.2.0")}))]
+    await ownUrl().checkAll()
+    expect(installs[0].options).toMatchObject({expectedVersion: "1.2.0", expectedBundleSha256: sha})
+  })
+
+  test("has no effect on a system miniapp, which updates from its deployment's host", async () => {
+    identities[pkg] = {source: "bundled_asset"}
+    responses = [served(manifest("1.2.0", {versions: listed("1.2.0")}))]
+    await updater().checkAll()
+    expect(installs[0].options).toMatchObject({expectedVersion: "1.2.0", expectedBundleSha256: sha})
+  })
+})
 
 function keep(stored: {core?: string; fetchedAt?: number; validForSeconds?: number; statuses: Record<string, string>}) {
   statusStore.set(REGISTRY_STATUS_KEY, JSON.stringify({core: core, fetchedAt: now, validForSeconds: 21_600, ...stored}))
@@ -713,10 +1099,10 @@ describe("the registry status", () => {
     expect(warnings).toEqual([])
   })
 
-  test("an archived miniapp opened by the person isn't checked either", async () => {
+  test("an archived miniapp that is about to start isn't checked either", async () => {
     installBoth()
     statusAnswer = answer({[acmeUrl]: "archived"})
-    await updater().checkOpened(acme)
+    await updater().checkBeforeStart(acme, {checkMs: 1000, installMs: 1000})
     expect(fetched).toEqual([])
   })
 
@@ -1001,12 +1387,14 @@ function networkUpdater(overrides: Partial<ConstructorParameters<typeof MiniappU
 }
 
 describe("moves and redirects", () => {
+  const installedSha = "c".repeat(64)
+
   beforeEach(async () => {
     routes = new Map()
     sent = []
     zipSha = Buffer.from(await crypto.subtle.digest("SHA-256", zipBytes)).toString("hex")
     active = {[acme]: "1.0.0"}
-    identities = {[acme]: {source: "url", sourceUrl: acmeUrl, bundleSha256: "c".repeat(64)}}
+    identities = {[acme]: {source: "url", sourceUrl: acmeUrl, bundleSha256: installedSha}}
     registerAnswer = async (request) => ({
       result: "accepted_unverified",
       entry: {
@@ -1026,7 +1414,11 @@ describe("moves and redirects", () => {
     })
   })
 
-  const release = (version: string) => acmeManifest(version, {bundle: {url: `${acme}-${version}.zip`, sha256: zipSha}})
+  // 1.0.0 is the build already installed; any other version is the ZIP the transport serves.
+  const release = (version: string) =>
+    acmeManifest(version, {
+      bundle: {url: `${acme}-${version}.zip`, sha256: version === "1.0.0" ? installedSha : zipSha},
+    })
 
   test("a 301 within the domain moves the miniapp: its release records the new URL, which is registered", async () => {
     const movedUrl = "https://apps.acme.com/tools/"
@@ -1053,7 +1445,7 @@ describe("moves and redirects", () => {
     expect(sent[0].init.headers["If-None-Match"]).toBe('"v2"')
   })
 
-  test("a move is recorded even when nothing newer is served there", async () => {
+  test("a move is recorded even when the build already installed is served there", async () => {
     route(`${acmeUrl}miniapp.json`, redirect(308, "/v2/miniapp.json"))
     route("https://tools.acme.com/v2/miniapp.json", json(release("1.0.0")))
     await networkUpdater().check(acme)
@@ -1364,5 +1756,205 @@ describe("sign-in challenges", () => {
       true,
     )
     expect(installs[0].options.releaseIdentity?.private).toBeUndefined()
+  })
+})
+
+describe("a development build from a local address", () => {
+  const dev = "com.acme.notes"
+  const address = "http://192.168.1.50:3000/"
+  const devSha = "c".repeat(64)
+  const nextSha = "d".repeat(64)
+
+  function localManifest(sha256: string, overrides: Record<string, unknown> = {}) {
+    return {
+      packageName: dev,
+      version: "0.1.0",
+      name: "Notes",
+      bundle: {url: `bundle-${sha256.slice(0, 8)}.zip`, sha256},
+      development: {reload: "ws://192.168.1.50:3001/__mentra_dev"},
+      ...overrides,
+    }
+  }
+
+  function servedLocally(body: Record<string, unknown>, extra: Partial<ManifestFetchResult> = {}): ManifestFetchResult {
+    return {status: 200, url: `${address}miniapp.json`, body: JSON.stringify(body), ...extra}
+  }
+
+  beforeEach(() => {
+    active = {[dev]: "dev-1000"}
+    identities = {[dev]: {source: "local", sourceUrl: address, bundleSha256: devSha}}
+    developmentBuilds = new Set([dev])
+  })
+
+  test("installs a build with another hash from its address, over HTTP, without asking or asking Core", async () => {
+    responses = [servedLocally(localManifest(nextSha))]
+    await updater().checkNow(dev)
+    expect(localFetches).toEqual([{url: `${address}miniapp.json`, local: true}])
+    expect(statusCalls).toEqual([])
+    expect(registrations).toEqual([])
+    expect(installs).toEqual([])
+    expect(localInstalls).toHaveLength(1)
+    const [{bundleUrl, install}] = localInstalls
+    expect(bundleUrl).toBe(`${address}bundle-dddddddd.zip`)
+    expect(install).toMatchObject({
+      packageName: dev,
+      version: "0.1.0",
+      sourceUrl: address,
+      sha256: nextSha,
+      reloadUrl: "ws://192.168.1.50:3001/__mentra_dev",
+    })
+    expect(active[dev]).not.toBe("dev-1000")
+  })
+
+  test("does nothing when its address serves the build it has", async () => {
+    responses = [servedLocally(localManifest(devSha))]
+    await updater().checkNow(dev)
+    expect(localFetches).toHaveLength(1)
+    expect(localInstalls).toEqual([])
+  })
+
+  test("a pass never asks a local address; other miniapps are still checked", async () => {
+    active[pkg] = "1.0.0"
+    identities[pkg] = {source: "bundled_asset"}
+    responses = [served(manifest("1.0.0"))]
+    await updater().checkAll()
+    expect(fetched.map((request) => request.url)).toEqual([`${sourceUrl}miniapp.json`])
+  })
+
+  test("checkNow ignores the minute rule and the failure backoff", async () => {
+    const u = updater()
+    responses = [servedLocally(localManifest(devSha))]
+    await u.checkNow(dev)
+    // Checked a moment ago: asked again at once.
+    responses = [servedLocally(localManifest(devSha))]
+    await u.checkNow(dev)
+    expect(localFetches).toHaveLength(2)
+    // The computer went away: the check failed, and a backoff would wait minutes.
+    responses = [{status: 503, url: `${address}miniapp.json`}]
+    await u.checkNow(dev)
+    expect(warnings.some((warning) => warning.includes(dev))).toBe(true)
+    responses = [servedLocally(localManifest(nextSha))]
+    await u.checkNow(dev)
+    expect(localInstalls).toHaveLength(1)
+  })
+
+  test("a start checks a local address every time, even right after a failed check", async () => {
+    const u = updater()
+    responses = [{status: 503, url: `${address}miniapp.json`}]
+    await u.checkBeforeStart(dev, {checkMs: 5000, installMs: 5000})
+    responses = [servedLocally(localManifest(nextSha))]
+    await u.checkBeforeStart(dev, {checkMs: 5000, installMs: 5000})
+    expect(localFetches).toHaveLength(2)
+    expect(localInstalls).toHaveLength(1)
+  })
+
+  test("a checkNow during a check runs one more check after it, shared by every checkNow meanwhile", async () => {
+    let answer!: (result: ManifestFetchResult) => void
+    const u = new MiniappUrlUpdater({
+      ...updaterDeps(),
+      fetchManifest: async (url, {local}) => {
+        localFetches.push({url, ...(local ? {local} : {})})
+        if (localFetches.length === 1) {
+          return new Promise<ManifestFetchResult>((resolve) => {
+            answer = resolve
+          })
+        }
+        return servedLocally(localManifest(nextSha))
+      },
+    })
+    const first = u.checkNow(dev)
+    // The first check is asking the address, and hasn't heard back.
+    for (let i = 0; i < 50 && localFetches.length === 0; i++) await Promise.resolve()
+    expect(localFetches).toHaveLength(1)
+    const second = u.checkNow(dev)
+    const third = u.checkNow(dev)
+    answer(servedLocally(localManifest(devSha)))
+    await Promise.all([first, second, third])
+    expect(localFetches).toHaveLength(2)
+    expect(localInstalls).toHaveLength(1)
+  })
+
+  test("follows a redirect that stays on the local network, and refuses one that leaves it", async () => {
+    responses = [
+      {status: 307, url: `${address}miniapp.json`, location: "http://192.168.1.51:3000/miniapp.json"},
+      {...servedLocally(localManifest(nextSha)), url: "http://192.168.1.51:3000/miniapp.json"},
+    ]
+    const u = updater()
+    await u.checkNow(dev)
+    expect(localFetches.map((request) => request.url)).toEqual([
+      `${address}miniapp.json`,
+      "http://192.168.1.51:3000/miniapp.json",
+    ])
+    expect(localInstalls).toHaveLength(1)
+    // The address it updates from is the one the person installed, not where it was sent for this check.
+    expect(localInstalls[0].install.sourceUrl).toBe(address)
+
+    localFetches = []
+    responses = [{status: 302, url: `${address}miniapp.json`, location: "https://evil.example/miniapp.json"}]
+    await u.checkNow(dev)
+    expect(localFetches).toHaveLength(1)
+    expect(localInstalls).toHaveLength(1)
+    expect(warnings.at(-1)).toContain("off the local network")
+  })
+
+  test("refuses a miniapp.json served from, or naming a bundle, off the local network", async () => {
+    responses = [{...servedLocally(localManifest(nextSha)), url: "https://cdn.example/miniapp.json"}]
+    await updater().checkNow(dev)
+    responses = [servedLocally(localManifest(nextSha, {bundle: {url: "https://cdn.example/b.zip", sha256: nextSha}}))]
+    await updater().checkNow(dev)
+    expect(localInstalls).toEqual([])
+  })
+
+  test("a failed install is counted as a failed check, and the build it has stays", async () => {
+    localInstallError = new Error("bundle SHA-256 mismatch")
+    responses = [servedLocally(localManifest(nextSha))]
+    await updater().checkNow(dev)
+    expect(localInstalls).toHaveLength(1)
+    expect(active[dev]).toBe("dev-1000")
+    expect(warnings.at(-1)).toContain("could not install")
+  })
+
+  test("is never replaced by an update from another URL: it checks only its own address", async () => {
+    // A system package's name: its release would update from Mentra's host.
+    active = {[pkg]: "dev-1000"}
+    identities = {[pkg]: {source: "local", sourceUrl: address, bundleSha256: devSha}}
+    developmentBuilds = new Set([pkg])
+    responses = [servedLocally(localManifest(nextSha, {packageName: pkg}))]
+    await updater().checkNow(pkg)
+    expect(fetched.map((request) => request.url)).toEqual([`${address}miniapp.json`])
+    expect(installs).toEqual([])
+    expect(localInstalls).toHaveLength(1)
+  })
+
+  test("leaves a release alone while the person's development build of it is installed", async () => {
+    // Development is off in this deployment, so the release runs; the development build still holds the package.
+    active = {[pkg]: "1.0.0"}
+    identities = {[pkg]: {source: "bundled_asset"}}
+    developmentBuilds = new Set([pkg])
+    await updater().checkAll()
+    await updater().checkNow(pkg)
+    expect(fetched).toEqual([])
+  })
+
+  test("doesn't check where the deployment doesn't allow development", async () => {
+    developmentAllowed = false
+    await updater().checkNow(dev)
+    expect(localFetches).toEqual([])
+  })
+
+  test("a build from an older CLI's release QR has no address, and doesn't update", async () => {
+    identities = {[dev]: {source: "local", bundleSha256: devSha}}
+    await updater().checkNow(dev)
+    await updater().checkBeforeStart(dev, {checkMs: 5000, installMs: 5000})
+    expect(localFetches).toEqual([])
+  })
+
+  test("reads the console connection only on the local network", () => {
+    expect(developmentReloadUrl("ws://192.168.1.50:3001/__mentra_dev", address)).toBe(
+      "ws://192.168.1.50:3001/__mentra_dev",
+    )
+    expect(developmentReloadUrl("ws://evil.example:3001/__mentra_dev", address)).toBeUndefined()
+    expect(developmentReloadUrl("http://192.168.1.50:3001/", address)).toBeUndefined()
+    expect(developmentReloadUrl(undefined, address)).toBeUndefined()
   })
 })

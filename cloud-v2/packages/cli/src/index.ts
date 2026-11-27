@@ -207,15 +207,34 @@ program
   .option("--cwd <path>", "miniapp project directory", process.cwd())
   .option("--usb", "reach the phone over USB via adb reverse instead of the LAN (Android only)")
   .option("--device <serial>", "target a specific adb device serial (use with --usb)")
-  .action(async (options: { cwd: string; usb?: boolean; device?: string }) => {
-    try {
-      // Local only: the phone treats the build as its package, refuses it over
-      // an install signed by a publisher, and requests miniapp tokens itself.
-      await devMiniapp({ cwd: resolve(options.cwd), usb: options.usb, device: options.device });
-    } catch (error) {
-      fail(error);
-    }
-  });
+  .option("--production", "serve the production build, the one `mentra pack` builds; nothing is watched")
+  .option("--sign", "with --production: sign with the stored publisher key (unsigned by default)")
+  .option("--signing-key <path>", "with --production: publisher signing key file")
+  .action(
+    async (options: {
+      cwd: string;
+      usb?: boolean;
+      device?: string;
+      production?: boolean;
+      sign?: boolean;
+      signingKey?: string;
+    }) => {
+      try {
+        // Local only: the phone treats the build as its package, refuses it over
+        // an install signed by a publisher, and requests miniapp tokens itself.
+        await devMiniapp({
+          cwd: resolve(options.cwd),
+          usb: options.usb,
+          device: options.device,
+          production: options.production,
+          sign: options.sign,
+          signingKeyPath: options.signingKey,
+        });
+      } catch (error) {
+        fail(error);
+      }
+    },
+  );
 
 program
   .command("build")
@@ -236,13 +255,15 @@ program
   .option("--no-build", "skip production build before packing")
   .option("--sign", "sign with the stored publisher key (unsigned by default)")
   .option("--signing-key <path>", "publisher signing key file (CI/non-persistent use)")
-  .action(async (options: { cwd: string; build: boolean; sign?: boolean; signingKey?: string }) => {
+  .option("--url <miniapp URL>", "the miniapp's URL: keep the versions published there (CI and clean checkouts)")
+  .action(async (options: { cwd: string; build: boolean; sign?: boolean; signingKey?: string; url?: string }) => {
     try {
       await packMiniapp({
         cwd: resolve(options.cwd),
         build: options.build,
         sign: options.sign,
         signingKeyPath: options.signingKey,
+        url: options.url,
       });
     } catch (error) {
       fail(error);

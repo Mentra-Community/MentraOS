@@ -7,7 +7,16 @@ import {tmpdir} from "node:os"
 import {dirname, join} from "node:path"
 import JSZip from "jszip"
 import {normalizeMiniappUrl, ServedMiniappManifestSchema} from "../../../cloud-v2/packages/protocol/src/miniapp-url"
-import {buildDevUrl, createBuildQueue, createDevRequestHandler, type DevRequestHandlerOptions} from "./dev"
+import {
+  buildDevUrl,
+  createBuildQueue,
+  createDevRequestHandler,
+  servedZipName,
+  type DevRequestHandlerOptions,
+} from "./dev"
+import {buildBundle, iconFromArchive, pack} from "./pack"
+import {generatePackageSigningKey} from "./package-signing-key"
+import {verifySignedBundleArchive} from "./bundle-signing"
 
 const MANIFEST = {
   packageName: "com.example.devtest",
@@ -89,9 +98,15 @@ describe("the dev server's miniapp.json", () => {
     expect(parsed.success).toBe(true)
     expect(served).toEqual({
       ...MANIFEST,
-      bundle: {url: "bundle.zip", sha256: expect.stringMatching(/^[0-9a-f]{64}$/)},
+      bundle: {
+        url: expect.stringMatching(/^com\.example\.devtest-1\.2\.3-[0-9a-f]{8}\.zip$/),
+        sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
       development: {reload: "ws://192.168.1.20:3001/__mentra_dev", mdns: "dev-mac.local"},
     })
+    // The ZIP's name carries its hash, as `pack` names one. Only `pack` writes `versions`.
+    expect(served.bundle.url).toBe(`com.example.devtest-1.2.3-${served.bundle.sha256.slice(0, 8)}.zip`)
+    expect(served).not.toHaveProperty("versions")
 
     const bytes = await fetchBundle(serve, url, served.bundle.url)
     expect(sha256(bytes)).toBe(served.bundle.sha256)
@@ -106,7 +121,7 @@ describe("the dev server's miniapp.json", () => {
     const response = await serve(new Request("http://192.168.1.20:3000/"))
     expect(response.status).toBe(200)
     const served = (await response.json()) as Record<string, any>
-    expect(served.bundle.url).toBe("bundle.zip")
+    expect(served.bundle.url).toBe(servedZipName(MANIFEST, served.bundle.sha256))
   })
 
   test("names the reload socket on the host the phone reached the server by", async () => {
@@ -134,9 +149,10 @@ describe("the dev server's miniapp.json", () => {
     expect((await fetchServed(serve, url)).bundle.sha256).toBe(first)
 
     write(root, "dist/ui/index.html", "<!doctype html><p>changed</p>")
-    const next = (await fetchServed(serve, url)).bundle.sha256
+    const changed = await fetchServed(serve, url)
+    const next = changed.bundle.sha256
     expect(next).not.toBe(first)
-    expect(sha256(await fetchBundle(serve, url, "bundle.zip"))).toBe(next)
+    expect(sha256(await fetchBundle(serve, url, changed.bundle.url))).toBe(next)
   })
 
   test("waits for the build in flight", async () => {
@@ -162,6 +178,146 @@ describe("the dev server's miniapp.json", () => {
     expect((await serve(new Request("http://192.168.1.20:3000/miniapp.json"))).status).toBe(500)
     const array = handler(project("[]"))
     expect((await array(new Request("http://192.168.1.20:3000/miniapp.json"))).status).toBe(500)
+  })
+})
+
+describe("the dev server's ZIP", () => {
+  const url = "http://192.168.1.20:3000/"
+
+  test("is also at /bundle.zip, where released Mentra Apps ask for it: always the latest build", async () => {
+    const root = project()
+    const serve = handler(root)
+    const first = await fetchServed(serve, url)
+    expect(sha256(await fetchBundle(serve, url, "bundle.zip"))).toBe(first.bundle.sha256)
+
+    write(root, "dist/ui/index.html", "<!doctype html><p>changed</p>")
+    const next = await fetchServed(serve, url)
+    expect(next.bundle.url).not.toBe(first.bundle.url)
+    expect(sha256(await fetchBundle(serve, url, "bundle.zip"))).toBe(next.bundle.sha256)
+  })
+
+  test("a build keeps its ZIP at its own name after a save, so a miniapp.json fetched before it still matches", async () => {
+    const root = project()
+    const serve = handler(root)
+    const first = await fetchServed(serve, url)
+
+    // The save lands between the phone's two requests.
+    write(root, "dist/ui/index.html", "<!doctype html><p>changed</p>")
+    const next = await fetchServed(serve, url)
+
+    expect(sha256(await fetchBundle(serve, url, first.bundle.url))).toBe(first.bundle.sha256)
+    expect(sha256(await fetchBundle(serve, url, next.bundle.url))).toBe(next.bundle.sha256)
+  })
+
+  test("keeps only the last few builds", async () => {
+    const root = project()
+    const serve = handler(root)
+    const first = await fetchServed(serve, url)
+    for (let save = 1; save <= 4; save++) {
+      write(root, "dist/ui/index.html", `<!doctype html><p>save ${save}</p>`)
+      await fetchServed(serve, url)
+    }
+    expect((await serve(new Request(new URL(first.bundle.url, url)))).status).toBe(404)
+  })
+
+  test("after a restart, unchanged files are still served under the name they had", async () => {
+    const root = project()
+    const before = await fetchServed(handler(root), url)
+    // A new server has named no build yet.
+    const restarted = handler(root)
+    expect(sha256(await fetchBundle(restarted, url, before.bundle.url))).toBe(before.bundle.sha256)
+  })
+
+  test("answers 404 for a ZIP name no build has", async () => {
+    const serve = handler(project())
+    await fetchServed(serve, url)
+    expect((await serve(new Request(new URL("com.example.devtest-1.2.3-00000000.zip", url)))).status).toBe(404)
+  })
+
+  test("a package name or version that can't be in a URL keeps the hash in the name", () => {
+    const hash = "9f2c0e1a".padEnd(64, "0")
+    expect(servedZipName({packageName: "com.example.notes", version: "0.3.5"}, hash)).toBe(
+      "com.example.notes-0.3.5-9f2c0e1a.zip",
+    )
+    expect(servedZipName({packageName: "com.example.notes", version: "1.0 beta?"}, hash)).toBe("bundle-9f2c0e1a.zip")
+    expect(servedZipName({}, hash)).toBe("bundle-9f2c0e1a.zip")
+  })
+})
+
+describe("dev --production: the production bundle, served as a miniapp URL", () => {
+  const url = "http://192.168.1.20:3000/"
+
+  /** The request handler `dev --production` runs, over the project's production bundle. */
+  async function production(root: string, signingKey?: ReturnType<typeof generatePackageSigningKey>) {
+    const bundle = await buildBundle({cwd: root, silent: true, signingKey})
+    const icon = await iconFromArchive(bundle.archive, bundle.manifest.icon, true)
+    return {bundle, serve: handler(root, {production: {bundle, icon}})}
+  }
+
+  test("serves the bundle pack builds: miniapp.json names its ZIP and hash, and the ZIP holds the packed miniapp.json", async () => {
+    const root = project()
+    const {bundle, serve} = await production(root)
+    const served = await fetchServed(serve, url)
+
+    expect(ServedMiniappManifestSchema.safeParse(served).success).toBe(true)
+    expect(served).toEqual({
+      ...MANIFEST,
+      bundle: {url: bundle.zipName, sha256: bundle.sha256},
+      development: {reload: "ws://192.168.1.20:3001/__mentra_dev", mdns: "dev-mac.local"},
+    })
+    expect(served).not.toHaveProperty("versions")
+
+    const bytes = await fetchBundle(serve, url, served.bundle.url)
+    expect(sha256(bytes)).toBe(served.bundle.sha256)
+    const zip = await JSZip.loadAsync(bytes)
+    expect(JSON.parse(await zip.file("miniapp.json")!.async("string"))).toEqual(MANIFEST)
+    expect(zip.file("background/index.js")).not.toBeNull()
+
+    // The same bytes `pack` writes to build/ for these files.
+    const packed = await Bun.file(await pack({cwd: root, silent: true})).bytes()
+    expect(sha256(packed)).toBe(served.bundle.sha256)
+  })
+
+  test("serves that ZIP at /bundle.zip too, and the icon from the bundle", async () => {
+    const root = project()
+    const {bundle, serve} = await production(root)
+    expect(sha256(await fetchBundle(serve, url, "bundle.zip"))).toBe(bundle.sha256)
+    const icon = await serve(new Request(new URL("icon.png", url)))
+    expect(icon.status).toBe(200)
+    expect(icon.headers.get("content-type")).toBe("image/png")
+    expect(await icon.text()).toBe("png bytes")
+  })
+
+  test("doesn't follow the working copy: a save changes nothing it serves", async () => {
+    const root = project()
+    const {bundle, serve} = await production(root)
+    write(root, "dist/ui/index.html", "<!doctype html><p>changed</p>")
+    write(root, "miniapp.json", JSON.stringify({...MANIFEST, version: "9.9.9"}))
+
+    const served = await fetchServed(serve, url)
+    expect(served.version).toBe("1.2.3")
+    expect(served.bundle).toEqual({url: bundle.zipName, sha256: bundle.sha256})
+    expect(sha256(await fetchBundle(serve, url, served.bundle.url))).toBe(bundle.sha256)
+  })
+
+  test("serves no project file: only what a host holding pack's folder serves", async () => {
+    const root = project()
+    const {serve} = await production(root)
+    for (const path of ["dist/ui/index.html", "dist/background/index.js", "package.json", "nope.zip", "miniapp.json.bak"]) {
+      expect((await serve(new Request(`${url}${path}`))).status).toBe(404)
+    }
+  })
+
+  test("serves the signed bundle when signing is asked for", async () => {
+    const root = project()
+    const signingKey = generatePackageSigningKey("com.example.devtest")
+    const {serve} = await production(root, signingKey)
+    const served = await fetchServed(serve, url)
+    const bytes = await fetchBundle(serve, url, served.bundle.url)
+    expect(sha256(bytes)).toBe(served.bundle.sha256)
+    const verified = await verifySignedBundleArchive(bytes)
+    expect(verified.packageName).toBe("com.example.devtest")
+    expect(verified.version).toBe("1.2.3")
   })
 })
 

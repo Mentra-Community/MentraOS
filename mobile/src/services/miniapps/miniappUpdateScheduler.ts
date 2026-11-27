@@ -10,11 +10,9 @@ const scheduler = new MiniappUpdateSchedulerCore({
     await defaultMiniapps.sync()
     return engine.miniapps.checkForUpdates()
   },
-  checkOpened: (packageName) => engine.miniapps.checkOpenedForUpdate(packageName),
   subscribeForeground: subscribeAppForeground,
   subscribeReconnect: subscribeCloudReconnect,
   subscribeDeferredUpdateReady: (handler) => engine.miniapps.onDeferredUpdateReady(() => handler()),
-  subscribeOpened: (handler) => engine.miniapps.onOpened(handler),
   setInterval: (handler, intervalMs) => BgTimer.setInterval(handler, intervalMs),
   clearInterval: (handle) => BgTimer.clearInterval(handle as number),
   warn: (message, error) => console.warn(message, error),

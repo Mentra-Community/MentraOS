@@ -26,9 +26,9 @@ The layers do not share memory. Exchange serializable data through the typed
 ## Commands
 
 ```bash
-bun run dev      # develop: scan once, then every save reloads on the phone
-bun run release  # persistent install that runs without the computer
-bun run build    # build both layers into dist/
+bun run dev             # develop: scan once, then every save reloads on the phone
+bun run dev:production  # try the production build, the one users will get
+bun run build           # build both layers into dist/
 ```
 
 Use `bun run dev` while you build. Scan its QR code once; after that each saved
@@ -36,9 +36,10 @@ change rebuilds and reloads on the phone, with no rescan. The Mentra App keeps
 one dev entry per manifest package name, so you can test several dev miniapps
 side by side.
 
-`bun run release` installs a fixed snapshot that keeps working after you close
-the CLI. Each change needs another `bun run release` and another scan, so save
-it for when you want the miniapp on the phone without the computer.
+`bun run dev:production` serves the production build, the one `bun run pack`
+writes, from your computer in the same way. Nothing is watched: after a change,
+run it again, and the phone takes the new build the next time it opens the
+miniapp. Use it to try what users will get before you publish.
 
 ## Before you share it
 

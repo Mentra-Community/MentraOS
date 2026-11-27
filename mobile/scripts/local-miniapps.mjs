@@ -4,8 +4,9 @@
  * deployment's miniapp host.
  *
  * startDevMiniapps() starts each miniapp's dev server (`mentra-miniapp dev`, frontend only: it calls the backend its
- * .env names, else its .env.example's dev backend), and the app installs each as a local build that reloads on every
- * save (src/services/miniapps/devMiniapps.ts). No QR code is scanned. The ports reach the app as
+ * .env names, else its .env.example's dev backend), and the app installs each from its dev server's URL as a local
+ * build, which updates from there when it opens and on every save (src/services/miniapps/devMiniapps.ts). No QR code
+ * is scanned. The ports reach the app as
  * EXPO_PUBLIC_DEV_MINIAPPS; the host is the one the bundle came from.
  *
  * A miniapp is a folder with a `pack` script: miniapps/<name>, a member of the root Bun workspace, and each folder

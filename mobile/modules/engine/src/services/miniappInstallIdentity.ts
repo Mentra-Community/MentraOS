@@ -1,5 +1,3 @@
-import semver from "semver"
-
 export interface MiniappInstallExpectations {
   packageName?: string
   version?: string
@@ -19,14 +17,26 @@ export function miniappInstallIdentityError(
   return null
 }
 
-/** One release rule for every delivery source: reinstall or upgrade, never downgrade. */
-export function assertMiniappUpdateVersion(packageName: string, version: string, installedVersions: string[]): void {
-  // Live development snapshots are sessions, not installed release versions.
-  if (version.startsWith("dev-")) return
-  if (!semver.valid(version)) throw new Error(`Invalid miniapp version: ${version}`)
-  const newer = installedVersions.filter((installed) => semver.valid(installed) && semver.gt(installed, version))
-  newer.sort(semver.rcompare)
-  if (newer.length > 0) {
-    throw new Error(`Cannot install ${packageName}@${version}: version ${newer[0]} is already installed`)
+/**
+ * The one update rule: what a miniapp's URL serves replaces the installed release when it is another build, whatever
+ * the two versions are. A build is its ZIP, identified by its SHA-256. A release installed before hashes were recorded
+ * counts as the build its URL serves at the same version.
+ */
+export function isServedBuildInstalled(
+  installed: {version: string; bundleSha256?: string},
+  served: {version: string; bundleSha256: string},
+): boolean {
+  if (!installed.bundleSha256) return installed.version === served.version
+  return installed.bundleSha256.toLowerCase() === served.bundleSha256.toLowerCase()
+}
+
+/**
+ * A release would replace a development build, which only the person replaces (`AppRegistry.isDevelopmentBuild`):
+ * the install is refused and the development build stays.
+ */
+export class DevelopmentBuildInstalledError extends Error {
+  constructor(readonly packageName: string) {
+    super(`${packageName} runs a development build, which only the person replaces`)
+    this.name = "DevelopmentBuildInstalledError"
   }
 }

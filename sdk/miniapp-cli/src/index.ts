@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import { dev } from './dev.js';
-import { release } from './release.js';
 import { pack } from './pack.js';
 import { schemaPrint, regenerateSchemaFile } from './schema.js';
 import { addPermissionCmd, listPermissionsCmd, removePermissionCmd } from './permission.js';
@@ -27,10 +26,18 @@ function printUsage(): void {
   console.log('                                                               (adb reverse, no shared Wi-Fi)');
   console.log('                                            --device <serial>  target one adb device');
   console.log('                                            --no-hot-reload    serve + log only; no remount on save');
-  console.log('  release                          Build, pack, and serve a QR to install on a phone');
-  console.log('                                   Options: --no-cache  --qr-output <path>  --sign  --signing-key <path>');
+  console.log('                                            --production       serve the production build, the one');
+  console.log('                                                               pack writes; nothing is watched');
+  console.log('                                            --sign, --signing-key <path>');
+  console.log('                                                               sign it (with --production)');
   console.log(
     '  pack                             Production-build and write build/, ready to upload (--no-build)',
+  );
+  console.log(
+    '                                            --url <miniapp URL>    keep the versions published there',
+  );
+  console.log(
+    '                                                                   (use it in CI)',
   );
   console.log(
     '                                   Signing is opt-in and permanent per package:',
@@ -61,7 +68,7 @@ function flagValue(flag: string): string | undefined {
   if (idx === -1) return undefined;
   const value = process.argv[idx + 1];
   if (!value || value.startsWith('-')) {
-    console.error(`Error: ${flag} requires a path argument`);
+    console.error(`Error: ${flag} requires a value`);
     process.exit(1);
   }
   return value;
@@ -74,12 +81,21 @@ switch (subcommand) {
       usb: process.argv.includes('--usb'),
       device: flagValue('--device'),
       hotReload: !process.argv.includes('--no-hot-reload'),
+      production: process.argv.includes('--production'),
+      sign: process.argv.includes('--sign'),
+      signingKeyPath: flagValue('--signing-key'),
     });
     break;
   case 'release':
-    await release({
-      noCache: process.argv.includes('--no-cache'),
+    // The former name of `dev --production`, kept for one release. Its flags
+    // still work; --no-cache has nothing left to skip, since the production
+    // build always runs.
+    console.log('mentra-miniapp release is now mentra-miniapp dev --production.');
+    await dev({
+      production: true,
       qrOutput: flagValue('--qr-output'),
+      usb: process.argv.includes('--usb'),
+      device: flagValue('--device'),
       sign: process.argv.includes('--sign'),
       signingKeyPath: flagValue('--signing-key'),
     });
@@ -93,6 +109,8 @@ switch (subcommand) {
       // Unsigned unless asked: signing pins a package's publisher permanently.
       sign: process.argv.includes('--sign'),
       signingKeyPath: flagValue('--signing-key'),
+      // The miniapp's URL: the versions published there stay listed.
+      url: flagValue('--url'),
     });
     break;
   case 'keys': {

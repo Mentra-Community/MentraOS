@@ -476,6 +476,19 @@ describe("a phone", () => {
     expect(idp.userLookups).toEqual([phone.sub])
   })
 
+  test("a phone's desired-state request reaches Fleet with its query: ?pins=1 is how it asks for pinned entries", async () => {
+    const phone = await phoneSession("pins")
+
+    const asking = await fromPhone(phone, "GET", "/desired-state?pins=1")
+    expect(asking.status).toBe(200)
+    expect((asking.json as Echo).pathWithQuery).toBe("/v1/client/desired-state?pins=1")
+    expect((asking.json as Echo).principal).toMatchObject({kind: "phone", mentraUserId: phone.mentraUserId})
+
+    // A phone that doesn't ask sends none, and Core adds none for it.
+    const plain = await fromPhone(phone, "GET", "/desired-state")
+    expect((plain.json as Echo).pathWithQuery).toBe("/v1/client/desired-state")
+  })
+
   test("an email changed in the Mentra App reaches Fleet with the account's next report, after one directory lookup", async () => {
     const phone = await phoneSession("renamed")
     expect(((await fromPhone(phone, "POST", "/report", {body: "{}"})).json as Echo).principal).toMatchObject({

@@ -1,7 +1,7 @@
 /**
  * MiniappEngine — constructs the MentraJS router singletons (crash controller,
  * UI router, JS router), binds them to the native Crust module + the launcher,
- * wires the dev-server background-respawn signal, and starts the message pump.
+ * and starts the message pump.
  *
  * Engine owns this so a bare OEM's `engine.start()` brings up the local-miniapp
  * engine with no host construction step. Host-only concerns that remain outside
@@ -14,8 +14,6 @@
 
 import CrustModule from "@mentra/crust"
 
-import devServerBridge from "./DevServerBridge"
-import {fleetEvents} from "./fleet/fleetEvents"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import {miniappLauncher} from "./MiniappLauncher"
 import {MentraJSCrashController} from "./MentraJSCrashController"
@@ -31,71 +29,12 @@ export interface MiniappEngine {
 
 let engine: MiniappEngine | null = null
 
-function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: MentraUIRouter): void {
-  devServerBridge.onRespawnBackground(async (packageName) => {
-    // A closed miniapp stays closed: its next launch resolves the server's current code.
-    if (!router.registeredPackages().includes(packageName)) return
-    try {
-      // Re-resolve the freshly built bundle (a new snapshot of what the dev
-      // server serves) via the launcher's shared recipe. Carries
-      // the declared permissions + manifest across the respawn — omitting them
-      // would respawn the JSContext with no permissions, so SUBSCRIBE gates and
-      // per-call dispatch checks would start rejecting after a background
-      // hot-reload.
-      const resolved = await miniappLauncher.resolveBundle(packageName)
-      if (!resolved) {
-        console.warn(`MentraJS: respawn-bg could not resolve bundle for ${packageName}`)
-        return
-      }
-      // The rebuilt bundle meets a launch's Mentra App version rule; refused, the running context stays.
-      miniappLauncher.assertRunsOnPhone(packageName, resolved)
-      // Force a respawn (kill + spawn) rather than launcher.ensureRunning,
-      // which is idempotent and would no-op an already-registered context.
-      const projectRunning = router.isProjectedRunning(packageName)
-      await router.unregister(packageName)
-      const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
-        permissions: resolved.declaredPermissions,
-        installedManifest: resolved.installedManifest,
-        hostTrustedSystem: resolved.hostTrustedSystem,
-        projectRunning,
-        developmentBuild: resolved.devBuild,
-      })
-      // A miniapp running as user activity starts again from the new bundle: an automatic launch to Fleet.
-      if (projectRunning) {
-        const manifest = resolved.installedManifest
-        fleetEvents.launchUnlessClaimed({
-          packageName,
-          ...(manifest?.name ? {miniappName: manifest.name} : {}),
-          ...(manifest?.version ? {versionName: manifest.version} : {}),
-          start: "automatic",
-          outcome: ok ? "started" : "failed",
-        })
-      }
-      if (!ok) {
-        console.warn(`MentraJS: respawn-bg failed for ${packageName}`)
-        return
-      }
-      miniappLauncher.noteRunningVersion(packageName, resolved.version)
-      // The respawned JSContext is a fresh MiniappSession with ui.bound false.
-      // The mounted WebView won't re-fire mentra.ready() (it's latched), so
-      // re-announce it so RPC replies (mentra.request) reach the UI again
-      // instead of being dropped while unbound.
-      uiRouter.notifyReopen(packageName)
-    } catch (e) {
-      console.warn(`MentraJS: respawn-bg threw for ${packageName}:`, e)
-    }
-  })
-  // Each connection to a dev server checks that the running build is the one it serves now (see `onCatchUp`).
-  devServerBridge.onCatchUp((packageName) => miniappLauncher.runsOutdatedDevBuild(packageName))
-}
-
 /**
  * Construct (once) and return the MentraJS engine singletons. Starts the router's
  * message pump on first call. Subsequent calls return the same instances.
  */
 export function ensureMiniappEngine(): MiniappEngine {
   if (engine) {
-    wireDevServerRespawnBackground(engine.router, engine.uiRouter)
     engine.router.start()
     return engine
   }
@@ -126,11 +65,6 @@ export function ensureMiniappEngine(): MiniappEngine {
   // through one place.
   miniappLauncher.configure({router})
 
-  // Wire up the dev server's "respawn-bg" signal so a touch under
-  // src/background/ kills + re-spawns the JSContext with the latest bundle.
-  // The WebView reload path stays separate (devServerBridge.onReload).
-  wireDevServerRespawnBackground(router, uiRouter)
-
   router.start()
 
   engine = {router, uiRouter, crashController}
@@ -147,8 +81,6 @@ export async function stopMiniappEngine(): Promise<void> {
   // Crust subscription once this function finishes.
   engine = null
 
-  devServerBridge.clearRespawnBackgroundHandler()
-  devServerBridge.onCatchUp(null)
   current.router.stop()
 
   const packages = current.router.registeredPackages()

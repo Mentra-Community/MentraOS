@@ -1,7 +1,7 @@
 /**
  * The update prompt for a running miniapp.
  *
- * When a newer release is staged for a miniapp the user is running, the
+ * When another release is staged for a miniapp the user is running, the
  * engine asks before stopping it. The host renders the prompt (its copy and
  * buttons) and answers it; the engine owns when a prompt may appear: only
  * while the Mentra App is in the foreground, one at a time. After Not now it

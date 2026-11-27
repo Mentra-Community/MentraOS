@@ -14,6 +14,7 @@ import {
   INVALID_TOKEN_ERROR,
   REGISTRY_CHECK_STATUSES,
   REGISTRY_ENTRY_NOT_FOUND_ERROR,
+  REGISTRY_VERSIONS_UNREADABLE_REASONS,
   SERVICE_UNAUTHORIZED_ERROR,
   USER_NOT_FOUND_ERROR,
   WORKSPACE_NOT_FOUND_ERROR,
@@ -36,6 +37,9 @@ import type {
   RegistryEntryDetail,
   RegistryLookupEntry,
   RegistryLookupRequest,
+  RegistryMiniappBuild,
+  RegistryVersionsRequest,
+  RegistryVersionsResponse,
   WorkspaceChangeEvent,
   WorkspaceChangesResponse,
   WorkspaceMembersResponse,
@@ -172,6 +176,14 @@ export interface CoreWorkspaceClient {
    * private miniapp is named only for a workspace that assigned it.
    */
   lookupRegistry(input: RegistryLookupRequest): Promise<Record<string, RegistryLookupEntry | null>>
+  /**
+   * What a miniapp URL serves now (Fleet only): Core reads its `miniapp.json` for this call, as `checkRegistry` reads
+   * an unknown URL (the same token rule, counted against the admin's hourly reads), and answers its latest build and
+   * the versions it lists, or why it has none to list. Null when this Core doesn't serve the route (an older Core:
+   * `404`). Like a check it waits at least `REGISTRY_CHECK_TIMEOUT_MS`. A workspace that isn't active, or a person
+   * who isn't a live account, is `forbidden`; an admin over the hourly reads is `bad_request` with `status` 429.
+   */
+  readRegistryVersions(input: RegistryVersionsRequest): Promise<RegistryVersionsResponse | null>
   /**
    * The registry's entry for a miniapp URL and Core's verified `miniapp.json` (the Store only), or null when the
    * registry has none (`404 not_found`). Core shows a private or phone-reported entry's URL and package only.
@@ -382,6 +394,46 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       iconUrl: entry.iconUrl as string | null,
       private: entry.private,
       archived: entry.archived,
+    }
+  }
+
+  const SHA256 = /^[0-9a-f]{64}$/
+
+  /** A build as `versions` answers it: a version, a URL and a lowercase SHA-256. */
+  function checkBuild(path: string, value: unknown, what: string): RegistryMiniappBuild {
+    const build = checkRecord(path, value, what)
+    if (typeof build.version !== "string" || !build.version) throw badResponse(path, `${what} has no version`)
+    if (typeof build.url !== "string" || !build.url) throw badResponse(path, `${what} has no url`)
+    if (typeof build.sha256 !== "string" || !SHA256.test(build.sha256)) throw badResponse(path, `${what} has no SHA-256`)
+    return {version: build.version, url: build.url, sha256: build.sha256}
+  }
+
+  /** The answer of `versions` for `url`. */
+  function checkVersions(path: string, value: unknown, url: string): RegistryVersionsResponse {
+    const answer = checkRecord(path, value, "the versions answer")
+    if (answer.url !== url) throw badResponse(path, "the answer is not for the URL asked about")
+    if (!isTime(answer.readAt)) throw badResponse(path, "readAt is not a time")
+    const readAt = answer.readAt as string
+    if (answer.status === "unreadable") {
+      const reason = REGISTRY_VERSIONS_UNREADABLE_REASONS.find(known => known === answer.reason)
+      if (reason === undefined) throw badResponse(path, "an unreadable answer has no known reason")
+      return {url, status: "unreadable", reason, readAt}
+    }
+    if (answer.status !== "read") throw badResponse(path, "the versions answer has no known status")
+    if (typeof answer.packageName !== "string" || !answer.packageName) throw badResponse(path, "a read answer has no packageName")
+    if (typeof answer.private !== "boolean" || typeof answer.deploymentDefault !== "boolean") {
+      throw badResponse(path, "a read answer's private or deploymentDefault is not a boolean")
+    }
+    if (answer.versions !== null && !Array.isArray(answer.versions)) throw badResponse(path, "versions is neither a list nor null")
+    return {
+      url,
+      status: "read",
+      packageName: answer.packageName,
+      private: answer.private,
+      deploymentDefault: answer.deploymentDefault,
+      latest: checkBuild(path, answer.latest, "the latest build"),
+      versions: answer.versions === null ? null : answer.versions.map(entry => checkBuild(path, entry, "a version")),
+      readAt,
     }
   }
 
@@ -719,6 +771,14 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
           return [packageName, checkLookupEntry(path, entries[packageName])]
         }),
       )
+    },
+
+    async readRegistryVersions(input) {
+      const path = `${REGISTRY_PREFIX}/versions`
+      const body: RegistryVersionsRequest = {url: input.url, workspaceId: input.workspaceId, mentraUserId: input.mentraUserId}
+      // One read under the same deadline as a check. A Core that predates the route has no such path.
+      const answer = await call("POST", path, body, status => status === 404, Math.max(timeoutMs, REGISTRY_CHECK_TIMEOUT_MS))
+      return answer === null ? null : checkVersions(path, answer, input.url)
     },
 
     async getRegistryEntry(url) {

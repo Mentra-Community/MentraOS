@@ -1,16 +1,18 @@
 /**
- * DevServerBridge — phone-side WebSocket connection to a `mentra-miniapp dev`
- * sidecar running on a developer's laptop.
+ * DevServerBridge — phone-side WebSocket connection to the console of a `mentra-miniapp dev` server running on a
+ * developer's computer: the `development.reload` URL a local build recorded when it installed.
  *
- * Multiplexed over a single WebSocket per dev miniapp:
- *   laptop → phone : {type: "reload"}                 → reopen the screen from the new bundle
- *   laptop → phone : {type: "respawn-bg"}             → restart the background JSContext, then reopen the screen
- *   phone  → laptop: {type: "log", level, args, ...}  → forwarded console calls
+ * Multiplexed over a single WebSocket per running local build:
+ *   laptop → phone : {type: "reload"} or {type: "respawn-bg"}  → a new build is ready: check the build's address now
+ *   phone  → laptop: {type: "log", level, args, ...}            → forwarded console calls
  *
- * Lifecycle: `connect(packageName, devUrl, devPort)` is called from
- * MiniappHost.mountDev once the dev applet is mounted. `disconnect(packageName)`
- * is called from MiniappHost.unmount. Reconnect with exponential backoff on
- * unexpected close — the dev server is the developer's laptop and may bounce.
+ * Both of the server's signals mean the same here: the phone checks the build's address and installs what it serves,
+ * which restarts the whole miniapp (`miniappUrlUpdates.ts` `checkNow`). The connection opening means it too, since
+ * builds made while the phone wasn't listening sent their signal to nobody. No other message is needed, so older
+ * servers and older apps keep working with each other.
+ *
+ * Lifecycle: the launcher connects when a local build's context starts and disconnects when it stops. Reconnect with
+ * exponential backoff on unexpected close — the dev server is the developer's laptop and may bounce.
  *
  * Outgoing logs are buffered in a small ring while disconnected; flushed on
  * reconnect. This catches early-startup logs the developer would otherwise
@@ -24,10 +26,8 @@ const BACKOFF_MIN_MS = 1_000
 const BACKOFF_MAX_MS = 30_000
 const RING_BUFFER_MAX_ENTRIES = 100
 const RING_BUFFER_MAX_BYTES = 32 * 1024
-/** A handler for a dev server signal. A promise holds the package's later signals until it settles. */
-export type DevSignalHandler = (packageName: string) => void | Promise<void>
-/** Whether the package runs older code than its dev server serves now. */
-export type DevCatchUpCheck = (packageName: string) => Promise<boolean>
+/** Asked to check a package's build now: its server's connection opened, or it signalled a new build. */
+export type DevCheckHandler = (packageName: string) => void | Promise<void>
 
 type State = "idle" | "connecting" | "connected" | "disconnected" | "closed"
 
@@ -48,69 +48,40 @@ interface BridgeEntry {
   attempts: number
   ringBuffer: BufferedLog[]
   ringBytes: number
-  reloadHandler: ((packageName: string) => void) | null
   reconnectTimer: ReturnType<typeof setTimeout> | null
 }
 
 class DevServerBridge {
   private entries = new Map<string, BridgeEntry>()
-  private globalReloadHandler: DevSignalHandler | null = null
-  private globalRespawnBackgroundHandler: DevSignalHandler | null = null
-  private globalCatchUpCheck: DevCatchUpCheck | null = null
-  /** Each package's signals run in the order the dev server sent them, one at a time. */
-  private signalQueues = new Map<string, Promise<void>>()
+  private checkHandler: DevCheckHandler | null = null
 
-  /**
-   * Register a global reload handler. MiniappHost calls this once at boot. The
-   * bridge invokes the handler with the offending packageName whenever a
-   * reload signal is received.
-   */
-  public onReload(handler: DevSignalHandler): void {
-    this.globalReloadHandler = handler
+  /** Register what runs when a server asks for a check (see the module comment). Null clears it. */
+  public onCheck(handler: DevCheckHandler | null): void {
+    this.checkHandler = handler
   }
 
-  /**
-   * Register a global background-respawn handler. Fires when the dev
-   * server sends `{type: "respawn-bg"}` — emitted on filesystem changes
-   * under `src/background/`. The host (MentraJSRouter via the
-   * bootstrap) should kill + respawn the JSContext to pick up the
-   * change. The bridge then runs the reload handler (see `onReload`), so
-   * the screen opens from the same new bundle.
-   */
-  public onRespawnBackground(handler: DevSignalHandler | null): void {
-    this.globalRespawnBackgroundHandler = handler
-  }
-
-  /** Clear the background-respawn handler when the miniapp engine is stopped. */
-  public clearRespawnBackgroundHandler(): void {
-    this.globalRespawnBackgroundHandler = null
-  }
-
-  /** Open (or re-open) a bridge to the given dev server. */
-  public connect(packageName: string, devHostUrl: string, devPort: number): void {
-    const url = this.buildWsUrl(devHostUrl, devPort)
+  /** Open (or re-open) a bridge to the console at `wsUrl` (`ws://<host>:<port>/__mentra_dev`). */
+  public connect(packageName: string, wsUrl: string): void {
     let entry = this.entries.get(packageName)
     if (entry) {
-      // Already have an entry; if the URL changed (e.g. LAN IP shifted), close
-      // and rebuild.
-      if (entry.url === url && (entry.state === "connecting" || entry.state === "connected")) return
+      // Already have an entry; if the URL changed (another computer, or a new address), close and rebuild.
+      if (entry.url === wsUrl && (entry.state === "connecting" || entry.state === "connected")) return
       this.teardownEntry(entry)
     }
     entry = {
       state: "idle",
       ws: null,
-      url,
+      url: wsUrl,
       attempts: 0,
       ringBuffer: [],
       ringBytes: 0,
-      reloadHandler: null,
       reconnectTimer: null,
     }
     this.entries.set(packageName, entry)
     this.openSocket(packageName, entry)
   }
 
-  /** Close a bridge for good. Called from MiniappHost.unmount. */
+  /** Close a bridge for good: the package's context stopped. */
   public disconnect(packageName: string): void {
     const entry = this.entries.get(packageName)
     if (!entry) return
@@ -152,39 +123,14 @@ class DevServerBridge {
 
   // -----------------------------------------------------------------------
 
-  /**
-   * Run a signal after the package's earlier ones have settled. A `reload` that follows a `respawn-bg` (one save that
-   * touched both layers) waits for the new background, so the reloaded screen doesn't start against the old one or one
-   * being torn down, and two respawns never overlap. A handler's failure is logged and doesn't hold the queue.
-   */
-  private enqueueSignal(packageName: string, signal: string, run: () => void | Promise<void>): void {
-    const previous = this.signalQueues.get(packageName) ?? Promise.resolve()
-    const next = previous.then(async () => {
-      try {
-        await run()
-      } catch (error) {
-        console.warn(`${LOG_TAG}: ${packageName} ${signal} failed`, error)
-      }
-    })
-    this.signalQueues.set(packageName, next)
-    void next.then(() => {
-      if (this.signalQueues.get(packageName) === next) this.signalQueues.delete(packageName)
-    })
-  }
-
-  private buildWsUrl(devHostUrl: string, devPort: number): string {
-    let host: string
-    try {
-      const parsed = new URL(devHostUrl)
-      host = parsed.hostname
-    } catch {
-      // devHostUrl might already be just an IP; best-effort.
-      host = devHostUrl
-        .replace(/^https?:\/\//, "")
-        .split(":")[0]
-        .split("/")[0]
-    }
-    return `ws://${host}:${devPort}/__mentra_dev`
+  /** Ask for a check of the package's build; a failure is logged. */
+  private requestCheck(packageName: string, why: string): void {
+    const handler = this.checkHandler
+    if (!handler) return
+    console.log(`${LOG_TAG}: ${packageName} ${why}; checking for a new build`)
+    void Promise.resolve()
+      .then(() => handler(packageName))
+      .catch((error) => console.warn(`${LOG_TAG}: ${packageName} check failed`, error))
   }
 
   private openSocket(packageName: string, entry: BridgeEntry): void {
@@ -232,6 +178,8 @@ class DevServerBridge {
     }
 
     ws.onmessage = (ev) => {
+      // A socket this entry replaced or closed speaks for nobody any more.
+      if (entry.ws !== ws || entry.state === "closed") return
       const data = typeof ev.data === "string" ? ev.data : null
       if (!data) return
       let parsed: {type?: string; protocol?: string} | null = null
@@ -256,28 +204,13 @@ class DevServerBridge {
         entry.attempts = 0
         console.log(`${LOG_TAG}: ${packageName} connected to ${entry.url}`)
         this.flushRingBuffer(packageName, entry)
-        this.enqueueSignal(packageName, "catch-up", async () => {
-          if (!(await this.globalCatchUpCheck?.(packageName))) return
-          console.log(`${LOG_TAG}: ${packageName} runs older code than its dev server serves; restarting it`)
-          void this.respawn(packageName)
-        })
+        this.requestCheck(packageName, "connected")
         return
       }
 
-      if (parsed.type === "reload") {
-        console.log(`${LOG_TAG}: ${packageName} received reload signal`)
-        this.enqueueSignal(packageName, "reload", () => this.globalReloadHandler?.(packageName))
-        return
-      }
-
-      // Two-layer dev signal: filesystem changes under src/background/
-      // trigger a full JSContext kill + respawn (not just a WebView
-      // reload). The host's MentraJSRouter listens here.
-      if (parsed.type === "respawn-bg") {
-        console.log(`${LOG_TAG}: ${packageName} received respawn-bg signal`)
-        // The respawn runs from a new snapshot of the bundle, which replaces the one the screen shows: it reopens the
-        // screen from it too. A reload that follows for the same save then finds nothing new.
-        void this.respawn(packageName)
+      // `reload` (the screen changed) and `respawn-bg` (the background changed) both mean a new build is ready.
+      if (parsed.type === "reload" || parsed.type === "respawn-bg") {
+        this.requestCheck(packageName, `received ${parsed.type}`)
         return
       }
     }
@@ -308,26 +241,6 @@ class DevServerBridge {
     const exp = Math.min(BACKOFF_MAX_MS, BACKOFF_MIN_MS * Math.pow(2, Math.max(0, attempts - 1)))
     const jitter = exp * (0.8 + Math.random() * 0.4)
     return Math.round(jitter)
-  }
-
-  /**
-   * Register the check the bridge runs each time it connects to a dev server (the first time and after every drop):
-   * saves made while the phone wasn't listening sent their reload to nobody, and a launch that fell back to the last
-   * snapshot never got one. When the check finds the running code outdated, the bridge restarts the background and
-   * reopens the screen, as a `respawn-bg` signal does.
-   */
-  public onCatchUp(check: DevCatchUpCheck | null): void {
-    this.globalCatchUpCheck = check
-  }
-
-  /**
-   * Restart the package's background from the current snapshot and reopen its screen, as a `respawn-bg` signal does,
-   * in order with the package's other signals. Resolves once both ran.
-   */
-  public respawn(packageName: string): Promise<void> {
-    this.enqueueSignal(packageName, "respawn-bg", () => this.globalRespawnBackgroundHandler?.(packageName))
-    this.enqueueSignal(packageName, "reload", () => this.globalReloadHandler?.(packageName))
-    return this.signalQueues.get(packageName) ?? Promise.resolve()
   }
 
   private bufferLog(entry: BridgeEntry, log: BufferedLog): void {

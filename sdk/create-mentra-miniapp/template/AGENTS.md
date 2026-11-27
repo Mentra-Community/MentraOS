@@ -64,7 +64,7 @@ Reference: https://docs.mentraglass.com/app-devs/core-concepts/webviews/back-nav
 
 - Replace `icon.png` with an icon designed for this miniapp: a square PNG, at
   least 512x512. The template ships a generic glasses placeholder, and
-  `mentra-miniapp dev` and `release` warn while it is still in place.
+  `mentra-miniapp dev` warns while it is still in place.
 - If you cannot create an image file, say so in your final message: tell the
   user that `icon.png` is still the template placeholder and needs replacing.
 - Set `name` and `description` in `miniapp.json` to describe the miniapp.
@@ -75,6 +75,6 @@ Reference: https://docs.mentraglass.com/app-devs/core-concepts/webviews/back-nav
   that, every saved change rebuilds and reloads on the phone without a rescan.
   Several dev miniapps can coexist when they use distinct manifest package
   names.
-- Use `bun run release` only for a persistent install that runs without the
-  development computer. A release install is a fixed snapshot: each change
-  needs another `bun run release` and another scan.
+- Use `bun run dev:production` only to try the production build, the one
+  `bun run pack` writes. Nothing is watched: each change needs another
+  `bun run dev:production`, and a new scan only if the address changed.

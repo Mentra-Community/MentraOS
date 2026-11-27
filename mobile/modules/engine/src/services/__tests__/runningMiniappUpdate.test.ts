@@ -5,7 +5,7 @@
  * prompt and deferral modules. Only the registry's native I/O, the router's
  * JavaScript contexts and host UI are replaced.
  */
-import {afterAll, beforeAll, beforeEach, describe, expect, mock, test} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test} from "bun:test"
 import {result as Res} from "typesafe-ts"
 
 import "./reactNativeTestMock"
@@ -17,9 +17,9 @@ import {
 } from "../../runtime/bootstrap"
 import type {ClientApp} from "../../types/applet"
 import {MiniappRunningError} from "../../utils/storeInstallRuntime"
-import {assertMiniappUpdateVersion} from "../miniappInstallIdentity"
 import type {InstallBundleOptions} from "../AppRegistry"
 import type {MentraJSRouter} from "../MentraJSRouter"
+import type {ManifestFetchResult} from "../miniappUrlUpdates"
 import type {PendingRunningUpdatePrompt} from "../runningUpdatePrompt"
 
 const pkg = "com.acme.notes"
@@ -78,8 +78,6 @@ const registry = {
   ],
   getActiveVersion: async () => active,
   getInstalledVersions: () => (notInstalled ? [] : [active]),
-  assertCanInstallVersion: (packageName: string, version: string) =>
-    assertMiniappUpdateVersion(packageName, version, [active]),
   getReleaseIdentity: () => ({source: "bundled_asset"}),
   isPackageAllowed: (packageName: string) => isLocalMiniappPackageAllowed(packageName),
   isReleaseAllowed: (packageName: string, version: string | undefined) =>
@@ -113,7 +111,6 @@ async function stagedInstall(first: "download" | "read", options: InstallBundleO
   calls.push("verify")
   if (verifyFailure) return Res.error(new Error(verifyFailure))
   try {
-    assertMiniappUpdateVersion(pkg, options.expectedVersion!, [active])
     calls.push("unpack")
     await options.whenStaged?.({hardwareRequirements: []})
     options.beforeActivate?.()
@@ -133,7 +130,7 @@ mock.module("../AppRegistry", () => ({
   getLocalAppRunningState: () => false,
   saveLocalAppRunningState: () => {},
 }))
-mock.module("../DevServerBridge", () => ({default: {connect: () => {}}}))
+mock.module("../DevServerBridge", () => ({default: {connect: () => {}, disconnect: () => {}}}))
 mock.module("../LocalMiniappRuntime", () => ({default: {waitForConnect: async () => {}}}))
 mock.module("../LocalDisplayManager", () => ({default: {onCoreAppChange: () => {}}}))
 mock.module("../NotificationsEmitter", () => ({islandNotifications: {emit: () => {}}}))
@@ -147,6 +144,8 @@ mock.module("../../utils/hardware/hardware", () => ({
   },
 }))
 mock.module("../../types/hardware", () => ({getModelCapabilities: () => ({})}))
+// The URL updater's own check that this phone runs a release: every release here does.
+mock.module("../miniappInstallCompatibility", () => ({checkMiniappRunsOnPhone: () => ({compatible: true})}))
 mock.module("@mentra/bluetooth-sdk", () => ({default: {clearDisplay: () => {}}}))
 mock.module("../../stores/settings", () => ({
   SETTINGS: {
@@ -171,7 +170,8 @@ const {classifyManagedInstallError, installMiniappRelease, MiniappInstallCancell
 const {miniappLauncher} = await import("../MiniappLauncher")
 const {miniappRunningRegistry} = await import("../MiniappRunningRegistry")
 isProjected = (packageName) => miniappRunningRegistry.has(packageName)
-const {useAppStatusStore, installAppStoreHooks, onMiniappOpenedByUser} = await import("../../stores/apps")
+const {useAppStatusStore, installAppStoreHooks} = await import("../../stores/apps")
+const {BASE_BACKOFF_MS, MiniappUrlUpdater, OPEN_CHECK_INTERVAL_MS} = await import("../miniappUrlUpdates")
 const prompt = await import("../runningUpdatePrompt")
 const deferredUpdates = await import("../deferredMiniappUpdates")
 
@@ -200,7 +200,6 @@ const prompts: PendingRunningUpdatePrompt[] = []
 const failures: unknown[] = []
 const blocked: string[] = []
 const incompatible: string[] = []
-const openedByUser: string[] = []
 
 function release(options: Partial<Parameters<typeof installMiniappRelease>[1]> = {}) {
   return installMiniappRelease("https://store.example/notes-1.1.0.zip", {
@@ -226,7 +225,6 @@ beforeAll(() => {
     onUpdateBlocked: (app) => blocked.push(app.packageName),
     onIncompatibleBlocked: (app) => incompatible.push(app.packageName),
   })
-  onMiniappOpenedByUser((packageName) => openedByUser.push(packageName))
 })
 afterAll(() => {
   prompt.setRunningUpdatePromptEnvironmentForTests(null)
@@ -251,7 +249,6 @@ beforeEach(async () => {
   failures.length = 0
   blocked.length = 0
   incompatible.length = 0
-  openedByUser.length = 0
   compatible = true
   stored.clear()
   deferredUpdates.resetDeferredMiniappUpdatesForTests()
@@ -365,12 +362,21 @@ describe("update prompt for a running miniapp", () => {
     expect(useAppStatusStore.getState().foregroundedPackage).toBeNull()
   })
 
-  test("its restart is not a person opening the miniapp", async () => {
-    await runApp({open: false})
-    openedByUser.length = 0
-    await release()
-    expect(miniappRunningRegistry.has(pkg)).toBe(true)
-    expect(openedByUser).toEqual([])
+  test("its restart doesn't wait for another update check, as an open does", async () => {
+    const checked: string[] = []
+    miniappLauncher.setUpdateCheck(async (packageName) => {
+      checked.push(packageName)
+    })
+    try {
+      await runApp({open: false})
+      expect(checked).toEqual([pkg])
+      await release()
+      expect(miniappRunningRegistry.has(pkg)).toBe(true)
+      expect(calls.at(-1)).toBe(`start:${pkg}@1.1.0`)
+      expect(checked).toEqual([pkg])
+    } finally {
+      miniappLauncher.setUpdateCheck(null)
+    }
   })
 
   test("a miniapp running without its screen open starts again without opening", async () => {
@@ -456,12 +462,22 @@ describe("update prompt for a running miniapp", () => {
     expect(miniappRunningRegistry.has(pkg)).toBe(true)
   })
 
-  test("the version rule refuses a lower version before downloading or asking", async () => {
+  test("a lower version is staged and asked about like any other update: versions are not compared", async () => {
     active = "2.0.0"
     await runApp({open: true})
-    await expect(release()).rejects.toThrow()
-    expect(calls).toEqual([])
-    expect(prompts).toHaveLength(0)
+    await release()
+    expect(calls).toEqual(["download", "verify", "unpack", "prompt", `stop:${pkg}`, "activate", `start:${pkg}@1.1.0`])
+    expect(prompts.map(({version}) => version)).toEqual(["1.1.0"])
+    expect(useAppStatusStore.getState().apps[0]).toMatchObject({version: "1.1.0", running: true})
+  })
+
+  test("other bytes under the running version are asked about too, and the miniapp restarts on them", async () => {
+    active = "1.1.0"
+    await runApp({open: true})
+    await release()
+    expect(calls).toEqual(["download", "verify", "unpack", "prompt", `stop:${pkg}`, "activate", `start:${pkg}@1.1.0`])
+    expect(useAppStatusStore.getState().foregroundedPackage).toBe(pkg)
+    expect(useAppStatusStore.getState().apps[0]).toMatchObject({version: "1.1.0", running: true, updating: false})
   })
 
   test("a running miniapp whose staged release the paired glasses can't launch defers without asking", async () => {
@@ -492,6 +508,268 @@ describe("update prompt for a running miniapp", () => {
     expect(prompts).toHaveLength(0)
     expect(active).toBe("1.1.0")
     expect(calls.filter((call) => call.startsWith("start:"))).toEqual([])
+  })
+})
+
+describe("opening a miniapp waits for its update check", () => {
+  const url = "https://notes.acme.com/"
+  const limits = {checkMs: 2000, installMs: 2000}
+  let clock = 1_000_000
+  let fetches = 0
+  let fetchManifest: () => Promise<ManifestFetchResult> = async () => serves("1.0.0")
+  /** Whether the paired glasses can launch the build the URL serves. */
+  let servedBuildLaunches: () => boolean = () => compatible
+  // The real updater over the real installer: only its requests and the registry's native I/O are replaced.
+  let updater: InstanceType<typeof MiniappUrlUpdater>
+  let waits: Array<string | null> = []
+  let stopWatching: () => void = () => {}
+
+  function serves(version: string): ManifestFetchResult {
+    return {
+      status: 200,
+      url: `${url}miniapp.json`,
+      body: JSON.stringify({
+        packageName: pkg,
+        version,
+        name: "Notes",
+        sdkVersion: "0.3.0",
+        minHostVersion: "3.0.0",
+        hardwareRequirements: [],
+        bundle: {url: `notes-${version}.zip`, sha256: "b".repeat(64)},
+      }),
+    }
+  }
+
+  function tick(ms = 20) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  const app = () => useAppStatusStore.getState().apps[0]
+
+  beforeEach(() => {
+    clock = 1_000_000
+    fetches = 0
+    limits.checkMs = 2000
+    limits.installMs = 2000
+    fetchManifest = async () => serves("1.0.0")
+    servedBuildLaunches = () => compatible
+    updater = new MiniappUrlUpdater({
+      installedPackages: async () => [pkg],
+      activeVersion: async () => active,
+      releaseIdentity: () => ({source: "url", sourceUrl: url}),
+      isSystemPackage: () => false,
+      firstPartyUrl: () => undefined,
+      isDevelopmentBuild: () => false,
+      developmentAllowed: () => true,
+      compatibilityPolicy: () => ({hostVersion: "3.3.0", supportedSdkRange: ">=0.3.0 <4.0.0"}),
+      launchesWithPairedGlasses: () => servedBuildLaunches(),
+      fetchManifest: () => {
+        fetches++
+        return fetchManifest()
+      },
+      fetchBundle: async () => {
+        throw new Error("the registry's installer is replaced")
+      },
+      install: installMiniappRelease,
+      installLocal: async () => {
+        throw new Error("no local builds here")
+      },
+      keepVersions: async () => {},
+      isRunningError: (error) => error instanceof MiniappRunningError,
+      installSession: () => 1,
+      requireRegistry: () => false,
+      registryCore: () => null,
+      registryStatus: async () => null,
+      register: async () => {
+        throw new Error("no registry")
+      },
+      statusStore: {get: () => undefined, set: () => {}},
+      setReleaseSourceUrl: () => false,
+      now: () => clock,
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+      log: () => {},
+      warn: () => {},
+    })
+    miniappLauncher.setUpdateCheck((packageName, onInstalling) =>
+      updater.checkBeforeStart(packageName, limits, onInstalling),
+    )
+    waits = []
+    stopWatching = miniappLauncher.onStartWaitChanged(() => waits.push(miniappLauncher.startWait(pkg)))
+  })
+
+  afterEach(() => {
+    stopWatching()
+    miniappLauncher.setUpdateCheck(null)
+  })
+
+  test("another build found and installed within the limits starts, with nothing asked", async () => {
+    fetchManifest = async () => serves("1.1.0")
+    const order: string[] = []
+    installAppStoreHooks({onOpenRequested: () => order.push(`splash while ${miniappLauncher.startWait(pkg)}`)})
+    expect(await useAppStatusStore.getState().start(app(), {trigger: "user"})).toBe(true)
+    installAppStoreHooks({onOpenRequested: undefined})
+    expect(calls).toEqual(["download", "verify", "unpack", "activate", `start:${pkg}@1.1.0`])
+    expect(prompts).toHaveLength(0)
+    expect(blocked).toEqual([])
+    // The host showed the miniapp's splash before the wait began; the wait then said what it was for.
+    expect(order).toEqual(["splash while null"])
+    expect(waits).toEqual(["check", "update", null])
+    expect(app()).toMatchObject({version: "1.1.0", running: true, updating: false})
+  })
+
+  test("a screen opened directly, with no start through the store, waits the same way", async () => {
+    fetchManifest = async () => serves("1.1.0")
+    await miniappLauncher.ensureRunning(pkg, {}, {trigger: "user"})
+    expect(calls).toEqual(["download", "verify", "unpack", "activate", `start:${pkg}@1.1.0`])
+    expect(prompts).toHaveLength(0)
+  })
+
+  test("a check that finds the installed build starts it, saying nothing about an update", async () => {
+    expect(await useAppStatusStore.getState().start(app(), {trigger: "user"})).toBe(true)
+    expect(calls).toEqual([`start:${pkg}@1.0.0`])
+    expect(waits).toEqual(["check", null])
+    expect(fetches).toBe(1)
+  })
+
+  test("past the limit to find another build, the installed one starts and the check carries on: the running miniapp is then asked", async () => {
+    limits.checkMs = 30
+    const answered = deferred()
+    fetchManifest = async () => {
+      await answered.promise
+      return serves("1.1.0")
+    }
+    expect(await useAppStatusStore.getState().start(app(), {trigger: "user"})).toBe(true)
+    expect(calls).toEqual([`start:${pkg}@1.0.0`])
+    expect(waits).toEqual(["check", null])
+    // The host answers once the miniapp runs: its update asks, as any running miniapp's does.
+    answer = "not_now"
+    answered.resolve()
+    await updater.check(pkg)
+    expect(prompts).toHaveLength(1)
+    expect(active).toBe("1.0.0")
+    expect(miniappRunningRegistry.has(pkg)).toBe(true)
+  })
+
+  test("past the limit to install it, the installed build starts and the update waits for the miniapp to stop", async () => {
+    limits.installMs = 30
+    const download = deferred()
+    downloadGate = download.promise
+    fetchManifest = async () => serves("1.1.0")
+    const ready: string[] = []
+    deferredUpdates.onDeferredMiniappUpdateReady((packageName) => ready.push(packageName))
+    expect(await useAppStatusStore.getState().start(app(), {trigger: "user"})).toBe(true)
+    expect(calls).toEqual(["download", `start:${pkg}@1.0.0`])
+    expect(waits).toEqual(["check", "update", null])
+    // The download finishes with the miniapp running: nothing is activated under it, and nothing is asked.
+    download.resolve()
+    await updater.check(pkg)
+    expect(active).toBe("1.0.0")
+    expect(prompts).toHaveLength(0)
+    await useAppStatusStore.getState().stop(pkg)
+    expect(ready).toEqual([pkg])
+  })
+
+  test("checked within the last minute, it starts at once without another check", async () => {
+    await updater.checkAll()
+    expect(fetches).toBe(1)
+    fetchManifest = () => new Promise(() => {})
+    clock += OPEN_CHECK_INTERVAL_MS - 1
+    limits.checkMs = 60_000
+    expect(await useAppStatusStore.getState().start(app(), {trigger: "user"})).toBe(true)
+    expect(calls).toEqual([`start:${pkg}@1.0.0`])
+    expect(fetches).toBe(1)
+  })
+
+  test("after a check that failed, it starts at once until the retry time has come", async () => {
+    fetchManifest = async () => {
+      throw new Error("offline")
+    }
+    await updater.checkAll()
+    expect(fetches).toBe(1)
+    fetchManifest = () => new Promise(() => {})
+    clock += OPEN_CHECK_INTERVAL_MS
+    limits.checkMs = 60_000
+    expect(await useAppStatusStore.getState().start(app(), {trigger: "user"})).toBe(true)
+    expect(calls).toEqual([`start:${pkg}@1.0.0`])
+    expect(fetches).toBe(1)
+
+    // Once the retry time has come, the next start waits for a check again.
+    await useAppStatusStore.getState().stop(pkg)
+    calls.length = 0
+    clock += BASE_BACKOFF_MS
+    fetchManifest = async () => serves("1.1.0")
+    expect(await useAppStatusStore.getState().start(app(), {trigger: "user"})).toBe(true)
+    expect(fetches).toBe(2)
+    expect(calls).toEqual(["download", "verify", "unpack", "activate", `start:${pkg}@1.1.0`])
+  })
+
+  test("a miniapp that already runs is asked, as before, and its restart waits for nothing", async () => {
+    limits.checkMs = 60_000
+    limits.installMs = 60_000
+    await runApp({open: true})
+    fetchManifest = async () => serves("1.1.0")
+    await updater.check(pkg)
+    expect(calls).toEqual(["download", "verify", "unpack", "prompt", `stop:${pkg}`, "activate", `start:${pkg}@1.1.0`])
+    expect(prompts).toHaveLength(1)
+    expect(useAppStatusStore.getState().foregroundedPackage).toBe(pkg)
+  })
+
+  test("opening the screen of a miniapp that already runs starts nothing and waits for nothing", async () => {
+    await runApp({open: false})
+    fetchManifest = () => new Promise(() => {})
+    clock += OPEN_CHECK_INTERVAL_MS
+    waits = []
+    expect(await useAppStatusStore.getState().start(app(), {trigger: "user"})).toBe(true)
+    await miniappLauncher.ensureRunning(pkg, {}, {trigger: "user"})
+    expect(calls).toEqual([])
+    expect(waits).toEqual([])
+  })
+
+  test("stopped while it waits, it starts nothing: not when the wait would have ended either", async () => {
+    limits.checkMs = 60
+    fetchManifest = () => new Promise(() => {})
+    const fromStore = useAppStatusStore.getState().start(app(), {trigger: "user"})
+    const fromScreen = miniappLauncher.ensureRunning(pkg, {}, {trigger: "user"}).catch((error) => error)
+    await tick()
+    expect(miniappLauncher.startWait(pkg)).toBe("check")
+    expect(app().running).toBe(false)
+    await useAppStatusStore.getState().stop(pkg)
+    expect(await fromStore).toBe(false)
+    expect((await fromScreen).name).toBe("MiniappStartCancelledError")
+    expect(miniappLauncher.startWait(pkg)).toBeNull()
+    await tick(100)
+    expect(calls.filter((call) => call.startsWith("start:"))).toEqual([])
+    expect(miniappRunningRegistry.has(pkg)).toBe(false)
+    expect(app().running).toBe(false)
+  })
+
+  test("stopped while its update installs, it starts nothing, and the update still installs", async () => {
+    fetchManifest = async () => serves("1.1.0")
+    const download = deferred()
+    downloadGate = download.promise
+    const starting = useAppStatusStore.getState().start(app(), {trigger: "user"})
+    await tick()
+    expect(miniappLauncher.startWait(pkg)).toBe("update")
+    await useAppStatusStore.getState().stop(pkg)
+    expect(await starting).toBe(false)
+    download.resolve()
+    await updater.check(pkg)
+    expect(calls.filter((call) => call !== `stop:${pkg}`)).toEqual(["download", "verify", "unpack", "activate"])
+    expect(active).toBe("1.1.0")
+    expect(miniappRunningRegistry.has(pkg)).toBe(false)
+  })
+
+  test("another build the paired glasses can't launch doesn't install as it opens: the installed build starts", async () => {
+    fetchManifest = async () => serves("1.1.0")
+    // The installed build passes the store's own gate: only the served one needs what the glasses lack.
+    servedBuildLaunches = () => false
+    expect(await useAppStatusStore.getState().start(app(), {trigger: "user"})).toBe(true)
+    expect(fetches).toBe(1)
+    expect(calls).toEqual([`start:${pkg}@1.0.0`])
+    expect(incompatible).toEqual([])
+    expect(prompts).toHaveLength(0)
+    expect(active).toBe("1.0.0")
   })
 })
 
@@ -638,7 +916,6 @@ describe("installation reasons", () => {
 
 describe("classifying a managed install failure", () => {
   test.each([
-    ["Cannot install com.acme.notes@1.0.0: version 2.0.0 is already installed", "newer_version_installed", false],
     ["Requires Mentra App 9.0.0+; this host is 3.0.0.", "incompatible_host", false],
     ["Built for SDK 9.0.0; this Mentra App supports ^1.0.0.", "incompatible_host", false],
     ["Publisher signature mismatch for com.acme.notes", "signature_invalid", false],

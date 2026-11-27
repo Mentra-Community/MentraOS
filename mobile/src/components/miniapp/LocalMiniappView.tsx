@@ -5,6 +5,7 @@ import type {WebView} from "react-native-webview"
 import {Text} from "@/components/ignite"
 import {translate} from "@/i18n"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useMiniappStartWait} from "@/hooks/useMiniappStartWait"
 import {useStressTestStore} from "@/stores/stressTest"
 import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
@@ -31,9 +32,9 @@ import {
 import {useOldWebStorageReader} from "./OldWebStorageReader"
 
 /**
- * LocalMiniappView — the Mentra App's presentation of a local (or dev)
- * miniapp around the engine's MiniappView: the splash, the capsule, back
- * handling, dev-offline recovery, the stream preview binding and the kept
+ * LocalMiniappView — the Mentra App's presentation of a local miniapp (a
+ * development build included) around the engine's MiniappView: the splash, the
+ * capsule, back handling, the stream preview binding and the kept
  * localStorage. The engine's view owns the WebView, the background launch and
  * the ready handshake; the always-on JSContext survives this component
  * unmounting.
@@ -51,9 +52,9 @@ interface LocalMiniappViewProps {
   packageName: string
   appName?: string
   version?: string
-  devUrl?: string
+  /** A development build (one installed from a local address): the splash says so. */
+  devBuild?: boolean
   iconUrl?: string
-  devPort?: string
   /** Called when the WebView's content process terminates / errors fatally. */
   onExit: () => void
   onClose: () => void
@@ -67,9 +68,8 @@ function LocalMiniappView({
   packageName,
   appName,
   version,
-  devUrl,
+  devBuild = false,
   iconUrl,
-  devPort,
   onExit,
   onClose,
   onMinimize,
@@ -87,8 +87,6 @@ function LocalMiniappView({
   // they're display-only (e.g. a store refresh resolving a lazy icon).
   const appNameRef = useRef(appName)
   appNameRef.current = appName
-  const iconUrlRef = useRef(iconUrl)
-  iconUrlRef.current = iconUrl
 
   const viewShotRef = useRef<View | null>(null)
   const miniappViewRef = useRef<MiniappViewHandle | null>(null)
@@ -118,6 +116,7 @@ function LocalMiniappView({
     setStorageKeeper(webStorageKeeperAfterLoad(keeper))
   }, [setStorageKeeper])
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
+  const updating = useMiniappStartWait(packageName) === "update"
   // Stream preview. For a CAMERA miniapp on Android the WebView is first rendered without its real
   // source: the preview's WebMessageListener only appears in documents that start loading after
   // it is installed, so the source is set once the binding resolves (or its timeout passes).
@@ -138,15 +137,6 @@ function LocalMiniappView({
     useMiniappPresentationStore.getState().setRevealedPackageName(packageName)
   }, [packageName])
 
-  const openDevOffline = useCallback(() => {
-    engine.miniapps.clearForeground()
-    useNavigationStore.getState().push("/applet/dev-offline", {
-      packageName,
-      name: appNameRef.current,
-      iconUrl: iconUrlRef.current,
-    })
-  }, [packageName])
-
   const handleStatus = useCallback(
     (status: MiniappViewStatus) => {
       if (status.state === "loading") {
@@ -164,22 +154,14 @@ function LocalMiniappView({
         return
       }
       if (status.reason === "never_ready") {
-        setErrorMessage(translate(devMode || devUrl ? "common:miniappNeverReady" : "common:miniappFailedToLoad"))
+        setErrorMessage(translate(devMode || devBuild ? "common:miniappNeverReady" : "common:miniappFailedToLoad"))
         return
       }
       if (status.reason === "load_timeout") {
         setErrorMessage(translate("common:miniappFailedToLoad"))
         return
       }
-      // Already-registered packages never throw from ensureRunning — a dropped
-      // dev server with no on-disk snapshot resolves no screen. Route those
-      // reopens to the offline recovery screen.
       if (status.reason !== "launch") {
-        if (devUrl) {
-          console.warn(`LocalMiniappView: ${packageName} already running but UI unresolved, routing to dev-offline`)
-          openDevOffline()
-          return
-        }
         setErrorMessage(translate("common:miniappUiUnavailable"))
         return
       }
@@ -187,12 +169,13 @@ function LocalMiniappView({
       // The age gate kept it from opening (MiniappAgeRestrictedError): the person answered the age question, or was
       // told why on the alert sheet. Close the screen instead of showing an error on it, while this miniapp is still
       // the one in front: a refusal that arrives after the person moved on leaves the screen they're on alone.
-      if (error.name === "MiniappAgeRestrictedError") {
+      // The same for a miniapp stopped while its start waited for its update check (MiniappStartCancelledError):
+      // nothing started, and there is nothing to say.
+      if (error.name === "MiniappAgeRestrictedError" || error.name === "MiniappStartCancelledError") {
         if (useAppStatusStore.getState().foregroundedPackage === packageName) engine.miniapps.clearForeground()
         return
       }
-      // A build this Mentra App can't run says why on its screen, as its install would have; a development build too,
-      // which is not offline.
+      // A build this Mentra App can't run says why on its screen, as its install would have; a development build too.
       if (error.name === "MiniappIncompatibleHostError") {
         console.warn(`LocalMiniappView: ${error.message}`)
         const {miniappName} = error as Error & {miniappName?: string}
@@ -201,19 +184,9 @@ function LocalMiniappView({
         )
         return
       }
-      if (devUrl) {
-        // Dev bundle couldn't be resolved (dev server unreachable, or the
-        // manifest/background bundle fetch failed) — route to the offline
-        // screen with "Try again" / "Re-scan QR" instead of a bare error.
-        console.warn(
-          `LocalMiniappView: ${packageName} dev bundle unresolvable, routing to dev-offline: ${error.message}`,
-        )
-        openDevOffline()
-        return
-      }
       setErrorMessage(error.message)
     },
-    [packageName, devUrl, devMode, openDevOffline, settleKeeperAfterLoad],
+    [packageName, devBuild, devMode, settleKeeperAfterLoad],
   )
 
   // Every screen's localStorage: the host keeps a copy in the miniapp's data
@@ -249,7 +222,7 @@ function LocalMiniappView({
       cancelOldWebStorageRead()
       getStreamPreviewCoordinator().viewDestroyed(packageName, "miniapp-unmounted")
     }
-  }, [packageName, version, devUrl, devPort, cancelOldWebStorageRead])
+  }, [packageName, version, cancelOldWebStorageRead])
 
   // The page changing its localStorage, which the host keeps a copy of.
   const handleMessage = useCallback(
@@ -425,7 +398,12 @@ function LocalMiniappView({
   if (loadAttempts > 0 && devMode && !errorMessage) {
     connectingLabel = `Loading… (attempt ${loadAttempts + 1} of ${MAX_LOAD_ATTEMPTS})`
   }
-  const showErrorCapsule = !!errorMessage && !contentRevealed
+  // Before the miniapp starts, an update found as it opened installs behind the splash, which says so. The check
+  // that finds it shows nothing: the splash looks as it always does.
+  if (updating && !errorMessage) connectingLabel = translate("home:miniappUpdating")
+  // The capsule sits under the splash until the page shows. It comes above it for a loading error, and while an
+  // update installs, which can take a while: the person can leave either. Leaving an update cancels the open.
+  const capsuleOverSplash = (!!errorMessage || updating) && !contentRevealed
 
   return (
     <View ref={viewShotRef} collapsable={false} className="flex-1" style={{backgroundColor: theme.colors.background}}>
@@ -436,8 +414,6 @@ function LocalMiniappView({
           ref={miniappViewRef}
           packageName={packageName}
           version={version}
-          devUrl={devUrl}
-          devPort={devPort}
           colorScheme={theme.isDark ? "dark" : "light"}
           safeAreaInsets={{
             top: insets.top,
@@ -455,7 +431,7 @@ function LocalMiniappView({
           onWebView={handleWebView}
           onLoadError={handleLoadError}
         />
-        {showCapsule && !showErrorCapsule && <CapsuleMenu forceShow={true} />}
+        {showCapsule && !capsuleOverSplash && <CapsuleMenu forceShow={true} />}
       </View>
       {/* Keep one splash mounted as the WebView arrives so its icon and timer do not restart. */}
       <MiniappSplash
@@ -465,12 +441,13 @@ function LocalMiniappView({
         isLoaded={ready && openingComplete}
         error={errorMessage}
         label={connectingLabel}
-        devApp={!!devUrl}
+        devApp={devBuild}
         disableFadeIn={true}
         onHidden={handleSplashHidden}
       />
-      {/* Loading errors need an escape route above the splash, while the WebView stays untouchable. */}
-      {showCapsule && showErrorCapsule && <CapsuleMenu forceShow={true} />}
+      {/* Loading errors, and a wait for an update, need an escape route above the splash, while the WebView stays
+          untouchable. */}
+      {showCapsule && capsuleOverSplash && <CapsuleMenu forceShow={true} />}
     </View>
   )
 }

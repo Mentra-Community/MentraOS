@@ -8,13 +8,6 @@
  *   import {MiniappRequestType} from "@mentra/miniapp/protocol"
  */
 
-import {installDevReloadListenerIfDevMode} from "./dev-reload"
-
-// Auto-install the dev-reload listener on module import so authors get live
-// reload for free in dev builds. No-op in production (gated on
-// window.MentraOS.miniappDeveloperMode).
-installDevReloadListenerIfDevMode()
-
 export {MiniappSession, NotConnectedError} from "./session"
 export type {
   AuthUpdatePayload,

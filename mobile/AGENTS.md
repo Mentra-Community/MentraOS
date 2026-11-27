@@ -14,7 +14,7 @@ The Mentra App is a React Native app built with Expo and expo-router for file-ba
 - Start dev server: `bun start` (expo start --dev-client)
 - Run on Android: `bun android` (expo run:android)
 - Run on iOS: `bun ios` (expo run:ios)
-- Miniapps (`scripts/local-miniapps.mjs`): `bun start`, `bun android` and `bun ios` serve every miniapp of the checkout from its dev server (frontend only, against its `.env.example` dev backend), and the debug build installs them all as local builds that reload on every save, with no QR code (`MENTRA_DEV_MINIAPPS=0` serves none). Every other build bundles no miniapps: it installs them from its deployment's miniapp host and keeps them updated from there. The private Mentra monorepo has more miniapps than MentraOS; the flow is the same.
+- Miniapps (`scripts/local-miniapps.mjs`): `bun start`, `bun android` and `bun ios` serve every miniapp of the checkout from its dev server (frontend only, against its `.env.example` dev backend), and the debug build installs each from its dev server's URL as a local build, with no QR code (`MENTRA_DEV_MINIAPPS=0` serves none). A local build updates through the same updater as every miniapp, from that URL only: when it opens, and on every save, which installs the new build and restarts the whole miniapp. With the dev servers stopped, the installed builds open as they are. Every other build bundles no miniapps: it installs them from its deployment's miniapp host and keeps them updated from there. The private Mentra monorepo has more miniapps than MentraOS; the flow is the same.
 - Run the iOS app directly on an Apple Silicon Mac: `bun ios:mac` (local Release build with bundled JavaScript, background launch). Use `--build-only` to compile without replacing the running app, or `--debug` with a separate Metro server. Requires Xcode development signing; does not upload to TestFlight.
 - Setup ADB port forwarding: `bun adb`
 
@@ -226,9 +226,10 @@ push("/settings/profile")
   miniapp deploys pack it with the app's `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`;
   staging and prod miniapp deploys use the repository variable
   `PUBLIC_MAPBOX_TOKEN`. A rotation updates all four: the three Doppler
-  configs and the variable. A miniapp host and a phone both keep a version
-  they already have, so after rotating the token, bump the navigation
-  miniapp's `miniapp.json` version.
+  configs and the variable. The token is part of the bundle's bytes, so after
+  rotating it, deploy the navigation miniapp again on each environment: the
+  host gets a build with another hash, and phones update to it. Its
+  `miniapp.json` version needs no bump.
 - **Downloads token (`sk.…`, secret scope `Downloads:Read`)** — build time only,
   authenticates downloading Mapbox's binary SDKs. Never shipped. It must live in:
   - `~/.netrc` for iOS (SPM reads it): `machine api.mapbox.com login mapbox password sk.…`

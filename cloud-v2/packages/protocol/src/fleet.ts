@@ -9,6 +9,7 @@
  * its own, and never strands the rest of its batch.
  */
 import {z} from "zod"
+import {MINIAPP_VERSION_PATTERN} from "./miniapp-url"
 
 export const FLEET_SCHEMA_VERSION = 1 as const
 
@@ -234,7 +235,17 @@ export const FLEET_ASSIGNMENT_STATES = [
 ] as const
 export type FleetAssignmentState = (typeof FLEET_ASSIGNMENT_STATES)[number]
 
-/** Stable reasons for a blocked or retrying assignment. Never error text. */
+/**
+ * Stable reasons for a blocked or retrying assignment. Never error text.
+ *
+ * `pin_unlisted` and `pin_hash_changed` are a pinned entry's ({@link FleetPinnedDesiredStateEntrySchema}): the
+ * miniapp no longer lists the pinned version, or lists it with another hash than the pin's
+ * (`selectMiniappTarget`). The phone installs nothing and keeps what it has. Only a phone that asked for pins can be
+ * handed a pinned entry, so only an MFM that serves pins is ever sent either reason.
+ *
+ * `development_build`: the person installed a development build of the package (from a developer's computer), which
+ * only they replace. The phone leaves the package as it is until they do.
+ */
 export const FLEET_ASSIGNMENT_REASONS = [
   "archived",
   "access_denied",
@@ -245,6 +256,9 @@ export const FLEET_ASSIGNMENT_REASONS = [
   "newer_version_installed",
   "manifest_conflict",
   "storage_full",
+  "pin_unlisted",
+  "pin_hash_changed",
+  "development_build",
 ] as const
 export type FleetAssignmentReason = (typeof FLEET_ASSIGNMENT_REASONS)[number]
 
@@ -549,33 +563,102 @@ export type FleetReportAck = z.infer<typeof FleetReportAckSchema>
  * An error, timeout, partial response or missing MFM is never an empty set: MFM answers {@link FLEET_UNAVAILABLE}
  * (503) and the phone keeps its last complete snapshot. `paused` (Phase 15) is not part of this schema, so a phone
  * that receives an unknown status keeps its last snapshot.
+ *
+ * **Two answers, and the phone chooses.** This schema is what every phone gets unless it asks otherwise: each entry
+ * is `selection: "latest"`, the version the URL serves. Released Mentra Apps parse an answer with exactly this strict
+ * schema and keep their last snapshot when it does not parse, so one entry of any other shape would stop every
+ * assignment on such a phone. A pinned assignment therefore reaches them as `latest`
+ * ({@link fleetDesiredStateWithoutPins}). A phone that holds pins asks for them, with `?pins=1`
+ * ({@link FLEET_DESIRED_STATE_PINS_PARAM}), and parses the answer with {@link FleetDesiredStateWithPinsSchema}.
  */
-export const FleetDesiredStateEntrySchema = z
+const desiredStateEntryFields = {
+  assignmentId: FleetId,
+  revision: FleetRevision,
+  /** The miniapp's own URL (Mentra-Specs #140). The phone installs it with `installMiniapp(url)`. */
+  url: FleetMiniappUrl,
+  /** The package the URL's manifest named when it was assigned. Display and matching only; the URL decides what installs. */
+  packageName: FleetText,
+}
+
+/** An entry that takes the version its URL serves: the only kind a phone that did not ask for pins is sent. */
+export const FleetDesiredStateEntrySchema = z.object({...desiredStateEntryFields, selection: z.literal("latest")}).strict()
+
+function desiredStateSchema<Entry extends z.ZodTypeAny>(entry: Entry) {
+  return z.discriminatedUnion("status", [
+    z
+      .object({
+        status: z.literal("managed"),
+        revision: FleetRevision,
+        generatedAt: FleetUtcTime,
+        workspace: z.object({workspaceId: FleetId, name: z.string().min(1).max(200)}).strict(),
+        entries: z.array(entry).max(FLEET_LIMITS.maxAssignmentEntries),
+      })
+      .strict(),
+    z.object({status: z.literal("unmanaged"), revision: FleetRevision, generatedAt: FleetUtcTime}).strict(),
+  ])
+}
+
+export const FleetDesiredStateSchema = desiredStateSchema(FleetDesiredStateEntrySchema)
+
+/** The query parameter, and its value, a phone sends on its desired-state request to be answered with pins: `?pins=1`. */
+export const FLEET_DESIRED_STATE_PINS_PARAM = "pins"
+export const FLEET_DESIRED_STATE_PINS_VALUE = "1"
+
+/** An assignment's pin: the version, and the SHA-256 it had when the admin chose it, in lowercase hex. */
+export const FleetAssignmentPinSchema = z
   .object({
-    assignmentId: FleetId,
-    revision: FleetRevision,
-    /** The miniapp's own URL (Mentra-Specs #140). The phone installs it with `installMiniapp(url)` and takes the version it serves. */
-    url: FleetMiniappUrl,
-    /** The package the URL's manifest named when it was assigned. Display and matching only; the URL decides what installs. */
-    packageName: FleetText,
-    selection: z.literal("latest"),
+    version: FleetText.regex(MINIAPP_VERSION_PATTERN),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/),
   })
   .strict()
 
-export const FleetDesiredStateSchema = z.discriminatedUnion("status", [
-  z
-    .object({
-      status: z.literal("managed"),
-      revision: FleetRevision,
-      generatedAt: FleetUtcTime,
-      workspace: z.object({workspaceId: FleetId, name: z.string().min(1).max(200)}).strict(),
-      entries: z.array(FleetDesiredStateEntrySchema).max(FLEET_LIMITS.maxAssignmentEntries),
-    })
-    .strict(),
-  z.object({status: z.literal("unmanaged"), revision: FleetRevision, generatedAt: FleetUtcTime}).strict(),
+/**
+ * An entry held at one version. The phone installs the miniapp's `versions` entry for `pin.version` while its hash
+ * is `pin.sha256`, and otherwise nothing, reporting `pin_unlisted` or `pin_hash_changed` (`selectMiniappTarget`).
+ * `pin` goes with `selection: "pinned"`, and only with it.
+ */
+export const FleetPinnedDesiredStateEntrySchema = z
+  .object({...desiredStateEntryFields, selection: z.literal("pinned"), pin: FleetAssignmentPinSchema})
+  .strict()
+
+/** An entry as a phone that asked for pins is sent it: `latest`, or `pinned` with its pin. */
+export const FleetDesiredStateEntryWithPinsSchema = z.discriminatedUnion("selection", [
+  FleetDesiredStateEntrySchema,
+  FleetPinnedDesiredStateEntrySchema,
 ])
+
+/** Desired state as a request with `?pins=1` is answered: {@link FleetDesiredStateSchema}, whose entries may be pinned. */
+export const FleetDesiredStateWithPinsSchema = desiredStateSchema(FleetDesiredStateEntryWithPinsSchema)
+
 export type FleetDesiredStateEntry = z.infer<typeof FleetDesiredStateEntrySchema>
 export type FleetDesiredState = z.infer<typeof FleetDesiredStateSchema>
+export type FleetAssignmentPin = z.infer<typeof FleetAssignmentPinSchema>
+export type FleetPinnedDesiredStateEntry = z.infer<typeof FleetPinnedDesiredStateEntrySchema>
+export type FleetDesiredStateEntryWithPins = z.infer<typeof FleetDesiredStateEntryWithPinsSchema>
+export type FleetDesiredStateWithPins = z.infer<typeof FleetDesiredStateWithPinsSchema>
+
+/** Whether a desired-state request's `pins` parameter asks for pins: exactly `1`. */
+export function fleetDesiredStateAsksForPins(value: string | null | undefined): boolean {
+  return value === FLEET_DESIRED_STATE_PINS_VALUE
+}
+
+/**
+ * The same desired state for a phone that did not ask for pins: every pinned entry as `latest`, without its pin, and
+ * nothing else changed. Such a phone stays on the latest version of a pinned miniapp, as it was before pins.
+ */
+export function fleetDesiredStateWithoutPins(state: FleetDesiredStateWithPins): FleetDesiredState {
+  if (state.status !== "managed") return state
+  return {
+    ...state,
+    entries: state.entries.map(({assignmentId, revision, url, packageName}) => ({
+      assignmentId,
+      revision,
+      url,
+      packageName,
+      selection: "latest" as const,
+    })),
+  }
+}
 export type FleetMiniappInventoryPayload = z.infer<typeof FleetMiniappInventoryPayloadSchema>
 export type FleetAssignmentOutcomePayload = z.infer<typeof FleetAssignmentOutcomePayloadSchema>
 export type FleetLaunchPayload = z.infer<typeof FleetLaunchPayloadSchema>

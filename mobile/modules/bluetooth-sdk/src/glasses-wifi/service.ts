@@ -18,7 +18,10 @@ import * as native from "./native"
  * hold the link here and use the binding it gives them; none of them sends a hotspot command or
  * joins a network itself. The link is shared: the first holder brings it up (Wi-Fi Direct on
  * Android with glasses that advertise it, else the glasses' hotspot, then the phone's one native
- * join), later holders get the same binding, and the last release takes it down.
+ * join), later holders get the same binding, and the last release takes it down. A link that is up stays
+ * up for [RELEASE_LINGER_MS] after its last release, and a hold meanwhile takes it as it is: a
+ * miniapp that restarts, or a fetch that follows a photo, doesn't take the link down and wait for
+ * it to come back.
  *
  * When the link goes down (the phone leaves the network, the glasses turn the AP off, restart, or
  * leave Bluetooth), holders hear `lost`; the service asks for the link again once the glasses are
@@ -62,7 +65,7 @@ export interface GlassesWifiHold {
   onChange(listener: (event: GlassesWifiEvent) => void): () => void
   /** The binding once the link is up: now, or when it is restored. Rejects when it ends or on abort. */
   ready(signal?: AbortSignal): Promise<GlassesWifiBinding>
-  /** Idempotent. The link goes down once nobody holds it. */
+  /** Idempotent. The link goes down [RELEASE_LINGER_MS] after nobody holds it, unless someone holds it again. */
   release(): Promise<void>
 }
 
@@ -86,6 +89,8 @@ export const BROADCAST_WAIT_MS = 3_000
 export const RESTORE_DEADLINE_MS = 3 * 60_000
 /** How long after the last release an enabled report is taken as a late enable to undo (OS-2133). */
 export const LATE_ENABLE_WINDOW_MS = 60_000
+/** How long a link that is up stays up after its last release, for a hold that follows at once. */
+export const RELEASE_LINGER_MS = 5_000
 
 const SESSION_REFRESH_CODES = new Set(["wifi_session_restarted", "wifi_session_changed"])
 
@@ -96,6 +101,8 @@ const holders = new Set<Holder>()
 let binding: GlassesWifiBinding | null = null
 let bringingUp: Promise<GlassesWifiBinding> | null = null
 let takingDown: Promise<void> | null = null
+/** Cancels the teardown waiting out [RELEASE_LINGER_MS] after the last release, while it waits. */
+let cancelLinger: (() => void) | null = null
 /** The radio of the link up or coming up. */
 let linkType: Link | null = null
 let lostAt: number | null = null
@@ -159,6 +166,8 @@ function setHotspot(enabled: boolean): Promise<HotspotStatus> {
 /** Hold the glasses Wi-Fi link, bringing it up if nobody holds it yet. */
 export async function holdGlassesWifi(options: GlassesWifiHoldOptions): Promise<GlassesWifiHold> {
   const holder: Holder = {options, listeners: new Set()}
+  // A link waiting out its last release is still up: this hold takes it as it is.
+  stopLinger()
   if (takingDown) await takingDown
   holders.add(holder)
   watchLateHotspots()
@@ -392,10 +401,29 @@ async function release(holder: Holder): Promise<void> {
   if (!holders.delete(holder)) return
   console.log(`[GlassesWifi] ${holder.options.consumer} released the link (${holders.size} left)`)
   if (holders.size > 0) return
-  takingDown = takeDown().finally(() => {
+  // A link that is up waits a little before it goes down. One still coming up, lost or ended goes
+  // down now: giving it back is what stops a bring-up nobody wants any more.
+  if (binding && !bringingUp && lostAt === null && endedReason === null) {
+    cancelLinger = after(RELEASE_LINGER_MS, () => {
+      cancelLinger = null
+      if (holders.size === 0) void startTakeDown()
+    })
+    return
+  }
+  await startTakeDown()
+}
+
+function startTakeDown(): Promise<void> {
+  stopLinger()
+  takingDown ??= takeDown().finally(() => {
     takingDown = null
   })
-  await takingDown
+  return takingDown
+}
+
+function stopLinger(): void {
+  cancelLinger?.()
+  cancelLinger = null
 }
 
 async function takeDown(): Promise<void> {
@@ -437,6 +465,12 @@ function notify(event: GlassesWifiEvent): void {
 }
 
 function lose(reason: string): void {
+  // Lost while waiting out its last release: nobody is left to restore it for.
+  if (cancelLinger && holders.size === 0) {
+    console.log(`[GlassesWifi] The link went down after its last release: ${reason}`)
+    void startTakeDown()
+    return
+  }
   if (!binding || holders.size === 0) return
   console.warn(`[GlassesWifi] The link went down: ${reason}`)
   setBinding(null)
@@ -516,13 +550,13 @@ function unwatch(): void {
  * is down, coming up or going down.
  */
 export async function holdGlassesWifiIfUp(consumer: string): Promise<GlassesWifiHold | null> {
-  if (holders.size === 0 || !binding || lostAt !== null || bringingUp || takingDown) return null
+  if ((holders.size === 0 && !cancelLinger) || !binding || lostAt !== null || bringingUp || takingDown) return null
   return holdGlassesWifi({consumer})
 }
 
 /** Whether anyone holds the link now. */
 function held(): boolean {
-  return holders.size > 0 || takingDown !== null
+  return holders.size > 0 || takingDown !== null || cancelLinger !== null
 }
 
 /**

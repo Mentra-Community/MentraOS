@@ -9,16 +9,22 @@ import {getConfigValues} from "../runtime/bootstrap"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {isPackageNameAllowedForUrl} from "./miniappDomainRule"
 import {fetchMiniappJson, MiniappFetchError, type MiniappFetchTransport, type MiniappJsonResult} from "./miniappFetch"
+import {selectInstallTarget} from "./miniappInstallTarget"
+import type {MiniappPinReader} from "./miniappPins"
 
-/** What a miniapp URL serves now, or the assignment reason it cannot be installed. */
+/**
+ * The build a miniapp URL serves for this phone now (latest, or the version a pin holds it to: `pinned`), or the
+ * assignment reason it cannot be installed. A pin that can't be met is `pin_unlisted` or `pin_hash_changed`.
+ */
 export type MiniappUrlResolution =
-  | {ok: true; packageName: string; version: string; bundleUrl: string; bundleSha256: string}
+  | {ok: true; packageName: string; version: string; bundleUrl: string; bundleSha256: string; pinned: boolean}
   | {ok: false; reason: FleetAssignmentReason}
 
 /**
  * Read what a miniapp URL serves: `<url>/miniapp.json`, a copy of the manifest in its current ZIP plus
  * `bundle: {url, sha256}` naming that ZIP (relative to `<url>/` or an absolute HTTPS URL), checked with the schema
- * Core checks registrations with. The URL decides the version, and the ZIP must have that SHA-256. The package name
+ * Core checks registrations with. The URL decides the version, and the ZIP must have that SHA-256; a package with a
+ * pin takes the pinned version's `versions` entry instead (`selectInstallTarget`, with `pinFor`). The package name
  * must pass the domain rule for the URL and for where its redirects ended.
  *
  * The request carries no Mentra account, token or cookie. A private miniapp's server asks for sign-in with Mentra's
@@ -26,7 +32,11 @@ export type MiniappUrlResolution =
  * and the URL must serve. Core names the assigning workspace in that token. The server decides access: a token it
  * refuses (401 or 403) is `access_denied`, and so is a 401 or 403 without the challenge.
  */
-export async function resolveMiniappUrl(url: string, transport?: MiniappFetchTransport): Promise<MiniappUrlResolution> {
+export async function resolveMiniappUrl(
+  url: string,
+  transport?: MiniappFetchTransport,
+  pinFor?: MiniappPinReader,
+): Promise<MiniappUrlResolution> {
   // An assignment names a public HTTPS miniapp URL; a local-network build is never assigned.
   const normalized = normalizeMiniappUrl(url)
   if (!normalized || normalized.kind !== "public") return {ok: false, reason: "not_a_miniapp"}
@@ -60,20 +70,24 @@ export async function resolveMiniappUrl(url: string, transport?: MiniappFetchTra
   const parsed = ServedMiniappManifestSchema.safeParse(raw)
   if (!parsed.success) return {ok: false, reason: "not_a_miniapp"}
   const manifest = parsed.data
-  const {packageName, version} = manifest
+  const {packageName} = manifest
   if (!isPackageNameAllowedForUrl(packageName, manifestUrl) || !isPackageNameAllowedForUrl(packageName, servedFrom))
     return {ok: false, reason: "not_a_miniapp"}
   // The token answered a challenge for this package only.
   if (response.challenge && response.challenge.packageName !== packageName) return {ok: false, reason: "not_a_miniapp"}
+  const target = selectInstallTarget(packageName, manifest, pinFor)
+  if (!target.ok) return {ok: false, reason: target.reason}
+  const {build} = target
   let bundleUrl: string
   try {
-    const resolved = new URL(manifest.bundle.url.trim(), servedFrom)
+    const resolved = new URL(build.url.trim(), servedFrom)
     if (resolved.protocol !== "https:") return {ok: false, reason: "not_a_miniapp"}
     bundleUrl = resolved.href
   } catch {
     return {ok: false, reason: "not_a_miniapp"}
   }
-  if (!checkManifestVersions(manifest, {hostVersion: getConfigValues().hostVersion}).ok)
+  // The top-level fields describe the latest build. A pinned build's are only in its ZIP, which the installer checks.
+  if (!target.pinned && !checkManifestVersions(manifest, {hostVersion: getConfigValues().hostVersion}).ok)
     return {ok: false, reason: "incompatible_host"}
-  return {ok: true, packageName, version, bundleUrl, bundleSha256: manifest.bundle.sha256}
+  return {ok: true, packageName, version: build.version, bundleUrl, bundleSha256: build.sha256, pinned: target.pinned}
 }

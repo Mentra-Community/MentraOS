@@ -68,11 +68,18 @@ export async function signBundleArchive(unsignedArchive: Uint8Array, key: Packag
     payload,
     signature: crypto.sign(null, Buffer.from(canonicalJson(payload)), privateKey).toString('base64url'),
   };
+  const signatureFolder = MENTRA_BUNDLE_SIGNATURE_PATH.slice(0, MENTRA_BUNDLE_SIGNATURE_PATH.lastIndexOf('/') + 1);
+  const addsFolder = !zip.files[signatureFolder];
+  const signatureDate = new Date(0);
   zip.file(MENTRA_BUNDLE_SIGNATURE_PATH, canonicalJson(envelope), {
     binary: false,
     createFolders: true,
-    date: new Date(0),
+    date: signatureDate,
   });
+  // JSZip dates the folder it adds for the entry with the current time. Dated
+  // like the entry, the same bundle signed with the same key is always the
+  // same ZIP, so signing again doesn't make a build a phone takes for new.
+  if (addsFolder && zip.files[signatureFolder]) zip.files[signatureFolder].date = signatureDate;
   return zip.generateAsync({
     type: 'uint8array',
     compression: 'DEFLATE',

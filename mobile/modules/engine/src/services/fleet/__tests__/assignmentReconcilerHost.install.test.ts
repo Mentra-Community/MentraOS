@@ -8,6 +8,7 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 import type {
   FleetAssignmentOutcomePayload,
   FleetDesiredState,
+  FleetDesiredStateWithPins,
   RegistryRegisterRequest,
   RegistryRegisterResponse,
 } from "@mentra/cloud-protocol"
@@ -17,7 +18,6 @@ import {cloudClientService} from "../../__tests__/cloudClientServiceTestMock"
 import {configure, resetForTests} from "../../../runtime/bootstrap"
 import {MiniappRunningError} from "../../../utils/storeInstallRuntime"
 import type {MiniappAssignment, MiniappReleaseIdentity} from "../../AppRegistry"
-import {assertMiniappUpdateVersion} from "../../miniappInstallIdentity"
 import type {ReleaseInstallOptions} from "../../miniappReleaseInstall"
 import {TRIGGER_JITTER_MS} from "../assignmentReconciler"
 import {MemoryFleetStore} from "./memoryFleetStore"
@@ -42,6 +42,8 @@ interface Site {
   admits?: (authorization: string) => boolean
   zip: Uint8Array
   sha256: string
+  /** `miniapp.json`'s `versions`, and the ZIP each names by file name. */
+  listed?: Array<{version: string; url: string; sha256: string; zip: Uint8Array}>
 }
 
 interface Sent {
@@ -83,7 +85,10 @@ async function serve(target: string, init: {headers: Record<string, string>; red
     return respond(target, 401, null, {"WWW-Authenticate": `Bearer realm="mentra", package="${found.challengeFor}"`})
   }
   if (asks && !(found.admits ?? (() => true))(authorization!)) return respond(target, 403, null)
-  if (isZip) return respond(target, 200, found.zip)
+  if (isZip) {
+    const listed = found.listed?.find((entry) => target.endsWith(`/${entry.url}`))
+    return respond(target, 200, listed ? listed.zip : found.zip)
+  }
   const version = found.versions.length > 1 ? found.versions.shift()! : found.versions[0]!
   const manifest = {
     packageName: found.packageName,
@@ -91,6 +96,7 @@ async function serve(target: string, init: {headers: Record<string, string>; red
     name: found.packageName.split(".").at(-1),
     minHostVersion: "3.3.0",
     bundle: {url: `${found.packageName}-${version}.zip`, sha256: found.sha256},
+    ...(found.listed ? {versions: found.listed.map(({version, url, sha256}) => ({version, url, sha256}))} : {}),
   }
   return respond(target, 200, JSON.stringify(manifest))
 }
@@ -141,8 +147,7 @@ mock.module("../../AppRegistry", () => ({
     getInstallReasons: (packageName: string) => phone.get(packageName)?.reasons ?? [],
     getMiniappAssignment: (packageName: string) => phone.get(packageName)?.assignment ?? null,
     getAssignedPackages: () => [...phone].filter(([, app]) => app.reasons.includes("assignment")).map(([name]) => name),
-    hasDevelopmentSelection: () => false,
-    clearDevelopmentSelection: async () => true,
+    isDevelopmentBuild: () => false,
     setMiniappAssignment: (packageName: string, assignment: MiniappAssignment) => {
       const app = phone.get(packageName)!
       app.assignment = assignment
@@ -157,8 +162,6 @@ mock.module("../../AppRegistry", () => ({
     },
     restoreMiniappAccess: () => {},
     isMiniappAccessRevoked: () => false,
-    assertCanInstallVersion: (packageName: string, version: string) =>
-      assertMiniappUpdateVersion(packageName, version, phone.get(packageName)?.versions ?? []),
     gcReleaseVersions: async () => {},
   },
 }))
@@ -433,6 +436,53 @@ describe("an assigned miniapp", () => {
     } finally {
       mock.module("expo/fetch", () => ({fetch: serve}))
     }
+  })
+})
+
+describe("a pinned assignment", () => {
+  async function pinnedSite(): Promise<{latest: string; old: string}> {
+    const latest = await site(notes, ["2.0.0"])
+    const zip = new TextEncoder().encode("notes 1.5.0 zip")
+    const old = Buffer.from(await crypto.subtle.digest("SHA-256", zip)).toString("hex")
+    latest.listed = [
+      {version: "2.0.0", url: `${notes}-2.0.0.zip`, sha256: latest.sha256, zip: latest.zip},
+      {version: "1.5.0", url: `old/${notes}-1.5.0.zip`, sha256: old, zip},
+    ]
+    sites.set(notesUrl, latest)
+    return {latest: latest.sha256, old}
+  }
+
+  function pinnedTo(version: string, sha256: string): FleetDesiredState {
+    const state = managed(1, [notesEntry]) as Extract<FleetDesiredStateWithPins, {status: "managed"}>
+    state.entries = [{...state.entries[0]!, selection: "pinned", pin: {version, sha256}}]
+    return state as unknown as FleetDesiredState
+  }
+
+  test("keeps its pin on the phone and installs the pinned version's ZIP, checked against its hash", async () => {
+    const {old} = await pinnedSite()
+    desired = pinnedTo("1.5.0", old)
+    start()
+    await reconcileUntil(() => states(notes).includes("installed"))
+
+    expect(JSON.parse(store.getString(`miniapp.pins.v1/${notes}`)!)).toMatchObject({
+      fleet: {version: "1.5.0", sha256: old, assignmentId: "asg_notes", workspaceId: "ws_acme", url: notesUrl},
+    })
+    expect(releaseInstalls).toHaveLength(1)
+    expect(releaseInstalls[0]!.bundleUrl).toBe(`${notesUrl}old/${notes}-1.5.0.zip`)
+    expect(releaseInstalls[0]!.options).toMatchObject({expectedVersion: "1.5.0", expectedBundleSha256: old})
+    expect(phone.get(notes)!.identities.get("1.5.0")).toMatchObject({bundleSha256: old})
+    expect(last(notes)).toMatchObject({state: "installed", selectedVersion: "1.5.0", installedVersion: "1.5.0"})
+  })
+
+  test("whose version now has other bytes installs nothing and reports pin_hash_changed", async () => {
+    await pinnedSite()
+    desired = pinnedTo("1.5.0", "9".repeat(64))
+    start()
+    await reconcileUntil(() => states(notes).length > 0)
+
+    expect(states(notes)).toEqual(["blocked:pin_hash_changed"])
+    expect(releaseInstalls).toEqual([])
+    expect(phone.has(notes)).toBe(false)
   })
 })
 

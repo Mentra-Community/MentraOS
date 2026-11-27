@@ -9,7 +9,10 @@ import type {ClientApp} from "../../types/applet"
 
 const compatible = {isCompatible: true, missingRequired: [], missingOptional: [], warnings: []}
 const installedApps = mock(async (): Promise<ClientApp[]> => [])
-const ensureRunning = mock(async (): Promise<unknown> => ({}))
+const ensureRunning = mock(async (..._args: unknown[]): Promise<unknown> => ({}))
+/** The launcher's wait for a miniapp's update check before it starts: true to go on, false when it was cancelled. */
+const waitForUpdate = mock(async (_packageName: string): Promise<boolean> => true)
+const cancelStart = mock((_packageName: string): void => {})
 const saveSetting = mock((_key: string, _value: unknown): {is_ok: () => boolean} => ({is_ok: () => true}))
 let modelAvailable = true
 mock.module("../../services/AppRegistry", () => ({
@@ -22,7 +25,7 @@ mock.module("../../services/AppRegistry", () => ({
     subscribe: () => () => {},
   },
 }))
-mock.module("../../services/MiniappLauncher", () => ({miniappLauncher: {ensureRunning}}))
+mock.module("../../services/MiniappLauncher", () => ({miniappLauncher: {ensureRunning, waitForUpdate, cancelStart}}))
 mock.module("../../services/MiniappRunningRegistry", () => ({
   miniappRunningRegistry: {subscribe: () => () => {}, getAll: () => []},
 }))
@@ -43,7 +46,6 @@ mock.module("../settings", () => ({
 let apps: typeof import("../apps").useAppStatusStore
 let installHooks: typeof import("../apps").installAppStoreHooks
 let useStart: typeof import("../apps").useStart
-let onOpenedByUser: typeof import("../apps").onMiniappOpenedByUser
 
 const target: ClientApp = {
   packageName: "com.test.notes",
@@ -73,7 +75,6 @@ beforeAll(async () => {
   apps = module.useAppStatusStore
   installHooks = module.installAppStoreHooks
   useStart = module.useStart
-  onOpenedByUser = module.onMiniappOpenedByUser
 })
 
 afterAll(resetForTests)
@@ -86,6 +87,9 @@ beforeEach(() => {
   stopListening = fleetEvents.subscribe({launch: (event) => launches.push(event)})
   ensureRunning.mockReset()
   ensureRunning.mockResolvedValue({})
+  waitForUpdate.mockReset()
+  waitForUpdate.mockResolvedValue(true)
+  cancelStart.mockReset()
   saveSetting.mockReset()
   saveSetting.mockImplementation(() => ({is_ok: () => true}))
   modelAvailable = true
@@ -143,35 +147,114 @@ describe("what a start shows", () => {
   })
 })
 
-describe("a person opening a miniapp", () => {
-  let opened: string[] = []
-  let unsubscribe: () => void = () => {}
-  beforeEach(() => {
-    opened = []
-    unsubscribe = onOpenedByUser((packageName) => opened.push(packageName))
-  })
-  afterEach(() => unsubscribe())
+describe("a start waits for the miniapp's update check", () => {
+  const other: ClientApp = {...target, packageName: "com.test.other", name: "Other", type: "standard", running: true}
+  const standard: ClientApp = {...target, type: "standard"}
 
-  test("is announced once the miniapp runs", async () => {
-    ensureRunning.mockImplementationOnce(async () => {
-      expect(opened).toEqual([])
-      return {}
+  function held() {
+    let release!: (goesOn: boolean) => void
+    const wait = new Promise<boolean>((resolve) => {
+      release = resolve
+    })
+    waitForUpdate.mockImplementationOnce(() => wait)
+    return release
+  }
+
+  test("behind the splash, and before anything else changes", async () => {
+    apps.setState({apps: [standard, other]})
+    const release = held()
+    const shown: string[] = []
+    installHooks({onOpenRequested: (app) => shown.push(app.packageName)})
+    const starting = apps.getState().start(standard, {trigger: "user", onAccepted: () => void shown.push("accepted")})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // The host has put the splash up, and the wait is on.
+    expect(shown).toEqual(["accepted", standard.packageName])
+    expect(waitForUpdate).toHaveBeenCalledWith(standard.packageName)
+    // Nothing has started, the other standard miniapp still runs, and Fleet has heard of no launch.
+    expect(ensureRunning).not.toHaveBeenCalled()
+    expect(apps.getState().apps.map((app) => app.running)).toEqual([false, true])
+    expect(launches).toEqual([])
+    release(true)
+    expect(await starting).toBe(true)
+    // Its context starts without waiting a second time.
+    expect(ensureRunning).toHaveBeenCalledWith(standard.packageName, undefined, {checkForUpdate: false})
+    expect(apps.getState().apps.map((app) => app.running)).toEqual([true, false])
+  })
+
+  test("and starts the version the wait installed, which is the one Fleet is told", async () => {
+    waitForUpdate.mockImplementationOnce(async () => {
+      apps.setState({apps: [{...target, version: "1.0.31"}]})
+      return true
     })
     expect(await apps.getState().start(target, {trigger: "user"})).toBe(true)
-    expect(opened).toEqual([target.packageName])
+    expect(launches).toEqual([
+      {packageName: "com.test.notes", miniappName: "Notes", versionName: "1.0.31", start: "user", outcome: "started"},
+    ])
   })
 
-  test("is not an automatic start, a refused or failed start, or re-opening a running miniapp", async () => {
+  test("whoever starts it: a person or the platform", async () => {
     expect(await apps.getState().start(target)).toBe(true)
+    apps.setState({apps: [target]})
+    expect(await apps.getState().start(target, {skipNavigation: true, trigger: "automatic"})).toBe(true)
+    expect(waitForUpdate).toHaveBeenCalledTimes(2)
+  })
+
+  test("except a restart around an install, a re-open of a running miniapp, a refused start and the app's own screens", async () => {
+    expect(await apps.getState().start(target, {trigger: "automatic", checkForUpdate: false})).toBe(true)
     apps.setState({apps: [{...target, running: true}]})
     expect(await apps.getState().start(target, {trigger: "user"})).toBe(true)
-    apps.setState({apps: [target]})
-    ensureRunning.mockRejectedValueOnce(new Error("spawn failed"))
-    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
     const incompatible = {...target, compatibility: {...compatible, isCompatible: false}}
     apps.setState({apps: [incompatible]})
     expect(await apps.getState().start(incompatible, {trigger: "user"})).toBe(false)
-    expect(opened).toEqual([])
+    const builtIn = {...target, packageName: "com.test.settings", name: "Settings", local: false, offline: true}
+    apps.setState({apps: [builtIn]})
+    expect(await apps.getState().start(builtIn, {trigger: "user"})).toBe(true)
+    expect(waitForUpdate).not.toHaveBeenCalled()
+  })
+
+  test("stopped while it waits, it starts nothing, changes nothing and is no launch", async () => {
+    apps.setState({apps: [standard, other]})
+    const release = held()
+    const starting = apps.getState().start(standard, {trigger: "user"})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await apps.getState().stop(standard.packageName)
+    // The stop cancels the launcher's wait, for every start that shares it.
+    expect(cancelStart).toHaveBeenCalledWith(standard.packageName)
+    release(false)
+    expect(await starting).toBe(false)
+    expect(ensureRunning).not.toHaveBeenCalled()
+    expect(apps.getState().apps.map((app) => app.running)).toEqual([false, true])
+    expect(launches).toEqual([])
+  })
+
+  test("a stop the wait didn't hear of still keeps it from starting", async () => {
+    const release = held()
+    const starting = apps.getState().start(target, {trigger: "user"})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await apps.getState().stop(target.packageName)
+    release(true)
+    expect(await starting).toBe(false)
+    expect(ensureRunning).not.toHaveBeenCalled()
+    expect(launches).toEqual([])
+  })
+
+  test("an install that began, or a removal, while it waited refuses the start", async () => {
+    let shown: string[] = []
+    installHooks({onUpdateBlocked: (app) => shown.push(app.packageName)})
+    waitForUpdate.mockImplementationOnce(async () => {
+      apps.setState({updatingPackages: new Set([target.packageName])})
+      return true
+    })
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
+    expect(shown).toEqual([target.packageName])
+    apps.setState({updatingPackages: new Set()})
+    waitForUpdate.mockImplementationOnce(async () => {
+      apps.setState({apps: []})
+      return true
+    })
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
+    expect(ensureRunning).not.toHaveBeenCalled()
+    expect(launches).toEqual([])
   })
 })
 

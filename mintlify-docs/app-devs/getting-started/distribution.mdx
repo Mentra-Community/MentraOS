@@ -18,48 +18,53 @@ people, see [Publish your miniapp](/app-devs/getting-started/publish).
 ## Dev install (you, iterating)
 
 While you're building, [`mentra-miniapp dev`](/app-devs/reference/cli#dev) serves
-your project over the LAN with hot reload. Scan the QR from the Mentra App and
-your changes reload on save. This is the inner loop; see the
-[Quickstart](/app-devs/getting-started/quickstart).
+your project over the LAN. Scan the QR from the Mentra App to install it; each
+change you save then installs on the phone and restarts the miniapp. This is the
+inner loop; see the [Quickstart](/app-devs/getting-started/quickstart).
 
-Dev mode is not an installation: the computer and CLI must remain running to
-serve each miniapp's runtime bundle. The Mentra App keeps a separate dev entry
-for each manifest package name and caches its name and icon, so you can scan and
-test multiple dev miniapps together. Rescanning the same package updates that
-entry. Use a release install when you want the miniapp to run without the
-computer. On a phone signed in to a company workspace, the Miniapp Developer
+A dev build is installed like any miniapp, from its local-network URL, and
+updates from that URL only: when you save, and when it opens. With your computer
+away it opens the build it has. There is one tile per package name, so you can
+scan and test several miniapps together; scan again only when the URL changes.
+Use a [production build](#production-build-local-testing-over-lan) to try what
+users will get. On a phone signed in to a company workspace, the Miniapp Developer
 tools appear only if the workspace allows miniapp development.
 
 A dev build runs as the package named in its `miniapp.json`, so it can stand in
-for an installed copy of that package. Dev code is unsigned: the Mentra App runs
-it in place of an unsigned install, but refuses it while the package is
-installed from a bundle signed with a publisher key. Uninstall the miniapp from
-the phone first, then scan again. `session.auth` works in a dev build the same
-way it does for the installed miniapp.
+for an installed copy of that package, until you uninstall it or install the
+release yourself: no update from another URL, workspace or Fleet assignment
+replaces it. It keeps its data apart from the installed copy's. An unsigned dev
+build can't replace a package installed from a bundle signed with a publisher
+key: uninstall the miniapp from the phone first, then scan again. `session.auth`
+works in a dev build the same way it does for the installed miniapp.
 
-## Release install (local testing over LAN)
+## Production build (local testing over LAN)
 
-To put a real, installed build on one or more test phones on your local network,
-run:
+To put the build users will get on one or more test phones on your local
+network, before you upload it, run:
 
 ```bash
-mentra-miniapp release
+mentra-miniapp dev --production
 ```
 
-This builds, packs, and serves the bundle behind a `miniapp://release` QR. Anyone
-on the same network can scan it to install. The miniapp installs on the device,
-**runs offline, and persists across restarts**: no laptop required once it's
-installed. This is intended for local testing, demos, and dogfooding. To reach other
+This builds the production bundle, the one `mentra-miniapp pack` writes, and
+serves it from your computer at a local-network miniapp URL, behind the same
+plain-URL QR that `dev` prints. Anyone on the same network can scan it. The
+phone keeps the build it downloaded, so the miniapp **runs offline, and persists
+across restarts**: no laptop required once it's installed. This is intended for
+local testing, demos, and dogfooding. To reach other
 people, [publish your miniapp](/app-devs/getting-started/publish).
 
-Each install is logged in your terminal, and the server stays up so multiple
-devices can install from the same QR. The miniapp opens on the phone as soon as
-it installs.
+The server stays up so multiple devices can install from the same QR.
 
-A release install is a fixed snapshot, like a React Native release build. After
-each change, run `mentra-miniapp release` again and rescan. While you develop,
-use `mentra-miniapp dev` instead: scan once, and every saved change reloads on
-the phone.
+Nothing is watched, so a saved change doesn't reach the phone. After a change,
+run `mentra-miniapp dev --production` again; the Mentra App takes the new build
+from the same URL the next time it opens the miniapp. While you develop, use
+`mentra-miniapp dev` instead: scan once, and every saved change installs on the
+phone.
+
+`mentra-miniapp release` is the former name of this command, and still runs for
+one more release of the CLI.
 
 ## Publishing
 
@@ -74,7 +79,7 @@ mentra-miniapp pack
 ```
 
 The folder is written to `build/`, with the ZIP named
-`<packageName>-<version>.zip`. Make sure your
+`<packageName>-<version>-<hash>.zip`. Make sure your
 [`miniapp.json`](/app-devs/core-concepts/miniapp-manifest) is accurate before you
 pack: its `hardwareRequirements` will decide which glasses can see your miniapp,
 and its `permissions` will drive the OS prompts users see.
@@ -87,14 +92,16 @@ for those workflows.
 
 ## Versioning
 
-Bump `version` in `miniapp.json` for every release build; it must be a semantic
-version such as `1.2.0`. The CLI names the artifact
-`<packageName>-<version>.zip`.
+`version` in `miniapp.json` is what people see; it must be a semantic version
+such as `1.2.0`. The CLI names the artifact
+`<packageName>-<version>-<hash>.zip`, where `<hash>` is the first 8 hex digits
+of the ZIP's SHA-256.
 
-The Mentra App installs a release only when its version is the same as or newer
-than the installed one. Installing the same version again replaces it; an older
-version is refused, whether it comes from a release QR or is bundled with the
-Mentra App. To go back to an older build, publish it again under a newer version.
+The Mentra App never compares versions. It updates a miniapp when the ZIP its
+URL names has another SHA-256 than the installed one, so a new build reaches
+phones with or without a new version, and installs whether its version is
+higher than, the same as or lower than the installed one. To go back to an
+older build, publish it again: no new version is needed.
 
 ## Signing
 
@@ -118,7 +125,7 @@ way a miniapp reaches the phone; there is no exception for first-party miniapps.
 
 <CardGroup cols={2}>
   <Card title="CLI reference" icon="terminal" href="/app-devs/reference/cli">
-    `dev`, `release`, and `pack` in detail.
+    `dev`, `dev --production`, and `pack` in detail.
   </Card>
   <Card title="The manifest" icon="file-code" href="/app-devs/core-concepts/miniapp-manifest">
     Get permissions and hardware requirements right before you build a release.

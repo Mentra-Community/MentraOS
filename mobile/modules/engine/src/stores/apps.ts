@@ -51,6 +51,11 @@ export interface StartOptions {
    * model) is refused silently.
    */
   trigger?: "user" | "automatic"
+  /**
+   * False for a start that doesn't wait for the miniapp's update check: the restart of a miniapp around an install.
+   * Every other start of a miniapp that isn't running waits (`MiniappLauncher.waitForUpdate`).
+   */
+  checkForUpdate?: boolean
 }
 
 /** Host seams for a start. The refusal explanations are only for a person's own start. */
@@ -93,32 +98,9 @@ function oneStartAtATime<T>(transition: () => Promise<T>): Promise<T> {
   return run
 }
 const uninstallingPackages = new Set<string>()
-const openedByUserListeners = new Set<(packageName: string) => void>()
 
 export function installAppStoreHooks(hooks: AppStoreHooks): void {
   hostHooks = {...hostHooks, ...hooks}
-}
-
-/**
- * A person started a miniapp (a `"user"` start) and it now runs. Re-opening one
- * that already runs, and automatic starts (restoring what ran before, an
- * update's restart), are not announced. Returns an unsubscribe.
- */
-export function onMiniappOpenedByUser(listener: (packageName: string) => void): () => void {
-  openedByUserListeners.add(listener)
-  return () => {
-    openedByUserListeners.delete(listener)
-  }
-}
-
-function announceOpenedByUser(packageName: string): void {
-  for (const listener of [...openedByUserListeners]) {
-    try {
-      listener(packageName)
-    } catch (error) {
-      console.warn("Miniapp opened listener threw", error)
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -395,10 +377,12 @@ function reportingLaunches(
       // The launcher classified any spawn failure it held back for this start; this report carries it.
       const failureReason = claim.release?.()
       if (attempted) {
+        // The version it runs: the wait for its update check may have installed another than the caller's.
+        const launched = useAppStatusStore.getState().apps.find((app) => app.packageName === clientApp.packageName)
         fleetEvents.launch({
           packageName: clientApp.packageName,
           miniappName: clientApp.name,
-          versionName: clientApp.version,
+          versionName: launched?.version ?? clientApp.version,
           start: opts?.trigger ?? "automatic",
           outcome: started ? "started" : "failed",
           ...(!started && failureReason ? {failureReason} : {}),
@@ -464,11 +448,13 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     const byUser = opts?.trigger === "user"
     const explain = byUser ? hostHooks : {}
     if (!isMiniappAvailable(packageName)) return false
-    const app = state.apps.find((a) => a.packageName === packageName)
-    if (!app) {
+    const installed = state.apps.find((a) => a.packageName === packageName)
+    if (!installed) {
       console.error(`ISLAND: app not found for package name: ${packageName}`)
       return false
     }
+    // Read again once the wait for its update check is over, below.
+    let app: ClientApp = installed
     if (state.updatingPackages.has(packageName)) {
       explain.onUpdateBlocked?.(app)
       return false
@@ -564,6 +550,27 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return true
     }
 
+    // A miniapp that isn't running is checked for an update before it starts, behind the splash the seam above put
+    // up, so that another build installs while it is still stopped and nothing is asked once it runs. Nothing has
+    // changed yet, so a start cancelled while it waits (the miniapp was stopped: the person left its splash) leaves
+    // everything as it was.
+    if (app.local && opts?.checkForUpdate !== false) {
+      const stopsBefore = stopCounts.get(packageName) ?? 0
+      const goesOn = await miniappLauncher.waitForUpdate(packageName)
+      if (!goesOn || (stopCounts.get(packageName) ?? 0) !== stopsBefore) return false
+      // The app as it is now: the wait may have installed another build, and an install or a removal may have begun.
+      const current = get().apps.find((a) => a.packageName === packageName)
+      if (!current) return false
+      app = current
+      if (get().updatingPackages.has(packageName)) {
+        explain.onUpdateBlocked?.(app)
+        return false
+      }
+      if (app.running) {
+        saveLastOpenTime(packageName)
+        return true
+      }
+    }
     // Past every gate: from here on this is a launch, reported to Fleet as started or failed. A native built-in that
     // declares no execution is the Mentra App's own interface (Settings, Feedback), not a miniapp, and is not reported.
     if (app.local || app.nativeExecution) attempt.begin()
@@ -600,7 +607,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // (no JS bundle).
     if (app.local) {
       try {
-        await miniappLauncher.ensureRunning(packageName)
+        // Its update check was waited for above.
+        await miniappLauncher.ensureRunning(packageName, undefined, {checkForUpdate: false})
       } catch (e) {
         // Spawn / bundle-resolve failed — revert the optimistic running flag so
         // the home list and miniapps.list() don't show a "running" app with no
@@ -617,7 +625,6 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       }
     }
 
-    if (byUser) announceOpenedByUser(packageName)
     return true
   }),
 
@@ -645,8 +652,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     await startStopApp(app, false)
 
     // Tear down the background JS context for local miniapps. No-op for native
-    // offline built-ins.
+    // offline built-ins. A start of it still waiting for its update check starts nothing.
     if (app.local) {
+      miniappLauncher.cancelStart(packageName)
       try {
         await miniappLauncher.stop(packageName)
       } catch (e) {

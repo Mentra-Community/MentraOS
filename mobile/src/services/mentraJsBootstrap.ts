@@ -87,9 +87,9 @@ export function bootstrapMentraJS() {
     }
   }
 
-  // The /applet/local route binds the UI router to its WebView directly
-  // via `getMentraJS().uiRouter.bindWebView(...)` — no global attach
-  // step needed. The router is reachable on the island engine singleton.
+  // A miniapp's screen (`MiniappView`) binds the UI router to its WebView
+  // directly via `getMentraJS().uiRouter.bindWebView(...)` — no global
+  // attach step needed. The router is reachable on the island engine singleton.
 
   return miniappEngine
 }

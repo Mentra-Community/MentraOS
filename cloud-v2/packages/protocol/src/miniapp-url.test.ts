@@ -5,9 +5,12 @@ import {
   isLocalNetworkHost,
   isPackageNameAllowedForUrl,
   MINIAPP_AGE_RATINGS,
+  MINIAPP_PIN_UNMET_REASONS,
   normalizeMiniappUrl,
   packagePrefixForHost,
+  parseMiniappVersions,
   registrableDomain,
+  selectMiniappTarget,
   ServedMiniappManifestSchema,
 } from "./miniapp-url"
 
@@ -188,5 +191,138 @@ describe("the served miniapp.json", () => {
 
   test.each([[null], [[]], ["miniapp"], [42]])("refuses %p", (value) => {
     expect(ServedMiniappManifestSchema.safeParse(value).success).toBe(false)
+  })
+})
+
+const OLD_SHA = "41ab77".padEnd(64, "b")
+const OLDER_SHA = "c07e5b".padEnd(64, "c")
+
+/** The update spec's example list: the latest version first, then two older ones. */
+const VERSIONS = [
+  {version: "1.4.2", url: "com.example.notes-1.4.2.zip", sha256: SHA},
+  {version: "1.4.1", url: "com.example.notes-1.4.1.zip", sha256: OLD_SHA},
+  {version: "1.4.0", url: "https://cdn.example.net/notes-1.4.0.zip", sha256: OLDER_SHA},
+]
+
+describe("the versions a served miniapp.json lists", () => {
+  test("a list of versions is kept, each with its URL and hash", () => {
+    const parsed = ServedMiniappManifestSchema.parse(specManifest({versions: VERSIONS}))
+    expect(parsed.versions).toEqual(VERSIONS)
+    expect(parseMiniappVersions(VERSIONS)).toEqual(VERSIONS)
+  })
+
+  test("a miniapp.json without a list parses as before, with no versions key", () => {
+    const parsed = ServedMiniappManifestSchema.parse(specManifest())
+    expect(parsed).toStrictEqual(specManifest() as never)
+    expect("versions" in parsed).toBe(false)
+  })
+
+  test("hashes are read in lowercase, an entry's other fields are kept, and an empty list is a list", () => {
+    const served = [{version: "1.4.2", url: "n.zip", sha256: SHA.toUpperCase(), minHostVersion: "3.3.0"}]
+    expect(ServedMiniappManifestSchema.parse(specManifest({versions: served})).versions).toEqual([
+      {version: "1.4.2", url: "n.zip", sha256: SHA, minHostVersion: "3.3.0"} as never,
+    ])
+    expect(ServedMiniappManifestSchema.parse(specManifest({versions: []})).versions).toEqual([])
+  })
+
+  test.each([
+    ["text", "1.4.2"],
+    ["an object", {"1.4.2": {url: "n.zip", sha256: SHA}}],
+    ["null", null],
+    ["a number", 3],
+    ["an entry that isn't an object", [VERSIONS[0], "1.4.1"]],
+    ["an entry that is a list", [VERSIONS[0], []]],
+    ["an entry without a version", [{url: "n.zip", sha256: SHA}]],
+    ["a version that isn't semver", [{version: "latest", url: "n.zip", sha256: SHA}]],
+    ["an entry without a URL", [{version: "1.4.2", sha256: SHA}]],
+    ["a blank URL", [{version: "1.4.2", url: " ", sha256: SHA}]],
+    ["a URL over 2,048 characters", [{version: "1.4.2", url: `n${"a".repeat(2048)}.zip`, sha256: SHA}]],
+    ["an entry without a hash", [{version: "1.4.2", url: "n.zip"}]],
+    ["a short hash", [{version: "1.4.2", url: "n.zip", sha256: "abc"}]],
+    ["a hash that isn't hex", [{version: "1.4.2", url: "n.zip", sha256: "z".repeat(64)}]],
+    ["one bad entry among good ones", [...VERSIONS, {version: "1.3.0", url: "n.zip", sha256: 7}]],
+    ["a version listed twice", [VERSIONS[0], {...VERSIONS[0], url: "other.zip"}]],
+  ])("a malformed list (%s) reads as no list, and the miniapp.json stays valid", (_name, versions) => {
+    expect(parseMiniappVersions(versions)).toBeUndefined()
+    const parsed = ServedMiniappManifestSchema.safeParse(specManifest({versions}))
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    expect("versions" in parsed.data).toBe(false)
+    expect(parsed.data).toStrictEqual(specManifest() as never)
+  })
+})
+
+describe("the build a phone should hold (selectMiniappTarget)", () => {
+  const served = ServedMiniappManifestSchema.parse(specManifest({versions: VERSIONS}))
+  const latest = {version: "1.4.2", url: "com.example.notes-1.4.2.zip", sha256: SHA}
+
+  test("without a pin the target is the bundle, with or without a list", () => {
+    expect(selectMiniappTarget(served)).toEqual({ok: true, target: latest})
+    expect(selectMiniappTarget(served, null)).toEqual({ok: true, target: latest})
+    const unlisted = ServedMiniappManifestSchema.parse(specManifest())
+    expect(selectMiniappTarget(unlisted, undefined)).toEqual({ok: true, target: latest})
+  })
+
+  test("without a pin the bundle is the target even when the list says otherwise (a rollback)", () => {
+    const rolledBack = ServedMiniappManifestSchema.parse(
+      specManifest({version: "1.4.1", bundle: {url: "com.example.notes-1.4.1.zip", sha256: OLD_SHA}, versions: VERSIONS}),
+    )
+    expect(selectMiniappTarget(rolledBack)).toEqual({
+      ok: true,
+      target: {version: "1.4.1", url: "com.example.notes-1.4.1.zip", sha256: OLD_SHA},
+    })
+  })
+
+  test("a pin that is met is its version's entry, older than the latest or not", () => {
+    expect(selectMiniappTarget(served, {version: "1.4.1", sha256: OLD_SHA})).toEqual({
+      ok: true,
+      target: {version: "1.4.1", url: "com.example.notes-1.4.1.zip", sha256: OLD_SHA},
+    })
+    expect(selectMiniappTarget(served, {version: "1.4.0", sha256: OLDER_SHA})).toEqual({
+      ok: true,
+      target: {version: "1.4.0", url: "https://cdn.example.net/notes-1.4.0.zip", sha256: OLDER_SHA},
+    })
+  })
+
+  test("a pin to the latest version is that version's entry, the same build as the bundle", () => {
+    expect(selectMiniappTarget(served, {version: "1.4.2", sha256: SHA})).toEqual({ok: true, target: latest})
+  })
+
+  test("the seal is compared whatever the case of either hash", () => {
+    expect(selectMiniappTarget(served, {version: "1.4.1", sha256: OLD_SHA.toUpperCase()})).toEqual({
+      ok: true,
+      target: {version: "1.4.1", url: "com.example.notes-1.4.1.zip", sha256: OLD_SHA},
+    })
+    const upper = {version: "1.4.2", bundle: {url: "n.zip", sha256: SHA}, versions: [{version: "1.4.1", url: "o.zip", sha256: OLD_SHA.toUpperCase()}]}
+    expect(selectMiniappTarget(upper, {version: "1.4.1", sha256: OLD_SHA})).toEqual({
+      ok: true,
+      target: {version: "1.4.1", url: "o.zip", sha256: OLD_SHA},
+    })
+  })
+
+  test("a version that is no longer listed has no target: pin_unlisted", () => {
+    expect(selectMiniappTarget(served, {version: "1.3.9", sha256: OLD_SHA})).toEqual({ok: false, reason: "pin_unlisted"})
+    const shorter = ServedMiniappManifestSchema.parse(specManifest({versions: VERSIONS.slice(0, 1)}))
+    expect(selectMiniappTarget(shorter, {version: "1.4.1", sha256: OLD_SHA})).toEqual({ok: false, reason: "pin_unlisted"})
+  })
+
+  test("a miniapp with no list, an empty one or a malformed one meets no pin, not even to the version it serves", () => {
+    for (const versions of [undefined, [], "1.4.2", [{version: "1.4.2", url: "n.zip"}]]) {
+      const manifest = ServedMiniappManifestSchema.parse(specManifest(versions === undefined ? {} : {versions}))
+      expect(selectMiniappTarget(manifest, {version: "1.4.2", sha256: SHA})).toEqual({ok: false, reason: "pin_unlisted"})
+    }
+  })
+
+  test("a listed version with other bytes has no target: pin_hash_changed", () => {
+    expect(selectMiniappTarget(served, {version: "1.4.1", sha256: OLDER_SHA})).toEqual({ok: false, reason: "pin_hash_changed"})
+    // The latest version republished: the bundle's new hash never stands in for the sealed one.
+    const republished = ServedMiniappManifestSchema.parse(
+      specManifest({bundle: {url: "n.zip", sha256: OLDER_SHA}, versions: [{version: "1.4.2", url: "n.zip", sha256: OLDER_SHA}]}),
+    )
+    expect(selectMiniappTarget(republished, {version: "1.4.2", sha256: SHA})).toEqual({ok: false, reason: "pin_hash_changed"})
+  })
+
+  test("the reasons are the two a phone reports", () => {
+    expect([...MINIAPP_PIN_UNMET_REASONS]).toEqual(["pin_unlisted", "pin_hash_changed"])
   })
 })

@@ -5,18 +5,23 @@ import devServerBridge from "../DevServerBridge"
 /** A stand-in for the dev server's socket: the test plays the laptop's side. */
 class FakeWebSocket {
   static last: FakeWebSocket | null = null
+  static opened: string[] = []
   onopen: (() => void) | null = null
   onmessage: ((event: {data: string}) => void) | null = null
   onerror: (() => void) | null = null
   onclose: (() => void) | null = null
   sent: string[] = []
+  closed = false
   constructor(readonly url: string) {
     FakeWebSocket.last = this
+    FakeWebSocket.opened.push(url)
   }
   send(data: string) {
     this.sent.push(data)
   }
-  close() {}
+  close() {
+    this.closed = true
+  }
   /** The laptop sends a frame. */
   serve(frame: object) {
     this.onmessage?.({data: JSON.stringify(frame)})
@@ -27,12 +32,15 @@ const realWebSocket = globalThis.WebSocket
 let logSpy: ReturnType<typeof spyOn>
 let warnSpy: ReturnType<typeof spyOn>
 const PACKAGE = "com.example.dev"
+const CONSOLE = "ws://192.168.1.20:3001/__mentra_dev"
+let checks: string[]
 
-function connect(): FakeWebSocket {
-  devServerBridge.connect(PACKAGE, "http://192.168.1.20:3000", 3001)
+/** Open the connection; the server answers hello unless `answer` is false. */
+function connect(answer = true): FakeWebSocket {
+  devServerBridge.connect(PACKAGE, CONSOLE)
   const ws = FakeWebSocket.last!
   ws.onopen?.()
-  ws.serve({type: "hello-ack", protocol: "mentra-dev/1"})
+  if (answer) ws.serve({type: "hello-ack", protocol: "mentra-dev/1"})
   return ws
 }
 
@@ -43,126 +51,101 @@ const flush = async () => {
 
 beforeEach(() => {
   ;(globalThis as {WebSocket: unknown}).WebSocket = FakeWebSocket
+  FakeWebSocket.opened = []
   logSpy = spyOn(console, "log").mockImplementation(() => {})
   warnSpy = spyOn(console, "warn").mockImplementation(() => {})
+  checks = []
+  devServerBridge.onCheck((pkg) => {
+    checks.push(pkg)
+  })
 })
 
 afterEach(() => {
   devServerBridge.disconnect(PACKAGE)
-  devServerBridge.clearRespawnBackgroundHandler()
-  devServerBridge.onCatchUp(null)
+  devServerBridge.onCheck(null)
   ;(globalThis as {WebSocket: unknown}).WebSocket = realWebSocket
   logSpy.mockRestore()
   warnSpy.mockRestore()
 })
 
-describe("DevServerBridge: a save that touched both layers", () => {
-  it("reloads the screen only once the new background is up", async () => {
-    const events: string[] = []
-    let finishRespawn!: () => void
-    devServerBridge.onRespawnBackground(async (pkg) => {
-      events.push(`respawn-start ${pkg}`)
-      await new Promise<void>((resolve) => (finishRespawn = resolve))
-      events.push(`respawn-done ${pkg}`)
-    })
-    devServerBridge.onReload((pkg) => {
-      events.push(`reload ${pkg}`)
+describe("DevServerBridge: a new build", () => {
+  it("connects to the console URL the build recorded", () => {
+    connect()
+    expect(FakeWebSocket.opened).toEqual([CONSOLE])
+    expect(JSON.parse(FakeWebSocket.last!.sent[0]!)).toEqual({type: "hello", protocol: "mentra-dev/1"})
+  })
+
+  it("asks for a check when the connection opens: builds made while nobody listened", async () => {
+    connect()
+    await flush()
+    expect(checks).toEqual([PACKAGE])
+  })
+
+  it("asks for a check on reload and on respawn-bg alike: both mean a new build is ready", async () => {
+    const ws = connect()
+    await flush()
+    checks = []
+    ws.serve({type: "reload"})
+    ws.serve({type: "respawn-bg"})
+    await flush()
+    expect(checks).toEqual([PACKAGE, PACKAGE])
+  })
+
+  it("asks for nothing before the server answers, or from a server that speaks another protocol", async () => {
+    const ws = connect(false)
+    await flush()
+    expect(checks).toEqual([])
+    ws.serve({type: "hello-ack", protocol: "mentra-dev/2"})
+    await flush()
+    expect(checks).toEqual([])
+  })
+
+  it("a failed check is logged and the connection keeps going", async () => {
+    devServerBridge.onCheck(async () => {
+      throw new Error("the address didn't answer")
     })
     const ws = connect()
-
-    ws.serve({type: "respawn-bg"})
+    await flush()
+    expect(warnSpy).toHaveBeenCalled()
+    devServerBridge.onCheck((pkg) => {
+      checks.push(pkg)
+    })
     ws.serve({type: "reload"})
     await flush()
-    expect(events).toEqual([`respawn-start ${PACKAGE}`])
-
-    finishRespawn()
-    await flush()
-    // The respawn reopens the screen from the new bundle; the save's own reload then finds it current.
-    expect(events).toEqual([
-      `respawn-start ${PACKAGE}`,
-      `respawn-done ${PACKAGE}`,
-      `reload ${PACKAGE}`,
-      `reload ${PACKAGE}`,
-    ])
-  })
-
-  it("still reloads when the respawn fails", async () => {
-    const events: string[] = []
-    devServerBridge.onRespawnBackground(async () => {
-      throw new Error("bundle unavailable")
-    })
-    devServerBridge.onReload(() => {
-      events.push("reload")
-    })
-    const ws = connect()
-    ws.serve({type: "respawn-bg"})
-    ws.serve({type: "reload"})
-    await flush()
-    expect(events).toEqual(["reload", "reload"])
-  })
-
-  it("never overlaps two respawns", async () => {
-    const events: string[] = []
-    const finishers: Array<() => void> = []
-    devServerBridge.onRespawnBackground(async () => {
-      events.push("respawn-start")
-      await new Promise<void>((resolve) => finishers.push(resolve))
-      events.push("respawn-done")
-    })
-    const ws = connect()
-    ws.serve({type: "respawn-bg"})
-    ws.serve({type: "respawn-bg"})
-    await flush()
-    expect(events).toEqual(["respawn-start"])
-    finishers[0]!()
-    await flush()
-    expect(events).toEqual(["respawn-start", "respawn-done", "respawn-start"])
-    finishers[1]!()
-    await flush()
-    expect(events).toEqual(["respawn-start", "respawn-done", "respawn-start", "respawn-done"])
-  })
-
-  it("reopens the screen after a background-only change, whose new bundle replaced the screen's", async () => {
-    const events: string[] = []
-    devServerBridge.onRespawnBackground(async () => {
-      events.push("respawn")
-    })
-    devServerBridge.onReload(() => {
-      events.push("reload")
-    })
-    const ws = connect()
-    ws.serve({type: "respawn-bg"})
-    await flush()
-    expect(events).toEqual(["respawn", "reload"])
-  })
-
-  it("reloads at once when nothing runs before it", async () => {
-    const events: string[] = []
-    devServerBridge.onReload(() => {
-      events.push("reload")
-    })
-    const ws = connect()
-    ws.serve({type: "reload"})
-    await flush()
-    expect(events).toEqual(["reload"])
+    expect(checks).toEqual([PACKAGE])
   })
 })
 
-describe("DevServerBridge: catching up on connect", () => {
-  it("restarts the build only when the check finds it older than the server's code", async () => {
-    const events: string[] = []
-    devServerBridge.onRespawnBackground((pkg) => void events.push(`respawn ${pkg}`))
-    devServerBridge.onReload((pkg) => void events.push(`reload ${pkg}`))
-    let outdated = false
-    devServerBridge.onCatchUp(async () => outdated)
-    const ws = connect()
-    await flush()
-    expect(events).toEqual([])
+describe("DevServerBridge: the connection", () => {
+  it("connecting again to the same console while it is open keeps the one connection", () => {
+    connect()
+    devServerBridge.connect(PACKAGE, CONSOLE)
+    expect(FakeWebSocket.opened).toEqual([CONSOLE])
+  })
 
-    // Saves landed while the connection was down; the next hello-ack catches up.
-    outdated = true
+  it("a build from another console replaces the connection", () => {
+    const first = connect()
+    devServerBridge.connect(PACKAGE, "ws://192.168.1.21:3001/__mentra_dev")
+    expect(first.closed).toBe(true)
+    expect(FakeWebSocket.opened).toEqual([CONSOLE, "ws://192.168.1.21:3001/__mentra_dev"])
+  })
+
+  it("forwards logs once connected, keeps them while not, and drops them once disconnected", async () => {
+    const ws = connect(false)
+    devServerBridge.forwardLog(PACKAGE, "log", ["early"], 1, "background")
+    expect(ws.sent).toHaveLength(1) // hello only
     ws.serve({type: "hello-ack", protocol: "mentra-dev/1"})
+    expect(ws.sent.slice(1).map((frame) => JSON.parse(frame).args)).toEqual([["early"]])
+    devServerBridge.forwardLog(PACKAGE, "warn", ["live"], 2, "ui")
+    expect(JSON.parse(ws.sent.at(-1)!)).toMatchObject({type: "log", level: "warn", args: ["live"], source: "ui"})
+
+    devServerBridge.disconnect(PACKAGE)
+    expect(ws.closed).toBe(true)
+    devServerBridge.forwardLog(PACKAGE, "log", ["after"], 3, "ui")
+    expect(ws.sent.some((frame) => frame.includes("after"))).toBe(false)
+    ws.serve({type: "reload"})
     await flush()
-    expect(events).toEqual([`respawn ${PACKAGE}`, `reload ${PACKAGE}`])
+    // The socket's last frames after a disconnect check nothing.
+    expect(checks).toEqual([PACKAGE])
   })
 })

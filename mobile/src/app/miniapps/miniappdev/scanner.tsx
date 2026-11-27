@@ -8,26 +8,15 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevOpenRoute, engine} from "@mentra/engine"
-import {
-  assertDevBuildAllowed,
-  installMiniappFromJsonUrl,
-  isLocalNetworkMiniappUrl,
-  normalizeManifestPermissions,
-  registerDevApp,
-  type DevAppRecord,
-} from "@mentra/engine-host-internal"
-import {installLocalMiniapp, localMiniappInstallErrorAlert} from "@/services/miniapps/localMiniappInstall"
+import {engine} from "@mentra/engine"
+import {installMiniappFromJsonUrl, normalizeManifestPermissions} from "@mentra/engine-host-internal"
 import {startMiniappInstallFromLink} from "@/services/miniapps/miniappInstallFlow"
-import {parseMiniappInstallLink} from "@/services/miniapps/miniappInstallLinks"
-import {showDevBuildError} from "@/utils/devMiniappAlerts"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {storage} from "@/utils/storage/storage"
-import type {AppletInterface, AppletPermission} from "@mentra/engine"
+import type {AppletInterface} from "@mentra/engine"
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()
-  const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
+  const {goBack, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [permission, requestPermission] = useCameraPermissions()
   const [scanned, setScanned] = useState(false)
 
@@ -37,7 +26,7 @@ export default function MiniappDeveloperScannerScreen() {
     }
   }, [permission, requestPermission])
 
-  // Every scan path opens a miniapp only once each required permission its
+  // An older CLI's release QR opens its miniapp only once each required permission its
   // miniapp.json declares is granted, the gate a home-tile tap applies. Asks for
   // the missing ones; after a denial, names them and offers Settings. Every way
   // out without opening runs onDecline, so the scanner never stays frozen.
@@ -108,44 +97,6 @@ export default function MiniappDeveloperScannerScreen() {
     }
   }
 
-  // A plain local-network miniapp URL (what `mentra dev` prints) installs through the engine as a development build,
-  // after the install sheet. `miniapp://dev?…` from older CLIs still loads its dev server below.
-  const installFromLocalNetwork = async (url: string) => {
-    let installed: Awaited<ReturnType<typeof installLocalMiniapp>>
-    // A permission sheet that was declined resets the scanner itself, once it closes.
-    let permissionsDeclined = false
-    try {
-      installed = await installLocalMiniapp(url, {
-        // A running copy restarts on the new build as it installs, so its required permissions come first, as for a
-        // release QR.
-        beforeInstall: async (preview) => {
-          const manifestRes = await fetch(new URL("miniapp.json", preview.url).href)
-          if (!manifestRes.ok) throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
-          const manifest = (await manifestRes.json()) as Record<string, unknown>
-          const build = {
-            packageName: preview.packageName,
-            name: preview.name,
-            permissions: normalizeManifestPermissions(
-              manifest.permissions as Parameters<typeof normalizeManifestPermissions>[0],
-            ),
-          } as unknown as AppletInterface
-          const granted = await grantRequiredPermissions(build, () => setScanned(false))
-          permissionsDeclined = !granted
-          return granted
-        },
-      })
-    } catch (error) {
-      const {title, message} = localMiniappInstallErrorAlert(error, url)
-      showAlert(title, message, [{text: translate("common:ok"), onPress: () => setScanned(false)}])
-      return
-    }
-    if (!installed) {
-      if (!permissionsDeclined) setScanned(false)
-      return
-    }
-    await openInstalledRelease(installed)
-  }
-
   const handleBarcodeScanned = async ({data}: {data: string}) => {
     if (scanned) return
     setScanned(true)
@@ -192,152 +143,12 @@ export default function MiniappDeveloperScannerScreen() {
       return
     }
 
-    // A miniapp's own URL, an open link or a package link installs through the install sheet, as from Add a miniapp.
-    // A local-network URL installs below, as a development build with its required permissions first.
-    const link = parseMiniappInstallLink(data)
-    if (link && (link.kind === "package" || !link.local)) {
-      const outcome = await startMiniappInstallFromLink(data, "scanner")
-      // Installed or opened, the flow has gone Home; otherwise the scanner resumes.
-      if (outcome === "cancelled" || outcome === "failed") setScanned(false)
-      return
-    }
-
-    try {
-      let devUrl: string
-      let packageName: string | undefined
-      let name: string | undefined
-      let devPort: string | undefined
-      let mdnsHost: string | undefined
-
-      if (data.startsWith("miniapp://dev")) {
-        const url = new URL(data)
-        devUrl = decodeURIComponent(url.searchParams.get("url") || "")
-        name = url.searchParams.get("name") || undefined
-        packageName = url.searchParams.get("package") || undefined
-        devPort = url.searchParams.get("dev") || undefined
-        mdnsHost = url.searchParams.get("mdns") || undefined
-      } else if (data.startsWith("http://") || data.startsWith("https://")) {
-        if (isLocalNetworkMiniappUrl(data)) {
-          await installFromLocalNetwork(data)
-          return
-        }
-        devUrl = data
-      } else {
-        showAlert(
-          translate("debugSettings:miniappScanInvalidQrTitle"),
-          translate("debugSettings:miniappScanInvalidQrBody"),
-          [{text: "OK", onPress: () => setScanned(false)}],
-        )
-        return
-      }
-
-      if (!devUrl) {
-        showAlert(
-          translate("debugSettings:miniappScanInvalidQrTitle"),
-          translate("debugSettings:miniappScanInvalidQrNoUrl"),
-          [{text: "OK", onPress: () => setScanned(false)}],
-        )
-        return
-      }
-
-      // A dev build is unsigned code under its package name: refuse it before
-      // probing when that package is installed with a publisher signature.
-      if (packageName) assertDevBuildAllowed(packageName)
-
-      // Pass mDNS up front — storage hasn't been written yet on first scan, so
-      // decideDevOpenRoute can't read `_dev_mdns` until we persist below.
-      const launchResult = await decideDevOpenRoute(packageName ?? "", devUrl, {
-        alternateHosts: mdnsHost ? [mdnsHost] : undefined,
-      })
-
-      const manifest = launchResult.decision === "live" ? launchResult.manifest : null
-      // Keep an explicit identity separate from the offline-screen display
-      // fallback — never persist routing keys under the shared `com.dev.unknown`.
-      const knownPackageName = (manifest?.packageName || packageName)?.trim() || undefined
-      packageName = knownPackageName || "com.dev.unknown"
-      name = manifest?.name || name || "Dev Miniapp"
-      const iconPath = manifest?.icon as string | undefined
-      const manifestPermissions: AppletPermission[] = Array.isArray(manifest?.permissions)
-        ? (manifest!.permissions as AppletPermission[])
-        : []
-
-      const resolvedBase = (
-        (launchResult.decision === "live" ? launchResult.resolvedUrl : undefined) || devUrl
-      ).replace(/\/$/, "")
-      let iconUrl: string | undefined
-      if (iconPath) {
-        iconUrl = /^https?:\/\//.test(iconPath) ? iconPath : `${resolvedBase}/${iconPath.replace(/^\//, "")}`
-      }
-
-      const portNum = devPort ? parseInt(devPort, 10) : NaN
-      // The manifest may name a different package than the QR did.
-      if (knownPackageName) assertDevBuildAllowed(knownPackageName)
-
-      // Persist a package-keyed home tile and routing record so this dev
-      // miniapp remains independently launchable without rescanning. Its icon
-      // is copied locally while the server is reachable.
-      if (manifest && knownPackageName) {
-        const existing = engine.miniapps.list().find((app) => app.packageName === knownPackageName)
-        if (existing?.running) await engine.miniapps.stop(knownPackageName)
-        await registerDevApp({
-          packageName: knownPackageName,
-          name: name ?? knownPackageName,
-          iconUrl: iconUrl ?? `${resolvedBase}/icon.png`,
-          // Prefer the host that actually answered (may be mDNS / Metro failover).
-          devUrl: resolvedBase,
-          // Explicit empty clears a prior QR's sidecar port / mDNS for this package.
-          devPort: Number.isFinite(portNum) ? portNum : undefined,
-          mdnsHost: mdnsHost ?? "",
-          type: manifest.type as DevAppRecord["type"],
-          permissions: manifest.permissions as DevAppRecord["permissions"],
-          hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
-          actions: manifest.actions as DevAppRecord["actions"],
-        })
-      } else if (knownPackageName) {
-        // Reachability failed — still stash URL + mDNS so "Try again" can recover
-        // after a laptop Wi-Fi IP change without forcing a re-scan. Only when the
-        // QR (or a prior identity) named a real package — never `com.dev.unknown`.
-        storage.save(`${knownPackageName}_dev_url`, devUrl)
-        if (mdnsHost) {
-          storage.save(`${knownPackageName}_dev_mdns`, mdnsHost)
-        } else {
-          storage.remove(`${knownPackageName}_dev_mdns`)
-        }
-        if (Number.isFinite(portNum)) {
-          storage.save(`${knownPackageName}_dev_port`, portNum)
-        } else {
-          storage.remove(`${knownPackageName}_dev_port`)
-        }
-      }
-
-      if (launchResult.decision === "offline") {
-        clearHistoryAndGoHome()
-        push("/applet/dev-offline", {packageName, name, iconUrl})
-        return
-      }
-
-      if (launchResult.decision === "cached") {
-        await engine.miniapps.refresh()
-        const snapshot = engine.miniapps.list().find((app) => app.packageName === packageName)
-        if (snapshot && !(await grantRequiredPermissions(snapshot, () => setScanned(false)))) return
-        clearHistoryAndGoHome()
-        await engine.miniapps.setForeground(packageName)
-        return
-      }
-
-      const fakeApplet = {
-        packageName: packageName ?? "",
-        name: name ?? "",
-        permissions: manifestPermissions,
-      } as unknown as AppletInterface
-      if (!(await grantRequiredPermissions(fakeApplet, () => setScanned(false)))) return
-
-      clearHistoryAndGoHome()
-      await engine.miniapps.refresh()
-      await engine.miniapps.setForeground(packageName)
-    } catch (error) {
-      showDevBuildError(error, () => setScanned(false))
-    }
+    // Everything else installs as any link does, through the install sheet: a miniapp's own URL, an open link, a
+    // package link, and a local address (the URL `mentra dev` prints, or an older CLI's `miniapp://dev` code), which
+    // installs as a development build.
+    const outcome = await startMiniappInstallFromLink(data, "scanner")
+    // Installed or opened, the flow has gone Home; otherwise the scanner resumes.
+    if (outcome === "cancelled" || outcome === "failed") setScanned(false)
   }
 
   if (!permission) {

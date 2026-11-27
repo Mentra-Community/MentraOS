@@ -10,10 +10,8 @@
  * signed install; the user uninstalls first, which clears the recorded key.
  *
  * Every install source follows this rule: QR and manual release installs,
- * bundled and deployment-managed installs, and development snapshots. There is
- * no first-party, QR or system-package bypass. Live development code served by a
- * dev server is unsigned, so it may only run under a package that has no
- * recorded publisher (see {@link assertUnsignedDevBuildAllowed}).
+ * bundled and deployment-managed installs, and development builds from a local
+ * address. There is no first-party, QR or system-package bypass.
  */
 export function assertPublisherIdentityPolicy(input: {
   packageName: string
@@ -32,24 +30,4 @@ export function assertPublisherIdentityPolicy(input: {
       `Publisher signature mismatch for installed miniapp ${input.packageName}; uninstall it to install a build from another publisher`,
     )
   }
-}
-
-/** Live development code was refused because the package is installed with a publisher signature. */
-export class SignedMiniappDevBuildError extends Error {
-  constructor(readonly packageName: string) {
-    super(`${packageName} is installed with a publisher signature. Uninstall it before running a development build.`)
-    this.name = "SignedMiniappDevBuildError"
-  }
-}
-
-/**
- * A live development build runs unsigned code under its manifest package name,
- * so it follows the unsigned-bundle rule: allowed when the package is not
- * installed or is installed unsigned, refused while a publisher key is recorded.
- */
-export function assertUnsignedDevBuildAllowed(input: {
-  packageName: string
-  installedFingerprint?: string | null
-}): void {
-  if (input.installedFingerprint) throw new SignedMiniappDevBuildError(input.packageName)
 }

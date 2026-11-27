@@ -4,7 +4,7 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 
 import type {MiniappReleaseIdentity} from "../AppRegistry"
 import {DeviceTypes, getModelCapabilities} from "../../types"
-import {assertMiniappUpdateVersion, miniappInstallIdentityError} from "../miniappInstallIdentity"
+import {miniappInstallIdentityError} from "../miniappInstallIdentity"
 import {missingRequiredHardware} from "../miniappInstallCompatibility"
 import type {ReleaseInstallOptions} from "../miniappReleaseInstall"
 import {MiniappRunningError} from "../../utils/storeInstallRuntime"
@@ -25,7 +25,6 @@ mock.module("../miniappReleaseInstall", () => ({
 }))
 mock.module("../localBuildInstall", () => ({
   installLocalBuild: async () => {},
-  restoreInstalledRelease: async () => {},
 }))
 
 const {createMiniappInstaller, InstallMiniappError, readMiniappListing, withFleetReport} = await import(
@@ -80,12 +79,17 @@ let ageVerdict: () => Promise<AgeGateVerdict>
 let ageChecks: AgeRatedMiniapp[]
 /** Every step, in order, for the tests that check where the age gate comes. */
 let steps: string[]
-let developmentSelected: boolean
+/** The package's development build, from a developer's computer, or null. */
+let development: {version: string; identity: MiniappReleaseIdentity | null} | null
+const developmentBuild = {
+  version: "dev-1000",
+  identity: {source: "local", sourceUrl: "http://192.168.1.20:8080/", bundleSha256: "c".repeat(64)},
+} as const
 let developmentAllowed: boolean
 let localInstalls: Array<{bundleUrl: string; install: LocalBuildInstall}>
 let localInstallFailure: Error | undefined
-let restored: string[]
-let restoreFailure: Error | undefined
+/** The pins the phone holds, by package. */
+let pins: Map<string, {version: string; sha256: string}>
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
@@ -134,11 +138,10 @@ function deps(overrides: Partial<InstallMiniappDependencies> = {}): InstallMinia
       return registryAnswer()
     },
     activeRelease: (packageName) => (packageName === pkg ? installed : null),
-    hasDevelopmentSelection: () => developmentSelected,
+    developmentBuild: () => development,
+    pinFor: (packageName) => pins.get(packageName) ?? null,
     developmentAllowed: () => developmentAllowed,
     updateUrl: (_packageName, identity) => (identity?.source === "url" ? identity.sourceUrl : undefined),
-    assertCanInstallVersion: (packageName, version) =>
-      assertMiniappUpdateVersion(packageName, version, installed && packageName === pkg ? [installed.version] : []),
     allowsRelease: () => allowed,
     checkAge: async (miniapp) => {
       ageChecks.push(miniapp)
@@ -168,12 +171,6 @@ function deps(overrides: Partial<InstallMiniappDependencies> = {}): InstallMinia
       localInstalls.push({bundleUrl, install: local})
       if (local.isCancelled?.()) throw new CancelledError()
       if (localInstallFailure) throw localInstallFailure
-    },
-    restoreRelease: async (packageName, isCancelled) => {
-      if (isCancelled()) throw new CancelledError()
-      if (restoreFailure) throw restoreFailure
-      restored.push(packageName)
-      developmentSelected = false
     },
     keepVersions: async (_packageName, versions) => {
       kept.push(versions)
@@ -224,12 +221,11 @@ beforeEach(async () => {
   ageVerdict = async () => "allowed"
   ageChecks = []
   steps = []
-  developmentSelected = false
+  development = null
   developmentAllowed = true
   localInstalls = []
   localInstallFailure = undefined
-  restored = []
-  restoreFailure = undefined
+  pins = new Map()
   cloudClientService.hasCore = () => true
   cloudClientService.getMiniappAuthToken = async (packageName: string) => {
     tokens.push(packageName)
@@ -660,6 +656,69 @@ describe("cancelling", () => {
   })
 })
 
+describe("a pinned package", () => {
+  const LATEST = "f".repeat(64)
+  const assignment = {
+    assignmentId: "asg_1",
+    assignmentRevision: 1,
+    workspaceId: "ws_1",
+    coreUrl: "https://core.example.com",
+    mentraUserId: "mu_1",
+    url,
+  }
+
+  beforeEach(() => {
+    // Latest is 1.2.0, which this phone never downloads; 1.1.0 is the build the pin chose.
+    served = manifest({
+      bundle: {url: `${pkg}-1.2.0.zip`, sha256: LATEST},
+      versions: [
+        {version: "1.2.0", url: `${pkg}-1.2.0.zip`, sha256: LATEST},
+        {version: "1.1.0", url: `old/${pkg}-1.1.0.zip`, sha256: zipSha},
+      ],
+    })
+    route(`${url}old/${pkg}-1.1.0.zip`, {status: 200, body: zipBytes})
+    zipManifest = {packageName: pkg, version: "1.1.0"}
+    pins.set(pkg, {version: "1.1.0", sha256: zipSha})
+  })
+
+  test("installs the pinned version's entry, over a newer release, and checks its hash", async () => {
+    installed = {version: "1.2.0", identity: {source: "url", sourceUrl: url, bundleSha256: LATEST}}
+    const result = await install(url, {source: "assignment", confirm: undefined, assignment})
+    expect(result).toEqual({status: "installed", packageName: pkg, version: "1.1.0"})
+    expect(installs).toHaveLength(1)
+    expect(installs[0]!.bundleUrl).toBe(`${url}old/${pkg}-1.1.0.zip`)
+    expect(installs[0]!.options).toMatchObject({expectedVersion: "1.1.0", expectedBundleSha256: zipSha})
+    expect(installs[0]!.identity).toEqual({source: "url", sourceUrl: url, bundleSha256: zipSha})
+    expect(kept).toEqual([["1.1.0", "1.2.0"]])
+  })
+
+  test("the top-level minHostVersion describes latest, so it doesn't refuse the pinned build", async () => {
+    served = {...served, minHostVersion: "9.0.0"}
+    const result = await install()
+    expect(result).toMatchObject({status: "installed", version: "1.1.0"})
+    installed = null
+    pins.clear()
+    expect(await failure(install())).toBe("needs_newer_app")
+  })
+
+  test.each([
+    ["pin_unlisted", {version: "1.0.0", sha256: zipSha}],
+    ["pin_hash_changed", {version: "1.1.0", sha256: "0".repeat(64)}],
+  ])("a pin that can't be met (%s) installs nothing and keeps what is installed", async (reason, pin) => {
+    installed = {version: "1.2.0", identity: {source: "url", sourceUrl: url, bundleSha256: LATEST}}
+    pins.set(pkg, pin)
+    expect(await failure(install(url, {source: "assignment", confirm: undefined, assignment}))).toBe(reason)
+    expect(installs).toEqual([])
+    expect(installed?.version).toBe("1.2.0")
+  })
+
+  test("a miniapp installed from this URL still opens while its pin can't be met", async () => {
+    installed = {version: "1.2.0", identity: {source: "url", sourceUrl: url, bundleSha256: LATEST}}
+    pins.set(pkg, {version: "1.0.0", sha256: zipSha})
+    expect(await install()).toEqual({status: "opened", packageName: pkg, version: "1.2.0"})
+  })
+})
+
 describe("what is already installed", () => {
   test("a miniapp installed from this URL opens, without registering or asking", async () => {
     installed = {version: "1.0.0", identity: {source: "url", sourceUrl: url}}
@@ -696,31 +755,26 @@ describe("what is already installed", () => {
     expect(kept).toEqual([["1.2.0", "1.0.0"]])
   })
 
-  test("a newer release installed from elsewhere stays, and opens", async () => {
+  test("a newer release installed from elsewhere is replaced by what the URL serves: versions are not compared", async () => {
     installed = {version: "2.0.0", identity: {source: "direct_download"}}
     const result = await install()
-    expect(result).toEqual({status: "opened", packageName: pkg, version: "2.0.0"})
-    expect(installs).toEqual([])
+    expect(result).toEqual({status: "installed", packageName: pkg, version: "1.2.0"})
+    expect(installs.map((entry) => entry.identity)).toEqual([{source: "url", sourceUrl: url, bundleSha256: zipSha}])
+    expect(installed).toEqual({version: "1.2.0", identity: {source: "url", sourceUrl: url, bundleSha256: zipSha}})
+    // The release it replaced is kept beside it.
+    expect(kept).toEqual([["1.2.0", "2.0.0"]])
   })
 
-  test("another install that commits a newer release first is what opens", async () => {
-    installed = {version: "1.0.0", identity: {source: "direct_download"}}
-    const result = await install(
-      url,
-      {},
-      {
-        install: async () => {
-          installed = {version: "3.0.0", identity: {source: "url", sourceUrl: url}}
-          throw new Error(`Cannot install ${pkg}: version 3.0.0 is already installed`)
-        },
-      },
-    )
-    expect(result).toEqual({status: "opened", packageName: pkg, version: "3.0.0"})
+  test("the same version installed from elsewhere is replaced too, and updates from this URL from then on", async () => {
+    installed = {version: "1.2.0", identity: {source: "direct_download", bundleSha256: "a".repeat(64)}}
+    const result = await install()
+    expect(result).toEqual({status: "installed", packageName: pkg, version: "1.2.0"})
+    expect(installed?.identity).toEqual({source: "url", sourceUrl: url, bundleSha256: zipSha})
   })
 
-  test("a newer release standing behind a development build of its name comes back, after the sheet, and opens", async () => {
+  test("a newer release standing behind a development build of its name is replaced, after the sheet", async () => {
     installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
-    developmentSelected = true
+    development = developmentBuild
     const previews: MiniappInstallPreview[] = []
     const result = await install(url, {
       confirm: async (preview) => {
@@ -728,16 +782,15 @@ describe("what is already installed", () => {
         return true
       },
     })
-    expect(result).toEqual({status: "opened", packageName: pkg, version: "2.0.0"})
+    expect(result).toEqual({status: "installed", packageName: pkg, version: "1.2.0"})
     expect(previews.map((preview) => preview.alreadyInstalled)).toEqual([true])
-    expect(restored).toEqual([pkg])
-    // Nothing downgrades.
-    expect(installs).toEqual([])
+    // The URL's build replaces both the development build and the higher release behind it.
+    expect(installs.map((entry) => entry.options.expectedVersion)).toEqual(["1.2.0"])
   })
 
-  test("bringing a release back from behind a development build meets the age gate before its sheet", async () => {
+  test("replacing a development build meets the age gate before its sheet", async () => {
     installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
-    developmentSelected = true
+    development = developmentBuild
     served = manifest({ageRating: "18+"})
     ageVerdict = async () => "too_young"
     let sheets = 0
@@ -749,31 +802,49 @@ describe("what is already installed", () => {
     })
     expect(await failure(pending)).toBe("age_restricted")
     expect(sheets).toBe(0)
-    expect(restored).toEqual([])
+    expect(installs).toEqual([])
   })
 
   test("declining the sheet leaves the development build running", async () => {
     installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
-    developmentSelected = true
+    development = developmentBuild
     expect(await failure(install(url, {confirm: async () => false}))).toBe("cancelled")
-    expect(restored).toEqual([])
+    expect(installs).toEqual([])
+    expect(installed?.version).toBe("2.0.0")
   })
 
-  test("a headless install brings the newer release back too; a Fleet assignment leaves that to the reconciler", async () => {
+  test("a person's headless install replaces a development build too", async () => {
     installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
-    developmentSelected = true
-    expect((await install(url, {source: "system", confirm: undefined})).status).toBe("opened")
-    expect(restored).toEqual([pkg])
-    developmentSelected = true
-    restored = []
+    development = developmentBuild
+    expect(await install(url, {source: "link", confirm: undefined})).toEqual({
+      status: "installed",
+      packageName: pkg,
+      version: "1.2.0",
+    })
+    expect(installs.map((entry) => entry.options.installReason)).toEqual(["explicit"])
+  })
+
+  test("a system miniapp's install and a Fleet assignment never replace a development build", async () => {
+    installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
+    development = developmentBuild
+    expect(await failure(install(url, {source: "system", confirm: undefined}))).toBe("development_build")
     const assignment = {workspaceId: "ws_1", coreUrl: "https://core.example", mentraUserId: "mu_1"} as never
-    expect((await install(url, {source: "assignment", assignment, confirm: undefined})).status).toBe("opened")
-    expect(restored).toEqual([])
+    expect(await failure(install(url, {source: "assignment", assignment, confirm: undefined}))).toBe("development_build")
+    // Refused before anything is registered or downloaded.
+    expect(registrations).toEqual([])
+    expect(installs).toEqual([])
   })
 
-  test("a session that ends before the release comes back is cancelled", async () => {
+  test("a Fleet assignment replaces a higher release installed from its own URL: the reconciler decided", async () => {
+    installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url, bundleSha256: "a".repeat(64)}}
+    const assignment = {workspaceId: "ws_1", coreUrl: "https://core.example", mentraUserId: "mu_1"} as never
+    const result = await install(url, {source: "assignment", assignment, confirm: undefined})
+    expect(result).toEqual({status: "installed", packageName: pkg, version: "1.2.0"})
+  })
+
+  test("a session that ends before a development build is replaced is cancelled", async () => {
     installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
-    developmentSelected = true
+    development = developmentBuild
     expect(
       await failure(
         install(url, {
@@ -784,10 +855,11 @@ describe("what is already installed", () => {
         }),
       ),
     ).toBe("cancelled")
-    expect(restored).toEqual([])
+    expect(installs).toEqual([])
+    expect(installed?.version).toBe("2.0.0")
   })
 
-  test("with no development build in its place, a newer release just opens", async () => {
+  test("with no development build in its place, a release installed from this URL just opens, whatever its version", async () => {
     installed = {version: "2.0.0", identity: {source: "url", sourceUrl: url}}
     let asked = false
     const result = await install(url, {
@@ -796,14 +868,14 @@ describe("what is already installed", () => {
         return true
       },
     })
-    expect(result.status).toBe("opened")
+    expect(result).toEqual({status: "opened", packageName: pkg, version: "2.0.0"})
     expect(asked).toBe(false)
-    expect(restored).toEqual([])
+    expect(installs).toEqual([])
   })
 
   test("installed from this URL, but standing behind a development build of its name, it installs again over that build", async () => {
     installed = {version: "1.2.0", identity: {source: "url", sourceUrl: url}}
-    developmentSelected = true
+    development = developmentBuild
     const result = await install()
     expect(result).toEqual({status: "installed", packageName: pkg, version: "1.2.0"})
     expect(installs.map((entry) => entry.identity)).toEqual([{source: "url", sourceUrl: url, bundleSha256: zipSha}])
@@ -1099,7 +1171,7 @@ describe("a local-network address", () => {
     const {bundleUrl, install: local} = localInstalls[0]!
     expect(bundleUrl).toBe(localZipUrl)
     expect(local).toMatchObject({packageName: claimed, version: "1.2.0", sourceUrl: localUrl, sha256: zipSha})
-    expect(local.server).toBeUndefined()
+    expect(local.reloadUrl).toBeUndefined()
     expect(sent.map((request) => request.url)).toEqual([localManifestUrl, localZipUrl])
   })
 
@@ -1117,34 +1189,39 @@ describe("a local-network address", () => {
     expect(localInstalls).toHaveLength(1)
   })
 
-  test("names its development server: live from its URL, reloading over its channel, by its .local name too", async () => {
-    serveLocal({
-      development: {reload: "ws://192.168.1.20:8081/__mentra_dev", mdns: "laptop.local"},
-      type: "standard",
-      permissions: [{type: "MICROPHONE", required: true}],
-      hardwareRequirements: [{type: "MICROPHONE", level: "REQUIRED"}],
-      actions: [{id: "open", description: "Open."}],
-    })
+  test("records the console connection its miniapp.json names, as mentra dev serves it", async () => {
+    serveLocal({development: {reload: "ws://192.168.1.20:8081/__mentra_dev", mdns: "laptop.local"}})
     await install(localUrl, {source: "local"})
-    expect(localInstalls[0]!.install.server).toEqual({
-      name: "Notes",
-      iconUrl: `${localUrl}icon.png`,
-      devUrl: "http://192.168.1.20:8080",
-      devPort: 8081,
-      mdnsHost: "laptop.local",
-      type: "standard",
-      permissions: [{type: "MICROPHONE", required: true}],
-      hardwareRequirements: [{type: "MICROPHONE", level: "REQUIRED"}],
-      actions: [{id: "open", description: "Open."}],
-    })
+    expect(localInstalls[0]!.install.reloadUrl).toBe("ws://192.168.1.20:8081/__mentra_dev")
   })
 
-  test("a development field it can't read leaves out what it can't", async () => {
-    serveLocal({development: {reload: "http://192.168.1.20:8081/", mdns: "laptop.example.com"}})
+  test.each([
+    ["not a WebSocket", "http://192.168.1.20:8081/"],
+    ["off the local network", "ws://laptop.example.com:8081/__mentra_dev"],
+  ])("records no console connection that is %s", async (_name, reload) => {
+    serveLocal({development: {reload}})
     await install(localUrl, {source: "local"})
-    const server = localInstalls[0]!.install.server!
-    expect(server.devPort).toBeUndefined()
-    expect(server.mdnsHost).toBe("")
+    expect(localInstalls[0]!.install.reloadUrl).toBeUndefined()
+  })
+
+  test("the development build installed from this address, with the build it serves now, just opens", async () => {
+    serveLocal()
+    development = {version: "dev-1000", identity: {source: "local", sourceUrl: localUrl, bundleSha256: zipSha}}
+    let asked = false
+    const result = await install(localUrl, {
+      source: "scanner",
+      confirm: async () => {
+        asked = true
+        return true
+      },
+    })
+    expect(result).toEqual({status: "opened", packageName: claimed, version: "dev-1000"})
+    expect(asked).toBe(false)
+    expect(localInstalls).toEqual([])
+    // Another build from that address installs over it.
+    serveLocal()
+    development = {version: "dev-1000", identity: {source: "local", sourceUrl: localUrl, bundleSha256: "c".repeat(64)}}
+    expect((await install(localUrl, {source: "scanner"})).status).toBe("installed")
   })
 
   test("is never installed for Fleet or by a system miniapp, and nothing is fetched", async () => {
@@ -1217,7 +1294,7 @@ describe("a local-network address", () => {
     installed = {version: "1.0.0", identity: {source: "url", sourceUrl: url}}
     await install(localUrl, {source: "local", confirm})
     installed = null
-    developmentSelected = true
+    development = developmentBuild
     serveLocal({packageName: pkg})
     await install(localUrl, {source: "local", confirm})
     expect(previews.map((preview) => preview.alreadyInstalled)).toEqual([true, true])

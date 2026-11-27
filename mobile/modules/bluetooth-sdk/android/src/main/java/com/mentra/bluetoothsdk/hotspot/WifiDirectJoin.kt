@@ -60,8 +60,9 @@ internal class WifiDirectJoin(context: Context) {
         // 1. Ask the glasses for a group, on the phone's own Wi-Fi channel when it has one.
         val status = arrayOfNulls<JSONObject>(1)
         val answered = latch()
+        val answer = StartAnswer()
         GlassesWifiDirect.onStatus { json ->
-            if (json.optString("state") in setOf("ready", "error", "stopped")) {
+            if (answer.answers(json.optString("state"), json.has("error"))) {
                 status[0] = json
                 answered.countDown()
             }
@@ -246,6 +247,29 @@ internal class WifiDirectJoin(context: Context) {
             m.cancelConnect(c, null)
             m.removeGroup(c, null)
         }
+    }
+
+    /**
+     * Which `wifi_direct_status` answers the `wifi_direct_start` just sent. The glasses report every
+     * change, so the `stopped` of the group a release just asked them to remove can reach the phone
+     * after the next start went out: the glasses then go on to report this start `starting` and
+     * `ready`. A `stopped` answers the start only once the glasses reported it `starting`, or when it
+     * carries an error, like the one sent when the glasses disconnect.
+     */
+    internal class StartAnswer {
+        private var started = false
+
+        @Synchronized
+        fun answers(state: String, hasError: Boolean): Boolean =
+            when (state) {
+                "starting" -> {
+                    started = true
+                    false
+                }
+                "ready", "error" -> true
+                "stopped" -> started || hasError
+                else -> false
+            }
     }
 
     private companion object {

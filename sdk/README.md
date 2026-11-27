@@ -11,7 +11,7 @@ is for engineers working **on** the SDK itself or running the in-repo example.
 | --- | --- |
 | **Use the SDK** to build a miniapp (API, session, modules, React hooks) | [`../mobile/modules/miniapp/README.md`](../mobile/modules/miniapp/README.md) — the package reference |
 | **Per-module deep dives** (return shapes, events, error codes) | [`docs/`](./docs/README.md) — start with [`two-layer.md`](./docs/two-layer.md) |
-| **Use the CLI** (`dev` / `release` / `pack` / `manifest` / …) | [`miniapp-cli/README.md`](./miniapp-cli/README.md) |
+| **Use the CLI** (`dev` / `pack` / `manifest` / …) | [`miniapp-cli/README.md`](./miniapp-cli/README.md) |
 | **Architecture / status walkthrough** | [`../agents/miniapp-sdk-overview.md`](../agents/miniapp-sdk-overview.md) |
 | **Develop the SDK / run the example from a fresh clone** | this file (below) |
 
@@ -24,7 +24,7 @@ This `sdk/` folder is a standalone [Bun workspace](https://bun.sh/docs/install/w
 | Path | What it is |
 | --- | --- |
 | `../mobile/modules/miniapp` | **The actual `@mentra/miniapp` SDK source** (a workspace member, despite living outside `sdk/`). |
-| `sdk/miniapp-cli` | `@mentra/miniapp-cli` — the `mentra-miniapp` author CLI (`dev`, `release`, `pack`, …). |
+| `sdk/miniapp-cli` | `@mentra/miniapp-cli` — the `mentra-miniapp` author CLI (`dev`, `pack`, …). |
 | `examples/miniapp` | Reference miniapp that consumes both via `workspace:*` (a member of this workspace, despite living outside `sdk/`). The thing you run to see the SDK work. |
 | `sdk/create-mentra-miniapp` | The `bunx create-mentra-miniapp` scaffolder + template. The template pins published versions, **not** `workspace:*`. |
 | `sdk/docs` | Per-module SDK reference (`session.<module>`). |
@@ -57,7 +57,7 @@ LAN, and prints a QR code. On your phone: **Mentra app → Settings → Develope
 settings → Mini App Development → Scan Mini App QR Code** (phone and laptop must
 be on the same Wi-Fi, or run `bun run dev --usb` to go over the USB cable
 instead). See [`miniapp-cli/README.md`](./miniapp-cli/README.md) for
-`dev` / `release` / `pack` details.
+`dev` / `pack` details.
 
 ## Developing the SDK itself
 

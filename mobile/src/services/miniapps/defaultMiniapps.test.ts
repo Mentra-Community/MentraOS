@@ -1,5 +1,5 @@
 import {engine} from "@mentra/engine"
-import {appRegistry, getDevAppRecords} from "@mentra/engine-host-internal"
+import {appRegistry} from "@mentra/engine-host-internal"
 
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import {deploymentStore} from "@/services/deployment/store"
@@ -22,7 +22,6 @@ jest.mock("@mentra/engine-host-internal", () => {
   }
   return {
     appRegistry: {getInstalledVersions: jest.fn(() => [])},
-    getDevAppRecords: jest.fn(() => []),
     firstPartyMiniappUrl: jest.requireActual("../../../modules/engine/src/services/systemMiniappTrust")
       .firstPartyMiniappUrl,
     InstallMiniappError,
@@ -105,7 +104,6 @@ describe("default miniapps", () => {
     install.mockReset().mockResolvedValue({status: "installed"})
     readListing.mockReset().mockImplementation(async (url: string) => listingFor(url))
     installedVersions.mockReset().mockReturnValue([])
-    ;(getDevAppRecords as jest.Mock).mockReturnValue([])
     ;(shouldSkipMiniappInstall as jest.Mock).mockReturnValue(false)
     defaultMiniapps.reset()
     jest.spyOn(console, "warn").mockImplementation(() => {})
@@ -130,10 +128,11 @@ describe("default miniapps", () => {
     expect(useDefaultMiniappsStore.getState()).toEqual(IDLE)
   })
 
-  it("leaves a QR development build, and a package the platform or Super Mode hides", async () => {
+  it("leaves a development build, and a package the platform or Super Mode hides", async () => {
     activate(createConsumerDeployment())
     coreServes(["com.mentra.notes", "com.mentra.link"])
-    ;(getDevAppRecords as jest.Mock).mockReturnValue([{packageName: "com.mentra.notes"}])
+    // The person's development build of the package, from their computer.
+    installedVersions.mockImplementation((name: string) => (name === "com.mentra.notes" ? ["dev-1800000000000"] : []))
     ;(shouldSkipMiniappInstall as jest.Mock).mockImplementation((name: string) => name === "com.mentra.link")
 
     await defaultMiniapps.sync()

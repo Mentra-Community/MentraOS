@@ -53,8 +53,9 @@ bun dev
 
 This validates your `miniapp.json`, builds both layers, serves them over your
 LAN, and prints a **QR code** plus its local-network miniapp URL,
-`http://<your-lan-ip>:<port>/`. It hot-reloads on save and forwards the
-miniapp's console logs back to your terminal.
+`http://<your-lan-ip>:<port>/`. Once the miniapp is on your phone, each save
+installs the new build there and restarts the miniapp, and its console logs
+come back to your terminal.
 
 ### Step 4: Load it on your phone
 
@@ -71,7 +72,8 @@ phone's own loopback address, so guest networks and client isolation stop
 mattering.
 </Info>
 
-The miniapp installs and starts. In the starter project, pressing a glasses
+The install sheet says the miniapp comes from your local network: press
+**Install**. The miniapp installs and starts. In the starter project, pressing a glasses
 button shows text on the display, and opening the miniapp's UI tile shows a
 round-trip latency demo between the UI and background layers.
 
@@ -145,7 +147,7 @@ export interface Channels {
   <Card title="The manifest" icon="file-code" href="/app-devs/core-concepts/miniapp-manifest">
     Permissions, hardware requirements, and entry points.
   </Card>
-  <Card title="Test a release" icon="upload" href="/app-devs/getting-started/distribution">
-    Pack a release and install it on local test devices.
+  <Card title="Test a production build" icon="upload" href="/app-devs/getting-started/distribution">
+    Put the build users will get on local test devices.
   </Card>
 </CardGroup>

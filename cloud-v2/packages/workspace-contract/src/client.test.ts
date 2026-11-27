@@ -902,6 +902,94 @@ describe("the miniapp registry", () => {
     }
   })
 
+  const versionsAsk = {url: NOTES_URL, workspaceId: "ws_1", mentraUserId: "mu_1"}
+  const read = (overrides: Record<string, unknown> = {}) => ({
+    url: NOTES_URL,
+    status: "read",
+    packageName: "com.example.notes",
+    private: false,
+    deploymentDefault: false,
+    latest: {version: "1.1.0", url: "notes-1.1.0.zip", sha256: "ab".repeat(32)},
+    versions: [
+      {version: "1.1.0", url: "notes-1.1.0.zip", sha256: "ab".repeat(32)},
+      {version: "1.0.0", url: "https://cdn.example.net/notes-1.0.0.zip", sha256: "cd".repeat(32)},
+    ],
+    readAt: "2026-10-24T08:00:00.000Z",
+    ...overrides,
+  })
+
+  test("readRegistryVersions POSTs the URL, workspace and person, signed, and returns what Core read", async () => {
+    const {client, calls} = clientFor(() => json(read()))
+    expect(await client.readRegistryVersions(versionsAsk)).toEqual(read() as never)
+    expect(calls[0].method).toBe("POST")
+    expect(calls[0].url).toBe(`${BASE}/api/internal/registry/versions`)
+    expect(JSON.parse(calls[0].body)).toEqual(versionsAsk)
+    expect(verifies(calls[0])).toBe(true)
+
+    expect(await clientFor(() => json(read({versions: null}))).client.readRegistryVersions(versionsAsk)).toMatchObject({versions: null})
+    const unreadable = {url: NOTES_URL, status: "unreadable", reason: "sign_in_required", readAt: "2026-10-24T08:00:00.000Z"}
+    expect(await clientFor(() => json(unreadable)).client.readRegistryVersions(versionsAsk)).toEqual(unreadable as never)
+  })
+
+  test("readRegistryVersions keeps only a build's version, URL and hash", async () => {
+    const extra = {version: "1.1.0", url: "notes-1.1.0.zip", sha256: "ab".repeat(32), minHostVersion: "3.3.0"}
+    const {client} = clientFor(() => json(read({latest: extra, versions: [extra]})))
+    const answer = await client.readRegistryVersions(versionsAsk)
+    expect(answer).toMatchObject({status: "read"})
+    if (answer?.status !== "read") return
+    expect(answer.latest).toEqual({version: "1.1.0", url: "notes-1.1.0.zip", sha256: "ab".repeat(32)})
+    expect(answer.versions).toEqual([{version: "1.1.0", url: "notes-1.1.0.zip", sha256: "ab".repeat(32)}])
+  })
+
+  test("readRegistryVersions fails closed on an answer for another URL or of the wrong shape", async () => {
+    for (const answer of [
+      read({url: "https://tools.acme.com/"}),
+      read({status: "maybe"}),
+      read({packageName: ""}),
+      read({private: "no"}),
+      read({deploymentDefault: undefined}),
+      read({latest: null}),
+      read({latest: {version: "1.1.0", url: "notes.zip", sha256: "AB".repeat(32)}}),
+      read({latest: {version: "1.1.0", url: "notes.zip", sha256: "abc"}}),
+      read({versions: "1.1.0"}),
+      read({versions: undefined}),
+      read({versions: [{version: "1.1.0", url: "notes.zip"}]}),
+      read({versions: [{version: "", url: "notes.zip", sha256: "ab".repeat(32)}]}),
+      read({readAt: "soon"}),
+      {url: NOTES_URL, status: "unreadable", reason: "busy", readAt: "2026-10-24T08:00:00.000Z"},
+      {url: NOTES_URL, status: "unreadable", readAt: "2026-10-24T08:00:00.000Z"},
+      {},
+    ]) {
+      const {client} = clientFor(() => json(answer))
+      await expectClientError(client.readRegistryVersions(versionsAsk), "bad_response")
+    }
+  })
+
+  test("readRegistryVersions is null from a Core without the route, forbidden for not_a_member, and keeps a 429's status", async () => {
+    expect(await clientFor(() => json({error: "not_found"}, 404)).client.readRegistryVersions(versionsAsk)).toBeNull()
+    expect(await clientFor(() => new Response("Not Found", {status: 404})).client.readRegistryVersions(versionsAsk)).toBeNull()
+    await expectClientError(clientFor(() => json({error: "not_a_member"}, 403)).client.readRegistryVersions(versionsAsk), "forbidden")
+    const limited = await expectClientError(
+      clientFor(() => json({error: "rate_limited"}, 429)).client.readRegistryVersions(versionsAsk),
+      "bad_request",
+    )
+    expect(limited.status).toBe(429)
+    await expectClientError(clientFor(() => json({error: "unavailable"}, 503)).client.readRegistryVersions(versionsAsk), "core_unavailable")
+  })
+
+  test("readRegistryVersions waits for Core's read like a check, past the client's usual timeout", async () => {
+    const slow = (_request: Recorded, init: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(json(read())), 200)
+        init.signal?.addEventListener("abort", () => {
+          clearTimeout(timer)
+          reject(init.signal?.reason)
+        })
+      })
+    const {client} = clientFor(slow, {timeoutMs: 50})
+    expect(await client.readRegistryVersions(versionsAsk)).toMatchObject({status: "read"})
+  })
+
   test("getRegistryEntry asks for one URL, signed over the exact query, and reads only not_found as none", async () => {
     const {client, calls} = clientFor(() => json({entry: detail()}))
     expect(await client.getRegistryEntry(NOTES_URL)).toEqual(detail())

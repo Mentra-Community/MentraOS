@@ -25,21 +25,19 @@ afterAll(() => {
   globalThis.fetch = originalFetch
 })
 
-test("a release QR installs the build it shows as a local build of its package, at its address", async () => {
+test("a release QR installs the build it shows as a local build of its package, a fixed one with no address", async () => {
   const result = await installMiniappFromJsonUrl("http://192.168.1.20:6789/")
   expect(result.is_ok() && result.value).toEqual({packageName: "com.mentra.notes", version: "2.0.0", name: "Notes"})
+  // Its server names no build to update to, so the build records no address to update from.
   expect(installs).toEqual([
-    {
-      bundleUrl: "http://192.168.1.20:6789/bundle.zip",
-      install: {packageName: "com.mentra.notes", version: "2.0.0", sourceUrl: "http://192.168.1.20:6789/"},
-    },
+    {bundleUrl: "http://192.168.1.20:6789/bundle.zip", install: {packageName: "com.mentra.notes", version: "2.0.0"}},
   ])
 })
 
 test("any address a release QR names installs as a local build", async () => {
   expect((await installMiniappFromJsonUrl("https://lan.example:6789")).is_ok()).toBe(true)
   expect(installs.map(({bundleUrl, install}) => [bundleUrl, install.sourceUrl])).toEqual([
-    ["https://lan.example:6789/bundle.zip", "https://lan.example:6789/"],
+    ["https://lan.example:6789/bundle.zip", undefined],
   ])
 })
 

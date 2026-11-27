@@ -31,6 +31,8 @@ mock.module("../../services/MiniappLauncher", () => ({
       launcherCalls.push(`spawn ${packageName}`)
       return ensureRunning(packageName)
     },
+    waitForUpdate: async () => true,
+    cancelStart: () => {},
     stop: async (packageName: string) => {
       launcherCalls.push(`stop ${packageName}`)
       stopped.push(packageName)

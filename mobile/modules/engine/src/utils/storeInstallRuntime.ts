@@ -10,7 +10,7 @@ export interface StoreInstallRuntimeLauncher {
   pauseLaunches(packageName: string): Promise<() => void>
   isRunning(packageName: string): boolean
   stop(packageName: string): Promise<void>
-  ensureRunning(packageName: string): Promise<unknown>
+  ensureRunning(packageName: string, hints?: undefined, options?: {checkForUpdate?: boolean}): Promise<unknown>
 }
 
 /**
@@ -34,7 +34,8 @@ export async function installWithRuntimeReload<T>(
     resumeLaunches()
     if (restartRequired && !launcher.isRunning(packageName)) {
       try {
-        await launcher.ensureRunning(packageName)
+        // What was just installed starts again: it doesn't wait for an update check, as an open does.
+        await launcher.ensureRunning(packageName, undefined, {checkForUpdate: false})
       } catch (error) {
         // Launch errors are reported by the runtime; they are not an archive
         // installation failure and must not claim that committed files rolled back.

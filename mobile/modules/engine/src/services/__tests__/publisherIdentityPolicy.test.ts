@@ -1,10 +1,6 @@
 import {describe, expect, test} from "bun:test"
 
-import {
-  assertPublisherIdentityPolicy,
-  assertUnsignedDevBuildAllowed,
-  SignedMiniappDevBuildError,
-} from "../publisherIdentityPolicy"
+import {assertPublisherIdentityPolicy} from "../publisherIdentityPolicy"
 
 describe("publisher identity policy", () => {
   test("accepts an unsigned bundle for a package that carries no publisher yet", () => {
@@ -58,25 +54,5 @@ describe("publisher identity policy", () => {
         installedFingerprint: "sha256:one",
       }),
     ).toThrow("Unsigned bundle cannot replace signed miniapp")
-  })
-
-  test("holds development builds to the installed signer like any other bundle", () => {
-    // A dev build of a package is that package. Unsigned dev code may replace
-    // an unsigned install or none, never a signed one.
-    expect(() => assertUnsignedDevBuildAllowed({packageName: "com.example.app"})).not.toThrow()
-    expect(() =>
-      assertUnsignedDevBuildAllowed({packageName: "com.example.app", installedFingerprint: null}),
-    ).not.toThrow()
-    let refused: unknown
-    try {
-      assertUnsignedDevBuildAllowed({packageName: "com.example.app", installedFingerprint: "sha256:one"})
-    } catch (error) {
-      refused = error
-    }
-    expect(refused).toBeInstanceOf(SignedMiniappDevBuildError)
-    expect((refused as SignedMiniappDevBuildError).packageName).toBe("com.example.app")
-    expect((refused as Error).message).toBe(
-      "com.example.app is installed with a publisher signature. Uninstall it before running a development build.",
-    )
   })
 })

@@ -3,6 +3,7 @@ import {
   FleetAssignmentOutcomePayloadSchema,
   type FleetAssignmentOutcomePayload,
   type FleetDesiredState,
+  type FleetDesiredStateWithPins,
 } from "@mentra/cloud-protocol"
 
 import {
@@ -17,6 +18,7 @@ import {
   type ManagedResolution,
   type ReconcilerSession,
 } from "../assignmentReconciler"
+import type {FleetMiniappPin} from "../../miniappPins"
 import type {FleetManagementState} from "../fleetManagementState"
 import type {FleetKeyValueStore} from "../fleetQueue"
 
@@ -121,11 +123,12 @@ let fetches: number
 let served: Map<string, ManagedResolution>
 let installed: Map<string, {version: string; bundleSha256?: string}>
 let otherReasons: Set<string>
+/** Packages another URL than their assignment's keeps current (a system miniapp, from its deployment's host). */
+let updatedElsewhere: Set<string>
 let assignments: Map<string, ManagedAssignment>
 let running: Set<string>
 let devSelections: Set<string>
 /** Packages whose live-development selection a live context still holds for an earlier context. */
-let heldSelections: Set<string>
 /** Packages whose release this deployment's policy would not run. */
 let disallowed: Set<string>
 /** Every policy question: `<package>@<version> <url>`. */
@@ -144,6 +147,22 @@ let calls: string[]
 let outcomes: FleetAssignmentOutcomePayload[]
 let contexts: string[]
 let management: FleetManagementState[]
+/** The Fleet pins the phone holds, by package. */
+let pins: Map<string, FleetMiniappPin>
+/** What each URL lists in `versions`, for the resolution to pick a pinned version from. */
+let listed: Map<string, {version: string; sha256: string}[]>
+
+/** The resolution the host makes: what the URL serves, or with a pin, the listed version it holds the package to. */
+function resolveAs(url: string): ManagedResolution {
+  const latest = served.get(url) ?? {ok: false, reason: "not_a_miniapp"}
+  if (!latest.ok) return latest
+  const pin = pins.get(latest.packageName)
+  if (!pin) return latest
+  const entry = listed.get(url)?.find((candidate) => candidate.version === pin.version)
+  if (!entry) return {ok: false, reason: "pin_unlisted"}
+  if (entry.sha256 !== pin.sha256) return {ok: false, reason: "pin_hash_changed"}
+  return {...latest, version: entry.version, bundleSha256: entry.sha256, bundleUrl: `${url}/${entry.version}.zip`}
+}
 
 function start(): AssignmentReconciler {
   reconciler = createAssignmentReconciler({
@@ -162,21 +181,22 @@ function start(): AssignmentReconciler {
     now: () => timers.now,
     random: () => 0,
     miniapps: {
-      resolve: async (url) => served.get(url) ?? {ok: false, reason: "not_a_miniapp"},
+      resolve: async (url) => resolveAs(url),
+      fleetPinnedPackages: () => [...pins.keys()],
+      setFleetPin: (pkg, pin) => {
+        calls.push(pin ? `pin:${pkg}@${pin.version}` : `unpin:${pkg}`)
+        if (pin) pins.set(pkg, pin)
+        else pins.delete(pkg)
+      },
       installedRelease: async (pkg) => installed.get(pkg) ?? null,
+      updatesFromAnotherUrl: (pkg) => updatedElsewhere.has(pkg),
       hasOtherReason: (pkg) => otherReasons.has(pkg),
       assignment: (pkg) => assignments.get(pkg) ?? null,
       assignedPackages: () => [...assignments.keys()],
-      hasDevelopmentSelection: (pkg) => devSelections.has(pkg),
+      isDevelopmentBuild: (pkg) => devSelections.has(pkg),
       allowsRelease: (pkg, version, _sha, url) => {
         policyAsked.push(`${pkg}@${version} ${url}`)
         return !disallowed.has(pkg)
-      },
-      clearDevelopmentSelection: async (pkg) => {
-        if (heldSelections.has(pkg)) return false
-        calls.push(`clear-dev:${pkg}`)
-        devSelections.delete(pkg)
-        return true
       },
       install: async ({resolution, assignment, isCancelled, onAsking}) => {
         calls.push(`install:${resolution.packageName}@${resolution.version}`)
@@ -191,7 +211,6 @@ function start(): AssignmentReconciler {
         if (isCancelled()) throw new InstallFailure("cancelled", true)
         const version = servedAtInstall ?? resolution.version
         installed.set(resolution.packageName, {version, bundleSha256: resolution.bundleSha256})
-        devSelections.delete(resolution.packageName)
         assignments.set(resolution.packageName, assignment)
         return {version}
       },
@@ -277,10 +296,10 @@ beforeEach(() => {
   served = new Map()
   installed = new Map()
   otherReasons = new Set()
+  updatedElsewhere = new Set()
   assignments = new Map()
   running = new Set()
   devSelections = new Set()
-  heldSelections = new Set()
   disallowed = new Set()
   policyAsked = []
   servedAtInstall = undefined
@@ -295,6 +314,8 @@ beforeEach(() => {
   outcomes = []
   contexts = []
   management = []
+  pins = new Map()
+  listed = new Map()
   serve("1.0.0")
 })
 
@@ -429,13 +450,49 @@ describe("managed desired state", () => {
     expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
   })
 
-  test("a higher installed version is newer_version_installed and is not replaced", async () => {
+  test("a higher installed version is replaced by what the URL serves: versions are not compared", async () => {
+    installed.set(notes, {version: "2.0.0", bundleSha256: "a".repeat(64)})
+    await startAndSettle()
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
+    expect(installed.get(notes)).toEqual({version: "1.0.0", bundleSha256: "c".repeat(64)})
+    expect(states()).toEqual(["downloading", "installed"])
+    expect(outcomes.at(-1)).toEqual(expect.objectContaining({selectedVersion: "1.0.0", installedVersion: "1.0.0"}))
+  })
+
+  test("a higher installed version with no recorded hash is replaced too", async () => {
     installed.set(notes, {version: "2.0.0"})
     await startAndSettle()
-    expect(calls).toEqual([])
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
+    expect(states()).toEqual(["downloading", "installed"])
+  })
+
+  test("a system miniapp its deployment's own host keeps current satisfies its assignment as it is", async () => {
+    // Its updater would put back what that host serves, and the reconciler what the assignment's URL serves, forever.
+    installed.set(notes, {version: "2.0.0", bundleSha256: "a".repeat(64)})
+    updatedElsewhere.add(notes)
+    const r = await startAndSettle()
+    r.trigger("foreground")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["assign:com.acme.notes"])
+    expect(installed.get(notes)).toEqual({version: "2.0.0", bundleSha256: "a".repeat(64)})
     expect(outcomes).toEqual([
-      expect.objectContaining({state: "blocked", reason: "newer_version_installed", installedVersion: "2.0.0"}),
+      expect.objectContaining({state: "installed", selectedVersion: "1.0.0", installedVersion: "2.0.0"}),
     ])
+  })
+
+  test("a system miniapp that isn't installed yet installs from its assignment's URL", async () => {
+    updatedElsewhere.add(notes)
+    await startAndSettle()
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
+  })
+
+  test("the served build already installed satisfies the assignment, and is never installed again", async () => {
+    installed.set(notes, {version: "1.0.0", bundleSha256: "c".repeat(64)})
+    const r = await startAndSettle()
+    r.trigger("foreground")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["assign:com.acme.notes"])
+    expect(states()).toEqual(["installed"])
   })
 
   test.each([
@@ -546,6 +603,36 @@ describe("managed desired state", () => {
     expect(states(notes)).toEqual(["downloading", "deferred_running", "installed"])
   })
 
+  test("a refused build is downloaded again once the URL serves other bytes under the same version", async () => {
+    installError = new InstallFailure("signature_invalid")
+    const r = await startAndSettle()
+    r.trigger("foreground")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toHaveLength(1)
+    serve("1.0.0", {bundleSha256: "d".repeat(64)})
+    installError = undefined
+    r.trigger("foreground")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0", "install:com.acme.notes@1.0.0"])
+    expect(installed.get(notes)).toEqual({version: "1.0.0", bundleSha256: "d".repeat(64)})
+    expect(states().at(-1)).toBe("installed")
+  })
+
+  test("other bytes under the same version dismiss the unanswered prompt of the build they replace", async () => {
+    installed.set(notes, {version: "0.9.0"})
+    running.add(notes)
+    asks.add(notes)
+    const r = await startAndSettle()
+    serve("1.0.0", {bundleSha256: "d".repeat(64)})
+    answer = async () => managed(2, [{}])
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0", "dismiss:com.acme.notes", "install:com.acme.notes@1.0.0"])
+    prompts.get(notes)!("update")
+    await settle()
+    expect(installed.get(notes)).toEqual({version: "1.0.0", bundleSha256: "d".repeat(64)})
+  })
+
   test("a newer release dismisses the unanswered prompt of the one it supersedes", async () => {
     installed.set(notes, {version: "0.9.0"})
     running.add(notes)
@@ -585,40 +672,34 @@ describe("managed desired state", () => {
     expect(installed.get(notes)?.version).toBe("0.9.0")
   })
 
-  test("the cached release satisfies the assignment once a stopped live-development selection is cleared", async () => {
-    installed.set(notes, {version: "1.0.0", bundleSha256: "c".repeat(64)})
+  test("a development build is left as it is: nothing installs, and the outcome says why", async () => {
+    installed.set(notes, {version: "0.9.0", bundleSha256: "c".repeat(64)})
     devSelections.add(notes)
     await startAndSettle()
-    expect(calls).toEqual(["clear-dev:com.acme.notes", "assign:com.acme.notes"])
-    expect(states()).toEqual(["installed"])
-  })
-
-  test("a selection a live context still holds for an earlier context is never cleared; it waits like a running one", async () => {
-    installed.set(notes, {version: "1.0.0", bundleSha256: "c".repeat(64)})
-    devSelections.add(notes)
-    heldSelections.add(notes)
-    const r = await startAndSettle()
     expect(calls).toEqual([])
-    expect(states()).toEqual(["deferred_running"])
-    heldSelections.delete(notes)
-    stop(notes)
-    await timers.advance(TRIGGER_JITTER_MS)
-    expect(calls).toEqual(["clear-dev:com.acme.notes", "assign:com.acme.notes"])
-    expect(states()).toEqual(["deferred_running", "installed"])
-    r.stop()
+    expect(states()).toEqual(["blocked:development_build"])
+    expect(outcomes.at(-1)).toMatchObject({state: "blocked", reason: "development_build", selectedVersion: "1.0.0"})
   })
 
-  test("a running live-development selection is deferred_running, then cleared when it stops", async () => {
+  test("a development build holds the package even when the release already satisfies the assignment", async () => {
     installed.set(notes, {version: "1.0.0", bundleSha256: "c".repeat(64)})
     devSelections.add(notes)
     running.add(notes)
     await startAndSettle()
     expect(calls).toEqual([])
-    expect(states()).toEqual(["deferred_running"])
-    stop(notes)
+    expect(outcomes.at(-1)).toMatchObject({state: "blocked", reason: "development_build"})
+  })
+
+  test("once the person removes their development build, the next cycle installs the assignment", async () => {
+    devSelections.add(notes)
+    const r = await startAndSettle()
+    expect(calls).toEqual([])
+    devSelections.delete(notes)
+    r.trigger("foreground")
     await timers.advance(TRIGGER_JITTER_MS)
-    expect(calls).toEqual(["clear-dev:com.acme.notes", "assign:com.acme.notes"])
-    expect(states()).toEqual(["deferred_running", "installed"])
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
+    expect(states().at(-1)).toBe("installed")
+    r.stop()
   })
 })
 
@@ -965,5 +1046,208 @@ describe("access", () => {
     await timers.advance(TRIGGER_JITTER_MS)
     expect(revoked.has(notes)).toBe(false)
     expect(calls.filter((call) => call.startsWith("revoke:"))).toEqual([])
+  })
+})
+
+describe("pins", () => {
+  const LATEST = "c".repeat(64)
+  const OLD = "1".repeat(64)
+
+  function pinned(revision: number, version: string, sha256: string, extra: {pkg?: string; url?: string} = {}) {
+    return {
+      status: "managed",
+      revision,
+      generatedAt: "2026-10-22T10:00:00.000Z",
+      workspace: {workspaceId: A, name: A},
+      entries: [
+        {
+          assignmentId: "asg_notes",
+          revision: revision,
+          url: extra.url ?? notesUrl,
+          packageName: extra.pkg ?? notes,
+          selection: "pinned",
+          pin: {version, sha256},
+        },
+      ],
+    } as FleetDesiredStateWithPins
+  }
+
+  beforeEach(() => {
+    serve("2.0.0", {bundleSha256: LATEST})
+    listed.set(notesUrl, [
+      {version: "2.0.0", sha256: LATEST},
+      {version: "1.5.0", sha256: OLD},
+    ])
+  })
+
+  test("a pinned entry writes the package's pin before anything installs, then installs the pinned version", async () => {
+    answer = async () => pinned(1, "1.5.0", OLD)
+    await startAndSettle()
+    expect(calls).toEqual(["pin:com.acme.notes@1.5.0", "install:com.acme.notes@1.5.0"])
+    expect(pins.get(notes)).toEqual({
+      version: "1.5.0",
+      sha256: OLD,
+      assignmentId: "asg_notes",
+      assignmentRevision: 1,
+      workspaceId: A,
+      coreUrl: sessionA.coreUrl,
+      mentraUserId: sessionA.mentraUserId,
+      url: notesUrl,
+    })
+    expect(installed.get(notes)).toEqual({version: "1.5.0", bundleSha256: OLD})
+    expect(outcomes.at(-1)).toMatchObject({state: "installed", selectedVersion: "1.5.0", installedVersion: "1.5.0"})
+  })
+
+  test("a pin to an older version replaces a newer installed build (a rollback)", async () => {
+    installed.set(notes, {version: "2.0.0", bundleSha256: LATEST})
+    answer = async () => pinned(1, "1.5.0", OLD)
+    await startAndSettle()
+    expect(calls).toContain("install:com.acme.notes@1.5.0")
+    expect(installed.get(notes)).toEqual({version: "1.5.0", bundleSha256: OLD})
+  })
+
+  test("a phone already on the pinned build is satisfied, and stays on it while latest moves on", async () => {
+    installed.set(notes, {version: "1.5.0", bundleSha256: OLD})
+    answer = async () => pinned(1, "1.5.0", OLD)
+    const r = await startAndSettle()
+    serve("2.1.0", {bundleSha256: "d".repeat(64)})
+    listed.set(notesUrl, [{version: "2.1.0", sha256: "d".repeat(64)}, ...listed.get(notesUrl)!])
+    r.trigger("foreground")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls.filter((call) => call.startsWith("install:"))).toEqual([])
+    expect(states()).toEqual(["installed"])
+  })
+
+  test("Latest clears the pin, and the latest build installs", async () => {
+    answer = async () => pinned(1, "1.5.0", OLD)
+    const r = await startAndSettle()
+    answer = async () => managed(2, [{}])
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(pins.has(notes)).toBe(false)
+    expect(calls.slice(2)).toEqual(["unpin:com.acme.notes", "install:com.acme.notes@2.0.0"])
+    expect(installed.get(notes)?.version).toBe("2.0.0")
+  })
+
+  test("a withdrawn assignment, an unmanaged account and leaving the workspace each clear the pin", async () => {
+    answer = async () => pinned(1, "1.5.0", OLD)
+    const r = await startAndSettle()
+    answer = async () => managed(2, [])
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(pins.has(notes)).toBe(false)
+
+    answer = async () => pinned(3, "1.5.0", OLD)
+    r.trigger("revision", 3)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(pins.has(notes)).toBe(true)
+    answer = async () => unmanaged(4)
+    r.trigger("revision", 4)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(pins.has(notes)).toBe(false)
+
+    answer = async () => pinned(5, "1.5.0", OLD)
+    r.trigger("revision", 5)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(pins.has(notes)).toBe(true)
+    // Cleared at once, before the next answer arrives (here it never does).
+    answer = () => new Promise(() => {})
+    r.trigger("leave")
+    expect(pins.has(notes)).toBe(false)
+  })
+
+  test("another account's pin is cleared by this account's answer", async () => {
+    pins.set(notes, {
+      version: "1.5.0",
+      sha256: OLD,
+      assignmentId: "asg_other",
+      assignmentRevision: 1,
+      workspaceId: B,
+      coreUrl: sessionB.coreUrl,
+      mentraUserId: sessionB.mentraUserId,
+      url: notesUrl,
+    })
+    answer = async () => managed(1, [{}])
+    await startAndSettle()
+    expect(calls).toEqual(["unpin:com.acme.notes", "install:com.acme.notes@2.0.0"])
+  })
+
+  test.each([
+    ["1.4.0", OLD, "pin_unlisted"],
+    ["1.5.0", "2".repeat(64), "pin_hash_changed"],
+  ])("a pin that can't be met (%p) installs nothing, keeps what is installed and says why", async (v, sha, reason) => {
+    installed.set(notes, {version: "2.0.0", bundleSha256: LATEST})
+    answer = async () => pinned(1, v, sha)
+    await startAndSettle()
+    expect(calls).toEqual([`pin:com.acme.notes@${v}`])
+    expect(installed.get(notes)).toEqual({version: "2.0.0", bundleSha256: LATEST})
+    expect(outcomes.at(-1)).toMatchObject({
+      state: "blocked",
+      reason,
+      selectedVersion: v,
+      installedVersion: "2.0.0",
+    })
+    expect(FleetAssignmentOutcomePayloadSchema.safeParse(outcomes.at(-1)).success).toBe(true)
+  })
+
+  test("a pin that can't be met on a phone with nothing installed installs nothing", async () => {
+    answer = async () => pinned(1, "1.4.0", OLD)
+    await startAndSettle()
+    expect(installed.has(notes)).toBe(false)
+    expect(states()).toEqual(["blocked:pin_unlisted"])
+  })
+
+  test("a phone that holds the sealed build stays installed when its version is no longer listed", async () => {
+    installed.set(notes, {version: "1.5.0", bundleSha256: OLD})
+    listed.set(notesUrl, [{version: "2.0.0", sha256: LATEST}])
+    answer = async () => pinned(1, "1.5.0", OLD)
+    await startAndSettle()
+    expect(calls.filter((call) => call.startsWith("install:"))).toEqual([])
+    expect(outcomes.at(-1)).toMatchObject({state: "installed", selectedVersion: "1.5.0", installedVersion: "1.5.0"})
+  })
+
+  test("a package another URL keeps current takes no pin: it would have no effect there", async () => {
+    installed.set(notes, {version: "2.0.0", bundleSha256: LATEST})
+    updatedElsewhere.add(notes)
+    answer = async () => pinned(1, "1.5.0", OLD)
+    await startAndSettle()
+    expect(pins.has(notes)).toBe(false)
+    expect(calls.filter((call) => call.startsWith("install:"))).toEqual([])
+    expect(states()).toEqual(["installed"])
+  })
+
+  describe("a snapshot kept by a build that didn't ask for pins", () => {
+    async function keptSnapshot(withPins: boolean): Promise<void> {
+      answer = async () => managed(4, [{}])
+      const first = await startAndSettle()
+      first.stop()
+      const [key, raw] = [...store.values.entries()].find(([k]) => k.startsWith(RECONCILER_STORE_PREFIX))!
+      const kept = JSON.parse(raw) as Record<string, unknown>
+      expect(kept.snapshotWithPins).toBe(true)
+      if (!withPins) delete kept.snapshotWithPins
+      store.values.set(key, JSON.stringify(kept))
+      fetches = 0
+    }
+
+    test("is read again once, though an ack names the revision it holds", async () => {
+      await keptSnapshot(false)
+      answer = async () => pinned(4, "1.5.0", OLD)
+      const r = start()
+      r.trigger("revision", 4)
+      await timers.advance(TRIGGER_JITTER_MS)
+      expect(fetches).toBe(1)
+      expect(pins.get(notes)?.version).toBe("1.5.0")
+      r.trigger("revision", 4)
+      await timers.advance(TRIGGER_JITTER_MS)
+      expect(fetches).toBe(1)
+    })
+
+    test("one asked for with pins is not read again for the revision it holds", async () => {
+      await keptSnapshot(true)
+      const r = start()
+      r.trigger("revision", 4)
+      await timers.advance(TRIGGER_JITTER_MS)
+      expect(fetches).toBe(0)
+    })
   })
 })

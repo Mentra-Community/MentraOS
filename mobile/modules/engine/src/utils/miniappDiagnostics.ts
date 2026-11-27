@@ -130,9 +130,8 @@ export function buildMiniappManifestSnapshot(raw: unknown, fallback: ManifestFal
   }
 }
 
-function executionMode(app: ClientApp): "built_in" | "dev_server" | "dev_snapshot" | "installed_bundle" {
+function executionMode(app: ClientApp): "built_in" | "dev_snapshot" | "installed_bundle" {
   if (app.offline) return "built_in"
-  if (app.isMiniappDev && app.devUrl && !app.version) return "dev_server"
   if (app.isMiniappDev) return "dev_snapshot"
   return "installed_bundle"
 }

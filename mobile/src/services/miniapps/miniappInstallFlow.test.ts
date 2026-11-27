@@ -193,9 +193,28 @@ describe("startMiniappInstall", () => {
     await expect(startMiniappInstall("https://notes.example.com/", "scanner")).resolves.toBe("opened")
     expect(mockConfirm).not.toHaveBeenCalled()
     expect(mockAskPermissions).toHaveBeenCalledWith(app)
-    expect(mockStart).toHaveBeenCalledWith(app, {trigger: "user", skipNavigation: true})
+    expect(mockStart).toHaveBeenCalledWith(app, {
+      trigger: "user",
+      skipNavigation: true,
+      onAccepted: expect.any(Function),
+    })
     expect(mockGoHome).toHaveBeenCalled()
     expect(mockSetForeground).toHaveBeenCalledWith("com.example.notes")
+  })
+
+  it("shows the installed miniapp's splash once its start is accepted, before the wait for its update check", async () => {
+    installs("opened")
+    mockList.mockReturnValue([{packageName: "com.example.notes", name: "Notes"}])
+    mockStart.mockImplementationOnce(async (_app, options) => {
+      // Not before: a refused start leaves the person in the scanner.
+      expect(mockGoHome).not.toHaveBeenCalled()
+      await (options as {onAccepted: () => Promise<void>}).onAccepted()
+      expect(mockGoHome).toHaveBeenCalledTimes(1)
+      expect(mockSetForeground).toHaveBeenCalledWith("com.example.notes")
+      return true
+    })
+    await expect(startMiniappInstall("https://notes.example.com/", "scanner")).resolves.toBe("opened")
+    expect(mockSetForeground).toHaveBeenCalledTimes(1)
   })
 
   it("stays put, so a scanner resumes, when the person declines the installed miniapp's permissions", async () => {
@@ -322,7 +341,11 @@ describe("a link opens the miniapp with nothing to press", () => {
     expect(mockToast).not.toHaveBeenCalled()
     expect(mockShowAlert).not.toHaveBeenCalled()
     expect(mockAskPermissions).toHaveBeenCalledWith(notes)
-    expect(mockStart).toHaveBeenCalledWith(notes, {trigger: "user", skipNavigation: true})
+    expect(mockStart).toHaveBeenCalledWith(notes, {
+      trigger: "user",
+      skipNavigation: true,
+      onAccepted: expect.any(Function),
+    })
     expect(mockSetForeground).toHaveBeenCalledWith("com.example.notes")
     // It appears in place: no opening animation over the splash.
     expect(consumeMiniappOpeningAnimation("com.example.notes")).toBe("none")
@@ -436,6 +459,67 @@ describe("a link opens the miniapp with nothing to press", () => {
     await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("installed")
     expect(mockStart).not.toHaveBeenCalled()
     expect(mockSetForeground).not.toHaveBeenCalled()
+  })
+
+  it("puts the miniapp's own splash under the link's as soon as its start is accepted, for the wait that follows", async () => {
+    installs("opened")
+    mockList.mockReturnValue([notes])
+    const seen: unknown[] = []
+    mockSetForeground.mockImplementation(async () => {
+      seen.push(splash())
+    })
+    // As the engine: the start is accepted, then waits for the miniapp's update check before anything starts.
+    mockStart.mockImplementationOnce(async (_app, options) => {
+      await (options as {onAccepted: () => Promise<void>}).onAccepted()
+      // The link's splash has closed over the miniapp's own, which is what says it is updating meanwhile.
+      seen.push(splash())
+      expect(mockGoHome).toHaveBeenCalledTimes(1)
+      expect(consumeMiniappOpeningAnimation("com.example.notes")).toBe("none")
+      return true
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("opened")
+    expect(seen).toEqual([{id: expect.any(Number), installing: false}, null])
+    // Brought to the front once, when the start was accepted.
+    expect(mockSetForeground).toHaveBeenCalledTimes(1)
+    expect(mockGoHome).toHaveBeenCalledTimes(1)
+    expect(mockStop).not.toHaveBeenCalled()
+  })
+
+  it("closes the miniapp's splash again when its start fails, or is cancelled, after it came up", async () => {
+    installs("opened")
+    mockList.mockReturnValue([{...notes, foregrounded: true}])
+    mockStart.mockImplementationOnce(async (_app, options) => {
+      await (options as {onAccepted: () => Promise<void>}).onAccepted()
+      return false
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("cancelled")
+    expect(mockClearForeground).toHaveBeenCalledTimes(1)
+    expect(splash()).toBeNull()
+  })
+
+  it("leaves another miniapp the person moved to alone when that start fails", async () => {
+    installs("opened")
+    mockList.mockReturnValue([notes])
+    mockStart.mockImplementationOnce(async (_app, options) => {
+      await (options as {onAccepted: () => Promise<void>}).onAccepted()
+      return false
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("cancelled")
+    expect(mockClearForeground).not.toHaveBeenCalled()
+  })
+
+  it("brings nothing to the front for a link closed before its start was accepted", async () => {
+    installs("opened")
+    mockList.mockReturnValue([notes])
+    mockStart.mockImplementationOnce(async (_app, options) => {
+      cancelMiniappLinkOpens()
+      await (options as {onAccepted: () => Promise<void>}).onAccepted()
+      return true
+    })
+    await expect(startMiniappInstallFromLink(LINK, "link")).resolves.toBe("cancelled")
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockGoHome).not.toHaveBeenCalled()
+    expect(mockStop).toHaveBeenCalledWith("com.example.notes")
   })
 
   it("stops a miniapp that started as the splash was closed, without bringing it to the front", async () => {

@@ -21,7 +21,9 @@ mock.module("../../services/AppRegistry", () => ({
     subscribe: () => () => {},
   },
 }))
-mock.module("../../services/MiniappLauncher", () => ({miniappLauncher: {ensureRunning}}))
+mock.module("../../services/MiniappLauncher", () => ({
+  miniappLauncher: {ensureRunning, waitForUpdate: async () => true, cancelStart: () => {}},
+}))
 mock.module("../../services/MiniappRunningRegistry", () => ({
   miniappRunningRegistry: {subscribe: () => () => {}, getAll: () => []},
 }))

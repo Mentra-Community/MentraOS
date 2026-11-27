@@ -34,6 +34,7 @@ export type {IslandNotification, IslandNotificationKind} from "./facades/notific
 export type {WifiSearchResult} from "./facades/glassesWifi"
 export type {IdentitySnapshot} from "./services/PairingIdentity"
 export type {PendingRunningUpdatePrompt, RunningUpdateFailure} from "./services/runningUpdatePrompt"
+export type {MiniappStartWait} from "./services/MiniappLauncher"
 // engine.miniapps.install: its options, its result and its error codes.
 export {
   InstallMiniappError,
@@ -213,14 +214,6 @@ export {
   type OrderMap,
 } from "./stores/apps"
 
-// Pure dev-miniapp launch-route decision (registration itself is internal).
-export {
-  decideDevLaunchRoute,
-  type DecideDevLaunchOptions,
-  type DevLaunchResult,
-  type DevManifest,
-} from "./utils/devMiniappLaunch"
-export {decideDevOpenRoute, type DevOpenDecision} from "./utils/devMiniappSnapshot"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {getAppBuildInfo} from "./utils/appBuildInfo"
 export {deleteMiniappDataOfAccount, isMiniappKeyKeptAtSignOut} from "./services/miniappAccountData"

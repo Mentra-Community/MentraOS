@@ -86,8 +86,9 @@ export interface InstallMiniappRequest {
 export interface InstallMiniappResult {
   /**
    * `installed`: this release installed. `opened`: nothing installed, because the miniapp is installed from this URL
-   * already, or a newer release of it is; {@link MiniappsModule.open} it to show it. `deferred`: the miniapp is
-   * running, so its update waits until it stops, or until the person answers the Mentra App's update prompt.
+   * already (older Mentra Apps also answer this when a release with a higher version is installed);
+   * {@link MiniappsModule.open} it to show it. `deferred`: the miniapp is running, so its update waits until it
+   * stops, or until the person answers the Mentra App's update prompt.
    */
   status: "installed" | "opened" | "deferred"
   packageName: string

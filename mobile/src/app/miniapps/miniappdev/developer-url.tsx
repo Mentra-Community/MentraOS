@@ -1,213 +1,35 @@
-import {useEffect, useState} from "react"
-import {Linking, ScrollView, TextInput, View} from "react-native"
+import {useState} from "react"
+import {ScrollView, TextInput, View} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {Group} from "@/components/ui/Group"
-import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevOpenRoute, engine} from "@mentra/engine"
-import {assertDevBuildAllowed, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {startMiniappInstallFromLink} from "@/services/miniapps/miniappInstallFlow"
-import {parseMiniappInstallLink} from "@/services/miniapps/miniappInstallLinks"
-import {showDevBuildError} from "@/utils/devMiniappAlerts"
-import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {storage} from "@/utils/storage/storage"
-import type {AppletInterface, AppletPermission} from "@mentra/engine"
-
-const RECENT_KEY = "miniapp_dev_recent"
-const MAX_RECENT = 5
-
-interface RecentDevApp {
-  packageName: string
-  name: string
-  url: string
-  /** Resolved absolute icon URL (if the manifest declared one). Persisted
-   *  so re-launching from the recent list doesn't show a placeholder. */
-  iconUrl?: string
-  timestamp: number
-}
-
-/** Resolve a manifest's icon path (relative or absolute) against a base URL. */
-function resolveIconUrl(baseUrl: string, iconPath: string | undefined): string | undefined {
-  if (!iconPath) return undefined
-  if (/^https?:\/\//.test(iconPath)) return iconPath
-  return `${baseUrl.replace(/\/$/, "")}/${iconPath.replace(/^\//, "")}`
-}
-
-/**
- * Derive the dev sidecar port from a `mentra-miniapp dev` user-server URL. The
- * CLI starts the static user server on `port` and the bundle/live-reload sidecar
- * on `port + 1`, so the sidecar is the URL's port plus one. Returns undefined if
- * the URL has no explicit port (nothing to derive a sidecar from).
- */
-function deriveDevPort(url: string): number | undefined {
-  try {
-    const port = Number(new URL(url).port)
-    return Number.isFinite(port) && port > 0 ? port + 1 : undefined
-  } catch {
-    return undefined
-  }
-}
 
 export default function MiniappDeveloperUrlScreen() {
   const {theme} = useAppTheme()
-  const {goBack, push} = useNavigationStore.getState()
+  const {goBack} = useNavigationStore.getState()
   const [url, setUrl] = useState("")
   const [loading, setLoading] = useState(false)
-  const [recent, setRecent] = useState<RecentDevApp[]>([])
 
-  useEffect(() => {
-    const result = storage.load<RecentDevApp[]>(RECENT_KEY)
-    if (result.is_ok()) setRecent(result.value)
-  }, [])
-
-  const saveRecent = (items: RecentDevApp[]) => {
-    setRecent(items)
-    storage.save(RECENT_KEY, items)
-  }
-
-  const launchDevMiniapp = async (entry: RecentDevApp) => {
-    try {
-      await openDevMiniapp(entry)
-    } catch (error) {
-      showDevBuildError(error)
-    }
-  }
-
-  const openDevMiniapp = async (entry: RecentDevApp) => {
-    // A dev build is unsigned code under its package name, refused while that
-    // package is installed with a publisher signature.
-    assertDevBuildAllowed(entry.packageName)
-    // One round trip: reachability + manifest. Avoids a second fetch
-    // for the permission-gate input.
-    const launchResult = await decideDevOpenRoute(entry.packageName, entry.url)
-
-    if (launchResult.decision === "offline") {
-      push("/applet/dev-offline", {
-        packageName: entry.packageName,
-        name: entry.name,
-      })
-      return
-    }
-
-    if (launchResult.decision === "cached") {
-      await engine.miniapps.setForeground(entry.packageName)
-      return
-    }
-
-    const packageName = launchResult.manifest.packageName || entry.packageName
-    assertDevBuildAllowed(packageName)
-    const appName = launchResult.manifest.name || entry.name
-    const manifestPermissions: AppletPermission[] = Array.isArray(launchResult.manifest.permissions)
-      ? (launchResult.manifest.permissions as AppletPermission[])
-      : []
-
-    if (manifestPermissions.length > 0) {
-      const fakeApplet = {
-        packageName,
-        name: appName,
-        permissions: manifestPermissions,
-      } as unknown as AppletInterface
-      const permResult = await askPermissionsUI(fakeApplet, theme)
-      if (permResult === -1) return
-      if (permResult === 0) {
-        const stillNeeded = await checkPermissionsUI(fakeApplet)
-        const friendlyNames = stillNeeded.map((p) => PERMISSION_CONFIG[p]?.name ?? p).join(", ")
-        showAlert(
-          "Required permissions denied",
-          `${appName} can't run without these permissions: ${friendlyNames}. Open Settings to enable them, then try again.`,
-          [
-            {text: "Open Settings", onPress: () => Linking.openSettings()},
-            {text: "Cancel", style: "cancel"},
-          ],
-        )
-        return
-      }
-    }
-
-    // Refresh this package's manifest metadata before foregrounding it. Other
-    // dev packages remain registered and independently launchable.
-    const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
-    if (existing?.running) await engine.miniapps.stop(packageName)
-    const resolvedUrl = launchResult.resolvedUrl || entry.url
-    await registerDevApp({
-      packageName,
-      name: appName,
-      iconUrl: resolveIconUrl(resolvedUrl, launchResult.manifest.icon) ?? entry.iconUrl ?? `${resolvedUrl}/icon.png`,
-      // Persist the host that answered — not the stale QR/recent-list IP.
-      devUrl: resolvedUrl,
-      devPort: deriveDevPort(resolvedUrl),
-      type: launchResult.manifest.type as DevAppRecord["type"],
-      permissions: launchResult.manifest.permissions as DevAppRecord["permissions"],
-      hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
-      actions: launchResult.manifest.actions as DevAppRecord["actions"],
-    })
-
-    await engine.miniapps.refresh()
-    await engine.miniapps.setForeground(packageName)
-  }
-
+  // Every miniapp URL installs as any link does, through the install sheet: a local address (the URL `mentra dev`
+  // prints) installs as a development build, and opens.
   const handleLoadUrl = async () => {
-    const trimmed = url.trim().replace(/\/+$/, "")
+    const trimmed = url.trim()
     if (!trimmed) {
       showAlert(translate("debugSettings:miniappUrlEmptyTitle"), translate("debugSettings:miniappUrlEmptyBody"), [
         {text: "OK"},
       ])
       return
     }
-    // A miniapp's own URL, an open link or a package link installs through the install sheet. Development servers are
-    // on the local network, and keep loading below.
-    const link = parseMiniappInstallLink(trimmed)
-    if (link && (link.kind === "package" || !link.local)) {
-      setLoading(true)
-      try {
-        await startMiniappInstallFromLink(trimmed, "paste")
-      } finally {
-        setLoading(false)
-      }
-      return
-    }
-    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-      showAlert(translate("debugSettings:miniappUrlInvalidTitle"), translate("debugSettings:miniappUrlInvalidBody"), [
-        {text: "OK"},
-      ])
-      return
-    }
-
     setLoading(true)
     try {
-      // Single fetch; serves as both validation that the URL points at a
-      // real miniapp dev server AND the manifest source for the launch.
-      const launchResult = await decideDevOpenRoute("", trimmed)
-      if (launchResult.decision !== "live") {
-        showAlert(
-          translate("debugSettings:miniappUrlFetchErrorTitle"),
-          translate("debugSettings:miniappUrlFetchErrorBody", {url: trimmed}),
-          [{text: "OK"}],
-        )
-        return
-      }
-
-      const manifest = launchResult.manifest
-      const entry: RecentDevApp = {
-        packageName: manifest.packageName || "com.dev.unknown",
-        name: manifest.name || "Dev miniapp",
-        url: trimmed,
-        iconUrl: resolveIconUrl(trimmed, manifest.icon),
-        timestamp: Date.now(),
-      }
-      const updated = [entry, ...recent.filter((r) => r.url !== entry.url)].slice(0, MAX_RECENT)
-      saveRecent(updated)
-
-      // launchDevMiniapp re-runs the reachability + manifest fetch (cheap;
-      // catches manifest changes between save and tap) and runs the
-      // permission gate before navigating.
-      await launchDevMiniapp(entry)
+      await startMiniappInstallFromLink(trimmed, "paste")
     } finally {
       setLoading(false)
     }
@@ -247,19 +69,6 @@ export default function MiniappDeveloperUrlScreen() {
               />
             </GlassView>
           </Group>
-
-          {recent.length > 0 && (
-            <Group title={translate("debugSettings:miniappUrlRecentTitle")}>
-              {recent.map((item) => (
-                <RouteButton
-                  key={item.url}
-                  label={item.name}
-                  subtitle={item.url}
-                  onPress={() => launchDevMiniapp(item)}
-                />
-              ))}
-            </Group>
-          )}
 
           <Spacer height={theme.spacing.s12} />
         </View>

@@ -27,7 +27,7 @@ import {Platform} from "react-native"
 import type {
   AudioPosition,
   AudioSubscription,
-  FleetDesiredState,
+  FleetDesiredStateWithPins,
   FleetReport,
   TranscriptionData,
   TranslationData,
@@ -1073,7 +1073,7 @@ export const cloudClientService = {
       async desiredStateAs(
         expected: {coreUrl: string; mentraUserId: string},
         opts?: {signal?: AbortSignal},
-      ): Promise<FleetDesiredState> {
+      ): Promise<FleetDesiredStateWithPins> {
         const c = client
         if (!c?.core) throw new SessionChangedError("signed_out")
         if (!clientCoreUrl || !sameCoreUrl(clientCoreUrl, expected.coreUrl))

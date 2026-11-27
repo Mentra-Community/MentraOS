@@ -20,7 +20,6 @@ const methods = [
   "buildMiniappInfo",
   "currentInstallCompatibilityPolicy",
   "evaluateInstallCompatibility",
-  "hasDevelopmentSelection",
   "handleMiniappsInstall",
   "handleMiniappsInstallCheck",
   "uninstallRefusal",
@@ -75,7 +74,8 @@ let identities: Record<string, {source: string; storePackageName?: string; sourc
 /** Packages whose context started as a local or development build. */
 const localBuilds = new Set<string>()
 let reasons: Record<string, string[]>
-let devRecords: Array<{packageName: string}>
+/** Packages a development build of is installed for. */
+let developmentBuilds: Set<string>
 let installs: Array<{url: string; options: InstallMiniappOptions}>
 let installImplementation: (url: string, options: InstallMiniappOptions) => Promise<InstallMiniappResult>
 let uninstalled: string[]
@@ -86,7 +86,6 @@ const HostClass = new Function(
   "SYSTEM_MINIAPP_PACKAGE_SET",
   "MiniappErrorCode",
   "appRegistry",
-  "getDevAppRecords",
   "installMiniapp",
   "InstallMiniappError",
   "useAppStatusStore",
@@ -108,9 +107,8 @@ const HostClass = new Function(
     getActiveReleaseVersion: (pkg: string) => (identities[pkg] ? "1.0.0" : null),
     getReleaseIdentity: (pkg: string) => identities[pkg] ?? null,
     getInstallReasons: (pkg: string) => reasons[pkg] ?? (identities[pkg] ? ["explicit"] : []),
-    getSelectedDevSnapshot: () => null,
+    isDevelopmentBuild: (pkg: string) => developmentBuilds.has(pkg),
   },
-  () => devRecords,
   async (target: string, options: InstallMiniappOptions) => {
     installs.push({url: target, options})
     return installImplementation(target, options)
@@ -193,7 +191,7 @@ beforeEach(() => {
   identities = {[ai]: {source: "bundled_asset"}, [notes]: {source: "bundled_asset"}}
   reasons = {}
   localBuilds.clear()
-  devRecords = []
+  developmentBuilds = new Set()
   installs = []
   installImplementation = async () => ({status: "installed", packageName: weather, version: "1.2.0"})
   uninstalled = []
@@ -408,7 +406,7 @@ describe("uninstalling from a system miniapp", () => {
 
   test("a development build of a URL install stays", async () => {
     identities[weather] = {source: "url", sourceUrl: url}
-    devRecords = [{packageName: weather}]
+    developmentBuilds = new Set([weather])
     const h = harness([app(ai), app(weather)])
     await h.host.handleMiniappsUninstall(ai, {packageName: weather}, "r1")
     expect(h.results[0].error?.code).toBe(MiniappErrorCode.NOT_PERMITTED)

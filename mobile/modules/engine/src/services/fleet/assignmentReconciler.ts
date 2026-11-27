@@ -6,10 +6,17 @@
  *   status changes nothing: the last complete snapshot stands and the fetch retries with backoff.
  * - Triggers (startup, foreground, a newer ack revision, a stop, reconnect, leaving a workspace) coalesce into one
  *   fetch after a short jitter. An ack revision that is not newer than the applied one fetches nothing.
- * - `managed`: each entry's URL decides the version. A missing or older package installs through the one release
- *   installer (a first install is silent; a running miniapp's update waits or asks). A satisfied assignment never
- *   reinstalls, unless the URL serves different bytes under the same version. Entries no longer desired lose their
- *   `assignment` reason; a package left with no reason uninstalls once it is idle. Its data stays.
+ * - `managed`: each entry's URL decides the build. A package that is missing, or is another build than its URL serves
+ *   (other bytes, whatever the two versions are), installs through the one release installer (a first install is
+ *   silent; a running miniapp's update waits or asks). A satisfied assignment never reinstalls. An installed system
+ *   miniapp, which updates from its deployment's own host, satisfies its assignment as it is. Entries no longer
+ *   desired lose their `assignment` reason; a package left with no reason uninstalls once it is idle. Its data stays.
+ * - Pins: a `pinned` entry holds its package to one version of what its URL lists. Each complete answer writes the
+ *   package's Fleet pin (`miniappPins.ts`) before anything of it is reconciled, and clears the pin of every package
+ *   the answer doesn't pin, so the URL updater and the installer, which read the pin, hold the same build. A pin that
+ *   can't be met installs nothing and is reported as `pin_unlisted` or `pin_hash_changed`, unless the phone already
+ *   holds the pinned build. Desired state is asked for with pins (`?pins=1`); a snapshot kept from a build that
+ *   didn't ask is read again once.
  * - `unmanaged`: every assignment reason this account holds is withdrawn the same way.
  * - The URL's server decides access. `access_denied` stops updates and is reported; the miniapp keeps running and
  *   can still be opened, and its backend decides what still works. A revocation recorded by an older build is
@@ -27,22 +34,26 @@
  */
 import {
   FleetAssignmentOutcomePayloadSchema,
-  FleetDesiredStateSchema,
+  FleetDesiredStateWithPinsSchema,
   type FleetAssignmentOutcomePayload,
   type FleetAssignmentReason,
   type FleetAssignmentState,
-  type FleetDesiredState,
-  type FleetDesiredStateEntry,
+  type FleetDesiredStateEntryWithPins,
+  type FleetDesiredStateWithPins,
 } from "@mentra/cloud-protocol"
-import semver from "semver"
 
+import {isServedBuildInstalled} from "../miniappInstallIdentity"
+import type {FleetMiniappPin} from "../miniappPins"
 import {normalizeCoreUrl} from "./coreUrl"
 import type {FleetManagementState} from "./fleetManagementState"
 import type {FleetKeyValueStore} from "./fleetQueue"
 
-/** Reads the signed-in account's desired state (`GET /api/client/fleet/desired-state` through Core). Throws on any failure. */
+/**
+ * Reads the signed-in account's desired state, pins included (`GET /api/client/fleet/desired-state?pins=1` through
+ * Core). Throws on any failure.
+ */
 export interface DesiredStateClient {
-  fetch(): Promise<FleetDesiredState>
+  fetch(): Promise<FleetDesiredStateWithPins>
 }
 
 export interface ReconcilerSession {
@@ -70,9 +81,20 @@ export type ManagedInstallFailure = FleetAssignmentReason | "running" | "cancell
 
 /** The phone's miniapps, as the reconciler uses them. */
 export interface ManagedMiniappPort {
+  /** What `url` serves for this phone: latest, or the version the package's pin holds it to. */
   resolve(url: string): Promise<ManagedResolution>
+  /** Every package holding a Fleet pin, whichever account's. */
+  fleetPinnedPackages(): string[]
+  /** Set the package's Fleet pin, or clear it with null. */
+  setFleetPin(packageName: string, pin: FleetMiniappPin | null): void
   /** The active installed release, or null when the package is not installed. */
   installedRelease(packageName: string): Promise<{version: string; bundleSha256?: string} | null>
+  /**
+   * The package's installed release is kept current from another URL than `url`: a system miniapp follows its
+   * deployment's own miniapp host, whichever URL assigned it. What is installed then satisfies the assignment as it
+   * is; otherwise the updater and the reconciler would each replace the other's build, on every check.
+   */
+  updatesFromAnotherUrl(packageName: string, url: string): boolean
   /** True when the package holds any reason besides `assignment` (explicit, bundled, manifest). */
   hasOtherReason(packageName: string): boolean
   /** The assignment the package's install recorded, or null. */
@@ -80,16 +102,10 @@ export interface ManagedMiniappPort {
   /** Every package holding an `assignment` reason, whichever account's. */
   assignedPackages(): string[]
   /**
-   * A live-development build or snapshot is selected for the package, so launching would not run the release. True
-   * also while the package's selection is still an earlier context's (see `clearDevelopmentSelection`).
+   * The person installed a development build of the package (`AppRegistry.isDevelopmentBuild`). Only they replace
+   * it, so an assignment leaves the package as it is.
    */
-  hasDevelopmentSelection(packageName: string): boolean
-  /**
-   * Clear the package's live-development selection in the current context, so launching runs its installed release.
-   * Resolves false, clearing nothing, while a live context of the package still holds an earlier context's selection:
-   * that one is never touched, and the package switches to the current context's once that context stops.
-   */
-  clearDevelopmentSelection(packageName: string): Promise<boolean>
+  isDevelopmentBuild(packageName: string): boolean
   /**
    * The deployment's policy lets the phone run this release, as this assignment's, once it is installed: the release
    * on disk when it has these bytes, otherwise one installed from the assignment's URL.
@@ -97,7 +113,7 @@ export interface ManagedMiniappPort {
   allowsRelease(packageName: string, version: string, bundleSha256: string, url: string): boolean
   /**
    * Install the assignment's URL headlessly. Resolves with the version installed, which is the one the URL serves when
-   * the install reads it: a URL that moved on since `resolve` installs its newer release. Rejects when nothing
+   * the install reads it: a URL that moved on since `resolve` installs what it serves by then. Rejects when nothing
    * committed, including when the install waits for the miniapp to stop (`classify` says `running`).
    */
   install(request: {
@@ -182,6 +198,8 @@ interface StoredOutcome {
   state: FleetAssignmentState
   reason?: FleetAssignmentReason
   selectedVersion?: string
+  /** The SHA-256 of the build a refused install was for. Kept on the phone only: the outcome record has no hash. */
+  selectedSha256?: string
   installedVersion?: string
   attempts: number
   attemptedAt: string
@@ -191,7 +209,12 @@ interface StoredOutcome {
 interface PersistedState {
   appliedRevision: number
   /** The last complete snapshot. */
-  snapshot: FleetDesiredState | null
+  snapshot: FleetDesiredStateWithPins | null
+  /**
+   * The snapshot was asked for with pins. A build from before pins kept one without them, in which a pinned
+   * assignment reads as `latest`, and an ack naming the same revision would not read it again: it is read again once.
+   */
+  snapshotWithPins?: boolean
   /** By assignment id: what this phone last reported. Also the record of what this account assigned here. */
   outcomes: Record<string, StoredOutcome>
   /** Packages whose last reason was withdrawn while they ran: uninstall once idle. */
@@ -210,6 +233,7 @@ interface AskingInstall {
   assignmentId: string
   assignmentRevision: number
   selectedVersion: string
+  selectedSha256: string
   gen: number
   /** The ack revision whose desired state still wants this install; a newer one cancels it unless it still does. */
   heard: {revision: number}
@@ -218,27 +242,20 @@ interface AskingInstall {
 }
 
 function emptyState(): PersistedState {
-  return {appliedRevision: 0, snapshot: null, outcomes: {}, pendingUninstalls: [], revoked: []}
+  return {appliedRevision: 0, snapshot: null, snapshotWithPins: true, outcomes: {}, pendingUninstalls: [], revoked: []}
 }
 
 function sessionKey(session: ReconcilerSession): string {
   return `${RECONCILER_STORE_PREFIX}${normalizeCoreUrl(session.coreUrl)}|${session.mentraUserId}`
 }
 
-function workspaceOf(snapshot: FleetDesiredState | null): string | null {
+function workspaceOf(snapshot: FleetDesiredStateWithPins | null): string | null {
   return snapshot?.status === "managed" ? snapshot.workspace.workspaceId : null
 }
 
 function sameSession(a: ReconcilerSession | null, b: ReconcilerSession | null): boolean {
   if (!a || !b) return a === b
   return a.mentraUserId === b.mentraUserId && normalizeCoreUrl(a.coreUrl) === normalizeCoreUrl(b.coreUrl)
-}
-
-function versionOrder(a: string, b: string): number {
-  const ca = semver.valid(semver.coerce(a) ?? a)
-  const cb = semver.valid(semver.coerce(b) ?? b)
-  if (!ca || !cb) return a === b ? 0 : NaN
-  return semver.compare(ca, cb)
 }
 
 export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): AssignmentReconciler {
@@ -258,6 +275,8 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
   let again = false
   let failures = 0
   let stopped = false
+  /** The session's kept snapshot was asked for without pins: the next trigger fetches, even at its revision. */
+  let refetchForPins = false
   const asking = new Map<string, AskingInstall>()
   const stopListener = miniapps.onStopped((packageName) => onPackageStopped(packageName))
   const dueListener = miniapps.onUpdateDue((packageName) => {
@@ -273,10 +292,11 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     if (!raw) return emptyState()
     try {
       const parsed = JSON.parse(raw) as PersistedState
-      const snapshot = parsed.snapshot ? FleetDesiredStateSchema.safeParse(parsed.snapshot) : null
+      const snapshot = parsed.snapshot ? FleetDesiredStateWithPinsSchema.safeParse(parsed.snapshot) : null
       return {
         appliedRevision: Number.isInteger(parsed.appliedRevision) ? parsed.appliedRevision : 0,
         snapshot: snapshot?.success ? snapshot.data : null,
+        snapshotWithPins: parsed.snapshotWithPins === true || !snapshot?.success,
         outcomes: parsed.outcomes && typeof parsed.outcomes === "object" ? parsed.outcomes : {},
         pendingUninstalls: Array.isArray(parsed.pendingUninstalls) ? parsed.pendingUninstalls : [],
         revoked: Array.isArray(parsed.revoked) ? parsed.revoked : [],
@@ -298,6 +318,8 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     session = current
     state = current ? load(current) : emptyState()
     wantedRevision = 0
+    // Read again once a snapshot kept without pins, whatever revision an ack names.
+    refetchForPins = !state.snapshotWithPins
     failures = 0
     again = false
     // A refused server stops updates only. Lift any launch block an older build stored, for this account and for
@@ -409,14 +431,14 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     if (!syncSession()) return
     if (!deps.isOnline()) return
     const gen = generation
-    let fetched: FleetDesiredState | null = null
+    let fetched: FleetDesiredStateWithPins | null = null
     try {
       fetched = await fetchWithTimeout()
     } catch {
       fetched = null
     }
     assertCurrent(gen)
-    const parsed = fetched === null ? null : FleetDesiredStateSchema.safeParse(fetched)
+    const parsed = fetched === null ? null : FleetDesiredStateWithPinsSchema.safeParse(fetched)
     if (!parsed?.success) {
       schedule(backoff())
       return
@@ -433,7 +455,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     if (wantedRevision > state.appliedRevision) schedule(backoff())
   }
 
-  function fetchWithTimeout(): Promise<FleetDesiredState> {
+  function fetchWithTimeout(): Promise<FleetDesiredStateWithPins> {
     return new Promise((resolve, reject) => {
       const handle = deps.timers.setTimeout(() => reject(new Error("desired state timed out")), FETCH_TIMEOUT_MS)
       deps.client.fetch().then(
@@ -449,7 +471,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     })
   }
 
-  async function apply(desired: FleetDesiredState, gen: number): Promise<void> {
+  async function apply(desired: FleetDesiredStateWithPins, gen: number): Promise<void> {
     const current = session!
     const previousWorkspace = workspaceOf(state.snapshot)
     const workspace = workspaceOf(desired)
@@ -461,16 +483,20 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     miniapps.setWorkspaceContext(current, workspace)
     state.appliedRevision = desired.revision
     state.snapshot = desired
+    state.snapshotWithPins = true
+    refetchForPins = false
     save()
     publishManagement()
 
     const entries = desired.status === "managed" ? desired.entries : []
-    const byPackage = new Map<string, FleetDesiredStateEntry>()
-    const duplicates: FleetDesiredStateEntry[] = []
+    const byPackage = new Map<string, FleetDesiredStateEntryWithPins>()
+    const duplicates: FleetDesiredStateEntryWithPins[] = []
     for (const entry of entries) {
       if (byPackage.has(entry.packageName)) duplicates.push(entry)
       else byPackage.set(entry.packageName, entry)
     }
+    // Before anything is installed or withdrawn, so that the updater and the installer hold what this answer pins.
+    writePins(byPackage, current, workspace)
 
     await withdrawUndesired(byPackage, desired.revision, gen)
     for (const entry of duplicates) {
@@ -482,8 +508,48 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     }
   }
 
+  /**
+   * Make the phone's Fleet pins this answer's: each pinned entry's pin, and none for every other package (a `latest`
+   * entry, an assignment that went, another account's or workspace's). A package another URL keeps current, a system
+   * miniapp updating from its deployment's host, takes no pin: that host's list isn't the one the pin was sealed
+   * against, so it would have no effect there (Fleet refuses such pins anyway).
+   */
+  function writePins(
+    byPackage: Map<string, FleetDesiredStateEntryWithPins>,
+    current: ReconcilerSession,
+    workspaceId: string | null,
+  ): void {
+    for (const packageName of miniapps.fleetPinnedPackages()) {
+      const entry = byPackage.get(packageName)
+      if (entry?.selection !== "pinned") miniapps.setFleetPin(packageName, null)
+    }
+    if (workspaceId === null) return
+    for (const [packageName, entry] of byPackage) {
+      if (entry.selection !== "pinned") continue
+      if (miniapps.updatesFromAnotherUrl(packageName, entry.url)) {
+        miniapps.setFleetPin(packageName, null)
+        continue
+      }
+      miniapps.setFleetPin(packageName, {
+        version: entry.pin.version,
+        sha256: entry.pin.sha256,
+        assignmentId: entry.assignmentId,
+        assignmentRevision: entry.revision,
+        workspaceId,
+        coreUrl: current.coreUrl,
+        mentraUserId: current.mentraUserId,
+        url: entry.url,
+      })
+    }
+  }
+
+  /** The phone left its workspace: the workspace's pins go with its grants, before the next answer arrives. */
+  function clearPins(): void {
+    for (const packageName of miniapps.fleetPinnedPackages()) miniapps.setFleetPin(packageName, null)
+  }
+
   async function withdrawUndesired(
-    byPackage: Map<string, FleetDesiredStateEntry>,
+    byPackage: Map<string, FleetDesiredStateEntryWithPins>,
     desiredRevision: number,
     gen: number,
   ): Promise<void> {
@@ -547,7 +613,11 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     save()
   }
 
-  async function reconcileEntry(entry: FleetDesiredStateEntry, desired: FleetDesiredState, gen: number): Promise<void> {
+  async function reconcileEntry(
+    entry: FleetDesiredStateEntryWithPins,
+    desired: FleetDesiredStateWithPins,
+    gen: number,
+  ): Promise<void> {
     const current = session!
     const workspaceId = workspaceOf(desired)!
     const previous = state.outcomes[entry.assignmentId]
@@ -556,8 +626,29 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       return
     }
 
-    const resolution = await miniapps.resolve(entry.url)
+    let resolution = await miniapps.resolve(entry.url)
     assertCurrent(gen)
+    // A pin that can't be met installs nothing and is reported, unless the phone holds the build the pin chose: that
+    // build stays the target, whatever the list says now, and the assignment is satisfied by it.
+    if (
+      !resolution.ok &&
+      entry.selection === "pinned" &&
+      (resolution.reason === "pin_unlisted" || resolution.reason === "pin_hash_changed")
+    ) {
+      const held = await miniapps.installedRelease(entry.packageName)
+      assertCurrent(gen)
+      const sealed = {version: entry.pin.version, bundleSha256: entry.pin.sha256}
+      if (!held || !isServedBuildInstalled(held, sealed)) {
+        record(entry, desired.revision, {
+          state: "blocked",
+          reason: resolution.reason,
+          selectedVersion: entry.pin.version,
+          installedVersion: held?.version,
+        })
+        return
+      }
+      resolution = {ok: true, packageName: entry.packageName, bundleUrl: entry.url, ...sealed}
+    }
     if (!resolution.ok) {
       if (resolution.reason === "access_denied" && state.revoked.includes(entry.packageName)) {
         state.revoked = state.revoked.filter((name) => name !== entry.packageName)
@@ -585,6 +676,15 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       })
       return
     }
+    // Only the person replaces their development build: the assignment installs nothing, and says why.
+    if (miniapps.isDevelopmentBuild(entry.packageName)) {
+      record(entry, desired.revision, {
+        state: "blocked",
+        reason: "development_build",
+        selectedVersion: resolution.version,
+      })
+      return
+    }
 
     const assignment: ManagedAssignment = {
       assignmentId: entry.assignmentId,
@@ -601,7 +701,8 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
         waiting.gen === gen &&
         waiting.assignmentId === entry.assignmentId &&
         waiting.assignmentRevision === entry.revision &&
-        waiting.selectedVersion === selectedVersion
+        waiting.selectedVersion === selectedVersion &&
+        waiting.selectedSha256 === resolution.bundleSha256
       ) {
         // Still the install this desired state wants: it keeps waiting for its answer.
         waiting.heard.revision = wantedRevision
@@ -612,12 +713,13 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     }
     const installed = await miniapps.installedRelease(entry.packageName)
     assertCurrent(gen)
-    // An install this release already refused is not downloaded again until the URL serves another version or the
-    // assignment changes.
+    // An install this build already refused is not downloaded again until the URL serves another build or the
+    // assignment changes. A refusal recorded before hashes were kept stands for its version.
     if (
       previous?.state === "blocked" &&
       previous.assignmentRevision === entry.revision &&
       previous.selectedVersion === selectedVersion &&
+      (previous.selectedSha256 === undefined || previous.selectedSha256 === resolution.bundleSha256) &&
       previous.attempts > 0 &&
       (previous.reason === "signature_invalid" ||
         previous.reason === "not_a_miniapp" ||
@@ -631,39 +733,19 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
         state: "blocked",
         reason: "incompatible_host",
         selectedVersion,
+        selectedSha256: resolution.bundleSha256,
         installedVersion: installed?.version,
       })
       return
     }
     if (installed) {
-      const order = versionOrder(installed.version, selectedVersion)
-      if (order > 0) {
-        record(entry, desired.revision, {
-          state: "blocked",
-          reason: "newer_version_installed",
-          selectedVersion,
-          installedVersion: installed.version,
-        })
-        return
-      }
-      // A release installed before digests were recorded counts as the served bytes at the same version.
-      const sameBytes = !installed.bundleSha256 || resolution.bundleSha256 === installed.bundleSha256
-      if (order === 0 && sameBytes) {
-        // The cached release satisfies the assignment only once a live-development selection no longer runs instead.
-        // Only the current context's selection is cleared; one a running context still holds waits for its stop.
-        if (miniapps.hasDevelopmentSelection(entry.packageName)) {
-          const cleared =
-            !miniapps.isRunning(entry.packageName) && (await miniapps.clearDevelopmentSelection(entry.packageName))
-          assertCurrent(gen)
-          if (!cleared) {
-            record(entry, desired.revision, {
-              state: "deferred_running",
-              selectedVersion,
-              installedVersion: installed.version,
-            })
-            return
-          }
-        }
+      // The update rule: the assignment is satisfied by the build its URL serves, and anything else is replaced by
+      // it, a higher version included. A release installed before digests were recorded counts as the served bytes
+      // at the same version. A release another URL keeps current is left to that URL.
+      if (
+        miniapps.updatesFromAnotherUrl(entry.packageName, entry.url) ||
+        isServedBuildInstalled(installed, {version: selectedVersion, bundleSha256: resolution.bundleSha256})
+      ) {
         const recorded = miniapps.assignment(entry.packageName)
         if (
           !recorded ||
@@ -712,9 +794,10 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
         ({version}): InstallResult => ({failed: false, version}),
         (error: unknown): InstallResult => ({failed: true, error}),
       )
+    const selected = {version: selectedVersion, sha256: resolution.bundleSha256}
     const first = await Promise.race([finished, asked])
     if (first) {
-      await settleInstall(entry, desired.revision, gen, selectedVersion, installed?.version, attempts, first)
+      await settleInstall(entry, desired.revision, gen, selected, installed?.version, attempts, first)
       return
     }
     // The person is asked whether to close the running miniapp. Other assignments and later triggers go on; a
@@ -723,12 +806,13 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       assignmentId: entry.assignmentId,
       assignmentRevision: entry.revision,
       selectedVersion,
+      selectedSha256: resolution.bundleSha256,
       gen,
       heard,
       settled: finished.then(async (result) => {
         if (asking.get(entry.packageName) === pending) asking.delete(entry.packageName)
         try {
-          await settleInstall(entry, state.appliedRevision, gen, selectedVersion, installed?.version, attempts, result)
+          await settleInstall(entry, state.appliedRevision, gen, selected, installed?.version, attempts, result)
         } catch (error) {
           if (!(error instanceof Superseded)) console.warn(`Fleet install of ${entry.packageName} failed`, error)
         }
@@ -744,14 +828,15 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
   }
 
   async function settleInstall(
-    entry: FleetDesiredStateEntry,
+    entry: FleetDesiredStateEntryWithPins,
     desiredRevision: number,
     gen: number,
-    selectedVersion: string,
+    selected: {version: string; sha256: string},
     installedVersion: string | undefined,
     attempts: number,
     result: InstallResult,
   ): Promise<void> {
+    const selectedVersion = selected.version
     assertCurrent(gen)
     if (result.failed) {
       const {kind, retryable} = miniapps.classify(result.error)
@@ -766,6 +851,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
         state: retryable ? "retrying" : "blocked",
         reason: kind,
         selectedVersion,
+        selectedSha256: selected.sha256,
         installedVersion: after,
         attempts,
       })
@@ -786,12 +872,13 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
   // --- outcomes ------------------------------------------------------------------------------------------------
 
   function record(
-    entry: FleetDesiredStateEntry,
+    entry: FleetDesiredStateEntryWithPins,
     desiredRevision: number,
     next: {
       state: FleetAssignmentState
       reason?: FleetAssignmentReason
       selectedVersion?: string
+      selectedSha256?: string
       installedVersion?: string
       attempts?: number
       attempted?: boolean
@@ -807,6 +894,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       state: next.state,
       ...(next.reason ? {reason: next.reason} : {}),
       ...(next.selectedVersion ? {selectedVersion: next.selectedVersion} : {}),
+      ...(next.selectedSha256 ? {selectedSha256: next.selectedSha256} : {}),
       ...(next.installedVersion ? {installedVersion: next.installedVersion} : {}),
       attempts: next.attempts ?? (sameRevision ? previous!.attempts : 0),
       attemptedAt: next.attempted || !previous ? at : previous.attemptedAt,
@@ -872,13 +960,17 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     syncSession()
     if (kind === "revision") {
       if (revision === undefined || !Number.isInteger(revision)) return
-      if (revision <= state.appliedRevision || revision <= wantedRevision) return
-      wantedRevision = revision
+      const stale = revision <= state.appliedRevision || revision <= wantedRevision
+      if (stale && !refetchForPins) return
+      if (!stale) wantedRevision = revision
     }
     if (kind === "leave") {
-      // The old workspace's work and grants stop now; the new context activates when its desired state arrives.
+      // The old workspace's work, grants and pins stop now; the new context activates when its desired state arrives.
       supersede()
-      if (session) miniapps.setWorkspaceContext(session, null)
+      if (session) {
+        miniapps.setWorkspaceContext(session, null)
+        clearPins()
+      }
       again = false
       schedule(0)
       return

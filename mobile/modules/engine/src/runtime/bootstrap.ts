@@ -109,11 +109,6 @@ export interface IslandConfigValues {
    * cloud on connect (20 for G1, 40 for G2, …). Defaults to 20 if unset.
    */
   audioFrameSizeBytes?: number
-  /**
-   * Dev-only live Metro/LAN host used to repair persisted local-miniapp dev URLs
-   * after the laptop changes networks. Omitted in production/OEM builds.
-   */
-  devServerHost?: () => string | undefined
 }
 
 export interface ManagedMiniappPolicyEntry {
@@ -238,8 +233,8 @@ export function isOfflineSystemMiniappAllowed(packageName: string): boolean {
 const MINIAPP_DEVELOPER_PACKAGE_NAME = "com.mentra.miniappdev"
 
 /**
- * Whether this deployment allows miniapp development: developer servers,
- * scanned release QRs and authoring snapshots, of any package. It follows the
+ * Whether this deployment allows miniapp development: builds from a local
+ * address (a developer's server, a release QR or the authoring link), of any package. It follows the
  * deployment's approval of the Miniapp Developer tools; Super Mode never
  * overrides it.
  */
@@ -311,7 +306,7 @@ export function isDeploymentManagedRelease(
 }
 
 /**
- * A developer build (live server or `dev-*` snapshot) under `packageName`.
+ * A development build (`dev-*`, from a local address) under `packageName`.
  * Where development is allowed it may add a package or stand in for an
  * installed one, managed or not.
  */

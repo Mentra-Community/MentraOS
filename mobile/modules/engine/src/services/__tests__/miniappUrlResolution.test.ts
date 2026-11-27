@@ -6,6 +6,16 @@ import {cloudClientService} from "./cloudClientServiceTestMock"
 
 let config: {hostVersion?: string} = {}
 mock.module("../../runtime/bootstrap", () => ({getConfigValues: () => config}))
+// The phone's pins, as the resolution reads them by default: the Fleet store, in memory.
+const fleetStore = new Map<string, string>()
+mock.module("../fleet/fleetStorage", () => ({
+  getFleetStore: () => ({
+    getString: (key: string) => fleetStore.get(key),
+    set: (key: string, value: string) => void fleetStore.set(key, value),
+    remove: (key: string) => void fleetStore.delete(key),
+    getAllKeys: () => [...fleetStore.keys()],
+  }),
+}))
 // Each test passes its own transport.
 mock.module("expo/fetch", () => ({
   fetch: async () => {
@@ -14,6 +24,7 @@ mock.module("expo/fetch", () => ({
 }))
 
 const {resolveMiniappUrl} = await import("../miniappUrlResolution")
+const {miniappPins} = await import("../miniappPins")
 const {normalizeMiniappUrl} = await import("@mentra/cloud-protocol/miniapp-url")
 const {domainRuleVectors} = await import("./miniappUrlVectors")
 
@@ -59,6 +70,7 @@ describe("resolving a miniapp URL", () => {
       version: "2.0.0",
       bundleUrl: "https://notes.acme.com/app/notes-2.0.0.zip",
       bundleSha256: SHA,
+      pinned: false,
     })
     expect(seen).toEqual(["https://notes.acme.com/app/miniapp.json"])
   })
@@ -266,5 +278,83 @@ describe("the domain rule", () => {
     const result = await resolveMiniappUrl(url, serve(200, manifest({packageName})))
     expect(result.ok).toBe(allowed)
     if (!result.ok) expect(result.reason).toBe("not_a_miniapp")
+  })
+})
+
+describe("resolving a URL for a package the phone pins", () => {
+  const OLD = "1".repeat(64)
+  const versions = [
+    {version: "2.0.0", url: "notes-2.0.0.zip", sha256: SHA},
+    {version: "1.5.0", url: "old/notes-1.5.0.zip", sha256: OLD},
+  ]
+  const fleetPin = (version: string, sha256: string) => ({
+    version,
+    sha256,
+    assignmentId: "asg_1",
+    assignmentRevision: 1,
+    workspaceId: "ws_1",
+    coreUrl: "https://core.example.com",
+    mentraUserId: "mu_1",
+    url: "https://notes.acme.com/app/",
+  })
+
+  beforeEach(() => fleetStore.clear())
+
+  test("takes the pinned version's entry from the phone's pin record, older than latest included", async () => {
+    miniappPins.setFleetPin(pkg, fleetPin("1.5.0", OLD))
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", serve(200, manifest({versions})))).toEqual({
+      ok: true,
+      packageName: pkg,
+      version: "1.5.0",
+      bundleUrl: "https://notes.acme.com/app/old/notes-1.5.0.zip",
+      bundleSha256: OLD,
+      pinned: true,
+    })
+  })
+
+  test("a pin to the latest version takes its entry, which names the same build", async () => {
+    miniappPins.setFleetPin(pkg, fleetPin("2.0.0", SHA))
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", serve(200, manifest({versions})))).toMatchObject({
+      ok: true,
+      version: "2.0.0",
+      bundleSha256: SHA,
+      pinned: true,
+    })
+  })
+
+  test("a version no longer listed, or a miniapp with no list, is pin_unlisted", async () => {
+    miniappPins.setFleetPin(pkg, fleetPin("1.4.0", OLD))
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", serve(200, manifest({versions})))).toEqual({
+      ok: false,
+      reason: "pin_unlisted",
+    })
+    miniappPins.setFleetPin(pkg, fleetPin("1.5.0", OLD))
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", serve(200, manifest()))).toEqual({
+      ok: false,
+      reason: "pin_unlisted",
+    })
+  })
+
+  test("a listed version with other bytes than the pin's is pin_hash_changed", async () => {
+    miniappPins.setFleetPin(pkg, fleetPin("1.5.0", "2".repeat(64)))
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", serve(200, manifest({versions})))).toEqual({
+      ok: false,
+      reason: "pin_hash_changed",
+    })
+  })
+
+  test("the top-level compatibility fields describe latest, so they don't refuse a pinned build", async () => {
+    config = {hostVersion: "3.0.0"}
+    miniappPins.setFleetPin(pkg, fleetPin("1.5.0", OLD))
+    const needsNewer = manifest({versions, minHostVersion: "9.0.0"})
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", serve(200, needsNewer))).toMatchObject({
+      ok: true,
+      version: "1.5.0",
+    })
+    miniappPins.setFleetPin(pkg, null)
+    expect(await resolveMiniappUrl("https://notes.acme.com/app", serve(200, needsNewer))).toEqual({
+      ok: false,
+      reason: "incompatible_host",
+    })
   })
 })

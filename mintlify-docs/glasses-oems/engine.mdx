@@ -357,6 +357,8 @@ const offPrompt = engine.miniapps.onUpdatePrompt((prompt) => {
 })
 const offFailure = engine.miniapps.onUpdateFailed(({displayName, installedVersion}) => { … })
 const offDeferred = engine.miniapps.onDeferredUpdateReady((packageName) => { … }) // check for updates again
+engine.miniapps.startWait(packageName)          // "check" | "update" | null: what its start waits for
+const offWait = engine.miniapps.onStartWaitChanged(() => { … })
 ```
 
 `install` takes a miniapp URL (the HTTPS base that serves `miniapp.json`). It fetches
@@ -546,6 +548,14 @@ sends it to a miniapp. When the gate stops a miniapp the person is installing or
 opening, the engine calls `ui.showAgeRestricted(notice)` so you can say why. An install
 with a sheet is checked before `confirm`; a headless install is checked when the
 miniapp first opens. Without `hostAgeRating`, nothing is gated.
+
+A miniapp that isn't running is checked for an update before it starts, however it
+is started (`start`, a mounted `MiniappView`, another miniapp): up to 5 seconds to
+learn whether its URL serves another build, then up to 30 more for that build to
+install. Past either limit the build it has starts, and the check carries on. Show
+the miniapp's splash as soon as it is opened, and say it is updating while
+`startWait(packageName)` is `"update"`. `stop` cancels a start that still waits:
+nothing starts.
 
 `onUpdatePrompt` is how the host renders the question before an update closes a
 running miniapp. The engine decides when a prompt may appear:

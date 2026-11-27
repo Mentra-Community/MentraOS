@@ -976,30 +976,12 @@ const en = {
     miniappScanPermissionDeniedTitle: "Permission Denied",
     miniappScanPermissionDeniedBody: "Please enable camera access in Settings to scan QR codes.",
     miniappScanCheckingPermission: "Checking camera permission\u2026",
-    miniappScanInvalidQrTitle: "Invalid QR",
-    miniappScanInvalidQrBody: "Expected a miniapp:// or http:// URL",
-    miniappScanInvalidQrNoUrl: "No URL found in QR code",
     miniappScanLoading: "Loading miniapp…",
     miniappScanInstalledTitle: "Installed",
     miniappScanInstalledBody: "{{name}} v{{version}} is on your home screen.",
     miniappScanPermissionsRequiredTitle: "Required permissions denied",
     miniappScanPermissionsRequiredBody:
       "{{name}} can't run without these permissions: {{permissions}}. Open Settings to enable them, then try again.",
-    miniappDevSignedInstallTitle: "Uninstall required",
-    miniappDevSignedInstallBody:
-      "{{packageName}} is installed with a publisher signature. Uninstall it before running a development build.",
-    miniappDevLoadErrorTitle: "Could not load dev miniapp",
-    miniappLocalInstallFailedTitle: "Couldn't install this miniapp",
-    miniappLocalInstallNotAMiniapp:
-      "{{address}} didn't serve a miniapp the Mentra App can install. Serve it with the latest `mentra dev`, then scan its QR code again.",
-    miniappLocalInstallNetwork:
-      "Couldn't reach {{address}}. Check that your phone is on the same network as the computer serving it.",
-    miniappLocalInstallAccessDenied:
-      "This Mentra App doesn't allow development builds, or the server refused the install.",
-    miniappLocalInstallNeedsNewerApp: "This miniapp needs a newer version of the Mentra App.",
-    miniappLocalInstallIntegrity: "The miniapp's files didn't match what its server described. Try again.",
-    miniappLocalInstallSignature:
-      "This miniapp is installed with a publisher signature. Uninstall it before installing a development build of it.",
     miniappUrlTitle: "Load Miniapp from URL",
     miniappUrlGroupTitle: "Dev Server URL",
     miniappUrlLabel: "URL",
@@ -1009,11 +991,6 @@ const en = {
     miniappUrlLoadingButton: "Loading\u2026",
     miniappUrlEmptyTitle: "Empty URL",
     miniappUrlEmptyBody: "Please enter a dev server URL.",
-    miniappUrlInvalidTitle: "Invalid URL",
-    miniappUrlInvalidBody: "URL must start with http:// or https://",
-    miniappUrlFetchErrorTitle: "Error",
-    miniappUrlFetchErrorBody: "Could not fetch miniapp.json from {{url}}",
-    miniappUrlRecentTitle: "Recent",
   },
   qrScan: {
     defaultTitle: "Scan QR code",

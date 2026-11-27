@@ -39,6 +39,12 @@ describe("parseMiniappInstallLink", () => {
     })
   })
 
+  it("reads the development server an older CLI's miniapp://dev code names as its miniapp URL", () => {
+    const code = "miniapp://dev?url=http%3A%2F%2F192.168.1.20%3A3000&package=com.acme.notes&dev=3001&mdns=laptop.local"
+    expect(parseMiniappInstallLink(code)).toEqual({kind: "url", url: "http://192.168.1.20:3000/", local: true})
+    expect(parseMiniappInstallLink("miniapp://dev?package=com.acme.notes")).toBeNull()
+  })
+
   it.each([
     "https://apps.mentraglass.com/open?url=https%3A%2F%2Fnotes.example.com%2F",
     "https://apps.mentra.glass/open?url=https%3A%2F%2Fnotes.example.com%2F",
@@ -82,7 +88,6 @@ describe("parseMiniappInstallLink", () => {
     "https://apps.mentraglass.com/search?q=notes",
     "https://apps.mentraglass.com/package/Not-A-Package",
     "com.mentra://home",
-    "miniapp://dev?url=http%3A%2F%2F192.168.1.20%3A8080",
     "javascript:alert(1)",
   ])("refuses %j", (input) => {
     expect(parseMiniappInstallLink(input)).toBeNull()

@@ -48,7 +48,7 @@ import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import * as trustedEmail from "../packages/core/src/services/account/trusted-email.service"
 import * as fetcher from "../packages/core/src/services/registry/miniapp-fetcher"
 import type {MiniappFetchResult} from "../packages/core/src/services/registry/miniapp-fetcher"
-import {registryChecksIdle} from "../packages/core/src/services/registry/registry-service-api.service"
+import {readMiniappVersions, registryChecksIdle} from "../packages/core/src/services/registry/registry-service-api.service"
 import {
   archive,
   registerMiniappUrl,
@@ -254,7 +254,7 @@ async function signed(method: "GET" | "POST", pathWithQuery: string, body: unkno
   const text = method === "GET" ? "" : (options.rawBody ?? JSON.stringify(body))
   const timestampMs = Date.now()
   const service =
-    options.service ?? (pathWithQuery.startsWith("/check") || pathWithQuery.startsWith("/lookup") ? "fleet" : "store")
+    options.service ?? (["/check", "/lookup", "/versions"].some((route) => pathWithQuery.startsWith(route)) ? "fleet" : "store")
   const headers: Record<string, string> = {"content-type": "application/json"}
   if (!options.unsigned) {
     headers[SERVICE_HEADERS.service] = service
@@ -646,6 +646,230 @@ describe("check", () => {
   })
 })
 
+// --- Versions ----------------------------------------------------------------
+
+describe("versions", () => {
+  const sha = (digit: string) => digit.repeat(64)
+  const LISTED = [
+    {version: "1.2.0", url: `${NOTES}-1.2.0-${"c".repeat(8)}.zip`, sha256: sha("c")},
+    {version: "1.1.0", url: `${NOTES}-1.1.0-${"b".repeat(8)}.zip`, sha256: sha("b")},
+    {version: "1.0.0", url: "https://cdn.example.net/notes-1.0.0.zip", sha256: sha("a")},
+  ]
+  const listedManifest = (overrides: Record<string, unknown> = {}) =>
+    manifest({version: "1.2.0", bundle: {url: LISTED[0]!.url, sha256: sha("C")}, versions: LISTED, ...overrides})
+
+  async function versions(url: string, options: {workspaceId?: string; mentraUserId?: string} = {}) {
+    const answer = await signed("POST", "/versions", {
+      url,
+      workspaceId: options.workspaceId ?? "ws_acme",
+      mentraUserId: options.mentraUserId ?? ADMIN,
+    })
+    expect(answer.status).toBe(200)
+    const {readAt, ...rest} = answer.json as Record<string, unknown>
+    expect(Number.isNaN(Date.parse(String(readAt)))).toBe(false)
+    return rest
+  }
+
+  test("answers the latest build and the versions the URL lists, as served now", async () => {
+    serve(NOTES_URL, listedManifest())
+    expect(await versions(NOTES_URL)).toEqual({
+      url: NOTES_URL,
+      status: "read",
+      packageName: NOTES,
+      private: false,
+      deploymentDefault: false,
+      latest: {version: "1.2.0", url: LISTED[0]!.url, sha256: sha("c")},
+      versions: LISTED,
+    })
+    expect(fetches).toEqual([{url: NOTES_URL, claims: null}])
+  })
+
+  test("reads the URL every time, never Core's stored entry, and stores nothing", async () => {
+    // Core registered 1.0.0, and holds that copy until a phone reports a newer version.
+    serve(NOTES_URL, manifest())
+    await check([NOTES_URL])
+    const stored = await entryRow(NOTES_URL)
+    expect(stored?.version).toBe("1.0.0")
+
+    // The publisher has since published 1.2.0 with a list: a check still answers from the entry, unread.
+    serve(NOTES_URL, listedManifest())
+    fetches = []
+    await check([NOTES_URL])
+    expect(fetches).toEqual([])
+    const first = await versions(NOTES_URL)
+    expect(first.latest).toEqual({version: "1.2.0", url: LISTED[0]!.url, sha256: sha("c")})
+    expect(fetches).toHaveLength(1)
+
+    // Republished under the same version with other bytes: the next read has the new hash.
+    serve(NOTES_URL, listedManifest({versions: [{...LISTED[0]!, sha256: sha("d")}, ...LISTED.slice(1)]}))
+    const second = await versions(NOTES_URL)
+    expect((second.versions as Array<{sha256: string}>)[0]?.sha256).toBe(sha("d"))
+    expect(fetches).toHaveLength(2)
+    expect(await entryRow(NOTES_URL)).toEqual(stored)
+  })
+
+  test("a miniapp that lists no versions, or something that isn't a list of them, has none: null, with its latest build", async () => {
+    for (const listed of [undefined, "1.0.0", [{version: "1.0.0", url: "notes.zip"}], [{version: "one", url: "n.zip", sha256: sha("a")}]]) {
+      serve(NOTES_URL, manifest(listed === undefined ? {} : {versions: listed}))
+      const answer = await versions(NOTES_URL)
+      expect(answer).toMatchObject({status: "read", packageName: NOTES, versions: null})
+      expect(answer.latest).toEqual({version: "1.0.0", url: `${NOTES}-1.0.0.zip`, sha256: SHA.toLowerCase()})
+    }
+    serve(NOTES_URL, manifest({versions: []}))
+    expect((await versions(NOTES_URL)).versions).toEqual([])
+  })
+
+  test("the URL is read in any spelling, and answered as it was sent", async () => {
+    serve(NOTES_URL, listedManifest())
+    const answer = await versions("https://Notes.Example.com")
+    expect(answer).toMatchObject({url: "https://Notes.Example.com", status: "read", packageName: NOTES})
+    expect(fetches.map((fetch) => fetch.url)).toEqual([NOTES_URL])
+  })
+
+  test("a private miniapp is read with the admin's token: a member is admitted, anyone else is told it asks for sign-in", async () => {
+    servePrivate(ACME_URL, ACME_TOOLS, {...acmeManifest(), versions: [{version: "1.0.0", url: "tools.zip", sha256: sha("a")}]}, (claims) => claims.workspaceId === "ws_acme")
+    expect(await versions(ACME_URL)).toMatchObject({
+      status: "read",
+      packageName: ACME_TOOLS,
+      private: true,
+      versions: [{version: "1.0.0", url: "tools.zip", sha256: sha("a")}],
+    })
+    expect(fetches.map((fetch) => fetch.claims && {aud: fetch.claims.aud, sub: fetch.claims.sub, workspaceId: fetch.claims.workspaceId})).toEqual([
+      null,
+      {aud: ACME_TOOLS, sub: ADMIN, workspaceId: "ws_acme"},
+    ])
+
+    // Another workspace's admin, and an Organization Admin who is no member of this one: their own tokens are refused.
+    expect(await versions(ACME_URL, {workspaceId: "ws_globex", mentraUserId: OTHER_ADMIN})).toEqual({
+      url: ACME_URL,
+      status: "unreadable",
+      reason: "sign_in_required",
+    })
+    fetches = []
+    expect(await versions(ACME_URL, {mentraUserId: OTHER_ADMIN})).toEqual({url: ACME_URL, status: "unreadable", reason: "sign_in_required"})
+    expect(fetches.find((fetch) => fetch.claims)?.claims).toMatchObject({sub: OTHER_ADMIN})
+    expect(fetches.find((fetch) => fetch.claims)?.claims?.workspaceId).toBeUndefined()
+  })
+
+  test("a URL Core can't reach says so, also when a phone has reported it", async () => {
+    expect(await versions(INTRANET_URL)).toEqual({url: INTRANET_URL, status: "unreadable", reason: "unreachable"})
+    await registerMiniappUrl({url: INTRANET_URL, reported: reported(), registrant: registrant()})
+    expect(await versions(INTRANET_URL)).toEqual({url: INTRANET_URL, status: "unreadable", reason: "unreachable"})
+    // A server that turns Core away with a 403 may still let phones in.
+    served.set(NOTES_URL, () => ({kind: "refused", status: 403}))
+    expect(await versions(NOTES_URL)).toEqual({url: NOTES_URL, status: "unreadable", reason: "unreachable"})
+  })
+
+  test("not a miniapp: nothing there, an invalid miniapp.json, a package its domain doesn't own, or a URL that can't be one, unread", async () => {
+    served.set(NOTES_URL, () => ({kind: "refused", status: 404}))
+    serve("https://broken.example.com/", manifest({packageName: "com.example.broken", version: "one"}))
+    serve("https://other.example.com/", manifest({packageName: "com.acme.notes"}))
+    for (const url of [NOTES_URL, "https://broken.example.com/", "https://other.example.com/"]) {
+      expect(await versions(url)).toEqual({url, status: "unreadable", reason: "not_a_miniapp"})
+    }
+    fetches = []
+    for (const url of ["http://notes.example.com/", "https://192.168.1.10/", "https://8.8.8.8/", "not a url", `${NOTES_URL}?v=2`]) {
+      expect(await versions(url)).toEqual({url, status: "unreadable", reason: "not_a_miniapp"})
+    }
+    expect(fetches).toEqual([])
+  })
+
+  test("an archived URL is not read", async () => {
+    serve(NOTES_URL, listedManifest())
+    await check([NOTES_URL])
+    await archive(rule("package", NOTES), by)
+    fetches = []
+    expect(await versions(NOTES_URL)).toEqual({url: NOTES_URL, status: "unreadable", reason: "archived"})
+    await archive(rule("domain", "acme.com"), by)
+    expect(await versions(ACME_URL)).toEqual({url: ACME_URL, status: "unreadable", reason: "archived"})
+    expect(fetches).toEqual([])
+  })
+
+  test("one of the deployment's default miniapps says so", async () => {
+    const url = "https://miniapps.mentraglass.com/com.mentra.notes/"
+    serve(url, listedManifest({packageName: "com.mentra.notes"}))
+    expect(await versions(url)).toMatchObject({status: "read", packageName: "com.mentra.notes", deploymentDefault: true})
+    // Mentra's domain alone doesn't make a miniapp a default one.
+    const other = "https://miniapps.mentraglass.com/com.mentra.fleettest/"
+    serve(other, listedManifest({packageName: "com.mentra.fleettest"}))
+    expect(await versions(other)).toMatchObject({status: "read", deploymentDefault: false})
+  })
+
+  test("each read counts against the admin's hourly registrations: past them it is 429 with Retry-After, unread", async () => {
+    setSystemTime(new Date("2026-10-24T12:30:00.000Z"))
+    serve(NOTES_URL, listedManifest())
+    await versions(NOTES_URL)
+    const windowStart = Date.parse("2026-10-24T12:00:00.000Z")
+    expect((await AuthRateLimitModel.findById(`miniapp-registry:${ADMIN}:${windowStart}`).lean())?.count).toBe(1)
+    await AuthRateLimitModel.updateOne({_id: `miniapp-registry:${ADMIN}:${windowStart}`}, {$set: {count: 120}})
+    fetches = []
+
+    const path = "/api/internal/registry/versions"
+    const text = JSON.stringify({url: NOTES_URL, workspaceId: "ws_acme", mentraUserId: ADMIN})
+    const timestampMs = Date.now()
+    const response = await app.request(`${BASE}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [SERVICE_HEADERS.service]: "fleet",
+        [SERVICE_HEADERS.timestamp]: String(timestampMs),
+        [SERVICE_HEADERS.signature]: signServiceRequest({secret: "fleet-f1", method: "POST", pathWithQuery: path, body: text, timestampMs}),
+      },
+      body: text,
+    })
+    expect(response.status).toBe(429)
+    expect(((await response.json()) as {error: string}).error).toBe("rate_limited")
+    expect(response.headers.get("retry-after")).toBe("1800")
+    expect(fetches).toEqual([])
+    // Another admin's reads are their own.
+    expect((await versions(NOTES_URL, {workspaceId: "ws_globex", mentraUserId: OTHER_ADMIN})).status).toBe("read")
+  })
+
+  test("a read that isn't done within the deadline is answered unreachable, and finishes on its own", async () => {
+    served.set(
+      NOTES_URL,
+      () =>
+        new Promise<MiniappFetchResult>((resolve) => {
+          held.push(() => resolve(ok(listedManifest(), `${NOTES_URL}miniapp.json`)))
+        }),
+    )
+    const started = Date.now()
+    const answer = await readMiniappVersions({url: NOTES_URL, workspaceId: "ws_acme", mentraUserId: ADMIN}, {deadlineMs: 200})
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(answer).toMatchObject({url: NOTES_URL, status: "unreadable", reason: "unreachable"})
+    for (const release of held.splice(0)) release()
+    await registryChecksIdle()
+  })
+
+  test("the workspace must be active and the person a live account", async () => {
+    serve(NOTES_URL, listedManifest())
+    for (const [workspaceId, mentraUserId] of [
+      ["ws_nowhere", ADMIN],
+      ["ws_acme", "mu_stranger"],
+    ] as const) {
+      const answer = await signed("POST", "/versions", {url: NOTES_URL, workspaceId, mentraUserId})
+      expect({status: answer.status, error: answer.json?.error}).toEqual({status: 403, error: "not_a_member"})
+    }
+    expect(fetches).toEqual([])
+  })
+
+  test("refuses a body that isn't what the route takes", async () => {
+    const valid = {url: NOTES_URL, workspaceId: "ws_acme", mentraUserId: ADMIN}
+    for (const body of [
+      {...valid, url: ""},
+      {...valid, url: 7},
+      {...valid, url: `https://notes.example.com/${"a".repeat(2100)}`},
+      {workspaceId: "ws_acme", mentraUserId: ADMIN},
+      {url: NOTES_URL, mentraUserId: ADMIN},
+      {...valid, mentraUserId: ""},
+    ]) {
+      const answer = await signed("POST", "/versions", body)
+      expect({status: answer.status, error: answer.json?.error}).toEqual({status: 400, error: "invalid_request"})
+    }
+    expect(fetches).toEqual([])
+  })
+})
+
 // --- Lookup ------------------------------------------------------------------
 
 describe("lookup", () => {
@@ -904,6 +1128,12 @@ describe("who may call", () => {
       owner: "fleet",
     },
     {method: "POST" as const, path: "/lookup", body: {workspaceId: "ws_acme", packageNames: [NOTES]}, owner: "fleet"},
+    {
+      method: "POST" as const,
+      path: "/versions",
+      body: {url: NOTES_URL, workspaceId: "ws_acme", mentraUserId: ADMIN},
+      owner: "fleet",
+    },
     {method: "GET" as const, path: `/entries?url=${encodeURIComponent(NOTES_URL)}`, body: undefined, owner: "store"},
     {
       method: "POST" as const,
@@ -971,6 +1201,24 @@ describe("the workspace contract's client", () => {
     expect(await fleet.lookupRegistry({workspaceId: "ws_acme", packageNames: [NOTES, "com.example.none"]})).toEqual({
       [NOTES]: {name: "Notes", iconUrl: `${NOTES_URL}icon.png`, private: false, archived: false},
       "com.example.none": null,
+    })
+    expect(await fleet.readRegistryVersions({url: NOTES_URL, workspaceId: "ws_acme", mentraUserId: ADMIN})).toMatchObject({
+      url: NOTES_URL,
+      status: "read",
+      packageName: NOTES,
+      latest: {version: "1.0.0", url: `${NOTES}-1.0.0.zip`, sha256: SHA.toLowerCase()},
+      versions: null,
+    })
+    expect(await fleet.readRegistryVersions({url: INTRANET_URL, workspaceId: "ws_acme", mentraUserId: ADMIN})).toMatchObject({
+      status: "unreadable",
+      reason: "unreachable",
+    })
+    await expect(fleet.readRegistryVersions({url: NOTES_URL, workspaceId: "ws_nowhere", mentraUserId: ADMIN})).rejects.toMatchObject({
+      code: "forbidden",
+      status: 403,
+    })
+    await expect(store.readRegistryVersions({url: NOTES_URL, workspaceId: "ws_acme", mentraUserId: ADMIN})).rejects.toMatchObject({
+      code: "forbidden",
     })
     expect((await store.getRegistryEntry(NOTES_URL))?.manifest?.name).toBe("Notes")
     expect(await store.getRegistryEntry("https://none.example.com/")).toBeNull()

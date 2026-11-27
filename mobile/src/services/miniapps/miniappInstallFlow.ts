@@ -201,7 +201,7 @@ export async function startMiniappInstall(
     if (opening) {
       // The miniapp opens in place of its splash, which closes over it. Not opened (its permissions declined, the
       // launch refused): the splash closes on where the person was; a miniapp just installed is on Home.
-      const opened = await openInstalledMiniapp(result.packageName, "none", () => stoppedByPerson(options))
+      const opened = await openInstalledMiniapp(result.packageName, "none", opening)
       opening.end()
       if (result.status === "opened") return opened ? "opened" : "cancelled"
       return "installed"
@@ -310,32 +310,53 @@ function showHome(): void {
 }
 
 /**
- * Open an installed miniapp as a tap on its Home tile does: required permissions first. Resolves whether it opened;
- * it goes Home only once the miniapp is starting. `animation` "none": it appears in place, under the splash it
- * opens from. `isStopped`: the person closed that splash, so nothing starts, and a miniapp that started meanwhile is
- * stopped again without coming to the front.
+ * Open an installed miniapp as a tap on its Home tile does: required permissions first. Resolves whether it opened.
+ * Its screen comes to the front as soon as the start is accepted, and only then does the app go Home: the miniapp's
+ * splash is up while the start waits for its update check, and a refused start leaves the person where they were.
+ * `animation` "none": it appears in place, under the splash it opens from. `opening` is that splash, a link's: it
+ * closes once the miniapp's own is under it. Once the person closed it nothing comes to the front, and a miniapp
+ * that started meanwhile is stopped again.
  */
 async function openInstalledMiniapp(
   packageName: string,
   animation?: MiniappOpeningAnimation,
-  isStopped: () => boolean = () => false,
+  opening?: MiniappLinkOpen,
 ): Promise<boolean> {
+  const isStopped = () => opening?.cancelled === true
   const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
   if (!app || blockUpdatingMiniapp(packageName)) return false
   if ((await askPermissionsUI(app)) !== 1) return false
   if (isStopped()) return false
+  let presented = false
+  const present = async () => {
+    if (presented || isStopped()) return
+    presented = true
+    useNavigationStore.getState().clearHistoryAndGoHome()
+    if (animation) setMiniappOpeningAnimation(packageName, animation)
+    await engine.miniapps.setForeground(packageName)
+    opening?.end()
+  }
+  // Its screen came up and the start then failed, or was cancelled from that screen: it closes again.
+  const dismiss = () => {
+    const inFront = engine.miniapps
+      .list()
+      .some((candidate) => candidate.packageName === packageName && candidate.foregrounded)
+    if (presented && inFront) engine.miniapps.clearForeground()
+  }
   try {
-    if (!(await engine.miniapps.start(app, {trigger: "user", skipNavigation: true}))) return false
+    if (!(await engine.miniapps.start(app, {trigger: "user", skipNavigation: true, onAccepted: present}))) {
+      dismiss()
+      return false
+    }
     if (isStopped()) {
       await engine.miniapps.stop(packageName)
       return false
     }
-    useNavigationStore.getState().clearHistoryAndGoHome()
-    if (animation) setMiniappOpeningAnimation(packageName, animation)
-    await engine.miniapps.setForeground(packageName)
+    await present()
     return true
   } catch (error) {
     console.warn(`MiniappInstall: couldn't open ${packageName}`, error)
+    dismiss()
     return false
   }
 }

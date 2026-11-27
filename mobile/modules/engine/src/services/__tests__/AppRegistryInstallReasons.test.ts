@@ -32,7 +32,6 @@ mock.module("react-native-mmkv", () => ({
   }),
 }))
 mock.module("../../runtime/bootstrap", () => ({
-  assertMiniappDevelopmentAllowed: () => {},
   getConfigValues: () => ({}),
   isDevMiniappAllowed: () => devAllowed,
   isInstalledMiniappAllowed: (_packageName: string, _version: unknown, _identity: unknown, context: unknown) => {
@@ -100,8 +99,6 @@ mock.module("../../utils/storage/zip", () => ({printDirectory: mock()}))
 
 const {default: registry, hasAssignmentReason, withReleaseDigest} = await import("../AppRegistry")
 const partitions = await import("../miniappDataPartition")
-const {miniappContextRegistry} = await import("../MiniappRunningRegistry")
-const {runInstallFilesystemTransaction} = await import("../installOperation")
 const packageName = "com.acme.notes"
 const assignment: MiniappAssignment = {
   assignmentId: "asg_1",
@@ -290,203 +287,89 @@ describe("release digests", () => {
   const ABC_SHA256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
   test("a release without a recorded digest records the SHA-256 of the bytes it installed", async () => {
-    expect(await withReleaseDigest({source: "bundled_asset"}, "1.0.0", bytes)).toEqual({
+    expect(await withReleaseDigest({source: "bundled_asset"}, bytes)).toEqual({
       source: "bundled_asset",
       bundleSha256: ABC_SHA256,
     })
-    expect(await withReleaseDigest({source: "direct_download"}, "1.0.0", bytes)).toEqual({
+    expect(await withReleaseDigest({source: "direct_download"}, bytes)).toEqual({
       source: "direct_download",
       bundleSha256: ABC_SHA256,
     })
+    // A development build too, such as an older CLI's release QR, whose server names no hash.
+    expect(await withReleaseDigest({source: "local"}, bytes)).toEqual({source: "local", bundleSha256: ABC_SHA256})
   })
 
-  test("a caller's verified digest is kept, and a development snapshot records none", async () => {
+  test("a caller's verified digest is kept", async () => {
     const verified = {source: "direct_download" as const, bundleSha256: "f".repeat(64)}
-    expect(await withReleaseDigest(verified, "1.0.0", bytes)).toEqual(verified)
-    expect(await withReleaseDigest({source: "dev_snapshot"}, "dev-1000", bytes)).toEqual({source: "dev_snapshot"})
+    expect(await withReleaseDigest(verified, bytes)).toEqual(verified)
+    const local = {source: "local" as const, sourceUrl: "http://192.168.1.20:3000/", bundleSha256: "e".repeat(64)}
+    expect(await withReleaseDigest(local, bytes)).toEqual(local)
   })
 })
 
-describe("live-development selection", () => {
-  test("a live-development URL is a selection until it is cleared; the installed release then runs", async () => {
+describe("a development build", () => {
+  const packageDir = `file:///test-documents/lmas/${packageName}`
+  const local: MiniappReleaseIdentity = {source: "local", sourceUrl: "http://192.168.1.20:3000/"}
+
+  test("is installed while a development build of the package is on disk, whichever runs", async () => {
     installed = ["1.0.0"]
-    expect(registry.hasDevelopmentSelection(packageName)).toBe(false)
-    values.set(`${packageName}_dev_url`, "http://192.168.1.20:3000")
-    values.set(`${packageName}_dev_port`, 3001)
-    values.set(`${packageName}_active_version`, "dev-1000")
-    expect(registry.hasDevelopmentSelection(packageName)).toBe(true)
-
-    await registry.clearDevelopmentSelection(packageName)
-    expect(registry.hasDevelopmentSelection(packageName)).toBe(false)
-    expect(values.has(`${packageName}_dev_port`)).toBe(false)
-    expect(values.has(`${packageName}_active_version`)).toBe(false)
-    expect(registry.getActiveReleaseVersion(packageName)).toBe("1.0.0")
-  })
-
-  test("a clear whose session ends while it waits for the install queue clears nothing", async () => {
-    installed = ["1.0.0"]
-    values.set(`${packageName}_dev_url`, "http://192.168.1.20:3000")
-    values.set(`${packageName}_active_version`, "dev-1000")
-    // Another install holds the queue.
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => (release = resolve))
-    const held = runInstallFilesystemTransaction(() => gate)
-    let sessionEnded = false
-    const clearing = registry.clearDevelopmentSelection(packageName, {
-      assertCurrent: () => {
-        if (sessionEnded) throw new Error("the restore's session ended")
-      },
-    })
-    sessionEnded = true
-    release()
-    await held
-    await expect(clearing).rejects.toThrow("the restore's session ended")
-    expect(values.get(`${packageName}_dev_url`)).toBe("http://192.168.1.20:3000")
-    expect(values.get(`${packageName}_active_version`)).toBe("dev-1000")
-  })
-})
-
-describe("live-development selection across workspaces", () => {
-  test("clears only the current workspace's snapshots, and nothing while a live context holds an earlier one", async () => {
-    const session = {coreUrl: "https://core.mentra.glass", mentraUserId: "mu_1"}
-    partitions.configureMiniappDataPartitions({getSession: () => session, assignedWorkspace: () => null})
-    try {
-      partitions.setFleetWorkspace(session, "ws_A")
-      partitions.recordDevSnapshotOwner(packageName, "dev-100")
-      values.set(`${packageName}_dev_url`, "http://192.168.1.5:5173")
-      miniappContextRegistry.add(packageName)
-      partitions.setFleetWorkspace(session, "ws_B")
-      // The live context runs A's selection: B may not clear it.
-      expect(registry.hasDevelopmentSelection(packageName)).toBe(true)
-      expect(await registry.clearDevelopmentSelection(packageName)).toBe(false)
-      expect(values.get(`${packageName}_dev_url`)).toBe("http://192.168.1.5:5173")
-
-      miniappContextRegistry.remove(packageName)
-      expect(values.has(`${packageName}_dev_url`)).toBe(false)
-      partitions.recordDevSnapshotOwner(packageName, "dev-200")
-      fakeDirs.set(`file:///test-documents/lmas/${packageName}`, ["1.0.0", "dev-100", "dev-200"])
-      expect(await registry.clearDevelopmentSelection(packageName)).toBe(true)
-      expect(deletedDirs).toEqual([`file:///test-documents/lmas/${packageName}/dev-200`])
-
-      partitions.setFleetWorkspace(session, "ws_A")
-      expect(values.get(`${packageName}_dev_url`)).toBe("http://192.168.1.5:5173")
-    } finally {
-      miniappContextRegistry.remove(packageName)
-      partitions.configureMiniappDataPartitions({getSession: () => null, assignedWorkspace: () => null})
-    }
-  })
-})
-
-describe("release install across workspaces", () => {
-  test("a new release in B removes B's development snapshots and leaves A's for A", () => {
-    const session = {coreUrl: "https://core.mentra.glass", mentraUserId: "mu_1"}
-    partitions.configureMiniappDataPartitions({getSession: () => session, assignedWorkspace: () => null})
-    try {
-      partitions.setFleetWorkspace(session, "ws_A")
-      partitions.recordDevSnapshotOwner(packageName, "dev-100")
-      values.set(`${packageName}_dev_selected_snapshot`, "dev-100")
-      partitions.setFleetWorkspace(session, "ws_B")
-      partitions.recordDevSnapshotOwner(packageName, "dev-200")
-      fakeDirs.set(`file:///test-documents/lmas/${packageName}`, ["1.0.0", "dev-100", "dev-200"])
-
-      const install = finalize("2.0.0", {source: "direct_download"}, "assignment")
-      install.apply()
-      install.afterCommit?.()
-      expect(deletedDirs).toEqual([`file:///test-documents/lmas/${packageName}/dev-200`])
-
-      partitions.setFleetWorkspace(session, "ws_A")
-      expect(values.get(`${packageName}_dev_selected_snapshot`)).toBe("dev-100")
-      expect(partitions.isDevSnapshotVisible(packageName, "dev-100")).toBe(true)
-    } finally {
-      partitions.configureMiniappDataPartitions({getSession: () => null, assignedWorkspace: () => null})
-    }
-  })
-})
-
-describe("release install while a live context holds another workspace's selection", () => {
-  const session = {coreUrl: "https://core.mentra.glass", mentraUserId: "mu_1"}
-
-  /** B selected a dev URL and dev-200; A selected its own and dev-100, and A's context is still live in B. */
-  function holdAsSelectionInB(): void {
-    partitions.configureMiniappDataPartitions({getSession: () => session, assignedWorkspace: () => null})
-    partitions.setFleetWorkspace(session, "ws_B")
-    values.set(`${packageName}_dev_url`, "B's")
-    partitions.recordDevSnapshotOwner(packageName, "dev-200")
-    partitions.setFleetWorkspace(session, "ws_A")
-    values.set(`${packageName}_dev_url`, "A's")
-    partitions.recordDevSnapshotOwner(packageName, "dev-100")
-    miniappContextRegistry.add(packageName)
-    partitions.setFleetWorkspace(session, "ws_B")
-    expect(values.get(`${packageName}_dev_url`)).toBe("A's")
-    fakeDirs.set(`file:///test-documents/lmas/${packageName}`, ["1.0.0", "dev-100", "dev-200"])
-  }
-
-  function release(): void {
-    miniappContextRegistry.remove(packageName)
-    partitions.configureMiniappDataPartitions({getSession: () => null, assignedWorkspace: () => null})
-  }
-
-  test("an install interrupted after its commit, before its cleanup, never brings B's selection back", () => {
-    try {
-      holdAsSelectionInB()
-      finalize("2.0.0", {source: "direct_download"}, "assignment").apply()
-      miniappContextRegistry.remove(packageName)
-      expect(values.has(`${packageName}_dev_url`)).toBe(false)
-    } finally {
-      release()
-    }
-  })
-
-  test("an install rolled back before its commit keeps B's selection for B", () => {
-    try {
-      holdAsSelectionInB()
-      const install = finalize("2.0.0", {source: "direct_download"}, "assignment")
-      install.apply()
-      install.rollback()
-      expect(values.get(`${packageName}_dev_url`)).toBe("A's")
-      miniappContextRegistry.remove(packageName)
-      expect(values.get(`${packageName}_dev_url`)).toBe("B's")
-    } finally {
-      release()
-    }
-  })
-
-  test("replaces B's selection and snapshots, and leaves the held selection of A alone", () => {
-    try {
-      holdAsSelectionInB()
-
-      const install = finalize("2.0.0", {source: "direct_download"}, "assignment")
-      install.apply()
-      install.afterCommit?.()
-      // The live context keeps running A's selection; only B's snapshot goes.
-      expect(values.get(`${packageName}_dev_url`)).toBe("A's")
-      expect(deletedDirs).toEqual([`file:///test-documents/lmas/${packageName}/dev-200`])
-
-      // Once it stops, B runs the release: its selection was replaced by the install. A's is kept for A.
-      miniappContextRegistry.remove(packageName)
-      expect(values.has(`${packageName}_dev_url`)).toBe(false)
-      partitions.setFleetWorkspace(session, "ws_A")
-      expect(values.get(`${packageName}_dev_url`)).toBe("A's")
-    } finally {
-      release()
-    }
-  })
-})
-
-describe("development snapshot selection", () => {
-  test("is a selection only while launching would run the snapshot instead of the release", async () => {
+    expect(registry.isDevelopmentBuild(packageName)).toBe(false)
     installed = ["1.0.0", "dev-1000"]
-    values.set(`${packageName}_active_version`, "1.0.0")
-    expect(registry.hasDevelopmentSelection(packageName)).toBe(false)
     values.set(`${packageName}_active_version`, "dev-1000")
-    expect(registry.hasDevelopmentSelection(packageName)).toBe(true)
-    devAllowed = false
-    expect(registry.hasDevelopmentSelection(packageName)).toBe(false)
-    devAllowed = true
-    values.delete(`${packageName}_active_version`)
-    expect(registry.hasDevelopmentSelection(packageName)).toBe(true)
-    expect(values.has(`${packageName}_active_version`)).toBe(false)
+    expect(registry.isDevelopmentBuild(packageName)).toBe(true)
     expect(await registry.getActiveVersion(packageName)).toBe("dev-1000")
+    // Where the deployment doesn't allow development, the release runs; the development build still holds the package.
+    devAllowed = false
+    expect(await registry.getActiveVersion(packageName)).toBe("1.0.0")
+    expect(registry.isDevelopmentBuild(packageName)).toBe(true)
+    devAllowed = true
+    // Without an active pointer, the development build runs.
+    values.delete(`${packageName}_active_version`)
+    expect(await registry.getActiveVersion(packageName)).toBe("dev-1000")
+  })
+
+  test("is what the Fleet reconciler asks about, and asking changes nothing", () => {
+    installed = ["1.0.0", "dev-1000"]
+    values.set(`${packageName}_active_version`, "dev-1000")
+    expect(registry.isDevelopmentBuild(packageName)).toBe(true)
+    expect(values.get(`${packageName}_active_version`)).toBe("dev-1000")
+    expect(deletedDirs).toEqual([])
+    installed = ["1.0.0"]
+    expect(registry.isDevelopmentBuild(packageName)).toBe(false)
+  })
+
+  test("is never replaced by a Fleet assignment, a deployment manifest or an automatic update, even at commit", () => {
+    installed = ["1.0.0", "dev-1000"]
+    values.set(`${packageName}_active_version`, "dev-1000")
+    for (const reason of ["assignment", undefined] as const) {
+      const install = finalize("2.0.0", {source: "direct_download"}, reason)
+      expect(() => install.apply()).toThrow("runs a development build, which only the person replaces")
+      install.rollback()
+      expect(values.get(`${packageName}_active_version`)).toBe("dev-1000")
+    }
+    expect(deletedDirs).toEqual([])
+  })
+
+  test("is replaced by the person's own release install, which removes it once it commits", async () => {
+    installed = ["1.0.0", "dev-1000"]
+    fakeDirs.set(packageDir, ["1.0.0", "dev-1000"])
+    values.set(`${packageName}_active_version`, "dev-1000")
+    const install = finalize("2.0.0", {source: "url", sourceUrl: "https://notes.acme.example/"}, "explicit")
+    install.apply()
+    expect(values.get(`${packageName}_active_version`)).toBe("2.0.0")
+    install.afterCommit?.()
+    expect(deletedDirs).toEqual([`${packageDir}/dev-1000`])
+  })
+
+  test("installs beside the package's release and its other development builds", () => {
+    installed = ["1.0.0", "dev-1000"]
+    fakeDirs.set(packageDir, ["1.0.0", "dev-1000"])
+    const install = finalize("dev-2000", local)
+    install.apply()
+    install.afterCommit?.()
+    expect(values.get(`${packageName}_active_version`)).toBe("dev-2000")
+    expect(registry.getReleaseIdentity(packageName, "dev-2000")).toEqual(local)
+    expect(deletedDirs).toEqual([])
   })
 })
 

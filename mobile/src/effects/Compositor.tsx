@@ -82,6 +82,12 @@ export default function Compositor() {
   const replacementGenerations = useMiniappPresentationStore((state) => state.replacementGenerations)
   const replacementGeneration = foregroundApp ? replacementGenerations[foregroundApp.packageName] ?? 0 : 0
   const renderedGeneration = useRef(0)
+  // A miniapp that comes to the front again mounts a new surface, also when the one it left is still sliding out.
+  // A miniapp restarted by its update can come back within that slide, and the surface it left shows the files it
+  // loaded before the update: with an unchanged version they are replaced in the same folder, so nothing else
+  // would reload them.
+  const leftForeground = useRef(false)
+  const [openings, setOpenings] = useState(0)
   // Last foregrounded packageName (null = none) — lets the keyboard-dismiss
   // effect below fire only on real identity changes, not reference churn.
   const prevForegroundPackageRef = useRef<string | null>(null)
@@ -117,15 +123,29 @@ export default function Compositor() {
     // dismissing on those would drop the keyboard mid-typing (e.g. an RN
     // TextInput on a settings screen) with no actual app switch.
     const currentPackage = foregroundApp?.packageName ?? null
-    if (currentPackage !== prevForegroundPackageRef.current) {
+    const previousPackage = prevForegroundPackageRef.current
+    if (currentPackage !== previousPackage) {
       prevForegroundPackageRef.current = currentPackage
       Keyboard.dismiss()
+      // The person left a miniapp that hadn't started yet: its start still waited for its update check, behind the
+      // splash. Leaving the splash cancels the open, so the miniapp doesn't start later behind their back. The
+      // check, and any update it found, carry on.
+      if (previousPackage && engine.miniapps.startWait(previousPackage)) {
+        void engine.miniapps
+          .stop(previousPackage)
+          .catch((error) => console.warn(`Compositor: failed to cancel the start of ${previousPackage}`, error))
+      }
     }
     if (foregroundApp) {
+      const reopened = leftForeground.current
+      leftForeground.current = false
+      if (reopened) setOpenings((count) => count + 1)
       // Mount before starting the slide, and keep the same reference across store refreshes.
-      const replaced = renderedGeneration.current !== replacementGeneration
+      const replaced = reopened || renderedGeneration.current !== replacementGeneration
       renderedGeneration.current = replacementGeneration
       setRenderedApp((prev) => (prev?.packageName === foregroundApp.packageName && !replaced ? prev : foregroundApp))
+    } else {
+      leftForeground.current = true
     }
     if (Platform.OS === "ios" && iosAppSwitcherBottomSwipe) {
       if (foregroundApp) {
@@ -334,9 +354,8 @@ export default function Compositor() {
   // Bottom swipe-up → app switcher (iOS home-indicator style). Commits by
   // backgrounding the miniapp and leaving the AppSwitcher open on /home.
   const commitToSwitcher = useCallback(() => {
-    const {getCurrentRoute, clearHistoryAndGoHome} = useNavigationStore.getState()
-    // The switcher lives on the home route — make sure it's underneath us.
-    if (getCurrentRoute() !== "/home") clearHistoryAndGoHome()
+    // The switcher lives on the home route — make sure it's underneath us. Home already there stays as it is.
+    useNavigationStore.getState().clearHistoryAndGoHome()
     // Not handleBack(): the overlay is already shrunk/faded, so capturing here
     // would overwrite the fresh screenshot taken at gesture begin.
     engine.miniapps.clearForeground()
@@ -545,7 +564,7 @@ export default function Compositor() {
             // switching between two offline-hosted apps must mount a fresh host
             // (the internal stack only seeds from def.initialRoute on mount, so
             // a reused instance would keep the previous app's stack).
-            key={`${renderedApp.packageName}:${replacementGenerations[renderedApp.packageName] ?? 0}`}
+            key={`${renderedApp.packageName}:${replacementGenerations[renderedApp.packageName] ?? 0}:${openings}`}
             packageName={renderedApp.packageName}
             appName={renderedApp.name}
             iconUrl={renderedApp.logoUrl}
@@ -564,13 +583,12 @@ export default function Compositor() {
             // `webViewCanGoBack` became true under B — which disabled the
             // Compositor's minimize-swipe and made the back-swipe pop to A's
             // page instead of returning home.
-            key={`${renderedApp.packageName}:${replacementGenerations[renderedApp.packageName] ?? 0}`}
+            key={`${renderedApp.packageName}:${replacementGenerations[renderedApp.packageName] ?? 0}:${openings}`}
             openingComplete={capsuleVisible}
             packageName={renderedApp.packageName}
             appName={renderedApp.name}
             version={renderedApp.version}
-            devUrl={renderedApp.devUrl}
-            devPort={renderedApp.devPort != null ? String(renderedApp.devPort) : undefined}
+            devBuild={renderedApp.isMiniappDev === true}
             iconUrl={renderedApp.logoUrl}
             onExit={handleBack}
             onClose={handleClose}

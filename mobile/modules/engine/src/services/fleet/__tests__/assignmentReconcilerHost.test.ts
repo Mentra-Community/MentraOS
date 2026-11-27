@@ -7,13 +7,15 @@ import type {AssignmentReconcilerDeps, ManagedAssignment, ManagedMiniappPort} fr
 
 let versions: string[] = []
 let activeVersion: string | null = null
-const identities = new Map<string, {bundleSha256?: string}>()
+const identities = new Map<string, {source?: string; sourceUrl?: string; bundleSha256?: string}>()
+let config: {systemMiniappPackages?: string[]; firstPartyMiniappsUrl?: string} = {}
 let port: ManagedMiniappPort | null = null
 const checked: unknown[] = []
 const installs: Array<{url: string; options: InstallMiniappOptions}> = []
 let installAnswer: () => Promise<InstallMiniappResult>
 
 mock.module("../../../runtime/bootstrap", () => ({
+  getConfigValues: () => config,
   isInstalledMiniappAllowed: (_pkg: string, _version: string, identity: {source: string}, context: unknown) => {
     checked.push({identity, context})
     return identity.source !== "url"
@@ -95,6 +97,7 @@ beforeEach(() => {
   versions = []
   activeVersion = null
   identities.clear()
+  config = {}
   checked.length = 0
   installs.length = 0
   installAnswer = async () => ({status: "installed", packageName: pkg, version: "1.2.0"})
@@ -125,6 +128,37 @@ describe("the Fleet host's miniapp port", () => {
       {identity: {source: "deployment_manifest", bundleSha256: sha}, context: {assigned: true}},
       {identity: fromUrl("d".repeat(64)), context: {assigned: true}},
     ])
+  })
+
+  test("an installed system miniapp follows its deployment's host, not another URL that assigned it", () => {
+    const captions = "com.mentra.captions"
+    const host = "https://miniapps.mentraglass.com/"
+    const elsewhere = "https://miniapps.dev.mentraglass.com/com.mentra.captions/"
+    config = {systemMiniappPackages: [captions], firstPartyMiniappsUrl: host}
+    // Not installed: there is nothing the host keeps current yet.
+    expect(port!.updatesFromAnotherUrl(captions, elsewhere)).toBe(false)
+    activeVersion = "1.0.0"
+    identities.set("1.0.0", {source: "url", sourceUrl: elsewhere})
+    expect(port!.updatesFromAnotherUrl(captions, elsewhere)).toBe(true)
+    // Assigned from the host it follows, however the URL is spelled: both read the same miniapp.json.
+    expect(port!.updatesFromAnotherUrl(captions, `${host}${captions}/`)).toBe(false)
+    expect(port!.updatesFromAnotherUrl(captions, `https://MINIAPPS.mentraglass.com/${captions}`)).toBe(false)
+    // A build nothing updates (a release QR's), and a deployment that names no host: the assignment's URL decides.
+    identities.set("1.0.0", {source: "direct_download"})
+    expect(port!.updatesFromAnotherUrl(captions, elsewhere)).toBe(false)
+    identities.set("1.0.0", {source: "url", sourceUrl: elsewhere})
+    config = {systemMiniappPackages: [captions]}
+    expect(port!.updatesFromAnotherUrl(captions, elsewhere)).toBe(false)
+  })
+
+  test("any other miniapp updates from the URL it was installed from, which its assignment's install makes its own", () => {
+    config = {
+      systemMiniappPackages: ["com.mentra.captions"],
+      firstPartyMiniappsUrl: "https://miniapps.mentraglass.com/",
+    }
+    activeVersion = "1.0.0"
+    identities.set("1.0.0", {source: "url", sourceUrl: "https://notes.acme.com/v1/"})
+    expect(port!.updatesFromAnotherUrl(pkg, "https://notes.acme.com/v2/")).toBe(false)
   })
 
   const resolution = {
@@ -160,13 +194,15 @@ describe("the Fleet host's miniapp port", () => {
     expect("confirm" in installs[0]!.options).toBe(false)
   })
 
-  test("an install that waits for a running miniapp, or keeps a newer release, commits nothing", async () => {
+  test("an install that waits for a running miniapp commits nothing", async () => {
     installAnswer = async () => ({status: "deferred", packageName: pkg, version: "1.0.0"})
     const deferred = await port!.install({resolution, assignment, isCancelled: () => false}).catch((error) => error)
     expect(port!.classify(deferred)).toEqual({kind: "running", retryable: true})
-    installAnswer = async () => ({status: "opened", packageName: pkg, version: "2.0.0"})
-    const opened = await port!.install({resolution, assignment, isCancelled: () => false}).catch((error) => error)
-    expect(port!.classify(opened)).toEqual({kind: "newer_version_installed", retryable: false})
+  })
+
+  test("an install of a lower version than the phone had is an install like any other", async () => {
+    installAnswer = async () => ({status: "installed", packageName: pkg, version: "0.9.0"})
+    expect(await port!.install({resolution, assignment, isCancelled: () => false})).toEqual({version: "0.9.0"})
   })
 
   test.each([
@@ -177,6 +213,8 @@ describe("the Fleet host's miniapp port", () => {
     ["age_restricted", "access_denied", false],
     ["needs_newer_app", "incompatible_host", false],
     ["signature_invalid", "signature_invalid", false],
+    ["pin_unlisted", "pin_unlisted", false],
+    ["pin_hash_changed", "pin_hash_changed", false],
     ["integrity", "download_failed", true],
     ["network", "download_failed", true],
     ["cancelled", "cancelled", true],

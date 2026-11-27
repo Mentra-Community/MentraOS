@@ -11,11 +11,14 @@
  * 5. Check the phone can run it: `minHostVersion` and `minApiLevel`. `hardwareRequirements` describe the glasses, which
  *    may not be paired yet, so they never refuse an install: the sheet says what the paired glasses lack.
  * 6. Download the ZIP (answering its server's challenge), check its SHA-256, and install it through the shared
- *    installer, which checks the ZIP's own package name and version and applies the signing and version rules.
+ *    installer, which checks the ZIP's own package name and version and applies the signing rule. What the URL
+ *    serves replaces what is installed, whatever the two versions are.
  *
- * A local-network address (spec, "Local-network miniapps") has no domain to own a package name, so it installs as a
- * development build of the name it serves, over HTTP or HTTPS: never registered, never updated from its URL, with
- * its own data, tokens marked as a local build's, and no system privileges ({@link installLocalBuild}).
+ * A local address (spec, "Miniapps served from a developer's computer") has no domain to own a package name, so it
+ * installs as a development build of the name it serves, over HTTP or HTTPS: never registered, updated from that
+ * address only, with its own data, tokens marked as a local build's, and no system privileges
+ * ({@link installLocalBuild}). Only the person replaces a development build: a system miniapp or a Fleet assignment
+ * never installs over one.
  */
 import type {FleetInstallFailureReason, RegistryRegisterRequest, RegistryRegisterResponse} from "@mentra/cloud-protocol"
 import {
@@ -41,14 +44,12 @@ import {
   missingRequiredHardware,
   type MiniappVersionPolicy,
 } from "./miniappInstallCompatibility"
-import {
-  installLocalBuild,
-  restoreInstalledRelease,
-  type LocalBuildInstall,
-  type LocalBuildServer,
-} from "./localBuildInstall"
+import {installLocalBuild, type LocalBuildInstall} from "./localBuildInstall"
+import {selectInstallTarget} from "./miniappInstallTarget"
+import {miniappPins, type MiniappPinReader} from "./miniappPins"
 import {installMiniappRelease, MiniappInstallCancelledError, type ReleaseInstallOptions} from "./miniappReleaseInstall"
-import {miniappUpdateUrl} from "./miniappUrlUpdates"
+import {DevelopmentBuildInstalledError} from "./miniappInstallIdentity"
+import {developmentReloadUrl, miniappUpdateUrl, servedReload} from "./miniappUrlUpdates"
 import {isSystemMiniappPackage} from "./SystemMiniappPolicy"
 import {firstPartyMiniappUrl} from "./systemMiniappTrust"
 
@@ -106,8 +107,8 @@ export interface InstallMiniappOptions {
 export interface InstallMiniappResult {
   /**
    * `installed`: this release installed. `opened`: nothing installed, because the package is installed from this URL
-   * already, or a newer release of it is; the caller opens it, if it opens anything. `deferred`: a headless update of
-   * a running miniapp waits for it to stop, or for the person's answer to the update prompt.
+   * already; the caller opens it, if it opens anything. `deferred`: a headless update of a running miniapp waits for
+   * it to stop, or for the person's answer to the update prompt.
    */
   status: "installed" | "opened" | "deferred"
   packageName: string
@@ -132,6 +133,9 @@ export type InstallMiniappErrorCode =
   | "cancelled"
   | "integrity"
   | "signature_invalid"
+  | "pin_unlisted"
+  | "pin_hash_changed"
+  | "development_build"
 
 export class InstallMiniappError extends Error {
   readonly code: InstallMiniappErrorCode
@@ -163,14 +167,17 @@ export interface InstallMiniappDependencies {
   register(request: RegistryRegisterRequest): Promise<RegistryRegisterResponse>
   /** The active installed release (not a development build), or null. */
   activeRelease(packageName: string): {version: string; identity: MiniappReleaseIdentity | null} | null
-  /** A development build (a local-network install, a development server or snapshot) runs instead of the release. */
-  hasDevelopmentSelection(packageName: string): boolean
+  /**
+   * The package's development build (the newest `dev-*` on the phone; `AppRegistry.isDevelopmentBuild`), which only
+   * the person replaces, or null.
+   */
+  developmentBuild(packageName: string): {version: string; identity: MiniappReleaseIdentity | null} | null
+  /** The pin that holds the package to one version, or null for latest (`miniappPins`). */
+  pinFor: MiniappPinReader
   /** The deployment allows development builds of the package, local-network builds included. */
   developmentAllowed(packageName: string): boolean
   /** The URL an installed release updates from, or undefined. */
   updateUrl(packageName: string, identity: MiniappReleaseIdentity | null): string | undefined
-  /** Throws when a newer release of the package is installed. */
-  assertCanInstallVersion(packageName: string, version: string): void
   /** The deployment lets this release run once it is installed, for an install that came in this way. */
   allowsRelease(
     packageName: string,
@@ -188,10 +195,8 @@ export interface InstallMiniappDependencies {
   /** The required hardware of these `hardwareRequirements` that the paired glasses (or none) lack. */
   missingHardware(hardwareRequirements: unknown): HardwareType[]
   install(bundleUrl: string, options: ReleaseInstallOptions): Promise<void>
-  /** Install a local-network build of the package ({@link installLocalBuild}). */
+  /** Install a local build of the package ({@link installLocalBuild}). */
   installLocal(bundleUrl: string, install: LocalBuildInstall): Promise<void>
-  /** Run the installed release again in place of a development build of its name ({@link restoreInstalledRelease}). */
-  restoreRelease(packageName: string, isCancelled: () => boolean): Promise<void>
   /** Keep only these releases of the package. */
   keepVersions(packageName: string, versions: string[]): Promise<void>
   /** Changes when the engine session ends; an install started before then never commits. */
@@ -227,16 +232,38 @@ export function createMiniappInstaller(
       )
     }
 
-    // A miniapp installed from this URL opens, unless a development build of its name runs in its place: installing
-    // it again replaces that build. Fleet's reconciler decides for itself what an assignment installs.
+    // The build to install: `bundle`, or the version a pin holds the package to.
+    const selected = selectInstallTarget(packageName, manifest, deps.pinFor)
+
+    // A miniapp installed from this URL opens, unless a development build of its name is installed: the person
+    // installing it again replaces that build. Fleet's reconciler decides for itself what an assignment installs.
     const active = deps.activeRelease(packageName)
-    options.onResolved?.(packageName, active?.version ?? null, manifest.version)
-    if (options.source !== "assignment" && active && !deps.hasDevelopmentSelection(packageName)) {
+    const development = deps.developmentBuild(packageName)
+    options.onResolved?.(packageName, active?.version ?? null, selected.ok ? selected.build.version : manifest.version)
+    // Only the person replaces a development build: a system miniapp's install, or Fleet's, leaves it alone.
+    if (development && (options.source === "assignment" || options.source === "system")) {
+      throw new InstallMiniappError(
+        "development_build",
+        `${packageName} has a development build, which only the person replaces`,
+      )
+    }
+    if (options.source !== "assignment" && active && !development) {
       const installedFrom = deps.updateUrl(packageName, active.identity)
       if (installedFrom && normalizeMiniappUrl(installedFrom)?.url === target.url) {
         return {status: "opened", packageName, version: active.version}
       }
     }
+
+    // A pin that can't be met installs nothing, and what is installed stays.
+    if (!selected.ok) {
+      throw new InstallMiniappError(
+        selected.reason,
+        `${packageName} is pinned to ${selected.pin.version}, which ${target.url} can't serve (${selected.reason})`,
+      )
+    }
+    const {build} = selected
+    const buildUrl = servedFileUrl(build.url, served.url, false)
+    if (!buildUrl) throw new InstallMiniappError("not_a_miniapp", `${target.url} names no bundle it may serve`)
 
     if (!isPackageNameAllowedForUrl(packageName, target.url) || !isPackageNameAllowedForUrl(packageName, served.url)) {
       throw new InstallMiniappError("domain_mismatch", `${target.host} can't serve ${packageName}`)
@@ -260,42 +287,19 @@ export function createMiniappInstaller(
       iconUrl: served.iconUrl,
       ageRating: manifest.ageRating ?? null,
       private: Boolean(served.challenge),
-      alreadyInstalled: active !== null,
+      alreadyInstalled: active !== null || development !== null,
       missingHardware: deps.missingHardware(manifest.hardwareRequirements),
     }
 
-    // A newer release is installed already: it stays, and opens. Where a development build of its name runs in its
-    // place, installing the URL again brings that release back.
-    try {
-      deps.assertCanInstallVersion(packageName, manifest.version)
-    } catch (error) {
-      if (!isNewerInstalled(error)) throw installError(error, packageName)
-      if (options.source !== "assignment" && deps.hasDevelopmentSelection(packageName)) {
-        if (options.confirm) {
-          await askToInstall(deps, options.confirm, preview, assertCurrent)
-          assertCurrent()
-        }
-        try {
-          await deps.restoreRelease(packageName, cancelled)
-        } catch (restoreError) {
-          if (restoreError instanceof MiniappInstallCancelledError || cancelled()) {
-            throw new InstallMiniappError("cancelled", `The install of ${packageName} was cancelled`, {
-              cause: restoreError,
-            })
-          }
-          throw installError(restoreError, packageName)
-        }
-      }
-      return {status: "opened", packageName, version: active?.version ?? manifest.version}
-    }
-
+    // What the URL serves replaces a release installed from elsewhere, and a development build of its name, whatever
+    // version is installed: versions are never compared.
     const identity: InstallableReleaseIdentity = {
       source: "url",
       sourceUrl: target.url,
-      bundleSha256: manifest.bundle.sha256,
+      bundleSha256: build.sha256,
       ...(served.challenge ? {private: true} : {}),
     }
-    if (!deps.allowsRelease(packageName, manifest.version, identity, options.source)) {
+    if (!deps.allowsRelease(packageName, build.version, identity, options.source)) {
       throw new InstallMiniappError(
         "access_denied",
         `This deployment doesn't allow installing ${packageName} from a URL`,
@@ -307,21 +311,22 @@ export function createMiniappInstaller(
       assertCurrent()
     }
 
-    assertCompatible(deps, manifest)
+    // The top-level fields describe the latest build; a pinned build's are only in its ZIP, which the installer checks.
+    if (!selected.pinned) assertCompatible(deps, manifest)
 
     const headless = !options.confirm
     try {
-      await deps.install(served.bundleUrl, {
+      await deps.install(buildUrl, {
         expectedPackageName: packageName,
-        expectedVersion: manifest.version,
-        expectedBundleSha256: manifest.bundle.sha256,
+        expectedVersion: build.version,
+        expectedBundleSha256: build.sha256,
         releaseIdentity: identity,
         // The installer reads the identity after the download, so a ZIP whose server alone asked for sign-in is
         // recorded as private too.
         downloadBundle: (bundleUrl) =>
           deps.fetchBundle(bundleUrl, {
             packageName,
-            sha256: manifest.bundle.sha256,
+            sha256: build.sha256,
             onChallenge: () => {
               identity.private = true
             },
@@ -335,30 +340,27 @@ export function createMiniappInstaller(
       })
     } catch (error) {
       if (error instanceof MiniappRunningError) {
-        return {status: "deferred", packageName, version: active?.version ?? manifest.version}
+        return {status: "deferred", packageName, version: active?.version ?? build.version}
       }
       if (error instanceof MiniappInstallCancelledError || cancelled()) {
         throw new InstallMiniappError("cancelled", `The install of ${packageName} was cancelled`, {cause: error})
-      }
-      // Another install of a newer release committed first.
-      if (isNewerInstalled(error)) {
-        return {status: "opened", packageName, version: deps.activeRelease(packageName)?.version ?? manifest.version}
       }
       throw installError(error, packageName)
     }
 
     await deps
-      .keepVersions(packageName, [manifest.version, ...(active ? [active.version] : [])])
-      .catch((error) => deps.warn(`Could not remove older releases of ${packageName}`, error))
-    return {status: "installed", packageName, version: manifest.version}
+      .keepVersions(packageName, [build.version, ...(active ? [active.version] : [])])
+      .catch((error) => deps.warn(`Could not remove other releases of ${packageName}`, error))
+    return {status: "installed", packageName, version: build.version}
   }
 }
 
 /**
- * A miniapp at a local-network address: a development build of the name it serves. Only the person installs one
- * (never Fleet or a system miniapp), and nothing registers it or checks its name against a domain. It installs beside
- * any release of that name, which it stands in for until that release is installed again or the package is
- * uninstalled; the signing rule still applies.
+ * A miniapp at a local address: a development build of the name it serves. Only the person installs one (never Fleet
+ * or a system miniapp), and nothing registers it or checks its name against a domain. It installs beside any release
+ * of that name, which it stands in for until the person installs that release again or uninstalls the package; the
+ * signing rule still applies. The development build it replaces is installed from this address already, with the
+ * build it serves now: it opens.
  */
 async function installFromLocalNetwork(
   deps: InstallMiniappDependencies,
@@ -377,12 +379,24 @@ async function installFromLocalNetwork(
   assertCurrent()
   const {manifest} = served
   const packageName = manifest.packageName
-  options.onResolved?.(packageName, deps.activeRelease(packageName)?.version ?? null, manifest.version)
+  const development = deps.developmentBuild(packageName)
+  options.onResolved?.(
+    packageName,
+    development?.version ?? deps.activeRelease(packageName)?.version ?? null,
+    manifest.version,
+  )
   if (!deps.developmentAllowed(packageName)) {
     throw new InstallMiniappError(
       "access_denied",
       `This deployment doesn't allow local-network builds of ${packageName}`,
     )
+  }
+  if (
+    development?.identity?.source === "local" &&
+    development.identity.sourceUrl === target.url &&
+    development.identity.bundleSha256 === manifest.bundle.sha256
+  ) {
+    return {status: "opened", packageName, version: development.version}
   }
 
   if (options.confirm) {
@@ -398,7 +412,7 @@ async function installFromLocalNetwork(
         iconUrl: served.iconUrl,
         ageRating: manifest.ageRating ?? null,
         private: false,
-        alreadyInstalled: deps.activeRelease(packageName) !== null || deps.hasDevelopmentSelection(packageName),
+        alreadyInstalled: deps.activeRelease(packageName) !== null || development !== null,
         missingHardware: deps.missingHardware(manifest.hardwareRequirements),
       },
       assertCurrent,
@@ -407,14 +421,14 @@ async function installFromLocalNetwork(
   }
 
   assertCompatible(deps, manifest)
-  const server = developmentServer(manifest, target.url, served.iconUrl)
+  const reloadUrl = developmentReloadUrl(servedReload(manifest), served.url)
   try {
     await deps.installLocal(served.bundleUrl, {
       packageName,
       version: manifest.version,
       sourceUrl: target.url,
       sha256: manifest.bundle.sha256,
-      ...(server ? {server} : {}),
+      ...(reloadUrl ? {reloadUrl} : {}),
       downloadBundle: (bundleUrl) =>
         deps.fetchBundle(bundleUrl, {packageName, sha256: manifest.bundle.sha256, onChallenge: () => {}, local: true}),
       isCancelled: cancelled,
@@ -474,51 +488,6 @@ function assertCompatible(deps: InstallMiniappDependencies, manifest: ServedMini
       "needs_newer_app",
       `${manifest.name} can't run on this phone: ${compatibility.reason}`,
     )
-  }
-}
-
-/**
- * The development server a local-network build's `miniapp.json` names in `development` (as `mentra dev` serves it):
- * the build then loads live from its URL, and the server reloads it over `development.reload`, on the same host.
- * Read for local-network URLs only. Undefined when it names none: the installed snapshot is the build.
- */
-function developmentServer(
-  manifest: ServedMiniappManifest,
-  url: string,
-  iconUrl: string | null,
-): LocalBuildServer | undefined {
-  const raw = manifest as ServedMiniappManifest & Record<string, unknown>
-  const development = raw.development
-  if (!development || typeof development !== "object" || Array.isArray(development)) return undefined
-  const {reload, mdns} = development as {reload?: unknown; mdns?: unknown}
-  let devPort: number | undefined
-  if (typeof reload === "string") {
-    try {
-      const parsed = new URL(reload)
-      const port = Number(parsed.port)
-      if ((parsed.protocol === "ws:" || parsed.protocol === "wss:") && Number.isInteger(port) && port > 0) {
-        devPort = port
-      }
-    } catch {
-      // No reload channel: the build runs live without hot reload.
-    }
-  }
-  // A `.local` name the phone may reach the same server by after its address changes.
-  const mdnsHost =
-    typeof mdns === "string" && /\.local$/i.test(mdns.trim()) && isLocalNetworkHost(mdns.trim()) ? mdns.trim() : ""
-  const devUrl = url.replace(/\/+$/, "")
-  return {
-    name: manifest.name,
-    iconUrl: iconUrl ?? `${devUrl}/icon.png`,
-    devUrl,
-    ...(devPort ? {devPort} : {}),
-    mdnsHost,
-    ...(typeof raw.type === "string" ? {type: raw.type as LocalBuildServer["type"]} : {}),
-    ...(Array.isArray(raw.permissions) ? {permissions: raw.permissions as LocalBuildServer["permissions"]} : {}),
-    ...(Array.isArray(raw.hardwareRequirements)
-      ? {hardwareRequirements: raw.hardwareRequirements as LocalBuildServer["hardwareRequirements"]}
-      : {}),
-    ...(Array.isArray(raw.actions) ? {actions: raw.actions as LocalBuildServer["actions"]} : {}),
   }
 }
 
@@ -646,16 +615,13 @@ async function register(deps: InstallMiniappDependencies, url: string, manifest:
   }
 }
 
-/** The version rule refused the release because a newer one is installed (`assertMiniappUpdateVersion`). */
-function isNewerInstalled(error: unknown): boolean {
-  return error instanceof Error && /^Cannot install .+: version .+ is already installed$/.test(error.message)
-}
-
 /** Map an installer or download failure to its code. Never the error text. */
 function installError(error: unknown, packageName: string): InstallMiniappError {
   const message = error instanceof Error ? error.message : String(error)
   const fail = (code: InstallMiniappErrorCode) =>
     new InstallMiniappError(code, `${packageName} did not install: ${message}`, {cause: error})
+  // A development build of the package was installed while this one downloaded: only the person replaces it.
+  if (error instanceof DevelopmentBuildInstalledError) return fail("development_build")
   if (error instanceof MiniappFetchError) {
     switch (error.code) {
       case "integrity":
@@ -686,7 +652,7 @@ function installError(error: unknown, packageName: string): InstallMiniappError 
   return fail("network")
 }
 
-/** A miniapp URL at a local-network address: it installs as a local build (see the module comment). */
+/** A miniapp URL at a local address: it installs as a local build (see the module comment). */
 export function isLocalNetworkMiniappUrl(url: string): boolean {
   return normalizeMiniappUrl(url)?.kind === "local"
 }
@@ -703,14 +669,21 @@ const engineDependencies: InstallMiniappDependencies = {
     const version = appRegistry.getActiveReleaseVersion(packageName)
     return version ? {version, identity: appRegistry.getReleaseIdentity(packageName, version)} : null
   },
-  hasDevelopmentSelection: (packageName) => appRegistry.hasDevelopmentSelection(packageName),
+  developmentBuild: (packageName) => {
+    const version = appRegistry
+      .getInstalledVersions(packageName)
+      .filter((candidate) => candidate.startsWith("dev-"))
+      .sort()
+      .at(-1)
+    return version ? {version, identity: appRegistry.getReleaseIdentity(packageName, version)} : null
+  },
+  pinFor: miniappPins.pinFor,
   developmentAllowed: (packageName) => isDevMiniappAllowed(packageName),
   updateUrl: (packageName, identity) =>
     miniappUpdateUrl(packageName, identity, {
       isSystemPackage: isSystemMiniappPackage,
       firstPartyUrl: (name) => firstPartyMiniappUrl(getConfigValues(), name),
     }),
-  assertCanInstallVersion: (packageName, version) => appRegistry.assertCanInstallVersion(packageName, version),
   // A Fleet assignment is its workspace's administration, which the deployment's policy weighs apart from development.
   allowsRelease: (packageName, version, identity, source) =>
     isInstalledMiniappAllowed(packageName, version, identity, {assigned: source === "assignment"}),
@@ -722,7 +695,6 @@ const engineDependencies: InstallMiniappDependencies = {
   },
   install: (bundleUrl, options) => installMiniappRelease(bundleUrl, options),
   installLocal: (bundleUrl, install) => installLocalBuild(bundleUrl, install),
-  restoreRelease: (packageName, isCancelled) => restoreInstalledRelease(packageName, {isCancelled}),
   keepVersions: (packageName, versions) => appRegistry.gcReleaseVersions(packageName, versions),
   installSession: () => localMiniappRuntime.installSession(),
   warn: (message, error) => console.warn(`installMiniapp: ${message}`, error ?? ""),
@@ -742,6 +714,9 @@ const FLEET_INSTALL_REASON: Record<InstallMiniappErrorCode, FleetInstallFailureR
   cancelled: "user_cancelled",
   integrity: "download_failed",
   signature_invalid: "signature_invalid",
+  pin_unlisted: "pin_unlisted",
+  pin_hash_changed: "pin_hash_changed",
+  development_build: "development_build",
 }
 
 /**
@@ -794,7 +769,9 @@ async function reportAttempt(
   url: string,
   options: InstallMiniappOptions,
 ): Promise<InstallMiniappResult> {
-  const source = options.source === "assignment" ? "assignment" : options.source === "local" ? "local" : "url"
+  // A local address installs a local build, whichever way it came in.
+  const local = normalizeMiniappUrl(url)?.kind === "local"
+  const source = options.source === "assignment" ? "assignment" : local ? "local" : "url"
   // What the installer resolved: the package and the release it replaces, for an update and for a failure.
   type Attempt = {packageName: string; previousVersion: string | null; version: string}
   let attempt: Attempt | null = null

@@ -6,6 +6,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {miniappLauncher} from "../../../../modules/engine/src/services/MiniappLauncher"
 import devServerBridge from "../../../../modules/engine/src/services/DevServerBridge"
+import appRegistry from "../../../../modules/engine/src/services/AppRegistry"
 import {miniappFileUrl} from "../../../../modules/engine/src/services/miniappScreenOrigin"
 import {useStressTestStore} from "@/stores/stressTest"
 import {
@@ -32,12 +33,20 @@ jest.mock("@/effects/CapsuleMenu", () => () => {
 })
 jest.mock("@/stores/capsule", () => ({useRegisterCapsule: jest.fn()}))
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))
-jest.mock("../MiniappSplash", () => (props: {error?: string}) => {
+jest.mock("../MiniappSplash", () => (props: {error?: string; label?: string}) => {
   const {Text} = require("react-native")
-  return <Text testID="splash-error">{props.error}</Text>
+  return (
+    <>
+      <Text testID="splash-error">{props.error}</Text>
+      <Text testID="splash-label">{props.label}</Text>
+    </>
+  )
 })
 /** The miniapp in front, as the engine's apps store holds it. */
 let mockForegroundedPackage: string | null = null
+/** What each miniapp's start waits for, as the engine reports it, and who listens. */
+let mockStartWaits: Record<string, "check" | "update"> = {}
+const mockStartWaitListeners = new Set<() => void>()
 let mockDevMode = false
 // The engine modules MiniappView runs on.
 jest.mock("../../../../modules/engine/src/services/MiniappLauncher", () => ({
@@ -54,8 +63,25 @@ jest.mock("../../../../modules/engine/src/services/LocalMiniappRuntime", () => (
 }))
 jest.mock("../../../../modules/engine/src/services/DevServerBridge", () => ({
   __esModule: true,
-  default: {onReload: jest.fn(), forwardLog: jest.fn()},
+  default: {forwardLog: jest.fn()},
 }))
+// The installs the screen follows: the version each package runs, and who hears of a change.
+let mockActiveVersion = "1.0.0"
+jest.mock("../../../../modules/engine/src/services/AppRegistry", () => {
+  const listeners = new Set<() => void>()
+  return {
+    __esModule: true,
+    default: {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      peekActiveVersion: () => mockActiveVersion,
+      getBundleDir: (packageName: string, version: string) => `file:///documents/lmas/${packageName}/${version}/`,
+      notifyForTests: () => listeners.forEach((listener) => listener()),
+    },
+  }
+})
 jest.mock("../../../../modules/engine/src/services/fleet/fleetEvents", () => ({fleetEvents: {crash: jest.fn()}}))
 jest.mock("../../../../modules/engine/src/runtime/bootstrap", () => ({getConfigValues: () => ({})}))
 jest.mock("../../../../modules/engine/src/utils/miniappGlobals", () => ({buildMiniappGlobalsScript: () => ""}))
@@ -95,7 +121,16 @@ jest.mock("@mentra/engine", () => ({
   },
   SETTINGS: {dev_mode: {key: "dev_mode"}},
   useSetting: () => [mockDevMode],
-  engine: {miniapps: {clearForeground: jest.fn()}},
+  engine: {
+    miniapps: {
+      clearForeground: jest.fn(),
+      startWait: (packageName: string) => mockStartWaits[packageName] ?? null,
+      onStartWaitChanged: (listener: () => void) => {
+        mockStartWaitListeners.add(listener)
+        return () => mockStartWaitListeners.delete(listener)
+      },
+    },
+  },
 }))
 jest.mock("@/services/streamPreview", () => {
   const coordinator = {
@@ -138,7 +173,9 @@ beforeEach(() => {
   jest.clearAllMocks()
   jest.replaceProperty(Platform, "OS", "android")
   useNavigationStore.setState({interceptor: null})
+  mockStartWaits = {}
   jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(NO_UI)
+  mockActiveVersion = "1.0.0"
   resetWebStorageMoveStateForTests()
   jest.requireActual("../../../../modules/engine/src/services/miniappWebStorage").resetMiniappWebStorageForTests()
 })
@@ -290,50 +327,58 @@ describe("the screen's origin", () => {
     first.unmount()
 
     jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(snapshot)
-    render(<LocalMiniappView {...props} devUrl="http://192.168.1.20:8081" />)
+    render(<LocalMiniappView {...props} devBuild />)
     await finishLaunch()
     expect(miniappFileUrl("com.mentra.test", "photo-1.jpg")).toBe(`${snapshot.uiOrigin}/.mentra/files/photo-1.jpg`)
   })
 
-  it("opens a live development build from its snapshot, never from its server", async () => {
-    const snapshot = {
+  it("opens a development build from the build on the phone, and follows each new build that installs", async () => {
+    const build = {
       uiUri: "https://invalid.dev.com.mentra.test.miniapp.invalid/ui/index.html",
       uiOrigin: "https://invalid.dev.com.mentra.test.miniapp.invalid",
       uiRootDir: "file:///documents/lmas/com.mentra.test/dev-1000/",
       uiOriginName: "invalid.dev.com.mentra.test",
       devBuild: true,
     }
-    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(snapshot)
-    const view = render(<LocalMiniappView {...props} devUrl="http://192.168.1.20:8081" />)
+    mockActiveVersion = "dev-1000"
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(build)
+    const view = render(<LocalMiniappView {...props} devBuild />)
     await finishLaunch()
     const first = view.UNSAFE_getByType("WebView" as never)
-    expect(first.props.source).toEqual({uri: snapshot.uiUri})
+    expect(first.props.source).toEqual({uri: build.uiUri})
     expect(first.props.miniappOrigin).toEqual({
-      packageName: snapshot.uiOriginName,
-      rootDir: snapshot.uiRootDir,
+      packageName: build.uiOriginName,
+      rootDir: build.uiRootDir,
       filesDir: FILES_DIR,
     })
-    expect(first.props.originWhitelist).not.toContain("http://192.168.1.20:8081")
 
-    // A reload whose bundle didn't change keeps the screen.
-    jest.mocked(miniappLauncher.resolveBundle).mockResolvedValue({uiRootDir: snapshot.uiRootDir} as never)
-    await act(async () => {
-      await jest.mocked(devServerBridge.onReload).mock.calls.at(-1)![0]("com.mentra.test")
-    })
+    // An install that left this package's build as it was keeps the screen.
+    act(() => (appRegistry as unknown as {notifyForTests: () => void}).notifyForTests())
     await finishLaunch()
     expect(view.UNSAFE_getByType("WebView" as never)).toBe(first)
+    expect(miniappLauncher.ensureRunning).toHaveBeenCalledTimes(1)
 
-    // A changed bundle opens from its new snapshot in a new WebView.
-    const next = {...snapshot, uiRootDir: "file:///documents/lmas/com.mentra.test/dev-2000/"}
-    jest.mocked(miniappLauncher.resolveBundle).mockResolvedValue({uiRootDir: next.uiRootDir} as never)
+    // A new build (a developer's save) opens from its own bundle, in a new WebView.
+    const next = {...build, uiRootDir: "file:///documents/lmas/com.mentra.test/dev-2000/"}
+    mockActiveVersion = "dev-2000"
     jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(next)
-    await act(async () => {
-      await jest.mocked(devServerBridge.onReload).mock.calls.at(-1)![0]("com.mentra.test")
-    })
+    act(() => (appRegistry as unknown as {notifyForTests: () => void}).notifyForTests())
     await finishLaunch()
     const second = view.UNSAFE_getByType("WebView" as never)
     expect(second.props.miniappOrigin.rootDir).toBe(next.uiRootDir)
     expect(() => first.props).toThrow(/unmounted/)
+  })
+
+  it("follows a release's new build too", async () => {
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(INSTALLED)
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    const next = {...INSTALLED, uiRootDir: "file:///documents/lmas/com.mentra.test/1.1.0/"}
+    mockActiveVersion = "1.1.0"
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(next)
+    act(() => (appRegistry as unknown as {notifyForTests: () => void}).notifyForTests())
+    await finishLaunch()
+    expect(view.UNSAFE_getByType("WebView" as never).props.miniappOrigin.rootDir).toBe(next.uiRootDir)
   })
 
   it("keeps the miniapp's document on its origin and opens other links in the system browser", async () => {
@@ -476,24 +521,23 @@ describe("the ready handshake", () => {
     expect(splashError(view)).toBeUndefined()
   })
 
-  it("retries a hot-reloaded development page the shim never reached", async () => {
-    const snapshot = {
+  it("retries a new development build's page the shim never reached", async () => {
+    const build = {
       uiUri: "https://invalid.dev.com.mentra.test.miniapp.invalid/ui/index.html",
       uiOrigin: "https://invalid.dev.com.mentra.test.miniapp.invalid",
       uiRootDir: "file:///documents/lmas/com.mentra.test/dev-1000/",
       uiOriginName: "invalid.dev.com.mentra.test",
       devBuild: true,
     }
-    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(snapshot)
-    const view = render(<LocalMiniappView {...props} devUrl="http://192.168.1.20:8081" />)
+    mockActiveVersion = "dev-1000"
+    jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(build)
+    const view = render(<LocalMiniappView {...props} devBuild />)
     await finishLaunch()
     load(view, {type: "page_loaded"}, {type: "ready"})
-    const next = {...snapshot, uiRootDir: "file:///documents/lmas/com.mentra.test/dev-2000/"}
-    jest.mocked(miniappLauncher.resolveBundle).mockResolvedValue({uiRootDir: next.uiRootDir} as never)
+    const next = {...build, uiRootDir: "file:///documents/lmas/com.mentra.test/dev-2000/"}
+    mockActiveVersion = "dev-2000"
     jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue(next)
-    await act(async () => {
-      await jest.mocked(devServerBridge.onReload).mock.calls.at(-1)![0]("com.mentra.test")
-    })
+    act(() => (appRegistry as unknown as {notifyForTests: () => void}).notifyForTests())
     await finishLaunch()
     load(view)
     act(() => jest.advanceTimersByTime(READY_TIMEOUT_MS))
@@ -698,6 +742,88 @@ describe("the screen's localStorage", () => {
     await finishLaunch()
     expect(reader(again)).toBeDefined()
     expect(attempts("com.mentra.notes")).toBe(2)
+  })
+})
+
+describe("a miniapp whose start waits for its update check", () => {
+  function setStartWait(wait: "check" | "update" | null) {
+    act(() => {
+      mockStartWaits = wait ? {"com.mentra.test": wait} : {}
+      for (const listener of mockStartWaitListeners) listener()
+    })
+  }
+
+  afterEach(() => {
+    mockForegroundedPackage = null
+  })
+
+  it("says it is updating on the splash while an update installs, and nothing while it is only checked", async () => {
+    let start!: (result: typeof INSTALLED) => void
+    jest.mocked(miniappLauncher.ensureRunning).mockReturnValue(
+      new Promise((resolve) => {
+        start = resolve
+      }),
+    )
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    const label = () => view.getByTestId("splash-label").props.children
+    // The splash is up from the first render, as for any open.
+    expect(label()).toBeUndefined()
+    setStartWait("check")
+    expect(label()).toBeUndefined()
+    // While it is only checked, the capsule stays under the splash, as for any open.
+    let underSplash = false
+    for (let node = view.getByTestId("capsule").parent; node; node = node.parent) {
+      if (node.props.pointerEvents === "none") underSplash = true
+    }
+    expect(underSplash).toBe(true)
+    setStartWait("update")
+    expect(label()).toBe("home:miniappUpdating")
+    // An update can take a while: the way out is above the splash, where it can be pressed.
+    let ancestor = view.getByTestId("capsule").parent
+    while (ancestor) {
+      expect(ancestor.props.pointerEvents).not.toBe("none")
+      ancestor = ancestor.parent
+    }
+    // Another miniapp's wait says nothing here.
+    act(() => {
+      mockStartWaits = {"com.mentra.notes": "update"}
+      for (const listener of mockStartWaitListeners) listener()
+    })
+    expect(label()).toBeUndefined()
+    setStartWait("update")
+    // Installed: the miniapp starts, and the splash goes back to what it always shows.
+    setStartWait(null)
+    await act(async () => {
+      start(INSTALLED)
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+    })
+    expect(label()).toBeUndefined()
+    expect(view.getByTestId("splash-error").props.children).toBeUndefined()
+  })
+
+  it("closes the screen, with no error, when the miniapp is stopped before it started", async () => {
+    const {engine} = jest.requireMock("@mentra/engine") as {engine: {miniapps: {clearForeground: jest.Mock}}}
+    mockForegroundedPackage = "com.mentra.test"
+    jest
+      .mocked(miniappLauncher.ensureRunning)
+      .mockRejectedValue(Object.assign(new Error("stopped before it started"), {name: "MiniappStartCancelledError"}))
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    expect(engine.miniapps.clearForeground).toHaveBeenCalledTimes(1)
+    expect(view.getByTestId("splash-error").props.children).toBeUndefined()
+  })
+
+  it("leaves the screen the person moved on to alone when its cancelled start reports back", async () => {
+    const {engine} = jest.requireMock("@mentra/engine") as {engine: {miniapps: {clearForeground: jest.Mock}}}
+    mockForegroundedPackage = null
+    jest
+      .mocked(miniappLauncher.ensureRunning)
+      .mockRejectedValue(Object.assign(new Error("stopped before it started"), {name: "MiniappStartCancelledError"}))
+    const view = render(<LocalMiniappView {...props} />)
+    await finishLaunch()
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    expect(view.getByTestId("splash-error").props.children).toBeUndefined()
   })
 })
 

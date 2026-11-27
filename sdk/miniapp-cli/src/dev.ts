@@ -4,9 +4,12 @@ import { join, resolve } from 'path';
 import { printQR, writeQRPng } from './qr.js';
 import { warnIfPlaceholderIcon } from './icon.js';
 import { validateManifest } from './manifest.js';
-import { buildProjectSnapshot, startDevSidecar } from './dev-server.js';
+import { buildProjectSnapshot, startDevSidecar, type ProjectSnapshot } from './dev-server.js';
 import { getLanIp, getMdnsHostname } from './lan.js';
 import { adbReverse, closeUsbTunnel, missingReversePorts, openUsbTunnel } from './adb.js';
+import { buildProduction } from './build.js';
+import { buildBundle, iconFromArchive, packedZipName, type PackedBundle } from './pack.js';
+import { missingSigningKeyError, resolvePackageSigningKey } from './package-signing-key.js';
 
 const DEFAULT_DEV_PORT = 3000;
 const DEV_PORT_SCAN_LIMIT = 50;
@@ -38,9 +41,23 @@ export interface DevOptions {
    * this to false; the sidecar still forwards console logs.
    */
   hotReload?: boolean;
+  /**
+   * Serve the production bundle, the one `pack` builds, in place of the
+   * working copy: what users will get, before it is uploaded. It is built
+   * once; nothing is watched and nothing reloads.
+   */
+  production?: boolean;
+  /** With `production`: sign the bundle, as `pack` does. Off by default; see pack()'s `sign` for why. */
+  sign?: boolean;
+  /** With `production`: sign with this key file. Implies `sign`. */
+  signingKeyPath?: string;
 }
 
-/** Where the dev server serves the project's ZIP, relative to the miniapp URL. */
+/**
+ * Where the dev server also serves its latest ZIP, whatever its name: the path
+ * released Mentra Apps ask for. The served miniapp.json names the ZIP by a name
+ * that carries its hash ({@link servedZipName}).
+ */
 export const DEV_BUNDLE_PATH = 'bundle.zip';
 
 /**
@@ -62,16 +79,31 @@ export interface DevelopmentInfo {
 }
 
 /**
+ * The name the dev server serves a build's ZIP under, relative to the miniapp
+ * URL: the one `pack` gives it, `<packageName>-<version>-<first 8 hex of its
+ * SHA-256>.zip`. Every build has its own name, so a phone or a proxy never
+ * takes an earlier build's download for this one.
+ */
+export function servedZipName(manifest: Record<string, unknown>, sha256: string): string {
+  const { packageName, version } = manifest;
+  const name =
+    typeof packageName === 'string' && typeof version === 'string' ? packedZipName(packageName, version, sha256) : '';
+  // Without a package name and version that can be in a URL, the hash alone.
+  return /^[A-Za-z0-9._+-]+$/.test(name) ? name : `bundle-${sha256.slice(0, 8)}.zip`;
+}
+
+/**
  * The miniapp.json the dev server serves: the ZIP's own, plus `bundle` naming
  * the ZIP and its SHA-256, as any miniapp URL serves, and `development`, which
- * the Mentra App reads only from a local-network URL.
+ * the Mentra App reads only from a local-network URL. It has no `versions`:
+ * only `pack` writes that list.
  */
 export function servedDevManifest(
   manifest: Record<string, unknown>,
   sha256: string,
   development: DevelopmentInfo,
 ): Record<string, unknown> {
-  return { ...manifest, bundle: { url: DEV_BUNDLE_PATH, sha256 }, development };
+  return { ...manifest, bundle: { url: servedZipName(manifest, sha256), sha256 }, development };
 }
 
 export interface DevRequestHandlerOptions {
@@ -86,9 +118,18 @@ export interface DevRequestHandlerOptions {
    * build, and miniapp.json and the ZIP it names come from the same one.
    */
   idle?: () => Promise<void>;
+  /**
+   * `dev --production`: the bundle to serve in place of the working copy, and
+   * the icon `pack` would write beside it. The server then serves what a host
+   * holding `pack`'s folder serves, and no project file.
+   */
+  production?: { bundle: PackedBundle; icon: { path: string; bytes: Uint8Array } | null };
 }
 
 const NO_STORE = 'no-store';
+
+/** How many builds' ZIPs the server keeps, so that a miniapp.json fetched just before a save still finds its ZIP. */
+const RECENT_BUILDS = 4;
 
 /**
  * Runs builds one at a time, in the order they were asked for, so two
@@ -114,27 +155,66 @@ export function createBuildQueue(run: () => Promise<void>): { build: () => Promi
   };
 }
 
+/** The ZIP's own miniapp.json as an object, or null when it isn't one. */
+function manifestOf(snapshot: ProjectSnapshot): Record<string, unknown> | null {
+  if (snapshot.manifest === null) return null;
+  try {
+    const manifest: unknown = JSON.parse(snapshot.manifest);
+    return typeof manifest === 'object' && manifest !== null && !Array.isArray(manifest)
+      ? (manifest as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function zipResponse(zip: Uint8Array): Response {
+  const body = zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer;
+  return new Response(body, {
+    headers: {
+      'content-type': 'application/zip',
+      'content-length': String(zip.byteLength),
+      'cache-control': NO_STORE,
+    },
+  });
+}
+
 /**
  * The static server's requests. `/miniapp.json` (and `/`) is the served
- * manifest, `/bundle.zip` the ZIP it names; any other path is a project file,
- * which live launches load `dist/` from.
+ * manifest. The ZIP it names is served under that name, which carries its
+ * hash, and the latest build's also at `/bundle.zip`, where released Mentra
+ * Apps ask for it. Any other path is a project file; with `production`, only
+ * the bundle's icon.
  */
 export function createDevRequestHandler(options: DevRequestHandlerOptions): (req: Request) => Promise<Response> {
+  const { production } = options;
+  const current = async (): Promise<ProjectSnapshot> =>
+    production
+      ? {
+          zip: production.bundle.archive,
+          sha256: production.bundle.sha256,
+          manifest: JSON.stringify(production.bundle.manifest),
+        }
+      : buildProjectSnapshot(options.cwd);
+  // The builds a served miniapp.json named, newest last, by their ZIP's name.
+  const recent = new Map<string, Uint8Array>();
+  const remember = (name: string, zip: Uint8Array): void => {
+    recent.delete(name);
+    recent.set(name, zip);
+    for (const oldest of recent.keys()) {
+      if (recent.size <= RECENT_BUILDS) break;
+      recent.delete(oldest);
+    }
+  };
+
   return async (req) => {
     await options.idle?.();
     const url = new URL(req.url);
     if (url.pathname === '/' || url.pathname === '/miniapp.json') {
-      const snapshot = await buildProjectSnapshot(options.cwd);
+      const snapshot = await current();
       if (snapshot.manifest === null) return new Response('not found', { status: 404 });
-      let manifest: unknown;
-      try {
-        manifest = JSON.parse(snapshot.manifest);
-      } catch {
-        manifest = null;
-      }
-      if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
-        return new Response('miniapp.json is not a JSON object', { status: 500 });
-      }
+      const manifest = manifestOf(snapshot);
+      if (!manifest) return new Response('miniapp.json is not a JSON object', { status: 500 });
       const development: DevelopmentInfo = {};
       const sidecarPort = options.sidecarPort();
       // The host the phone reached this server by: the LAN address, loopback
@@ -143,21 +223,14 @@ export function createDevRequestHandler(options: DevRequestHandlerOptions): (req
       // Lets the phone retry via ComputerName.local when the raw IP goes stale
       // after a Wi-Fi/DHCP change.
       if (options.mdnsHost) development.mdns = options.mdnsHost;
-      const served = servedDevManifest(manifest as Record<string, unknown>, snapshot.sha256, development);
+      const served = servedDevManifest(manifest, snapshot.sha256, development);
+      remember((served.bundle as { url: string }).url, snapshot.zip);
       return new Response(`${JSON.stringify(served, null, 2)}\n`, {
         headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': NO_STORE },
       });
     }
     if (url.pathname === `/${DEV_BUNDLE_PATH}` || url.pathname === '/__mentra_dev/bundle.zip') {
-      const { zip } = await buildProjectSnapshot(options.cwd);
-      const body = zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer;
-      return new Response(body, {
-        headers: {
-          'content-type': 'application/zip',
-          'content-length': String(zip.byteLength),
-          'cache-control': NO_STORE,
-        },
-      });
+      return zipResponse((await current()).zip);
     }
     // Strip leading slash and prevent ../ traversal. Path joining
     // against cwd already canonicalises, but we double-check by
@@ -165,6 +238,24 @@ export function createDevRequestHandler(options: DevRequestHandlerOptions): (req
     const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
     if (rel.split('/').some((seg) => seg === '..')) {
       return new Response('forbidden', { status: 403 });
+    }
+    if (rel.endsWith('.zip') && !rel.includes('/')) {
+      // A build a served miniapp.json named. After a restart nothing is
+      // remembered yet, and unchanged files still make the ZIP of that name.
+      let zip = recent.get(rel);
+      if (!zip) {
+        const snapshot = await current();
+        const manifest = manifestOf(snapshot);
+        if (manifest && servedZipName(manifest, snapshot.sha256) === rel) zip = snapshot.zip;
+      }
+      if (zip) return zipResponse(zip);
+    }
+    if (production) {
+      const { icon } = production;
+      if (!icon || rel !== icon.path.replace(/^(\.\/)+/, '')) return new Response('not found', { status: 404 });
+      return new Response(icon.bytes.slice().buffer, {
+        headers: { 'content-type': contentTypeFor(icon.path), 'cache-control': NO_STORE },
+      });
     }
     const abs = join(options.cwd, rel);
     try {
@@ -256,6 +347,7 @@ async function runBuild(cwd: string): Promise<void> {
 
 export async function dev(options: DevOptions = {}): Promise<void> {
   const cwd = resolve(options.cwd ?? process.cwd());
+  const production = options.production === true;
   const manifestPath = resolve(cwd, 'miniapp.json');
   if (!existsSync(manifestPath)) {
     console.error('Error: miniapp.json not found in current directory');
@@ -283,8 +375,9 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     process.exit(1);
   }
 
+  // The production bundle is checked as `pack` checks it, when it is built.
   const entry = manifest.entry as { background?: string; ui?: string } | undefined;
-  if (!entry || typeof entry.background !== 'string') {
+  if (!production && (!entry || typeof entry.background !== 'string')) {
     console.error(
       'Error: miniapp.json is missing `entry.background`. Two-layer miniapps ' +
         'must declare `entry.background` (and optionally `entry.ui`) — see ' +
@@ -297,13 +390,28 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   const name: string = (manifest.name as string) ?? 'unnamed';
   const packageName: string = (manifest.packageName as string) ?? 'unknown';
+  const wantsSignature = options.sign === true || Boolean(options.signingKeyPath);
+  if (wantsSignature && !production) {
+    console.warn('Warning: --sign and --signing-key apply only with --production. The development build is unsigned.');
+  }
+  // Only look for a key when signing was asked for, and before anything is
+  // built or served: a key sitting in the store is not consent to pin this
+  // package's publisher.
+  const signingKey =
+    production && wantsSignature
+      ? await resolvePackageSigningKey(packageName, { inputPath: options.signingKeyPath })
+      : null;
+  if (production && wantsSignature && !signingKey) throw missingSigningKeyError(packageName);
+
   // MENTRA_MINIAPP_DEV_PORT: the port a runner serving several miniapps assigned
   // (the Mentra App's scripts/dev-miniapps.mjs).
   const requestedPort: number =
     Number(process.env.MENTRA_MINIAPP_DEV_PORT) || ((manifest.port as number) ?? DEFAULT_DEV_PORT);
   const port = pickDevPort(requestedPort);
 
-  console.log(`Starting dev server for ${name} (${packageName}) on port ${port}...`);
+  console.log(
+    `Starting ${production ? 'the production build server' : 'dev server'} for ${name} (${packageName}) on port ${port}...`,
+  );
   if (port !== requestedPort) {
     console.log(`Port ${requestedPort} was unavailable; using ${port} instead.`);
   }
@@ -312,26 +420,44 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   // no build is writing dist/.
   const { build, idle } = createBuildQueue(() => runBuild(cwd));
 
-  // Initial build before serving — a fresh `bun run dev` should always
-  // start from a clean, current `dist/`.
-  try {
-    await build();
-  } catch (err) {
-    console.error('Initial build failed:', (err as Error).message);
-    process.exit(1);
+  let served: DevRequestHandlerOptions['production'];
+  if (production) {
+    // Built once, as `pack` builds it. Nothing rebuilds it while this runs.
+    await buildProduction(cwd);
+    const bundle = await buildBundle({ cwd, silent: true, signingKey: signingKey ?? undefined });
+    served = { bundle, icon: await iconFromArchive(bundle.archive, bundle.manifest.icon, false) };
+    console.log(
+      `✓ Production build of ${packageName}@${bundle.version} (${Math.round(bundle.archive.byteLength / 1024)} KB)`,
+    );
+    console.log(bundle.publisherFingerprint ? `Publisher key: ${bundle.publisherFingerprint}` : 'Publisher key: unsigned');
+    console.log(`SHA-256: ${bundle.sha256}`);
+  } else {
+    // Initial build before serving — a fresh `bun run dev` should always
+    // start from a clean, current `dist/`.
+    try {
+      await build();
+    } catch (err) {
+      console.error('Initial build failed:', (err as Error).message);
+      process.exit(1);
+    }
   }
 
   const mdnsHost = getMdnsHostname();
   let sidecarPort: number | null = null;
 
-  // Static HTTP server on `port` serving the project root: the miniapp URL.
-  // The phone fetches `miniapp.json`, then the `bundle.zip` it names, and
-  // live launches load `dist/` files from here. Range requests aren't
-  // supported — files are small and short-lived.
+  // Static HTTP server on `port`: the miniapp URL. The phone fetches
+  // `miniapp.json`, then the ZIP it names. Range requests aren't supported —
+  // files are small and short-lived.
   const userServer = Bun.serve({
     hostname: '0.0.0.0',
     port,
-    fetch: createDevRequestHandler({ cwd, sidecarPort: () => sidecarPort, mdnsHost, idle }),
+    fetch: createDevRequestHandler({
+      cwd,
+      sidecarPort: () => sidecarPort,
+      mdnsHost,
+      idle: production ? undefined : idle,
+      production: served,
+    }),
   });
 
   // In USB mode the QR advertises loopback, so a missing LAN IP is the expected
@@ -347,14 +473,17 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   // Sidecar on userPort + 1 — hosts the `__mentra_dev` WebSocket the
   // phone uses for live reload + console-log forwarding. The
   // `onBeforeBroadcast` hook rebuilds `dist/` before the phone is
-  // notified, so the next `bundle.zip` fetch ships current code.
+  // notified, so the next ZIP fetch ships current code. A production build
+  // is never watched: its sidecar only forwards the console.
   // Failure here is non-fatal; the miniapp still runs without live reload.
+  const hotReload = !production && options.hotReload !== false;
   let sidecar: ReturnType<typeof startDevSidecar> | null = null;
   try {
     sidecar = startDevSidecar({
       port: port + 1,
       watchDir: cwd,
-      hotReload: options.hotReload !== false,
+      hotReload,
+      bundleZip: served ? async () => served.bundle.archive : undefined,
       onBeforeBroadcast: async () => {
         try {
           await build();
@@ -364,7 +493,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
       },
     });
     sidecarPort = sidecar.port;
-    if (options.hotReload === false) {
+    if (!production && options.hotReload === false) {
       console.log('Hot reload off. Restart without --no-hot-reload to remount the miniapp on save.');
     }
   } catch (err) {
@@ -406,7 +535,11 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   const printBanner = (): void => {
     console.log('\n╔══════════════════════════════════════════════════════════════╗');
-    console.log('║  To test your miniapp on glasses:                            ║');
+    if (production) {
+      console.log('║  To try your production build on glasses:                    ║');
+    } else {
+      console.log('║  To test your miniapp on glasses:                            ║');
+    }
     console.log('║                                                              ║');
     console.log('║    1. Open the Mentra App on your phone                      ║');
     console.log('║    2. Settings → Miniapp Developer Settings                  ║');
@@ -419,15 +552,25 @@ export async function dev(options: DevOptions = {}): Promise<void> {
       console.log('║  Your phone must be on the same Wi-Fi as this computer.      ║');
     }
     console.log('║                                                              ║');
-    console.log('║  Scan once. Every saved change rebuilds and reloads on the   ║');
-    console.log('║  phone, with no rescan. Keep this process running.           ║');
-    console.log('║                                                              ║');
-    console.log('║  Each package gets its own dev entry, so several dev         ║');
-    console.log('║  miniapps can run side by side. The home screen caches the   ║');
-    console.log('║  name and icon; rescan to update them.                       ║');
-    console.log('║                                                              ║');
-    console.log('║  For an install that runs without this computer:             ║');
-    console.log('║    bun run release                                           ║');
+    if (production) {
+      console.log('║  This is the build `pack` writes: what users will get.       ║');
+      console.log('║  Nothing is watched. After a change, stop this and run it    ║');
+      console.log('║  again; scan again only if the address changed.              ║');
+      console.log('║                                                              ║');
+      console.log('║  While developing, leave out --production:                   ║');
+      console.log('║    mentra-miniapp dev                                        ║');
+      console.log('║  reloads every saved change on the phone.                    ║');
+    } else {
+      console.log('║  Scan once. Every saved change rebuilds and reloads on the   ║');
+      console.log('║  phone, with no rescan. Keep this process running.           ║');
+      console.log('║                                                              ║');
+      console.log('║  Each package gets its own dev entry, so several dev         ║');
+      console.log('║  miniapps can run side by side. The home screen caches the   ║');
+      console.log('║  name and icon; rescan to update them.                       ║');
+      console.log('║                                                              ║');
+      console.log('║  To try the production build, what users will get:           ║');
+      console.log('║    mentra-miniapp dev --production                           ║');
+    }
     console.log('╚══════════════════════════════════════════════════════════════╝\n');
   };
 
@@ -492,14 +635,18 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     void (async () => {
       try {
         console.log(`\n📶 LAN IP changed: ${lanIp} → ${newIp}`);
-        console.log('Rebuilding so baked-in LAN URLs (e.g. signing endpoints) stay current…');
-        try {
-          await build();
-        } catch (err) {
-          // Leave lanIp on the previous value so the next poll retries this IP.
-          // Committing early would leave dist/ stale while skipping further rebuilds.
-          console.error('Rebuild after LAN IP change failed:', (err as Error).message);
-          return;
+        // A production build is served as it was built: run the command again
+        // for one that carries the new address.
+        if (!production) {
+          console.log('Rebuilding so baked-in LAN URLs (e.g. signing endpoints) stay current…');
+          try {
+            await build();
+          } catch (err) {
+            // Leave lanIp on the previous value so the next poll retries this IP.
+            // Committing early would leave dist/ stale while skipping further rebuilds.
+            console.error('Rebuild after LAN IP change failed:', (err as Error).message);
+            return;
+          }
         }
         const previous = lanIp;
         lanIp = newIp;

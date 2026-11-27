@@ -3,15 +3,16 @@
  *
  * Owns the `Documents/lmas/<packageName>/<version>/` filesystem layout, the
  * one installer every source uses (QR/manual releases, bundled ZIPs,
- * deployment-managed releases, dev snapshots), and the active-version pointer
+ * deployment-managed releases, development builds), and the active-version pointer
  * in MMKV. It does NOT touch the apps store directly — instead it notifies
  * subscribers when the install set changes, so the host (mobile manager, OEM
  * app) can refresh its own state.
  *
- * Every install validates the archive, applies the publisher signer rule and
- * the version rule (never lower than an installed release), and activates the
- * bundle and its registry metadata in one serialized, crash-recoverable
- * transaction. See {@link InstallBundleOptions}.
+ * Every install validates the archive, applies the publisher signer rule, and
+ * activates the bundle and its registry metadata in one serialized,
+ * crash-recoverable transaction. Versions are never compared: a release with a
+ * lower version than the installed one installs like any other, and becomes
+ * the active one. See {@link InstallBundleOptions}.
  *
  * Public surface:
  *   - installFromUrl(url, opts?)            install/replace a miniapp from a URL
@@ -20,11 +21,12 @@
  *   - getInstalledMiniapps()                ClientApp[] derived from disk
  *   - getActiveVersion(packageName)         active version string for a package
  *   - getPublisherKeyFingerprint(pkg)       recorded publisher signer, if any
- *   - getLatestDevSnapshotVersion(pkg)      newest on-disk `dev-*` snapshot
+ *   - isDevelopmentBuild(pkg)               a build installed from a local address runs for the package
  *   - getBundleDir / getMiniappManifest     filesystem helpers used by hosts
  *   - subscribe(fn)                         register a refresh listener
  */
 
+import {normalizeMiniappUrl} from "@mentra/cloud-protocol/miniapp-url"
 import {fetch as expoFetch} from "expo/fetch"
 import {Directory, Paths, File} from "expo-file-system"
 import {unzip} from "react-native-zip-archive"
@@ -35,13 +37,10 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 import type {AppletType, ClientApp} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {readBoundedBody} from "../utils/boundedByteStream"
-import {configuredDevHost} from "../utils/configuredDevHost"
-import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {sha256Hex} from "../utils/sha256"
 import {
-  assertMiniappDevelopmentAllowed,
   getConfigValues,
   isDevMiniappAllowed,
   isInstalledMiniappAllowed,
@@ -67,30 +66,19 @@ import {normalizeManifestActions} from "./manifestActions"
 import {normalizeManifestPermissions} from "./manifestPermissions"
 import {isFileUriInside} from "./miniappPaths"
 import {
-  assertMiniappUpdateVersion,
+  DevelopmentBuildInstalledError,
   miniappInstallIdentityError,
   type MiniappInstallExpectations,
 } from "./miniappInstallIdentity"
-import {
-  forgetDevSnapshotOwner,
-  isAssignedByCurrentWorkspace,
-  isDevelopmentSelectionCurrent,
-  isDevSnapshotOfCurrentContext,
-  isDevSnapshotVisible,
-  recordDevSnapshotOwner,
-  restoreStashedDevelopmentSelection,
-  stashedDevelopmentSelectionOf,
-  type StashedDevelopmentSelection,
-} from "./miniappDataPartition"
+import {isAssignedByCurrentWorkspace, takeLegacyDevelopmentSelections} from "./miniappDataPartition"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
-import {assertPublisherIdentityPolicy, assertUnsignedDevBuildAllowed} from "./publisherIdentityPolicy"
+import {assertPublisherIdentityPolicy} from "./publisherIdentityPolicy"
 import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
 import {sameMiniappBundle} from "./sameMiniappBundle"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
 export {normalizeManifestPermissions} from "./manifestPermissions"
-export {SignedMiniappDevBuildError} from "./publisherIdentityPolicy"
 
 function normalizeManifestType(raw: unknown): AppletType {
   return raw === "background" || raw === "system_dashboard" || raw === "standard" ? raw : "standard"
@@ -163,9 +151,11 @@ interface InstalledLma {
  * Where an installed release came from. `url`: installed from the miniapp's own URL (`sourceUrl`).
  * `direct_download`: a release Fleet installed from a resolved URL, or a release QR on an earlier Mentra App.
  * `bundled_asset`: the ZIP this build ships.
- * `deployment_manifest`: a workspace's deployment manifest. `dev_snapshot`: a development build. `local`: a
- * local-network build or a release QR (`sourceUrl` is its address), always a `dev-*` development snapshot: it never
- * updates from a URL, never gets system privileges, keeps its data apart and gets tokens marked as a local build.
+ * `deployment_manifest`: a workspace's deployment manifest. `local`: a development build, installed from a local
+ * address (`sourceUrl`), such as the URL `mentra dev` prints, or a release QR. It is always a `dev-*` directory, updates
+ * from that address only, never gets system privileges, keeps its data apart and gets tokens marked as a local build;
+ * only the person replaces it ({@link AppRegistry.isDevelopmentBuild}). `dev_snapshot`: a development build an earlier
+ * Mentra App installed without recording its address; read, never written.
  */
 export type MiniappReleaseSource =
   | "direct_download"
@@ -186,6 +176,12 @@ export interface MiniappReleaseIdentity {
   source: MiniappReleaseSource | RetiredMiniappReleaseSource
   /** The miniapp URL (`url` and `local` releases): the base that serves `miniapp.json`, ending in `/`. */
   sourceUrl?: string
+  /**
+   * `local` builds: the console connection of the server that served the build (`development.reload` in its
+   * `miniapp.json`, as `mentra dev` serves it). The phone forwards the miniapp's logs there, and checks the build's
+   * address again when it connects or signals a new build.
+   */
+  reloadUrl?: string
   /** `url` releases: the miniapp's server asked for sign-in, for `miniapp.json` or the ZIP. */
   private?: boolean
   bundleSha256?: string
@@ -262,8 +258,8 @@ export interface InstallBundleOptions {
   downloadBundle?: (url: string) => Promise<Uint8Array>
   onProgress?: (phase: InstallProgressPhase) => void
   /**
-   * Runs once the bundle is downloaded, verified, checked against the signer,
-   * version and compatibility rules, and unpacked, before the serialized
+   * Runs once the bundle is downloaded, verified, checked against the signer
+   * and compatibility rules, and unpacked, before the serialized
    * activation. It may wait (for example for the user's consent) without
    * holding up other installs. Throwing discards the unpacked files. It gets
    * the hardware requirements the staged release's own manifest declares.
@@ -330,12 +326,6 @@ interface StorageSnapshot<T> {
   value?: T
 }
 
-// Live-dev routing for a package. A release install clears it in the same
-// metadata transaction that activates the release, so an interrupted install
-// can never leave a committed release shadowed by its old dev registration.
-const DEV_ROUTING_FIELDS = ["meta", "url", "port", "mdns", "last_reachable", "selected_snapshot"] as const
-type DevRoutingSnapshot = Record<(typeof DEV_ROUTING_FIELDS)[number], StorageSnapshot<unknown>>
-
 /** Written into the pending activation marker before any metadata changes. */
 interface InstallMetadataRollbackJournal {
   schemaVersion: 1
@@ -344,21 +334,7 @@ interface InstallMetadataRollbackJournal {
   publisher: StorageSnapshot<string>
   release: StorageSnapshot<MiniappReleaseIdentity>
   active: StorageSnapshot<string>
-  devRouting?: DevRoutingSnapshot
-  /** The current context's stashed selection of the package, which a release install empties (see finalizeInstall). */
-  devStash?: StashedDevelopmentSelection
   reasons?: StorageSnapshot<StoredInstallReasons>
-}
-
-function isStashedDevelopmentSelection(value: unknown): value is StashedDevelopmentSelection {
-  const stash = value as Partial<StashedDevelopmentSelection> | null
-  return (
-    Boolean(stash) &&
-    typeof stash!.contextId === "string" &&
-    Boolean(stash!.selection) &&
-    typeof stash!.selection === "object" &&
-    !Array.isArray(stash!.selection)
-  )
 }
 
 function snapshotStorage<T>(key: string): StorageSnapshot<T> {
@@ -376,11 +352,10 @@ function restoreStorage<T>(key: string, snapshot: StorageSnapshot<T>): void {
   if (restored.is_error()) throw restored.error
 }
 
-function isStorageSnapshot(value: unknown, valueType: "object" | "string" | "any"): value is StorageSnapshot<unknown> {
+function isStorageSnapshot(value: unknown, valueType: "object" | "string"): value is StorageSnapshot<unknown> {
   if (!value || typeof value !== "object" || typeof (value as {present?: unknown}).present !== "boolean") return false
   const snapshot = value as {present: boolean; value?: unknown}
   if (!snapshot.present) return true
-  if (valueType === "any") return Object.prototype.hasOwnProperty.call(snapshot, "value")
   return valueType === "string"
     ? typeof snapshot.value === "string"
     : Boolean(snapshot.value && typeof snapshot.value === "object" && !Array.isArray(snapshot.value))
@@ -402,11 +377,7 @@ function readMetadataRollbackJournal(
       !isStorageSnapshot(parsed.publisher, "string") ||
       !isStorageSnapshot(parsed.release, "object") ||
       !isStorageSnapshot(parsed.active, "string") ||
-      (parsed.reasons !== undefined && !isStorageSnapshot(parsed.reasons, "object")) ||
-      (parsed.devStash !== undefined && !isStashedDevelopmentSelection(parsed.devStash)) ||
-      (parsed.devRouting !== undefined &&
-        (!parsed.devRouting ||
-          DEV_ROUTING_FIELDS.some((field) => !isStorageSnapshot(parsed.devRouting?.[field], "any"))))
+      (parsed.reasons !== undefined && !isStorageSnapshot(parsed.reasons, "object"))
     ) {
       console.warn(`APP_REGISTRY: ignoring invalid metadata rollback journal for ${packageName}@${version}`)
       return null
@@ -449,14 +420,8 @@ function restoreInstallationMetadata<T>(key: string, snapshot: StorageSnapshot<T
   if (removed.is_error()) throw removed.error
 }
 
-function restoreDevRouting(packageName: string, snapshot: DevRoutingSnapshot): void {
-  for (const field of DEV_ROUTING_FIELDS) restoreStorage(`${packageName}_dev_${field}`, snapshot[field])
-}
-
 function restoreInstallMetadata(journal: InstallMetadataRollbackJournal): void {
   if (journal.reasons) restoreInstallationMetadata(installReasonsKey(journal.packageName), journal.reasons)
-  if (journal.devRouting) restoreDevRouting(journal.packageName, journal.devRouting)
-  if (journal.devStash) restoreStashedDevelopmentSelection(journal.packageName, journal.devStash)
   restoreStorage(activeVersionKey(journal.packageName), journal.active)
   restoreInstallationMetadata(releaseIdentityKey(journal.packageName, journal.version), journal.release)
   restoreInstallationMetadata(publisherIdentityKey(journal.packageName), journal.publisher)
@@ -582,15 +547,14 @@ async function downloadWith(
 }
 
 /**
- * Every release records the SHA-256 of the ZIP it installed, a bundled or release-QR install included, so Fleet can
- * report it and an assignment can tell whether its URL serves the same bytes. Development snapshots record none.
+ * Every build records the SHA-256 of the ZIP it installed, a bundled, release-QR or development install included, so
+ * Fleet can report it and the updater can tell whether its URL serves the same bytes.
  */
 export async function withReleaseDigest(
   identity: MiniappReleaseIdentity,
-  version: string,
   bytes: Uint8Array,
 ): Promise<MiniappReleaseIdentity> {
-  if (identity.bundleSha256 || version.startsWith("dev-")) return identity
+  if (identity.bundleSha256) return identity
   return {...identity, bundleSha256: await sha256Hex(bytes)}
 }
 
@@ -836,8 +800,8 @@ async function activateExtractedMiniApp(
     throw new Error("INSTALL_CONTENTS_FAILED")
   }
 
-  // Recheck the signer and version rules (and any caller guard) now that the
-  // bundle is staged and no installed file has changed yet.
+  // Recheck the signer rule (and any caller guard) now that the bundle is
+  // staged and no installed file has changed yet.
   try {
     beforeActivate()
   } catch (error) {
@@ -930,18 +894,6 @@ function directoryNames(directory: Directory): string[] {
     .map((entry) => entry.name)
 }
 
-/** Delete the locally cached icon named by a serialized dev record, best effort. */
-function deleteCachedDevIcon(serializedRecord: string, packageName: string): void {
-  try {
-    const iconUrl = (JSON.parse(serializedRecord) as Partial<DevAppRecord>).iconUrl
-    if (typeof iconUrl !== "string" || !iconUrl.startsWith("file://")) return
-    const icon = new File(iconUrl)
-    if (icon.exists) icon.delete()
-  } catch (error) {
-    console.warn(`APP_REGISTRY: failed to delete dev icon for ${packageName}:`, error)
-  }
-}
-
 type Listener = () => void
 
 class AppRegistry {
@@ -954,32 +906,19 @@ class AppRegistry {
   private refreshNeeded: boolean = true
   private loaded = false
   private listeners = new Set<Listener>()
-  private retainedDevVersions = new Map<string, Set<string>>()
 
-  /** Hold the running and rollback bundles while an explicit replacement settles. */
-  public retainDevVersions(packageName: string, versions: string[]): () => void {
-    if (this.retainedDevVersions.has(packageName)) throw new Error("A miniapp replacement is already in progress")
-    this.retainedDevVersions.set(packageName, new Set(versions.filter((version) => version.startsWith("dev-"))))
-    return () => {
-      this.retainedDevVersions.delete(packageName)
-    }
-  }
-
-  private protectedDevVersions(packageName: string): Set<string> {
-    const versions = new Set(this.retainedDevVersions.get(packageName))
-    const selected = this.getSelectedDevSnapshot(packageName)
-    if (selected) versions.add(selected)
+  /** The development build a running context of the package runs, which garbage collection leaves alone. */
+  private runningDevVersion(packageName: string): string | null {
     const active = storage.load<string>(activeVersionKey(packageName))
-    if (active.is_ok() && active.value.startsWith("dev-") && miniappRunningRegistry.has(packageName))
-      versions.add(active.value)
-    return versions
+    return active.is_ok() && active.value.startsWith("dev-") && miniappRunningRegistry.has(packageName)
+      ? active.value
+      : null
   }
 
   private removeReleaseIdentity(packageName: string, version: string): void {
     const key = releaseIdentityKey(packageName, version)
     getInstallationMetadata().remove(key)
     storage.remove(key)
-    if (version.startsWith("dev-")) forgetDevSnapshotOwner(packageName, version)
   }
 
   /**
@@ -1024,38 +963,14 @@ class AppRegistry {
   }
 
   /**
-   * A live-development URL, build or snapshot would run for the package instead of its installed release. True also
-   * while a live context of the package holds an earlier account's or workspace's selection: it is not this context's
-   * to clear, and the current one's is restored when that context stops.
+   * A development build is installed for the package: a `dev-*` build from a local address, such as the URL `mentra
+   * dev` prints. It runs in place of any release of the name while the deployment allows development, and only the
+   * person replaces it, by uninstalling the package or installing a release themselves. An automatic update from
+   * another URL, a workspace's deployment manifest, a default miniapp and a Fleet assignment never do: the installer
+   * refuses them ({@link DevelopmentBuildInstalledError}), and they leave the package alone.
    */
-  public hasDevelopmentSelection(packageName: string): boolean {
-    return (
-      !isDevelopmentSelectionCurrent(packageName) ||
-      readDevAppRecord(packageName) !== null ||
-      storage.load<string>(`${packageName}_dev_url`).is_ok() ||
-      this.chooseActiveVersion(packageName).version?.startsWith("dev-") === true
-    )
-  }
-
-  /**
-   * Clear the package's live-development selection and the development builds of the current context, as a release
-   * install does, so launching runs its installed release. Another account's or workspace's snapshots stay on disk
-   * with their selections. Resolves false, clearing nothing, while a live context of the package still holds an
-   * earlier context's selection. Serialized with installs: `assertCurrent` runs once the transaction holds the queue,
-   * before anything changes, so a caller whose session ended while it waited clears nothing.
-   */
-  public clearDevelopmentSelection(packageName: string, options: {assertCurrent?: () => void} = {}): Promise<boolean> {
-    return runInstallFilesystemTransaction(async () => {
-      options.assertCurrent?.()
-      if (!isDevelopmentSelectionCurrent(packageName)) return false
-      invalidateDevSnapshotRequests(packageName)
-      this.clearDevArtifacts(packageName, {currentContextOnly: true})
-      const active = storage.load<string>(activeVersionKey(packageName))
-      if (active.is_ok() && active.value.startsWith("dev-")) storage.remove(activeVersionKey(packageName))
-      this.refreshNeeded = true
-      this.notify()
-      return true
-    })
+  public isDevelopmentBuild(packageName: string): boolean {
+    return this.getInstalledVersions(packageName).some((version) => version.startsWith("dev-"))
   }
 
   /** Add the `assignment` reason (or replace its assignment), keeping every other reason. */
@@ -1143,6 +1058,33 @@ class AppRegistry {
   private constructor() {
     this.cleanupInterruptedInstallCache()
     this.recoverInterruptedActivations()
+    migrateDevelopmentRecords(this)
+  }
+
+  /**
+   * For the one migration of development records ({@link migrateDevelopmentRecords}): record that the package's
+   * newest development build updates from `serverUrl`, the development server an earlier Mentra App kept it current
+   * from, and connects to its console on `consolePort`. False when no development build of the package is on disk, or
+   * the address isn't a local one.
+   */
+  public adoptDevelopmentServer(packageName: string, serverUrl: string, consolePort?: number): boolean {
+    const version = this.getInstalledVersions(packageName)
+      .filter((candidate) => candidate.startsWith("dev-"))
+      .sort()
+      .reverse()[0]
+    const address = normalizeMiniappUrl(serverUrl.endsWith("/") ? serverUrl : `${serverUrl}/`)
+    if (!version || address?.kind !== "local") return false
+    const identity = this.getReleaseIdentity(packageName, version)
+    const host = new URL(address.url).hostname
+    const adopted: MiniappReleaseIdentity = {
+      ...(identity ?? {}),
+      source: "local",
+      sourceUrl: address.url,
+      ...(consolePort ? {reloadUrl: `ws://${host}:${consolePort}/__mentra_dev`} : {}),
+    }
+    getInstallationMetadata().set(releaseIdentityKey(packageName, version), JSON.stringify(adopted))
+    this.refreshNeeded = true
+    return true
   }
 
   /** Remove cache artifacts left behind when the process died mid-install. */
@@ -1360,9 +1302,9 @@ class AppRegistry {
   }
 
   /**
-   * The deployment lets this installed release run ({@link isInstalledMiniappAllowed}): listing, launch precedence,
-   * launches and the version rule ask this. A release installed from a URL runs as a Fleet assignment while the
-   * account's current workspace assigned the package.
+   * The deployment lets this installed release run ({@link isInstalledMiniappAllowed}): listing, launch precedence
+   * and launches ask this. A release installed from a URL runs as a Fleet assignment while the account's current
+   * workspace assigned the package.
    */
   public isReleaseAllowed(
     packageName: string,
@@ -1375,27 +1317,6 @@ class AppRegistry {
   }
 
   /**
-   * One version rule for every install source: an incoming release must be
-   * greater than or equal to every installed release; an equal version is a
-   * reinstall. Dev snapshot versions (`dev-*`) are sessions, not releases.
-   */
-  public assertCanInstallVersion(packageName: string, version: string): void {
-    const policy = getConfigValues().localMiniappPolicy
-    const workspaceManaged = policy?.managed.some((entry) => entry.packageName === packageName) ?? false
-    const installed = this.getInstalledVersions(packageName).filter((installedVersion) => {
-      if (!policy) return true
-      // In a workspace, consumer releases retained on disk are not installations
-      // in that environment; compare only releases its policy can use. For a
-      // package the workspace manages, its deployment releases are the
-      // installation, never a consumer copy of the same package.
-      const identity = this.getReleaseIdentity(packageName, installedVersion)
-      if (workspaceManaged && identity?.source !== "deployment_manifest") return false
-      return this.isReleaseAllowed(packageName, installedVersion, identity)
-    })
-    assertMiniappUpdateVersion(packageName, version, installed)
-  }
-
-  /**
    * Download and install a miniapp bundle from a URL. The URL must serve a
    * zip whose root contains `miniapp.json` plus the bundle entry files.
    * The bundle goes through the same validated transaction as every other
@@ -1403,7 +1324,7 @@ class AppRegistry {
    */
   public installFromUrl(url: string, opts?: InstallBundleOptions): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      if (opts?.expectedPackageName) this.assertNoReplacementInProgress(opts.expectedPackageName, opts.versionOverride)
+      if (opts?.expectedPackageName) this.assertMayReplaceDevelopmentBuild(opts.expectedPackageName, opts.versionOverride, opts)
       const bytes = opts?.downloadBundle
         ? await downloadWith(opts.downloadBundle, url, opts)
         : await downloadMiniAppZip(url, {
@@ -1428,7 +1349,7 @@ class AppRegistry {
     opts?: LocalZipInstallOptions,
   ): AsyncResult<{packageName: string; version: string}, Error> {
     return Res.try_async(async () => {
-      if (opts?.expectedPackageName) this.assertNoReplacementInProgress(opts.expectedPackageName, opts.versionOverride)
+      if (opts?.expectedPackageName) this.assertMayReplaceDevelopmentBuild(opts.expectedPackageName, opts.versionOverride, opts)
       if (
         opts?.adoptIdenticalInstalledVersion &&
         (opts.releaseIdentity?.source !== "deployment_manifest" ||
@@ -1463,21 +1384,28 @@ class AppRegistry {
   }
 
   /**
-   * A release may not land while a dev build replacement of the same package
-   * (retainDevVersions) is settling; dev snapshots belong to that replacement.
-   * Checked before download, inside the serialized install, and at commit.
+   * Only the person replaces a development build ({@link isDevelopmentBuild}): a release installs over one only as
+   * their own install (`installReason` `explicit`). An automatic update, a deployment manifest's install and a Fleet
+   * assignment are refused with {@link DevelopmentBuildInstalledError}. Checked before the download, inside the
+   * serialized install, and at commit, so a development build installed meanwhile is not replaced either.
    */
-  private assertNoReplacementInProgress(packageName: string, version: string | undefined): void {
-    if (!version?.startsWith("dev-") && this.retainedDevVersions.has(packageName))
-      throw new Error("Cannot install a release during miniapp replacement")
+  private assertMayReplaceDevelopmentBuild(
+    packageName: string,
+    version: string | undefined,
+    opts: Pick<InstallBundleOptions, "installReason"> | undefined,
+  ): void {
+    if (version?.startsWith("dev-") || opts?.installReason === "explicit") return
+    if (this.isDevelopmentBuild(packageName)) throw new DevelopmentBuildInstalledError(packageName)
   }
 
   /**
    * The one installer. Validates the archive bytes, then extracts and
-   * activates them in the serialized filesystem transaction. The signer and
-   * version rules are checked before extraction and again inside the queue
-   * immediately before any installed file changes, so a competing install
-   * that commits first cannot make this one's earlier decision valid.
+   * activates them in the serialized filesystem transaction. The signer rule
+   * is checked before extraction and again inside the queue immediately
+   * before any installed file changes, so a competing install that commits
+   * first cannot make this one's earlier decision valid. Installs of one
+   * package commit in the order they reach the queue: the last one is the
+   * active release, whatever its version.
    */
   private async installArchive(
     bytes: Uint8Array,
@@ -1499,16 +1427,15 @@ class AppRegistry {
     const version = opts?.versionOverride ?? manifest.version
     // The publisher fingerprint only ever comes from signature verification.
     const {publisherKeyFingerprint: _callerFingerprint, ...callerIdentity} = opts?.releaseIdentity ?? {
-      source: version.startsWith("dev-") ? "dev_snapshot" : localZip ? "bundled_asset" : "direct_download",
+      source: version.startsWith("dev-") ? "local" : localZip ? "bundled_asset" : "direct_download",
     }
     const releaseIdentity: MiniappReleaseIdentity = {
-      ...(await withReleaseDigest(callerIdentity, version, bytes)),
+      ...(await withReleaseDigest(callerIdentity, bytes)),
       ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
     }
     const validateTrust = () => {
-      this.assertNoReplacementInProgress(manifest.packageName, version)
+      this.assertMayReplaceDevelopmentBuild(manifest.packageName, version, opts)
       assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint)
-      this.assertCanInstallVersion(manifest.packageName, version)
     }
     // Fail fast before extraction; the transaction checks again under the queue.
     validateTrust()
@@ -1556,9 +1483,9 @@ class AppRegistry {
   /**
    * Registry metadata for an activation, applied before the atomic commit:
    * the verified publisher (recorded the first time a signed bundle installs),
-   * the release identity, the active-version pointer, and — for a release —
-   * the removal of the package's live-dev routing. A rollback journal is
-   * written first so a crash before commit restores all of it.
+   * the release identity and the active-version pointer. A rollback journal is
+   * written first so a crash before commit restores all of it. A release the
+   * person installs over a development build removes that build once it commits.
    */
   private finalizeInstall(
     packageName: string,
@@ -1578,14 +1505,6 @@ class AppRegistry {
       ? {present: true, value: previousRelease}
       : {present: false}
     const activeBefore = snapshotStorage<string>(activeKey)
-    const devRoutingBefore = releaseInstall
-      ? (Object.fromEntries(
-          DEV_ROUTING_FIELDS.map((field) => [field, snapshotStorage(`${packageName}_dev_${field}`)]),
-        ) as DevRoutingSnapshot)
-      : undefined
-    // A live context may hold an earlier context's selection: the current context's then waits in the stash. The
-    // release replaces that one too, in the same transaction as the live keys.
-    const devStashBefore = releaseInstall ? stashedDevelopmentSelectionOf(packageName) : null
     const reasonsKey = installReasonsKey(packageName)
     const reasonsBefore = installReason ? snapshotInstallationMetadata<StoredInstallReasons>(reasonsKey) : undefined
     // The pending activation hides a replaced same-version release from inference: take the reasons it held.
@@ -1598,25 +1517,13 @@ class AppRegistry {
       publisher: publisherBefore,
       release: releaseBefore,
       active: activeBefore,
-      ...(devRoutingBefore ? {devRouting: devRoutingBefore} : {}),
-      ...(devStashBefore ? {devStash: devStashBefore} : {}),
       ...(reasonsBefore ? {reasons: reasonsBefore} : {}),
     }
     recordRecoveryState(JSON.stringify(rollbackJournal))
 
-    // Whether the live development selection this release replaces is the current context's. While a live context
-    // still holds an earlier context's, the install leaves that one alone and replaces the current context's.
-    let selectionCurrent = true
-
     const rollbackMetadata = () => {
       let firstError: unknown
       for (const restore of [
-        () => {
-          if (devRoutingBefore) restoreDevRouting(packageName, devRoutingBefore)
-        },
-        () => {
-          if (devStashBefore) restoreStashedDevelopmentSelection(packageName, devStashBefore)
-        },
         () => restoreStorage(activeKey, activeBefore),
         () => restoreInstallationMetadata(releaseKey, releaseBefore),
         () => restoreInstallationMetadata(publisherKey, publisherBefore),
@@ -1637,22 +1544,9 @@ class AppRegistry {
     return {
       apply: () => {
         // The commit point: apply and the commit rename run without yielding,
-        // so a replacement that began after the queue's checks still wins.
-        this.assertNoReplacementInProgress(packageName, version)
-        if (releaseInstall) {
-          // A dev probe or snapshot download started earlier must not
-          // reactivate development code over this release.
-          invalidateDevSnapshotRequests(packageName)
-          // A held earlier context's live keys stay; the current context's selection is replaced wherever it is.
-          selectionCurrent = isDevelopmentSelectionCurrent(packageName)
-          if (selectionCurrent) {
-            for (const field of DEV_ROUTING_FIELDS) restoreStorage(`${packageName}_dev_${field}`, {present: false})
-          }
-          if (devStashBefore) {
-            restoreStashedDevelopmentSelection(packageName, {contextId: devStashBefore.contextId, selection: {}})
-          }
-        }
-        // Every signed install records its publisher, development snapshots
+        // so a development build installed after the queue's checks is still not replaced.
+        this.assertMayReplaceDevelopmentBuild(packageName, version, {installReason})
+        // Every signed install records its publisher, development builds
         // included: from here on only bundles signed with the same key replace
         // this package, until an uninstall clears the record.
         if (releaseIdentity.publisherKeyFingerprint) {
@@ -1661,7 +1555,6 @@ class AppRegistry {
         getInstallationMetadata().set(releaseKey, JSON.stringify(releaseIdentity))
         if (installReason === "assignment") this.recordAssignment(packageName, assignment!, reasonsAtActivation)
         else if (installReason) this.recordInstallReason(packageName, installReason, reasonsAtActivation)
-        if (!releaseInstall) recordDevSnapshotOwner(packageName, version)
         // Do not notify until the pending filesystem marker has committed.
         // A subscriber scanning here would exclude the pending version and
         // could replace this pointer with the previous installed release.
@@ -1670,24 +1563,9 @@ class AppRegistry {
       },
       rollback: rollbackMetadata,
       afterCommit: () => {
-        if (releaseInstall) {
-          // Routing already committed with the active release. Only disposable
-          // snapshot files, the dev index entry and the cached dev icon remain,
-          // so an interruption here cannot select old dev code.
-          // Only the current context's development builds go; a held selection of another context keeps its own.
-          try {
-            this.gcDevVersions(packageName, 0, {currentContext: true})
-            if (selectionCurrent) {
-              if (getDevAppIndex().includes(packageName)) {
-                storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(getDevAppIndex().filter((pkg) => pkg !== packageName)))
-              }
-              const devMeta = devRoutingBefore?.meta
-              if (devMeta?.present && typeof devMeta.value === "string") deleteCachedDevIcon(devMeta.value, packageName)
-            }
-          } catch (error) {
-            console.warn(`APP_REGISTRY: failed to clean obsolete dev artifacts for ${packageName}`, error)
-          }
-        }
+        // The person's release replaced their development build: the active pointer already names the release, so
+        // an interruption here can't select the development build again, and only its files remain to remove.
+        if (releaseInstall) this.gcDevVersions(packageName, 0)
         this.refreshNeeded = true
         this.notify()
       },
@@ -1743,69 +1621,20 @@ class AppRegistry {
   }
 
   /**
-   * Drop every dev-* version directory for a package plus ALL dev MMKV keys
-   * (URL/port/reachability + the home-tile metadata record). Called on
-   * uninstall, so a dev package leaves nothing behind that `projectDevApps`
-   * could re-surface. A release install clears the same routing inside its
-   * install transaction instead (see finalizeInstall).
+   * Garbage-collect older `dev-*` builds of this package, keeping the latest `keep` (by name, which sorts by install
+   * time: `dev-<ms>`). Releases are left alone, and so is the build a running context of the package runs.
    */
-  private clearDevArtifacts(packageName: string, opts: {currentContextOnly?: boolean} = {}): void {
-    if (this.retainedDevVersions.has(packageName)) throw new Error("Cannot clear a miniapp during replacement")
-    try {
-      const pkgDir = new Directory(Paths.document, "lmas", packageName)
-      if (pkgDir.exists) {
-        for (const item of pkgDir.list()) {
-          if (
-            item instanceof Directory &&
-            item.name.startsWith("dev-") &&
-            (!opts.currentContextOnly || isDevSnapshotVisible(packageName, item.name))
-          ) {
-            try {
-              this.removeReleaseIdentity(packageName, item.name)
-              item.delete()
-            } catch (e) {
-              console.warn(`APP_REGISTRY: failed to delete ${item.name}:`, e)
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.warn(`APP_REGISTRY: clearDevArtifacts dir scan failed for ${packageName}:`, e)
-    }
-    storage.remove(`${packageName}_dev_selected_snapshot`)
-    storage.remove(`${packageName}_dev_url`)
-    storage.remove(`${packageName}_dev_port`)
-    storage.remove(`${packageName}_dev_mdns`)
-    storage.remove(`${packageName}_dev_last_reachable`)
-    // HTTP-direct dev miniapps are indexed by their real package name. A
-    // release install/uninstall of that same package should remove only its
-    // dev tile; unrelated dev miniapps must remain available.
-    if (readDevAppRecord(packageName)) unregisterDevApp(packageName)
-  }
-
-  /**
-   * Garbage-collect older `dev-*` version directories for this package,
-   * keeping the latest `keep` (by lexicographic sort, which matches
-   * timestamp ordering since dev-<ms> is zero-padded).
-   *
-   * Only touches `dev-*` versions of one development context: the package's own (the one a live context of it
-   * holds, else the current one), or with `currentContext` the current one. Semver-installed versions and another
-   * account's or workspace's snapshots (kept with that context's selection) are left alone.
-   */
-  public gcDevVersions(packageName: string, keep: number, opts: {currentContext?: boolean} = {}): void {
-    const owned = opts.currentContext ? isDevSnapshotOfCurrentContext : isDevSnapshotVisible
+  public gcDevVersions(packageName: string, keep: number): void {
     try {
       const pkgDir = new Directory(Paths.document, "lmas", packageName)
       if (!pkgDir.exists) return
       const dirs = pkgDir
         .list()
-        .filter(
-          (d): d is Directory => d instanceof Directory && d.name.startsWith("dev-") && owned(packageName, d.name),
-        )
+        .filter((d): d is Directory => d instanceof Directory && d.name.startsWith("dev-"))
         .sort((a, b) => (a.name < b.name ? 1 : -1))
-      const protectedVersions = this.protectedDevVersions(packageName)
+      const running = this.runningDevVersion(packageName)
       for (let i = keep; i < dirs.length; i++) {
-        if (protectedVersions.has(dirs[i].name)) continue
+        if (dirs[i].name === running) continue
         try {
           dirs[i].delete()
           this.removeReleaseIdentity(packageName, dirs[i].name)
@@ -1852,46 +1681,14 @@ class AppRegistry {
     })
   }
 
-  /** An explicitly selected packed snapshot takes precedence over scanned live URLs. */
-  public getSelectedDevSnapshot(packageName: string): string | null {
-    const selected = storage.load<string>(`${packageName}_dev_selected_snapshot`)
-    return selected.is_ok() &&
-      selected.value.startsWith("dev-") &&
-      this.getInstalledVersions(packageName).includes(selected.value) &&
-      isDevSnapshotVisible(packageName, selected.value)
-      ? selected.value
-      : null
-  }
-
-  public selectDevSnapshot(packageName: string, version: string | null): void {
-    if (version !== null && (!version.startsWith("dev-") || !this.getInstalledVersions(packageName).includes(version)))
-      throw new Error("Selected dev snapshot is not installed")
-    if (version === null) storage.remove(`${packageName}_dev_selected_snapshot`)
-    else storage.save(`${packageName}_dev_selected_snapshot`, version)
-    this.markRefreshNeeded()
-  }
-
-  /** Remove one failed staged dev replacement without clearing other dev files or settings. */
-  public discardDevSnapshot(packageName: string, version: string): void {
-    if (!/^dev-[0-9a-f-]+$/.test(version)) throw new Error("Expected an owned dev snapshot version")
-    const directory = new Directory(Paths.document, "lmas", packageName, version)
-    if (directory.exists) directory.delete()
-    this.removeReleaseIdentity(packageName, version)
-    this.refreshNeeded = true
-    this.notify()
-  }
-
   public uninstall(packageName: string, version?: string, options: UninstallOptions = {}): AsyncResult<void, Error> {
     // Serialize with installs: an uninstall must not delete a package tree
     // while another operation is staging or activating inside it.
     return Res.try_async(() =>
       runInstallFilesystemTransaction(async () => {
         options.beforeRemove?.()
-        if (this.retainedDevVersions.has(packageName)) throw new Error("Cannot uninstall a miniapp during replacement")
         if (version) {
           const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
-          // Guard exists: a dev miniapp loads over HTTP and has no on-disk dir,
-          // so an unconditional delete() would throw and abort the cleanup below.
           if (lmaDir.exists) lmaDir.delete()
           this.removeReleaseIdentity(packageName, version)
           console.log("APP_REGISTRY: Uninstalled mini app version", version)
@@ -1909,10 +1706,6 @@ class AppRegistry {
           }
           console.log("APP_REGISTRY: Uninstalled all versions of mini app", packageName)
         }
-        // Always clear dev artifacts: for HTTP-direct dev miniapps the tile is
-        // backed by storage records (_dev_meta + dev_apps_index), not the disk
-        // dir, so without this the projected tile reappears on the next refresh.
-        this.clearDevArtifacts(packageName)
         // Removing the last installed version clears the recorded signer, so
         // any build of the package (an unsigned or dev build included) may
         // install again. Android's uninstall-then-install, for the same reason.
@@ -1985,16 +1778,11 @@ class AppRegistry {
 
   /** The version a launch runs, by launch precedence, and the active pointer to store for it (null to leave it). */
   private chooseActiveVersion(packageName: string): {version: string | undefined; remember: string | null} {
-    // Another account's or workspace's dev snapshot is not an installation here.
-    let versions = this.getInstalledVersions(packageName).filter((version) =>
-      isDevSnapshotVisible(packageName, version),
-    )
+    let versions = this.getInstalledVersions(packageName)
     // A developer build only stands in while the deployment allows development.
-    // A stored dev snapshot pointer is left alone so re-allowing it brings that
-    // scan back; until then a released version stays on screen.
+    // A stored dev build pointer is left alone so re-allowing it brings that
+    // build back; until then a released version stays on screen.
     const devAllowed = isDevMiniappAllowed(packageName)
-    const selectedSnapshot = devAllowed ? this.getSelectedDevSnapshot(packageName) : null
-    if (selectedSnapshot) return {version: selectedSnapshot, remember: null}
     // Treat MMKV as a hint, not authority. A stored version may have been
     // GC'd off disk without this pointer being updated.
     const res = storage.load<string>(`${packageName}_active_version`)
@@ -2035,28 +1823,6 @@ class AppRegistry {
     return result
   }
 
-  /**
-   * Newest `dev-*` snapshot that still has a resolvable UI or background
-   * entry. Semver store installs are ignored — a live-dev tile must not
-   * silently fall back to a released store bundle when the laptop drops.
-   */
-  public getLatestDevSnapshotVersion(packageName: string): string | null {
-    const versions = this.getInstalledVersions(packageName)
-      .filter((v) => v.startsWith("dev-") && isDevSnapshotVisible(packageName, v))
-      .sort()
-      .reverse()
-    for (const version of versions) {
-      const paths = this.getMiniappEntryPaths(packageName, version)
-      if (paths?.background || paths?.ui) return version
-    }
-    return null
-  }
-
-  /** True iff {@link getLatestDevSnapshotVersion} finds a usable snapshot. */
-  public hasDevSnapshot(packageName: string): boolean {
-    return this.getLatestDevSnapshotVersion(packageName) != null
-  }
-
   public getMetadata(packageName: string, version: string): InstalledInfo {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
@@ -2089,32 +1855,21 @@ class AppRegistry {
   }
 
   /**
-   * Merge disk-derived apps with the projected dev + offline layers,
-   * de-duping by packageName. An active dev registration wins over an older
-   * disk install of the same package; installing a release clears that dev
-   * registration in finalizeInstall. Native offline apps keep top priority.
+   * Merge disk-derived apps with the offline layer, de-duping by packageName.
+   * Native offline apps keep top priority.
    */
   private mergeProjectedApps(diskApps: ClientApp[], includeBackgroundOnly = false): ClientApp[] {
     const offline = this.projectOfflineApps().filter((app) => isOfflineSystemMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
-    const dev = this.projectDevApps().filter(
-      (app) =>
-        isDevMiniappAllowed(app.packageName) &&
-        !offlinePackages.has(app.packageName) &&
-        !this.getSelectedDevSnapshot(app.packageName),
-    )
-    const devPackages = new Set(dev.map((app) => app.packageName))
     const installed = diskApps.filter(
       (app) =>
         (app.version?.startsWith("dev-")
           ? isDevMiniappAllowed(app.packageName)
-          : this.isReleaseAllowed(app.packageName, app.version)) &&
-        !offlinePackages.has(app.packageName) &&
-        !devPackages.has(app.packageName),
+          : this.isReleaseAllowed(app.packageName, app.version)) && !offlinePackages.has(app.packageName),
     )
     // A background-only miniapp (a Store) never appears in user-facing lists;
     // only the host's own maintenance asks for it.
-    return [...installed, ...dev, ...offline].filter((app) =>
+    return [...installed, ...offline].filter((app) =>
       isMiniappAvailable(app.packageName, includeBackgroundOnly ? "background" : "interactive"),
     )
   }
@@ -2163,14 +1918,9 @@ class AppRegistry {
         // Declared actions (for session.miniapps.list + invoke gating).
         const actions = normalizeManifestActions(manifest?.actions)
 
-        // Dev miniapps live in the same lmas/ tree as installed ones, but
+        // Development builds live in the same lmas/ tree as installed ones, but
         // their version directory name starts with "dev-".
         const isMiniappDev = versionString.startsWith("dev-")
-        let devUrl: string | undefined
-        if (isMiniappDev && !this.getSelectedDevSnapshot(lmaInfo.packageName)) {
-          const devUrlRes = storage.load<string>(`${lmaInfo.packageName}_dev_url`)
-          if (devUrlRes.is_ok()) devUrl = devUrlRes.value
-        }
 
         out.push({
           packageName: lmaInfo.packageName,
@@ -2193,7 +1943,6 @@ class AppRegistry {
           // actions must reject every invoke, not bypass the check.
           actions,
           ...(isMiniappDev ? {isMiniappDev: true} : {}),
-          ...(devUrl ? {devUrl} : {}),
           onStart: () => saveLocalAppRunningState(lmaInfo.packageName, true),
           onStop: () => saveLocalAppRunningState(lmaInfo.packageName, false),
         })
@@ -2222,47 +1971,6 @@ class AppRegistry {
   public markRefreshNeeded(): void {
     this.refreshNeeded = true
     this.notify()
-  }
-
-  /**
-   * Project persisted dev-app metadata records into ClientApp tiles. Dev
-   * miniapps aren't installed to disk (they load over HTTP), so they don't
-   * appear in the `lmas/` scan — this surfaces them on the home screen so
-   * they're re-launchable without re-scanning the QR.
-   */
-  private projectDevApps(): ClientApp[] {
-    return getDevAppRecords().map((rec) => {
-      // Every dev rebuild has a unique snapshot directory. Prefer its manifest
-      // icon so home tiles update with the bundle instead of retaining the
-      // separately cached, stable-path QR preview (and its decoded image cache).
-      const snapshotVersion = this.getLatestDevSnapshotVersion(rec.packageName)
-      const snapshotIcon = snapshotVersion ? this.getMetadata(rec.packageName, snapshotVersion).logoUrl : undefined
-      const permissions = normalizeManifestPermissions(rec.permissions)
-      const hardwareRequirements = buildHardwareRequirements(rec.hardwareRequirements, rec.packageName)
-      return {
-        packageName: rec.packageName,
-        version: undefined,
-        running: miniappRunningRegistry.has(rec.packageName),
-        local: true,
-        healthy: true,
-        loading: false,
-        offline: false,
-        hidden: false,
-        offlineRoute: "",
-        name: rec.name,
-        webviewUrl: "",
-        logoUrl: snapshotIcon || rec.iconUrl,
-        type: normalizeManifestType(rec.type),
-        permissions,
-        hardwareRequirements,
-        actions: normalizeManifestActions(rec.actions),
-        isMiniappDev: true,
-        devUrl: rec.devUrl,
-        devPort: rec.devPort,
-        onStart: () => saveLocalAppRunningState(rec.packageName, true),
-        onStop: () => saveLocalAppRunningState(rec.packageName, false),
-      }
-    })
   }
 
   private projectOfflineApps(): ClientApp[] {
@@ -2361,305 +2069,66 @@ export function getLocalAppScreenshot(packageName: string): string | undefined {
   return uri
 }
 
-/**
- * Persisted metadata for a dev miniapp's home tile.
- *
- * Dev miniapps load directly off the dev server over HTTP and are NOT
- * installed into `lmas/`, so the disk scan in `getInstalledMiniapps` can't
- * see them. We persist a tiny record at scan / dev-URL-entry time so the
- * tile survives across app launches and is re-launchable without re-scanning.
- * `permissions` / `hardwareRequirements` are snapshotted from the manifest so
- * the home-screen permission gate has data without a disk bundle.
- */
-export interface DevAppRecord {
-  packageName: string
-  name: string
-  iconUrl: string
-  devUrl: string
-  devPort?: number
-  /**
-   * Bonjour / mDNS hostname from the QR (`ComputerName.local`). Used as a
-   * failover host when the raw LAN IP in `devUrl` goes stale after a Wi-Fi
-   * change — phones that resolve `.local` can relaunch without re-scanning.
-   */
-  mdnsHost?: string
-  type?: AppletType
-  permissions?: Array<string | {type: string; required?: boolean; description?: string}>
-  hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-  /** Manifest-declared actions — so dev-sideloaded miniapps can be invoked too. */
-  actions?: Array<{
-    id?: unknown
-    description?: unknown
-    parameters?: unknown
-    outputSchema?: unknown
-    lifecycle?: unknown
-    audience?: unknown
-  }>
-  /** Legacy single-slot migration field. New records use the real packageName directly. */
-  sourcePackageName?: string
+// ---- Development records from before builds updated from their address --------------------------------------------
+
+/** Set once the records below have been migrated, in the installation metadata store. */
+const DEVELOPMENT_RECORDS_MIGRATED_KEY = "miniapp_development_records_migrated:v1"
+/** The keys an earlier Mentra App kept a development server's record in, per package, in the default store. */
+const LEGACY_DEVELOPMENT_KEY_SUFFIXES = [
+  "_dev_meta",
+  "_dev_url",
+  "_dev_port",
+  "_dev_mdns",
+  "_dev_last_reachable",
+  "_dev_selected_snapshot",
+] as const
+const LEGACY_DEVELOPMENT_INDEX_KEY = "dev_apps_index"
+const LEGACY_DEVELOPMENT_ICONS_DIR = "dev-miniapp-icons"
+
+function isLegacyDevelopmentKey(key: string): boolean {
+  return key === LEGACY_DEVELOPMENT_INDEX_KEY || LEGACY_DEVELOPMENT_KEY_SUFFIXES.some((suffix) => key.endsWith(suffix))
 }
-
-const DEV_APPS_INDEX_KEY = "dev_apps_index"
-const DEV_APP_ICONS_DIR = "dev-miniapp-icons"
-
-function isPrivateLanHost(hostname: string): boolean {
-  return (
-    hostname === "localhost" ||
-    hostname.startsWith("192.168.") ||
-    hostname.startsWith("10.") ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
-  )
-}
-
-function rewriteStaleDevUrl(value: string): string {
-  if (!__DEV__) return value
-  const host = configuredDevHost()
-  if (!host) return value
-
-  try {
-    const url = new URL(value)
-    if (url.hostname === host || !isPrivateLanHost(url.hostname)) return value
-    url.hostname = host
-    return url.toString().replace(/\/$/, "")
-  } catch {
-    return value
-  }
-}
-
-function normalizeDevAppRecord(record: DevAppRecord): DevAppRecord {
-  const devUrl = rewriteStaleDevUrl(record.devUrl)
-  const iconUrl = rewriteStaleDevUrl(record.iconUrl)
-  return devUrl === record.devUrl && iconUrl === record.iconUrl ? record : {...record, devUrl, iconUrl}
-}
-
-/** Legacy package used by builds that supported only one dev miniapp. */
-export const DEV_APP_PACKAGE_NAME = "com.dev"
-export const DEV_APP_NAME = "Dev"
 
 /**
- * Copy a dev-server icon into Documents so the tile remains branded after the
- * laptop/server disappears. A failed download is non-fatal: the remote URL is
- * retained and can still render while the server is reachable.
+ * Once, at startup: an earlier Mentra App kept a record of each development server (`<pkg>_dev_url`, its console
+ * port, and per account and workspace copies of them) beside the build it downloaded from it, and kept that build
+ * current itself. Now the build records its address and updates from it like any miniapp. Each package's newest
+ * development build takes its record's address and console connection, so it keeps updating without a rescan; then
+ * every record goes. A record whose build is gone leaves nothing behind: that server is scanned again. The registry
+ * runs this as it is created; it is exported for its tests.
  */
-async function cacheDevAppIcon(packageName: string, iconUrl: string): Promise<string> {
-  if (!/^https?:\/\//.test(iconUrl)) return iconUrl
-
+export function migrateDevelopmentRecords(registry: AppRegistry): void {
   try {
-    const dir = new Directory(Paths.document, DEV_APP_ICONS_DIR)
-    if (!dir.exists) dir.create({intermediates: true})
-
-    const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
-    let extension = ".png"
-    try {
-      const match = new URL(iconUrl).pathname.match(/\.(png|jpe?g|webp|gif|svg)$/i)
-      if (match) extension = `.${match[1].toLowerCase()}`
-    } catch {
-      // Keep the decoder-friendly .png fallback; image loaders sniff content.
+    const metadata = getInstallationMetadata()
+    if (metadata.getString(DEVELOPMENT_RECORDS_MIGRATED_KEY)) return
+    const live: Record<string, unknown> = {}
+    for (const key of storage.getAllKeys()) {
+      if (!isLegacyDevelopmentKey(key)) continue
+      const loaded = storage.load<unknown>(key)
+      if (loaded.is_ok()) live[key] = loaded.value
     }
-
-    const target = new File(dir, `${safePackageName}${extension}`)
-    const downloaded = await File.downloadFileAsync(iconUrl, target, {idempotent: true})
-
-    // Only remove older extensions AFTER the replacement is safely on disk;
-    // a broken icon URL must not destroy the last known-good cached logo.
-    for (const item of dir.list()) {
-      if (item instanceof File && item.uri !== downloaded.uri && item.name.startsWith(`${safePackageName}.`)) {
-        try {
-          item.delete()
-        } catch {
-          // Best effort; the current icon has already been persisted.
+    // The live record is the current account's; another account's or workspace's comes after it.
+    const adopted = new Set<string>()
+    for (const selection of [live, ...takeLegacyDevelopmentSelections()]) {
+      for (const [key, value] of Object.entries(selection)) {
+        if (!key.endsWith("_dev_url") || typeof value !== "string") continue
+        const packageName = key.slice(0, -"_dev_url".length)
+        if (adopted.has(packageName)) continue
+        const port = selection[`${packageName}_dev_port`]
+        if (registry.adoptDevelopmentServer(packageName, value, typeof port === "number" ? port : undefined)) {
+          adopted.add(packageName)
         }
       }
     }
-    return downloaded.uri
+    for (const key of Object.keys(live)) storage.remove(key)
+    const icons = new Directory(Paths.document, LEGACY_DEVELOPMENT_ICONS_DIR)
+    if (icons.exists) icons.delete()
+    if (adopted.size > 0) console.log(`APP_REGISTRY: development builds now update from their address: ${[...adopted]}`)
+    metadata.set(DEVELOPMENT_RECORDS_MIGRATED_KEY, "1")
   } catch (error) {
-    console.warn(`APP_REGISTRY: failed to cache dev icon for ${packageName}:`, error)
-    return readDevAppRecord(packageName)?.iconUrl ?? iconUrl
+    // Tried again at the next start.
+    console.warn("APP_REGISTRY: could not migrate the development records", error)
   }
-}
-
-function removeDevRecordKeys(packageName: string): void {
-  const existing = readDevAppRecord(packageName)
-  if (existing?.iconUrl.startsWith("file://")) {
-    try {
-      const icon = new File(existing.iconUrl)
-      if (icon.exists) icon.delete()
-    } catch (error) {
-      console.warn(`APP_REGISTRY: failed to delete dev icon for ${packageName}:`, error)
-    }
-  }
-  storage.remove(`${packageName}_dev_meta`)
-  storage.remove(`${packageName}_dev_url`)
-  storage.remove(`${packageName}_dev_port`)
-  storage.remove(`${packageName}_dev_mdns`)
-  storage.remove(`${packageName}_dev_last_reachable`)
-}
-
-function readDevAppRecord(packageName: string): DevAppRecord | null {
-  const res = storage.load<string>(`${packageName}_dev_meta`)
-  if (!res.is_ok()) return null
-  try {
-    return JSON.parse(res.value) as DevAppRecord
-  } catch {
-    return null
-  }
-}
-
-/** Move the historical `com.dev` record onto its real manifest package key. */
-function migrateLegacyDevSlot(): void {
-  const legacy = readDevAppRecord(DEV_APP_PACKAGE_NAME)
-  const targetPackage = legacy?.sourcePackageName?.trim()
-  if (!legacy || !targetPackage || targetPackage === DEV_APP_PACKAGE_NAME) return
-
-  const existingTarget = readDevAppRecord(targetPackage)
-  const migrated: DevAppRecord = existingTarget ?? {
-    ...legacy,
-    packageName: targetPackage,
-    sourcePackageName: targetPackage,
-  }
-  if (!existingTarget) storage.save(`${targetPackage}_dev_meta`, JSON.stringify(migrated))
-
-  const legacyUrl = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_url`)
-  const targetUrl = storage.load<string>(`${targetPackage}_dev_url`)
-  if (!targetUrl.is_ok()) {
-    storage.save(`${targetPackage}_dev_url`, legacyUrl.is_ok() ? legacyUrl.value : migrated.devUrl)
-  }
-  const legacyPort = storage.load<number>(`${DEV_APP_PACKAGE_NAME}_dev_port`)
-  const targetPort = storage.load<number>(`${targetPackage}_dev_port`)
-  if (!targetPort.is_ok()) {
-    const port = migrated.devPort ?? (legacyPort.is_ok() ? legacyPort.value : undefined)
-    if (typeof port === "number" && Number.isFinite(port)) storage.save(`${targetPackage}_dev_port`, port)
-  }
-  const legacyMdns = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_mdns`)
-  const targetMdns = storage.load<string>(`${targetPackage}_dev_mdns`)
-  if (!targetMdns.is_ok() && legacyMdns.is_ok() && legacyMdns.value.trim()) {
-    storage.save(`${targetPackage}_dev_mdns`, legacyMdns.value.trim())
-  }
-
-  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
-  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_url`)
-  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
-  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_mdns`)
-  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_last_reachable`)
-
-  const index = Array.from(new Set(getDevAppIndex().map((pkg) => (pkg === DEV_APP_PACKAGE_NAME ? targetPackage : pkg))))
-  storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(index))
-}
-
-function readStoredMdnsHost(packageName: string): string | undefined {
-  const res = storage.load<string>(`${packageName}_dev_mdns`)
-  if (!res.is_ok()) return undefined
-  return res.value.trim() || undefined
-}
-
-/**
- * Whether live development code may run under `packageName`. The deployment
- * must allow miniapp development. A dev build is the package itself, served
- * unsigned, so it is also refused while the installed package carries a
- * publisher signature (throwing {@link SignedMiniappDevBuildError});
- * uninstalling clears that signature.
- */
-export function assertDevBuildAllowed(packageName: string): void {
-  assertMiniappDevelopmentAllowed()
-  assertUnsignedDevBuildAllowed({
-    packageName,
-    installedFingerprint: appRegistry.getPublisherKeyFingerprint(packageName),
-  })
-}
-
-/**
- * Register or update one dev miniapp under its real manifest package. Different
- * package names coexist; rescanning the same package updates that package only.
- * The phone keeps the record, its `${packageName}_dev_*` routing keys, and the
- * dev-build marking until a release install or uninstall replaces them.
- *
- * A dev build follows the local-build rules whatever name it claims: it keeps
- * its data apart from the package's, its tokens are marked as a local build's,
- * it never gets system privileges and it never updates from a URL.
- *
- * `assertCurrent` runs after the icon download, immediately before the record
- * and routing keys are written: an install whose session ended meanwhile
- * throws there, so it never selects its server in a later session.
- */
-export async function registerDevApp(record: DevAppRecord, options: {assertCurrent?: () => void} = {}): Promise<void> {
-  migrateLegacyDevSlot()
-  const packageName = record.packageName.trim()
-  if (!packageName) throw new Error("Dev miniapp manifest is missing packageName")
-  assertDevBuildAllowed(packageName)
-
-  const iconUrl = await cacheDevAppIcon(packageName, record.iconUrl)
-  options.assertCurrent?.()
-  // Relaunch paths (developer-URL screen, loadDevMiniapp) omit mdnsHost, so an
-  // omitted field keeps whatever the QR scan stored instead of wiping the
-  // `.local` failover host.
-  const mdnsHost = record.mdnsHost !== undefined ? record.mdnsHost.trim() || undefined : readStoredMdnsHost(packageName)
-  const devRecord: DevAppRecord = {
-    ...record,
-    packageName,
-    sourcePackageName: packageName,
-    name: record.name || DEV_APP_NAME,
-    iconUrl,
-    mdnsHost,
-  }
-  storage.save(`${packageName}_dev_meta`, JSON.stringify(devRecord))
-  storage.remove(`${packageName}_dev_selected_snapshot`)
-  storage.save(`${packageName}_dev_url`, record.devUrl)
-  if (typeof record.devPort === "number" && Number.isFinite(record.devPort)) {
-    storage.save(`${packageName}_dev_port`, record.devPort)
-  } else {
-    storage.remove(`${packageName}_dev_port`)
-  }
-  if (mdnsHost) {
-    storage.save(`${packageName}_dev_mdns`, mdnsHost)
-  } else {
-    storage.remove(`${packageName}_dev_mdns`)
-  }
-  const idx = getDevAppIndex()
-  if (!idx.includes(packageName)) {
-    idx.push(packageName)
-    storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
-  }
-  appRegistry.markRefreshNeeded()
-}
-
-/** Drop one dev miniapp's metadata, routing keys, and cached icon. */
-export function unregisterDevApp(packageName = DEV_APP_PACKAGE_NAME): void {
-  removeDevRecordKeys(packageName)
-  const idx = getDevAppIndex().filter((p) => p !== packageName)
-  storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
-  appRegistry.markRefreshNeeded()
-}
-
-function getDevAppIndex(): string[] {
-  const res = storage.load<string>(DEV_APPS_INDEX_KEY)
-  if (!res.is_ok()) return []
-  try {
-    const parsed = JSON.parse(res.value)
-    return Array.isArray(parsed) ? (parsed as string[]) : []
-  } catch {
-    return []
-  }
-}
-
-export function getDevAppRecords(): DevAppRecord[] {
-  migrateLegacyDevSlot()
-  const out: DevAppRecord[] = []
-  for (const pkg of getDevAppIndex()) {
-    const res = storage.load<string>(`${pkg}_dev_meta`)
-    if (!res.is_ok()) continue
-    try {
-      const record = JSON.parse(res.value) as DevAppRecord
-      const normalized = normalizeDevAppRecord(record)
-      if (normalized !== record) {
-        storage.save(`${pkg}_dev_meta`, JSON.stringify(normalized))
-        storage.save(`${pkg}_dev_url`, normalized.devUrl)
-      }
-      out.push(normalized)
-    } catch {
-      /* corrupt record — skip */
-    }
-  }
-  return out
 }
 
 const appRegistry = AppRegistry.getInstance()

@@ -84,9 +84,9 @@ export interface AppletInterface {
  *
  * Extends AppletInterface with the host-side fields the manager / OEM tracks
  * outside the manifest: offline routing, hardware compatibility result,
- * loading/hidden/local flags, lifecycle hooks, screenshot, and the
- * dev-miniapp escape hatches (`devUrl` / `isMiniappDev`) that surface a
- * `mentra-miniapp dev` snapshot.
+ * loading/hidden/local flags, lifecycle hooks, screenshot, and
+ * `isMiniappDev`, which marks a development build (one installed from a local
+ * address, such as the URL `mentra-miniapp dev` prints).
  */
 /**
  * A manifest-declared action a miniapp exposes for other (system) miniapps to
@@ -134,8 +134,6 @@ export interface ClientApp extends AppletInterface {
   version?: string
   needsPcm?: boolean
   needsTranscript?: boolean
-  devUrl?: string
-  devPort?: number
   isMiniappDev?: boolean
   /** Manifest-declared actions (for session.miniapps.list + invoke gating). */
   actions?: DeclaredAction[]

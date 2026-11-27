@@ -827,8 +827,6 @@ const mockIslandEntries = () => {
     useStart: jest.fn(() => appStatusState.start),
     useStop: jest.fn(() => appStatusState.stop),
     sortAppsByLastOpenTime: jest.fn((apps) => apps),
-    decideDevLaunchRoute: jest.fn(),
-    decideDevOpenRoute: jest.fn(),
     HardwareCompatibility: {
       checkCompatibility: jest.fn(() => ({
         isCompatible: true,
@@ -858,10 +856,6 @@ const mockIslandEntries = () => {
 
   // --- "@mentra/engine-host-internal": raw stores + service singletons ---
   const internal = {
-    // The phone's dev-build signer gate; tests that exercise it use the real AppRegistry.
-    assertDevBuildAllowed: jest.fn(),
-    SignedMiniappDevBuildError: jest.requireActual("./modules/engine/src/services/publisherIdentityPolicy")
-      .SignedMiniappDevBuildError,
     installMiniappFromJsonUrl: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
     // Fleet's managed/unmanaged answer: a pure module, so tests drive the real one (`setFleetManagementState`).
     ...jest.requireActual("./modules/engine/src/services/fleet/fleetManagementState"),
@@ -1033,7 +1027,6 @@ const mockIslandEntries = () => {
     },
     configureRuntime: jest.fn(),
     configureLauncher: jest.fn(),
-    getDevAppRecords: jest.fn(() => []),
     sha256Hex: jest.fn(() => Promise.resolve("0".repeat(64))),
     miniappLauncher: {
       isRunning: jest.fn(() => false),
@@ -1065,7 +1058,6 @@ const mockIslandEntries = () => {
     miniappRunningRegistry: {
       isRunning: jest.fn(() => false),
     },
-    devServerBridge: {},
   }
 
   mockIslandEntriesCache = {main, internal, devtools}

@@ -25,12 +25,17 @@ mentra-miniapp pack
 
 | File | What it is |
 |---|---|
-| `<packageName>-<version>.zip` | The bundle. ZIPs of earlier versions stay beside it. |
-| `miniapp.json` | Your `miniapp.json` plus `bundle: {url, sha256}`, naming the ZIP and its SHA-256. |
+| `<packageName>-<version>-<hash>.zip` | The bundle. `<hash>` is the first 8 hex digits of its SHA-256, so every build has its own file name. ZIPs of earlier builds stay beside it. |
+| `miniapp.json` | Your `miniapp.json` plus `bundle: {url, sha256}`, naming the ZIP and its SHA-256, and `versions`, the [versions people can pin](#versions-people-can-pin). |
 | The icon, such as `icon.png` | The file your `miniapp.json` `icon` names. |
 
-Your own `miniapp.json` must not declare `bundle`; `pack` adds it to the copy it
-writes. See the [CLI reference](/app-devs/reference/cli#pack) for signing.
+Your own `miniapp.json` must not declare `bundle` or `versions`; `pack` adds them
+to the copy it writes. See the [CLI reference](/app-devs/reference/cli#pack) for
+signing.
+
+To try the packed build on a phone before you upload it, run
+`mentra-miniapp dev --production`: it serves the same ZIP from your computer.
+See the [CLI reference](/app-devs/reference/cli#production-build).
 
 ## 2. Host it
 
@@ -40,15 +45,72 @@ your **miniapp URL**, for example `https://notes.example.com/`.
 
 For each release:
 
-1. Bump `version` in `miniapp.json` (semantic version, such as `1.4.2`).
-2. Run `mentra-miniapp pack`.
-3. Upload the new ZIP first, and `miniapp.json` last, so your URL never names a
-   ZIP that isn't there yet. A ZIP never changes once published; each version
-   is a new file.
+1. Run `mentra-miniapp pack`.
+2. Upload the new ZIP first, and `miniapp.json` last, so your URL never names a
+   ZIP that isn't there yet. A ZIP never changes once published; each build is
+   a new file.
+
+The Mentra App updates an installed miniapp when the ZIP your URL names is not
+the one it has: it compares the ZIP's SHA-256, never the version. So a change
+reaches phones whether or not you bump `version` in `miniapp.json`, which is
+there for people to read (a semantic version, such as `1.4.2`). The same files
+always pack to the same ZIP, so packing unchanged code again updates nobody. To
+roll back, pack the earlier code again and upload it, or point `bundle` in the
+served `miniapp.json` back at the earlier ZIP.
 
 Have your host send an `ETag` or `Last-Modified` header. The Mentra App asks
 for `miniapp.json` conditionally, so an unchanged miniapp costs one small `304`
 response.
+
+### Versions people can pin
+
+A workspace can hold its phones on one version of your miniapp while you publish
+newer ones. A pinned phone looks that version up in the `versions` list of your
+`miniapp.json`, which `pack` writes:
+
+```json miniapp.json
+{
+  "packageName": "com.example.notes",
+  "version": "0.3.5",
+  "bundle": {"url": "com.example.notes-0.3.5-9f2c0e1a.zip", "sha256": "9f2c0e1a…"},
+  "versions": [
+    {"version": "0.3.5", "url": "com.example.notes-0.3.5-9f2c0e1a.zip", "sha256": "9f2c0e1a…"},
+    {"version": "0.3.4", "url": "com.example.notes-0.3.4-41ab77c3.zip", "sha256": "41ab77c3…"}
+  ]
+}
+```
+
+`bundle` is the latest build: what a phone without a pin runs. `versions` has
+one entry per version, highest version first, and at most 50; past that, the
+lowest versions leave the list. A miniapp without the list can't be pinned, and
+nothing else about it changes.
+
+- **Keep the old ZIPs online if you want them pinnable.** Every version in the
+  list needs its ZIP at your URL for as long as it is listed. A host you upload
+  files to, such as R2 or S3, keeps them unless you delete them. A host that
+  replaces the whole site on each deploy, such as GitHub Pages or Cloudflare
+  Pages, serves only what the deploy holds: keep `build/` from one pack to the
+  next and deploy all of it. A version whose ZIP is gone can no longer be
+  installed by a phone pinned to it.
+- **Tell `pack` what is already published.** `pack` adds the version it packed
+  and keeps the others. On your own computer it takes them from `build/`, from
+  the last pack, and lists only versions whose ZIPs are still there. A CI
+  checkout starts without `build/`, so pass your miniapp URL there:
+
+  ```bash
+  mentra-miniapp pack --url https://notes.example.com/
+  ```
+
+  `pack` then reads the `miniapp.json` your URL serves and keeps its versions.
+  If it can't read it, it stops and writes nothing, so a failed read never
+  publishes a shorter list. The first time, when your URL answers `404`, it
+  starts a new list.
+- **A version is one build.** Packing other bytes under a version already
+  listed replaces that version's entry with the new hash. Phones without a pin
+  update. A phone pinned to that version keeps the build it has, and the
+  workspace sees a pin that can't be met, because a pin never moves a phone to
+  code nobody chose. Give a version you want pinnable for good a number you
+  don't publish twice.
 
 ## 3. Match the package name to your domain
 
@@ -86,9 +148,14 @@ Mentra App still asks for the permissions your miniapp requires. They can also
 paste the URL into **Add a miniapp** in the Mentra App or scan a QR code of it;
 an install sheet then shows where the miniapp comes from before it installs.
 
-Installed miniapps check for new releases when the Mentra App starts, when it
+Installed miniapps check for a new build when the Mentra App starts, when it
 comes to the foreground, when a miniapp opens, and every 15 minutes while it
-runs.
+runs. A miniapp that isn't running updates with nothing to answer. Opening one
+waits for its check behind its splash, for up to 5 seconds, and a new build
+installs before your miniapp shows, for up to 30 seconds more, while the
+splash says "Updating…"; past either limit the installed build opens. Only a
+miniapp that is already running is asked "Update {name}?", because updating
+restarts it.
 
 ## Age rating and listing
 
@@ -176,8 +243,10 @@ backend can be an ordinary unlisted miniapp whose backend checks `workspaceId`.
 
 `mentra-miniapp dev` serves your project from your computer and prints a QR of
 its local-network URL, `http://<your-lan-ip>:<port>/`. The Mentra App installs
-it like any miniapp URL, shows it as "From your local network", and reloads it
-when you save. See the [CLI reference](/app-devs/reference/cli#dev).
+it like any miniapp URL, shows it as "From your local network", and when you
+save, installs the new build and restarts the miniapp. `mentra-miniapp dev
+--production` serves the production build the same way, without watching for
+saves: the phone takes a new build the next time the miniapp opens. See the [CLI reference](/app-devs/reference/cli#dev).
 
 A local-network URL has no domain to vouch for its package name, so a local build
 could claim any name. Two rules make that useless:
