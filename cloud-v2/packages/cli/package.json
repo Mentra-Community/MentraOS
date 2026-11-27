@@ -1,6 +1,6 @@
 {
   "name": "@mentra/cli",
-  "version": "2.0.0-dev.2",
+  "version": "2.0.0-dev.3",
   "description": "Mentra developer CLI: sign in, and run, build and pack Mentra miniapps. Bun-only.",
   "type": "module",
   "bin": {

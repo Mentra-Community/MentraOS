@@ -16,7 +16,7 @@
     },
     "../cloud-v2/packages/cli": {
       "name": "@mentra/cli",
-      "version": "2.0.0-dev.2",
+      "version": "2.0.0-dev.3",
       "bin": {
         "mentra": "./src/index.ts",
       },
@@ -435,7 +435,7 @@
     },
     "create-mentra-miniapp": {
       "name": "create-mentra-miniapp",
-      "version": "0.1.0-dev.2",
+      "version": "0.1.0-dev.3",
       "bin": {
         "create-mentra-miniapp": "./bin/index.ts",
       },
@@ -448,7 +448,7 @@
     },
     "miniapp-cli": {
       "name": "@mentra/miniapp-cli",
-      "version": "0.1.0-dev.2",
+      "version": "0.1.0-dev.3",
       "bin": {
         "mentra-miniapp": "./src/index.ts",
       },
