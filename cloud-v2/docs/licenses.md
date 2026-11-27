@@ -134,15 +134,17 @@ workspace a number of licenses of a product until a date, and nothing is ever
 charged. It needs `organization.licenses.grant`: an Organization Admin holds
 it, and so does an operator key created with it (a workspace key never may).
 Billing records a key's grant by the key's ID and name and the person who
-created it. It is also under `/api/admin/organization` for the admin portal's
-session: the admin portal's Workspaces page offers **Grant licenses** on each
-active workspace to a caller holding the capability, and sends the request with
-an idempotency key it keeps while the form asks for the same grant, so a retry
-after a timeout makes nothing new. The same page makes a workspace for a
-customer and invites its Owner ([Workspaces](workspaces.md#apis)), and an open
-workspace's Licenses tab lists what it holds, with **End grant** on each active
-license for a caller holding the capability
-([Ending a grant early](#ending-a-grant-early)).
+created it. It is also under `/api/portal/organization` for the workspace
+portal's session (and `/api/admin/organization` for the admin portal's): a
+workspace's **Admin tools** page in the workspace portal, which only Organization
+Admins see, offers **Grant licenses** to a caller holding the capability, and
+sends the request with an idempotency key it keeps while the form asks for the
+same grant, so a retry after a timeout makes nothing new. The page lists what
+the workspace holds, with **End grant** on each active license
+([Ending a grant early](#ending-a-grant-early)). The admin portal's Workspaces
+page makes a workspace for a customer and invites its Owner
+([Workspaces](workspaces.md#apis)), and links each workspace to the workspace
+portal.
 
 | Route | Does |
 | --- | --- |
@@ -150,7 +152,7 @@ license for a caller holding the capability
 | `POST /api/organization/workspaces/:workspaceId/license-grants/:product/end` | Ends the workspace's grant of that product now, before its date. |
 
 Both need `organization.licenses.grant`, and both are also under
-`/api/admin/organization`.
+`/api/portal/organization` and `/api/admin/organization`.
 
 ```sh
 curl -X POST "$MENTRA_CORE_URL/api/organization/workspaces/ws_123/license-grants" \
@@ -221,7 +223,7 @@ the ended grant's own key answers that grant, ended, and makes nothing.)
 `POST /api/organization/workspaces/:workspaceId/license-grants/:product/end`
 ends the workspace's grant of `product` now. It needs
 `organization.licenses.grant`, as the grant does, from a person or an operator
-key. The admin portal's **End grant**, on an open workspace's Licenses tab, asks
+key. **End grant**, on the workspace portal's Admin tools page, asks
 first in a dialog that names the workspace and the product and says how many
 people lose it. The organization-wide Licenses page stays read-only.
 
@@ -598,9 +600,10 @@ deletion from the change feed (`workspace.deleted`) and stops charging.
 
 ### Dev and staging support reset
 
-On dev or staging, an Organization Admin can use **Admin → Workspaces → Reset licenses & billing**.
+On dev or staging, an Organization Admin can use **Reset licenses & billing** on a workspace's Admin tools page in
+the workspace portal, which offers it where `GET /api/portal/me` answers `organization.licenseReset: true`.
 A short confirmation dialog names the workspace and offers Cancel or Reset; no reason or typed confirmation is required.
-`GET /api/admin/workspace-license-resets/:workspaceId` previews the workspace's license and assignment counts.
+`GET /api/portal/workspace-license-resets/:workspaceId` previews the workspace's license and assignment counts.
 `POST` to the same address takes `{confirmWorkspaceId}`. Both routes require an Organization Admin person
 and `CLOUD_CORE_ENVIRONMENT=dev` or `staging`; other deployments refuse them.
 

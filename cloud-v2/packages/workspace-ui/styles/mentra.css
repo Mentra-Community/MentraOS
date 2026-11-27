@@ -48,6 +48,9 @@
   --mentra-brand: #00b869;
   /* Keyboard focus: the text colour, so focus reads as part of the control and not as a status. */
   --mentra-focus: var(--mentra-text);
+  /* Staff powers in use (the Organization Admin ribbon): a blue used for nothing else. */
+  --mentra-admin: #1d4ed8;
+  --mentra-admin-text: #ffffff;
   /* The Store's danger red, for actions that remove or end something. */
   --mentra-danger: #b63a29;
 
@@ -104,6 +107,8 @@
   --color-info-foreground: var(--mentra-info);
   --color-error: var(--mentra-error-bg);
   --color-error-foreground: var(--mentra-error);
+  --color-admin: var(--mentra-admin);
+  --color-admin-foreground: var(--mentra-admin-text);
 
   /* The sign-in page's shapes: 24px cards and dialogs, 16px menus, 12px notices; controls are pills. */
   --radius-card: 24px;

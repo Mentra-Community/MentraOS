@@ -1,4 +1,7 @@
-/** Admin-only non-production test-billing reset. The production API rejects the action before touching billing. */
+/**
+ * The non-production test-billing reset, for an Organization Admin, on a workspace's Admin tools page in Mentra
+ * Portal (`/api/portal/workspace-license-resets`). The production API rejects the action before touching billing.
+ */
 import {Hono} from "hono"
 import {z} from "zod"
 import {AdminActionAuditLogModel} from "../../models/admin-action-audit-log.model"

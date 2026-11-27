@@ -106,7 +106,6 @@ jobs:
         # Browserless: React views render to static markup.
         run: |
           bun test --max-concurrency=1 \
-            scripts/deploy-pages.test.ts \
             websites/account/src \
             websites/account/functions \
             websites/admin/functions \

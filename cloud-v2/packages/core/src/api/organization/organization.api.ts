@@ -15,7 +15,8 @@
  * leaked key cannot mint another that outlives its own revocation. A key
  * holding `organization.credentials.manage` lists and revokes operator keys.
  *
- * Workspaces: `GET /workspaces` lists every workspace; `POST /workspaces`
+ * Workspaces: `GET /workspaces` lists every workspace (`?query=` searches their names, and with `&emails=true`
+ * the emails of their members and pending invitations); `POST /workspaces`
  * creates one whose first Owner is the person the body names (`owner: {email}`
  * on hosted Core, or `owner: {mentraUserId}`), the caller not becoming a member,
  * or, with no `owner`, one with no members yet, for a person who has no account:
@@ -50,6 +51,7 @@ import {
   createWorkspaceForOwner,
   listAllWorkspaces,
   recoverOwnership,
+  WORKSPACE_SEARCH_MAX_LENGTH,
 } from "../../services/workspaces/workspace.service"
 import type {AppEnv} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
@@ -89,11 +91,17 @@ export function createOrganizationApi(): Hono<AppEnv> {
 
   // --- Workspaces ------------------------------------------------------------
 
+  // `?query=` searches names (and ids); with `&emails=true` also member and pending invitation emails.
   app.get("/workspaces", ...administersWorkspaces, async (c) => {
     const size = pageLimit(c)
     const before = c.req.query("before")
+    const query = c.req.query("query")?.trim() ?? ""
+    if (query.length > WORKSPACE_SEARCH_MAX_LENGTH) {
+      throw new InvalidRequest(`query is at most ${WORKSPACE_SEARCH_MAX_LENGTH} characters`)
+    }
+    const searchEmails = c.req.query("emails") === "true"
     // One more than the page, to know whether there is another page without a trailing empty one.
-    const rows = await listAllWorkspaces({limit: size + 1, ...(before ? {before} : {})})
+    const rows = await listAllWorkspaces({limit: size + 1, ...(before ? {before} : {}), ...(query ? {query, searchEmails} : {})})
     const items = rows.slice(0, size)
     return c.json({items, next: rows.length > size ? items[items.length - 1]!.workspaceId : null})
   })
@@ -114,27 +122,7 @@ export function createOrganizationApi(): Hono<AppEnv> {
     return c.json(created, 201)
   })
 
-  // Make a person an owner of a workspace (ownership recovery). The person is named by their Core user id,
-  // or on hosted Core by their account's confirmed email.
-  app.post("/workspaces/:workspaceId/owners", ...administersWorkspaces, async (c) => {
-    const owner = await namedPerson(await readJsonObject(c))
-    // Owning a workspace needs a person to own it; a typo must not mint a membership nobody can ever use.
-    // `recoverOwnership` also refuses an id that names no user, or a deleted account's tombstone.
-    if (!owner) return c.json({error: "user_not_found", error_description: "no such person"}, 404)
-    // The confirmed address the person was found by is how the members list and the audit log name them.
-    return c.json(
-      await recoverOwnership(requestActor(c), c.req.param("workspaceId"), owner.mentraUserId, {email: owner.email}),
-    )
-  })
-
-  // Give a workspace licenses of a product until a date, without a sale, and end such a grant before its date
-  // (`license-grants.api.ts`): a person or an operator key holding `organization.licenses.grant`.
-  const grantsLicenses = [
-    requirePersonOrOperatorKey(),
-    requireOrganizationCapability("organization.licenses.grant"),
-  ] as const
-  app.post("/workspaces/:workspaceId/license-grants", ...grantsLicenses, grantLicenses)
-  app.post("/workspaces/:workspaceId/license-grants/:product/end", ...grantsLicenses, endLicenseGrant)
+  addWorkspaceAdminTools(app)
 
   // --- Operator keys ---------------------------------------------------------
 
@@ -170,6 +158,48 @@ export function createOrganizationApi(): Hono<AppEnv> {
   })
 
   return app
+}
+
+/**
+ * The organization routes an Organization Admin uses on one workspace from Mentra Portal (its Admin tools page):
+ * make an Owner, grant licenses and end a grant. Mentra Portal's session reaches only these, at
+ * `/api/portal/organization`: it never creates or lists operator keys, makes workspaces or lists every workspace,
+ * which stay with the admin portal's session and bearers.
+ */
+export function createWorkspaceAdminToolsApi(): Hono<AppEnv> {
+  const app = new Hono<AppEnv>()
+  addWorkspaceAdminTools(app)
+  return app
+}
+
+/** What is done to one existing workspace for the organization, mounted by both route sets above. */
+function addWorkspaceAdminTools(app: Hono<AppEnv>): void {
+  const administersWorkspaces = [
+    requirePersonOrOperatorKey(),
+    requireOrganizationCapability("organization.workspaces.administer"),
+  ] as const
+
+  // Make a person an owner of a workspace (ownership recovery). The person is named by their Core user id,
+  // or on hosted Core by their account's confirmed email.
+  app.post("/workspaces/:workspaceId/owners", ...administersWorkspaces, async (c) => {
+    const owner = await namedPerson(await readJsonObject(c))
+    // Owning a workspace needs a person to own it; a typo must not mint a membership nobody can ever use.
+    // `recoverOwnership` also refuses an id that names no user, or a deleted account's tombstone.
+    if (!owner) return c.json({error: "user_not_found", error_description: "no such person"}, 404)
+    // The confirmed address the person was found by is how the members list and the audit log name them.
+    return c.json(
+      await recoverOwnership(requestActor(c), c.req.param("workspaceId"), owner.mentraUserId, {email: owner.email}),
+    )
+  })
+
+  // Give a workspace licenses of a product until a date, without a sale, and end such a grant before its date
+  // (`license-grants.api.ts`): a person or an operator key holding `organization.licenses.grant`.
+  const grantsLicenses = [
+    requirePersonOrOperatorKey(),
+    requireOrganizationCapability("organization.licenses.grant"),
+  ] as const
+  app.post("/workspaces/:workspaceId/license-grants", ...grantsLicenses, grantLicenses)
+  app.post("/workspaces/:workspaceId/license-grants/:product/end", ...grantsLicenses, endLicenseGrant)
 }
 
 /** `body.owner`, the person a new workspace is for: an object naming them by `email` or `mentraUserId` (400 otherwise). */

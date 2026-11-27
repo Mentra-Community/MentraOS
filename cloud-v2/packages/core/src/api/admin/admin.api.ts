@@ -25,8 +25,6 @@
  *    so they need an Organization Admin who is a person;
  *  - `/audit-log`: `organization.credentials.manage`. The log has no capability of its own; it is how whoever
  *    oversees keys sees what people and keys did with their admin standing, so it goes with managing them;
- *  - `/workspace-license-resets`: an Organization Admin who is a person (the billing module is told a person
- *    asked);
  *  - `/fleet`: forwarded to the optional Fleet service, for a person or an operator key holding
  *    `organization.fleet.administer` (an Organization Admin, or a key created with the scope); Fleet is told
  *    which key it is. The forwarder carries its own gates.
@@ -50,10 +48,10 @@ import {adminFleetApi} from "../fleet/fleet-forwarding"
 import {principalAuth, principalLabel, requireOrganizationCapability} from "../middleware/principal.middleware"
 import {createOrganizationApi} from "../organization/organization.api"
 import {createPortalAuthApi} from "../signin/portal-auth.api"
+import {portalSite} from "../../services/signin/portal-signin.service"
 import {createWorkspacesApi} from "../workspaces/workspaces.api"
 import auditLog from "./audit-log.api"
 import licenses from "./licenses.api"
-import workspaceLicenseResets from "./workspace-license-resets.api"
 import registry from "./registry.api"
 import reports from "./reports.api"
 import supportProfiles from "./support-profiles.api"
@@ -77,6 +75,8 @@ export interface AdminMeResponse {
    * licenses learns nothing about them.
    */
   licenses: {available: boolean}
+  /** Mentra Portal, where each workspace is managed: its origin, or null on a Core with no portal configured. */
+  portal: {url: string | null}
 }
 
 const app = new Hono<AppEnv>()
@@ -110,6 +110,15 @@ async function licensesAvailable(principal: CorePrincipal): Promise<boolean> {
   return anyLicenseExists()
 }
 
+/** Mentra Portal's origin, from `CLOUD_CORE_ENTERPRISE_PORTAL_URL`; null when it is unset or not a URL. */
+function workspacePortalOrigin(): string | null {
+  try {
+    return portalSite("portal")?.origin ?? null
+  } catch {
+    return null
+  }
+}
+
 app.get("/me", async c => {
   const principal = c.get("principal")!
   const body: AdminMeResponse = {
@@ -131,12 +140,12 @@ app.get("/me", async c => {
     workspaces: principal.kind === "user" ? await listWorkspacesForUser(principal.mentraUserId) : [],
     fleet: {installed: fleetInstalled()},
     licenses: {available: await licensesAvailable(principal)},
+    portal: {url: workspacePortalOrigin()},
   }
   return c.json(body)
 })
 
 app.route("/workspaces", createWorkspacesApi())
-app.route("/workspace-license-resets", workspaceLicenseResets)
 app.route("/organization", createOrganizationApi())
 app.route("/fleet", adminFleetApi)
 

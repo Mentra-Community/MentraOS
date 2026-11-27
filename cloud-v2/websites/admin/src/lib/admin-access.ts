@@ -17,17 +17,18 @@ export interface AdminMe {
   credential: { credentialId: string; credentialKind: "workspace" | "organization"; label: string } | null;
   organization: { capabilities: OrganizationCapability[] };
   workspaces: PrincipalResponse["workspaces"];
-  /**
-   * Whether Fleet is installed on this Core, true for an install whose settings are unusable too. The Workspaces
-   * page then links each workspace to its Fleet Management in the workspace portal; the admin portal has no Fleet
-   * page of its own. Absent from a Core that predates Fleet, which reads as not installed.
-   */
+  /** Whether Fleet is installed on this Core. Absent from a Core that predates Fleet, which reads as not installed. */
   fleet?: { installed: boolean };
   /**
    * Whether the Licenses page has anything to offer this caller: they may read licenses, and billing is configured
    * on this Core or any license exists. Absent from a Core that predates licenses, which reads as nothing to offer.
    */
   licenses?: { available: boolean };
+  /**
+   * Mentra Portal, where each workspace is managed (the Workspaces page's Manage workspace): its origin, or null on a
+   * Core with no portal configured. Absent from an older Core, which reads as none.
+   */
+  portal?: { url: string | null };
 }
 
 /** The pages in navigation order. The first one a principal can see is their default page. */

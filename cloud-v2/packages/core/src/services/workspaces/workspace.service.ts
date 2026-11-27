@@ -164,8 +164,21 @@ export async function listWorkspacesForUser(
  * administrator sees the one that has none: made for an Owner whose invitation is still pending
  * or has expired, or left by its last Owner's account being deleted.
  */
-export async function listAllWorkspaces(opts: {limit: number; before?: string}): Promise<OrganizationWorkspaceListItem[]> {
+export async function listAllWorkspaces(opts: {
+  limit: number
+  before?: string
+  /** Search text (trimmed; at most {@link WORKSPACE_SEARCH_MAX_LENGTH}): see {@link workspaceSearchFilter}. */
+  query?: string
+  /** With `query`, also match the workspaces whose members or pending invitations have an email containing it. */
+  searchEmails?: boolean
+}): Promise<OrganizationWorkspaceListItem[]> {
   const filter: Record<string, unknown> = {}
+  const query = opts.query?.trim() ?? ""
+  if (query) {
+    const search = await workspaceSearchFilter(query, opts.searchEmails === true)
+    if (!search) return []
+    Object.assign(filter, search)
+  }
   if (opts.before) {
     const cursor = await WorkspaceModel.findOne({workspaceId: opts.before}).select({_id: 1}).lean()
     if (!cursor) fail("invalid_request", "unknown pagination cursor")
@@ -174,6 +187,28 @@ export async function listAllWorkspaces(opts: {limit: number; before?: string}):
   const rows = await WorkspaceModel.find(filter).sort({_id: -1}).limit(clampPageSize(opts.limit)).lean()
   const owners = await countActiveOwnersOf(rows.map(row => row.workspaceId))
   return rows.map(row => ({...toSummary(row), owners: owners.get(row.workspaceId) ?? 0}))
+}
+
+/** The longest search text the organization's workspace list takes. */
+export const WORKSPACE_SEARCH_MAX_LENGTH = 100
+
+/**
+ * The filter for the workspaces `query` finds, case-insensitively: those whose name contains it or whose id is it;
+ * with `searchEmails`, also those with an active member or a pending invitation whose email contains it, so a
+ * customer's workspace is found by its owner's address, invited or joined. Null when nothing can match.
+ */
+async function workspaceSearchFilter(query: string, searchEmails: boolean): Promise<Record<string, unknown> | null> {
+  const contains = {$regex: query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i"}
+  const either: Array<Record<string, unknown>> = [{name: contains}, {workspaceId: query}]
+  if (searchEmails) {
+    const [members, invited] = await Promise.all([
+      WorkspaceMembershipModel.distinct("workspaceId", {status: "active", email: contains}),
+      WorkspaceInvitationModel.distinct("workspaceId", {status: "pending", email: contains}),
+    ])
+    const ids = [...new Set([...members, ...invited].filter((id): id is string => typeof id === "string"))]
+    if (ids.length > 0) either.push({workspaceId: {$in: ids}})
+  }
+  return {$or: either}
 }
 
 export async function getActiveMembership(workspaceId: string, mentraUserId: string): Promise<MembershipRow | null> {

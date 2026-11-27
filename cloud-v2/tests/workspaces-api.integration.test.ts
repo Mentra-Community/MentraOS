@@ -2247,6 +2247,34 @@ describe("organization workspaces", () => {
     expect((await call("GET", "/api/organization/workspaces", {as: await person("owner-one")})).status).toBe(403)
   })
 
+  test("the organization's list searches names, and with emails=true member and invitation emails", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const owner = await person("search-owner")
+    const northwind = await createWorkspace(owner, "Northwind Utilities")
+    const tailspin = await createWorkspace(await person("other-owner"), "Tailspin Energy")
+    const invited = await call("POST", "/api/organization/workspaces", {as: admin, body: {name: "Fabrikam"}})
+    await call("POST", `/api/workspaces/${invited.json.workspaceId}/invitations`, {as: admin, body: {email: "Buyer@Fabrikam.Example", role: "owner"}})
+    const names = async (search: string) => {
+      const reply = await call("GET", `/api/organization/workspaces?${search}`, {as: admin})
+      expect(reply.status).toBe(200)
+      return reply.json.items.map((item: any) => item.name).sort()
+    }
+
+    // A name, case-insensitively and anywhere in it; an id exactly; regex characters are plain text.
+    expect(await names("query=northWIND")).toEqual(["Northwind Utilities"])
+    expect(await names(`query=${tailspin.workspaceId}`)).toEqual(["Tailspin Energy"])
+    expect(await names("query=.*")).toEqual([])
+    // Emails only when asked: the owner's, and a pending invitation's.
+    expect(await names(`query=${encodeURIComponent(owner.email)}`)).toEqual([])
+    expect(await names(`query=${encodeURIComponent(owner.email)}&emails=true`)).toEqual(["Northwind Utilities"])
+    expect(await names("query=buyer%40fabrikam&emails=true")).toEqual(["Fabrikam"])
+    expect(await names("query=nobody%40example.test&emails=true")).toEqual([])
+    // No search is the whole list; a search over 100 characters is refused.
+    expect((await names("")).length).toBe(3)
+    expect((await call("GET", `/api/organization/workspaces?query=${"x".repeat(101)}`, {as: admin})).status).toBe(400)
+    expect(northwind.workspaceId).toBeTruthy()
+  })
+
   test("an operator key holding organization.workspaces.administer lists every workspace too", async () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
     const one = await createWorkspace(await person("owner-one"), "One")

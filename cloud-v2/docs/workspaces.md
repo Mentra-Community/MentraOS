@@ -82,6 +82,17 @@ place. A `?workspace=` you cannot open is "Workspace not found". The older
 `/w/<workspaceId>[/<page>]` addresses redirect to these, keeping their query
 (`?purchase=`, `?fleet=`). There is no personal page: `/account/billing` is "Page not found".
 
+**Admin tools.** An Organization Admin also sees an "Organization Admin" group in every
+workspace's sidebar with one page, **Admin tools** (`/admin`): the workspace's licenses with
+**Grant licenses** and **End grant** ([Licenses](licenses.md#granting-licenses)), **Make owner**
+(by account email or Mentra user id, `POST /api/portal/organization/workspaces/:workspaceId/owners`),
+the workspace's keys, **Reset licenses & billing** on dev and staging, and the workspace's audit
+log. Where an Organization Admin's powers are what let them manage the workspace (they are not
+its Owner), and on Admin tools, a blue "Organization Admin" ribbon runs across the top of the
+page. The admin portal's Workspaces page lists every workspace with **Manage workspace ↗**, which
+opens it here; it learns this portal's address from `GET /api/admin/me` (`portal.url`, from
+`CLOUD_CORE_ENTERPRISE_PORTAL_URL`).
+
 **The current workspace** is `?workspace=` when the address has one; else the workspace this
 browser tab last opened from your own list while it is still there (remembered in the browser,
 never an authority, and another tab's pick does not move this one); else your first (oldest)
@@ -135,9 +146,8 @@ licenses are assigned from the Licenses page.
   role), and a row has no menu where neither is yours to do. Both carry the revision
   you last saw (`409 membership_changed`), and a role change that fails says so above
   the list.
-- **The admin portal** has the same list and menu, so role changes and Remove are
-  there too, with each member's Mentra user id and a Copy id button for recovering a
-  workspace's ownership. It has no Licenses column.
+- **An Organization Admin** sees each member's Mentra user id and a Copy id button,
+  for making someone an Owner on the workspace's Admin tools page (below).
 
 ## Creating and joining
 
@@ -306,6 +316,7 @@ session authenticates only its own routes:
 | --- | --- | --- |
 | `/api/portal/workspaces/*` | The workspace portal | Its session, or a bearer |
 | `/api/portal/billing/*` | The workspace portal | Its session, or a bearer; forwarded to the billing module ([Portal modules](portal-modules.md)) |
+| `/api/portal/organization/workspaces/:workspaceId/{owners,license-grants}`, `/api/portal/workspace-license-resets/*` | The workspace portal's Admin tools page, for Organization Admins: only the organization routes it uses, never operator keys or the list of every workspace | Its session, or a bearer |
 | `/api/admin/workspaces/*`, `/api/admin/organization/*` | The admin portal | Its session, or a bearer |
 | `/api/workspaces/*`, `/api/organization/*` | Servers and tools | Identity-provider access tokens and Core keys |
 
@@ -328,7 +339,10 @@ from deletion (`deletionHolds`), and `DELETE /:workspaceId` answers
 `409 workspace_has_holds` with those holds while there are any. `GET /api/organization` tells any
 caller, a key included, its organization capabilities and whether it may create
 a workspace for itself (a key never may). With `organization.workspaces.administer`,
-`GET /api/organization/workspaces` lists every workspace (each with `owners`, how many live Owners
+`GET /api/organization/workspaces` lists every workspace (`?query=` finds those whose name contains
+the text, case-insensitively, or whose id is exactly it; with `&emails=true` also those with an active member
+(the email too case-insensitively)
+or a pending invitation whose email contains it; each with `owners`, how many live Owners
 it has; 0 means it has none now, as one still waiting for the Owner invited to it, or one whose
 last Owner deleted their account), `POST /api/organization/workspaces`
 `{name, owner: {email} | {mentraUserId}}` creates one whose first Owner is that person (the

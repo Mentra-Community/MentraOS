@@ -8,8 +8,13 @@ import {fail} from "../workspaces/workspace-error"
 import {auditActor, getWorkspace, touchWorkspace, type Actor} from "../workspaces/workspace.service"
 import {endLicensesForOwner} from "./license.service"
 
+/** Whether this deployment offers the license reset: dev and staging only. */
+export function licenseResetsOffered(): boolean {
+  return ["staging", "dev"].includes(process.env.CLOUD_CORE_ENVIRONMENT ?? "")
+}
+
 export function requireNonProductionLicenseReset(): void {
-  if (!["staging", "dev"].includes(process.env.CLOUD_CORE_ENVIRONMENT ?? "")) fail("forbidden", "license resets are available on staging and dev only")
+  if (!licenseResetsOffered()) fail("forbidden", "license resets are available on staging and dev only")
 }
 
 export function validateLicenseReset(workspaceId: string, body: Record<string, unknown>): string {

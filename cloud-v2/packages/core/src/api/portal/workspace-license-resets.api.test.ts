@@ -21,9 +21,9 @@ function app(principal: CorePrincipal) {
   const root = new Hono<AppEnv>()
   root.use("*", async (c, next) => {c.set("principal", principal); c.set("reqId", "reset-test"); await next()})
   root.onError((error, c) => error instanceof WorkspaceError ? c.json({error: error.code}, error.status as 400) : c.json({error: error.message}, 500))
-  return root.route("/api/admin/workspace-license-resets", resetApi)
+  return root.route("/api/portal/workspace-license-resets", resetApi)
 }
-const path = "/api/admin/workspace-license-resets/ws_target"
+const path = "/api/portal/workspace-license-resets/ws_target"
 const request = (body: unknown) => ({method: "POST", headers: {authorization: "Bearer test", "content-type": "application/json"}, body: JSON.stringify(body)})
 const body = {confirmWorkspaceId: "ws_target"}
 

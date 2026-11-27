@@ -11,6 +11,11 @@
  *    portal modules to offer them (`modules: {billing}`): `billing` wherever billing is installed and usable;
  *  - `/workspaces/*`: the workspace API (`workspaces.api.ts`), the same handlers
  *    `/api/workspaces` and `/api/admin/workspaces` serve;
+ *  - `/organization/workspaces/:workspaceId/{owners,license-grants}`: the organization routes an Organization Admin's
+ *    tools on one workspace use (make an Owner, grant licenses, end a grant), the same handlers `/api/organization`
+ *    serves (`createWorkspaceAdminToolsApi`), and none of its others: this session never creates or lists operator
+ *    keys, makes workspaces or lists every workspace; `/workspace-license-resets/*`: the dev and staging license
+ *    reset (`workspace-license-resets.api.ts`), for an Organization Admin who is a person;
  *  - `/billing/*`: the billing portal module, forwarded to the Mentra Miniapp Store (`portal-modules.api.ts`).
  *    Its public reads (`/billing/public/*`, a product's name) are mounted ahead of the person gate, for anyone;
  *  - `/org`, `/trusted-issuers`: enterprise orgs and their trusted issuers, owned
@@ -34,6 +39,9 @@ import { listWorkspacesForUser } from "../../services/workspaces/workspace.servi
 import { requireUserPrincipal, userPrincipal } from "../middleware/principal.middleware";
 import { createPortalAuthApi } from "../signin/portal-auth.api";
 import { createWorkspacesApi } from "../workspaces/workspaces.api";
+import { createWorkspaceAdminToolsApi } from "../organization/organization.api";
+import workspaceLicenseResets from "./workspace-license-resets.api";
+import { licenseResetsOffered } from "../../services/licenses/workspace-license-reset.service";
 import { portalFleetApi } from "../fleet/fleet-forwarding";
 import { portalModuleApi, portalModulePublicApi } from "./portal-modules.api";
 
@@ -68,6 +76,9 @@ app.route("/auth", createPortalAuthApi("portal"));
 app.route("/billing/public", portalModulePublicApi("billing"));
 app.use("*", requireUserPrincipal("portal"));
 app.route("/workspaces", createWorkspacesApi());
+// An Organization Admin's tools on a workspace, in Mentra Portal: each route checks its own organization capability.
+app.route("/organization", createWorkspaceAdminToolsApi());
+app.route("/workspace-license-resets", workspaceLicenseResets);
 app.route("/billing", portalModuleApi("billing"));
 // Fleet Management for a workspace's Admins and Owners: not a portal module, so it has its own mount.
 app.route("/fleet", portalFleetApi);
@@ -102,7 +113,11 @@ async function getMe(c: AppContext) {
     modules: portalModuleAvailability(),
     // What Fleet's UI needs of the caller (`FleetUiMe`): organization capabilities, the workspace(s) they may use
     // Fleet in with their capabilities there, and whether Fleet is installed.
-    organization: { capabilities: organizationView(principal).capabilities },
+    // `licenseReset`: the dev and staging license reset is offered to this Organization Admin.
+    organization: {
+      capabilities: organizationView(principal).capabilities,
+      licenseReset: principal.isOrganizationAdmin && licenseResetsOffered(),
+    },
     workspaces: await fleetWorkspacesOf(principal, c.req.query("workspaceId")),
     fleet: { installed: fleetInstalled() },
   });

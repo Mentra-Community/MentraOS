@@ -72,7 +72,7 @@ describe("making a workspace for an invited owner", () => {
       expect(result.workspaceId).toBe("ws_new");
       expect(result.invitationProblem).toBe("Too many invitations. Try again later.");
       expect(createdWorkspaceMessage(result)).toBe(
-        "Northwind was created, but the invitation to sam@northwind.test was not sent: Too many invitations. Try again later. Open the workspace and invite its owner from Invitations.",
+        "Northwind was created, but the invitation to sam@northwind.test was not sent: Too many invitations. Try again later. Manage the workspace and invite its owner from its Members page.",
       );
     } finally {
       fetched.restore();

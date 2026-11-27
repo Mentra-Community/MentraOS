@@ -226,12 +226,7 @@ function AdminPage() {
     >
       {active === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
       {active === "workspaces" ? (
-        <WorkspacesPage
-          fleetInstalled={principal.fleet?.installed === true}
-          resetEnabled={ENVIRONMENT === "staging" || ENVIRONMENT === "dev"}
-          canGrantLicenses={principal.organization.capabilities.includes("organization.licenses.grant")}
-          licensesReadable={visible.includes("licenses")}
-        />
+        <WorkspacesPage portalUrl={principal.portal?.url ?? null} />
       ) : null}
       {active === "licenses" ? <LicensesPage /> : null}
       {active === "registry" ? <RegistryPage /> : null}

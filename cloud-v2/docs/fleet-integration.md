@@ -97,10 +97,11 @@ setting above allows it. Core has no capabilities endpoint:
   Fleet is not installed, and the phone stops collecting and asks again at its
   next sign-in or start; `503 {"error":"fleet_unavailable"}` means Fleet is
   installed but cannot answer now, and the phone keeps its records and retries.
-- The admin portal reads `fleet.installed` from `GET /api/admin/me`, so it offers
-  Fleet only where it exists. `installed` is true for an install whose URL or
-  secret is unusable too, so the portal can say Fleet is unavailable instead of
-  hiding a broken install. It says nothing about what a caller may do in Fleet.
+- `GET /api/admin/me` and `GET /api/portal/me` say whether Fleet is installed
+  (`fleet.installed`), so a portal offers Fleet only where it exists. `installed`
+  is true for an install whose URL or secret is unusable too, so a portal can say
+  Fleet is unavailable instead of hiding a broken install. It says nothing about
+  what a caller may do in Fleet.
 
 ## Forwarding paths
 

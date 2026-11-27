@@ -1,19 +1,19 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { OrganizationWorkspaceListItem, WorkspaceSummary } from "@mentra/workspace-contract";
-import { WorkspaceSettingsPanel, workspaceKeys } from "@mentra/workspace-ui";
-import { capabilitiesForRole, type WorkspaceDetail } from "@mentra/workspace-contract";
+import { workspaceKeys } from "@mentra/workspace-ui";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ReactElement } from "react";
-import { ApiError } from "../lib/api";
 import {
   adminWorkspaceApi,
   hasNoOwner,
+  manageWorkspaceUrl,
   ORGANIZATION_WORKSPACES_KEY,
-  parseOwnerTarget,
-  recoverWorkspaceOwnership,
-  RecoverOwnershipForm,
-  STORE_DELETE_NOTICE,
+  WorkspaceSearchForm,
+  workspacesKey,
+  workspacesPath,
   WorkspacesPage,
 } from "./workspaces";
 
@@ -23,11 +23,11 @@ const everyone: WorkspaceSummary[] = [
   { workspaceId: "ws_orphan", name: "Orphaned Lab", status: "active", authorizationRevision: 9 },
   { workspaceId: "ws_gone", name: "Closed Down", status: "deleted", authorizationRevision: 2 },
 ];
+const PORTAL = "https://portal.test";
 
-function render(ui: ReactElement, seed: { everyone?: WorkspaceSummary[]; details?: WorkspaceDetail[] } = {}): string {
+function render(ui: ReactElement, seed: { everyone?: WorkspaceSummary[] } = {}): string {
   const client = new QueryClient();
   if (seed.everyone) client.setQueryData(ORGANIZATION_WORKSPACES_KEY, { pages: [{ items: seed.everyone, next: null }], pageParams: [undefined] });
-  for (const detail of seed.details ?? []) client.setQueryData(workspaceKeys.detail(adminWorkspaceApi, detail.workspaceId), detail);
   try {
     return renderToStaticMarkup(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
   } finally {
@@ -35,54 +35,40 @@ function render(ui: ReactElement, seed: { everyone?: WorkspaceSummary[]; details
   }
 }
 
-describe("the Fleet Management link on the Workspaces page", () => {
-  // The open workspace is state, so a server render shows the list only; the link itself is tested through its URL.
-  test("points at the workspace's Fleet overview in the workspace portal, and only where there is a portal", async () => {
-    const { fleetOverviewUrl, workspacePortalUrl } = await import("../lib/config");
-    expect(fleetOverviewUrl("https://portal.test", "ws_acme")).toBe("https://portal.test/w/ws_acme/fleet?fleet=overview");
-    expect(fleetOverviewUrl("https://portal.test", "ws/odd id")).toBe("https://portal.test/w/ws%2Fodd%20id/fleet?fleet=overview");
-    expect(fleetOverviewUrl(null, "ws_acme")).toBeNull();
-    expect(workspacePortalUrl("https://portal.test/")).toBe("https://portal.test");
-    for (const bad of [undefined, "", "  ", "javascript:alert(1)", "not a url"]) expect(workspacePortalUrl(bad)).toBeNull();
-  });
-});
-
 describe("the Workspaces page", () => {
-  test("lists every workspace with portal management and the existing support tools", () => {
-    const markup = render(<WorkspacesPage portalUrl="https://portal.staging.mentraglass.com" />, { everyone });
+  test("lists every workspace with one action, Manage workspace, which opens it in Mentra Portal", () => {
+    const markup = render(<WorkspacesPage portalUrl={PORTAL} />, { everyone });
     expect(markup).toContain("All workspaces");
     expect(markup).toContain("Acme Robotics");
-    expect(markup).toContain('aria-label="Open Acme Robotics"');
-    expect(markup).toContain('aria-label="Recover ownership of Orphaned Lab"');
     expect(markup).toContain('aria-label="Manage workspace Acme Robotics"');
-    expect(markup).toContain('href="https://portal.staging.mentraglass.com/?workspace=ws_acme"');
-    expect(render(<WorkspacesPage portalUrl={null} />, { everyone })).not.toContain("Manage workspace");
-    expect(markup).toContain("Open a workspace to manage");
-    expect(markup).not.toContain('role="tab"');
+    expect(markup).toContain('href="https://portal.test/?workspace=ws_acme"');
+    expect(manageWorkspaceUrl(PORTAL, "ws/odd id")).toBe("https://portal.test/?workspace=ws%2Fodd%20id");
+    // What is done to one workspace is in Mentra Portal now: nothing of it is left here.
+    for (const gone of ["Open Acme", "Recover ownership", "Grant licenses", "Reset licenses", 'role="tab"', "End grant"]) expect(markup).not.toContain(gone);
   });
 
-  test("a deleted workspace is marked and cannot be opened or recovered", () => {
-    const markup = render(<WorkspacesPage portalUrl="https://portal.staging.mentraglass.com" />, { everyone });
+  test("a deleted workspace is marked and offers nothing", () => {
+    const markup = render(<WorkspacesPage portalUrl={PORTAL} />, { everyone });
     expect(markup).toContain("Deleted");
-    expect(markup).not.toContain('aria-label="Open Closed Down"');
-    expect(markup).not.toContain('aria-label="Recover ownership of Closed Down"');
     expect(markup).not.toContain('aria-label="Manage workspace Closed Down"');
   });
 
-  test("reset controls are explicitly enabled for non-production and never offered for deleted workspaces", () => {
-    expect(render(<WorkspacesPage />, {everyone})).not.toContain("Reset licenses &amp; billing");
-    const markup = render(<WorkspacesPage resetEnabled />, {everyone});
-    expect(markup).toContain('aria-label="Reset licenses and billing for Acme Robotics"');
-    expect(markup).not.toContain('aria-label="Reset licenses and billing for Closed Down"');
+  test("with no Mentra Portal address from Core, rows have no action and the page says why", () => {
+    const markup = render(<WorkspacesPage portalUrl={null} />, { everyone });
+    expect(markup).not.toContain("Manage workspace");
+    expect(markup).toContain("This Core has no Mentra Portal address");
+    expect(render(<WorkspacesPage portalUrl={PORTAL} />, { everyone })).not.toContain("no Mentra Portal address");
   });
 
-  test("offers a new workspace, and a grant only to a caller who may grant", () => {
-    const markup = render(<WorkspacesPage />, { everyone });
-    expect(markup).toMatch(/<button[^>]*>New workspace<\/button>/);
-    expect(markup).not.toContain("Grant licenses");
-    const granting = render(<WorkspacesPage canGrantLicenses />, { everyone });
-    expect(granting).toContain('aria-label="Grant licenses to Acme Robotics"');
-    expect(granting).not.toContain('aria-label="Grant licenses to Closed Down"');
+  test("offers a new workspace", () => {
+    expect(render(<WorkspacesPage portalUrl={PORTAL} />, { everyone })).toMatch(/<button[^>]*>New workspace<\/button>/);
+  });
+
+  test("its source no longer carries the workspace screens or the support tools that moved to Mentra Portal", () => {
+    const source = readFileSync(join(import.meta.dir, "workspaces.tsx"), "utf8");
+    for (const gone of ["WorkspaceMembersPanel", "WorkspaceCredentialsPanel", "WorkspaceAuditPanel", "WorkspaceSettingsPanel", "license-grants", "/owners", "workspace-license-resets"]) {
+      expect(source).not.toContain(gone);
+    }
   });
 
   test("marks an active workspace that has no owner, and only where Core counted none", () => {
@@ -94,110 +80,32 @@ describe("the Workspaces page", () => {
     expect(counted.map(hasNoOwner)).toEqual([false, true, false]);
     // A Core that sends no count says nothing either way.
     expect(everyone.map(hasNoOwner)).toEqual([false, false, false]);
-    const markup = render(<WorkspacesPage />, { everyone: counted });
+    const markup = render(<WorkspacesPage portalUrl={PORTAL} />, { everyone: counted });
     expect(markup.match(/>No owner</g)).toHaveLength(1);
     expect(markup.indexOf("Orphaned Lab")).toBeLessThan(markup.indexOf(">No owner<"));
     expect(markup.indexOf(">No owner<")).toBeLessThan(markup.indexOf("Closed Down"));
-    expect(render(<WorkspacesPage />, { everyone })).not.toContain("No owner");
+    expect(render(<WorkspacesPage portalUrl={PORTAL} />, { everyone })).not.toContain("No owner");
+  });
+
+  test("searches by name, and by member and invitation emails when the box is ticked", () => {
+    expect(workspacesPath({ query: "", emails: true })).toBe("/api/admin/organization/workspaces?limit=50");
+    expect(workspacesPath({ query: "  North wind ", emails: false })).toBe("/api/admin/organization/workspaces?limit=50&query=North+wind");
+    expect(workspacesPath({ query: "sam@northwind.test", emails: true }, "ws_last")).toBe(
+      "/api/admin/organization/workspaces?limit=50&query=sam%40northwind.test&emails=true&before=ws_last",
+    );
+    // The unsearched list keeps the key the rest of the page invalidates; a search sits beneath it.
+    expect(workspacesKey({ query: " ", emails: true })).toBe(ORGANIZATION_WORKSPACES_KEY);
+    expect(workspacesKey({ query: "north", emails: true })).toEqual([...ORGANIZATION_WORKSPACES_KEY, "north", true]);
+    const form = renderToStaticMarkup(<WorkspaceSearchForm search={{ query: "", emails: false }} onSearch={() => {}} />);
+    expect(form).toContain("Search workspaces");
+    expect(form).toContain("Also search member and invitation emails");
+    expect(form).not.toContain("Clear");
+    const page = render(<WorkspacesPage portalUrl={PORTAL} />, { everyone });
+    expect(page).toContain('role="search"');
   });
 
   test("a list still loading says so", () => {
-    expect(render(<WorkspacesPage />)).toContain("Loading workspaces");
-  });
-
-  test("states that a workspace that owns miniapps in the Mentra Miniapp Store can't be deleted", () => {
-    const owner: WorkspaceDetail = {
-      ...everyone[0]!,
-      membership: null,
-      capabilities: [...capabilitiesForRole("owner")],
-      deletionHolds: [],
-    };
-    const markup = render(
-      <WorkspaceSettingsPanel api={adminWorkspaceApi} workspaceId="ws_acme" deleteNotice={STORE_DELETE_NOTICE} />,
-      { details: [owner] },
-    );
-    expect(markup).toContain(
-      "A workspace that owns miniapps in the Mentra Miniapp Store can&#x27;t be deleted. Delete its miniapps first.",
-    );
-    // Nothing is left behind any more, so there is no word of miniapps staying in the Store.
-    expect(markup).not.toContain("stay there");
-    expect(markup).not.toContain("Store operator");
-  });
-
-  test("a workspace that still owns miniapps says so where the delete is, and cannot be deleted from here", () => {
-    const held: WorkspaceDetail = {
-      ...everyone[0]!,
-      membership: null,
-      capabilities: [...capabilitiesForRole("owner")],
-      organizationAdmin: true,
-      deletionHolds: [{ service: "store", reason: "owns_miniapps", count: 3 }],
-    };
-    const markup = render(
-      <WorkspaceSettingsPanel api={adminWorkspaceApi} workspaceId="ws_acme" deleteNotice={STORE_DELETE_NOTICE} />,
-      { details: [held] },
-    );
-    const section = /<section aria-label="Delete workspace"[\s\S]*?<\/section>/.exec(markup)?.[0] ?? "";
-    expect(section).toContain("This workspace still owns 3 miniapps. Delete them in the Developer Console first.");
-    expect(section).toMatch(/<button[^>]*disabled=""[^>]*>Delete workspace<\/button>/);
-    expect(section).not.toContain(STORE_DELETE_NOTICE);
-  });
-});
-
-describe("recover ownership", () => {
-  test("names a person by email or by Mentra user id, and refuses blank", () => {
-    expect(parseOwnerTarget("")).toEqual({ ok: false, message: "Enter an email address or a Mentra user id." });
-    expect(parseOwnerTarget("  sam@acme.test ")).toEqual({ ok: true, target: { email: "sam@acme.test" } });
-    expect(parseOwnerTarget(" mu_123 ")).toEqual({ ok: true, target: { mentraUserId: "mu_123" } });
-  });
-
-  test("the form asks for the person and the workspace it is for, and shows why the last attempt failed", () => {
-    const markup = renderToStaticMarkup(
-      <RecoverOwnershipForm workspaceName="Orphaned Lab" pending={false} error={null} onSubmit={() => {}} onCancel={() => {}} />,
-    );
-    expect(markup).toContain("Account email or Mentra user id");
-    expect(markup).toContain("Orphaned Lab");
-    expect(markup).not.toContain('role="alert"');
-    const failed = renderToStaticMarkup(
-      <RecoverOwnershipForm workspaceName="Orphaned Lab" pending error="No Mentra account matches that email or user id." onSubmit={() => {}} onCancel={() => {}} />,
-    );
-    expect(failed).toContain('role="alert"');
-    expect(failed).toMatch(/<button[^>]*disabled=""[^>]*>[^<]*Make owner/);
-  });
-
-  test("posts the person to the admin portal's organization route for that workspace", async () => {
-    const summary = { ...everyone[1]!, authorizationRevision: 10 };
-    const spy = spyOn(globalThis, "fetch").mockImplementation((async () => Response.json(summary)) as unknown as typeof fetch);
-    try {
-      expect(await recoverWorkspaceOwnership("ws_orphan", { email: "sam@acme.test" })).toEqual(summary);
-      const [url, init] = spy.mock.calls[0]!;
-      expect(url).toBe("/api/admin/organization/workspaces/ws_orphan/owners");
-      expect(init).toMatchObject({ method: "POST" });
-      expect(JSON.parse(String((init as RequestInit).body))).toEqual({ email: "sam@acme.test" });
-      await recoverWorkspaceOwnership("ws/odd id", { mentraUserId: "mu_1" });
-      expect(spy.mock.calls[1]![0]).toBe("/api/admin/organization/workspaces/ws%2Fodd%20id/owners");
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  test("an unknown person reads as a sentence; any other failure keeps the server's own words", async () => {
-    const unknown = spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ error: "user_not_found" }, { status: 404 }));
-    try {
-      const error = await recoverWorkspaceOwnership("ws_orphan", { mentraUserId: "nobody" }).catch((caught: unknown) => caught);
-      expect(error).toBeInstanceOf(ApiError);
-      expect((error as Error).message).toBe("No Mentra account matches that email or user id.");
-    } finally {
-      unknown.mockRestore();
-    }
-    const other = spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ error: "workspace_not_found", error_description: "workspace not found" }, { status: 404 }),
-    );
-    try {
-      const error = await recoverWorkspaceOwnership("ws_gone", { mentraUserId: "mu_1" }).catch((caught: unknown) => caught);
-      expect((error as Error).message).toBe("workspace not found");
-    } finally {
-      other.mockRestore();
-    }
+    expect(render(<WorkspacesPage portalUrl={PORTAL} />)).toContain("Loading workspaces");
   });
 });
 

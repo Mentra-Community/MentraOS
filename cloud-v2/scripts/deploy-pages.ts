@@ -36,19 +36,6 @@ const accountConfig = {
 };
 const accountConfigured = Object.values(accountConfig).every(Boolean);
 
-// The workspace portal each environment's admin portal deep-links to (Workspaces, Fleet Management), given to
-// the admin portal's build as PORTAL_URL.
-export const portalUrls: Record<Environment, string> = {
-  dev: "https://portal.dev.mentraglass.com",
-  staging: "https://portal.staging.mentraglass.com",
-  prod: "https://portal.mentraglass.com",
-};
-
-/** The public build-time configuration of the admin portal for `env`. */
-export function adminBuildConfig(env: Environment): Record<string, string> {
-  return { PORTAL_URL: portalUrls[env] };
-}
-
 if (import.meta.main) main();
 
 function main() {
@@ -83,7 +70,7 @@ function deploySite(site: Site, env: Environment) {
     if (!accountConfigured) fail("The account site needs ACCOUNT_SUPABASE_URL and ACCOUNT_SUPABASE_PUBLISHABLE_KEY.");
     run(["bun", "--cwd", "websites/account", "build"], { env: accountConfig });
   } else {
-    run(["bun", "--cwd", "websites/admin", "build"], { env: adminBuildConfig(env) });
+    run(["bun", "--cwd", "websites/admin", "build"]);
   }
   run([
     "bunx",

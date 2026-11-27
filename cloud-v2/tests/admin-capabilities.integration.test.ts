@@ -61,6 +61,7 @@ import {
   ADMIN_ORIGIN,
   applyEnv,
   HOSTED_ENV,
+  PORTAL_ORIGIN,
   SUPABASE_ISSUER,
   SUPABASE_JWKS,
   SUPABASE_PROJECT,
@@ -281,6 +282,8 @@ describe("GET /api/admin/me", () => {
       fleet: {installed: false},
       // No billing and no license.
       licenses: {available: false},
+      // Mentra Portal's address, from CLOUD_CORE_ENTERPRISE_PORTAL_URL: where Manage workspace opens a workspace.
+      portal: {url: PORTAL_ORIGIN},
     }
 
     const bySession = await call("GET", "/api/admin/me", {as: admin})
@@ -344,6 +347,8 @@ describe("GET /api/admin/me", () => {
       fleet: {installed: false},
       // No billing and no license.
       licenses: {available: false},
+      // Mentra Portal's address, from CLOUD_CORE_ENTERPRISE_PORTAL_URL: where Manage workspace opens a workspace.
+      portal: {url: PORTAL_ORIGIN},
     })
     expect(reply.text).not.toContain(key.token)
   })
@@ -364,6 +369,8 @@ describe("GET /api/admin/me", () => {
       fleet: {installed: false},
       // No billing and no license.
       licenses: {available: false},
+      // Mentra Portal's address, from CLOUD_CORE_ENTERPRISE_PORTAL_URL: where Manage workspace opens a workspace.
+      portal: {url: PORTAL_ORIGIN},
     })
     expect(reply.text).not.toContain(ws.token)
   })

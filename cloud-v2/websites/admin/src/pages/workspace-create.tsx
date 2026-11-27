@@ -59,7 +59,7 @@ export async function createWorkspaceForInvitedOwner(input: { name: string; emai
 export function createdWorkspaceMessage(created: CreatedWorkspace): string {
   return created.invitationProblem === null
     ? `${created.name} was created and ${created.email} was invited as its owner. The invitation expires in 14 days; until they accept, the workspace has no owner.`
-    : `${created.name} was created, but the invitation to ${created.email} was not sent: ${created.invitationProblem} Open the workspace and invite its owner from Invitations.`;
+    : `${created.name} was created, but the invitation to ${created.email} was not sent: ${created.invitationProblem} Manage the workspace and invite its owner from its Members page.`;
 }
 
 /**

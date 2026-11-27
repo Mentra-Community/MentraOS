@@ -1481,7 +1481,7 @@ describe("the workspace portal's /me", () => {
     const reply = await send("GET", "/api/portal/me", {headers: {cookie: owner.cookie}})
     expect(reply.status).toBe(200)
     expect(reply.json.user).toMatchObject({mentraUserId: owner.mentraUserId, id: owner.mentraUserId, email: owner.email})
-    expect(reply.json.organization).toEqual({capabilities: []})
+    expect(reply.json.organization).toEqual({capabilities: [], licenseReset: false})
     expect(reply.json.fleet).toEqual({installed: true})
     expect(reply.json.workspaces).toEqual([
       {workspaceId: ws, name: "Acme", capabilities: expect.arrayContaining(["fleet.read", "miniapps.assign"])},
@@ -1513,5 +1513,71 @@ describe("the workspace portal's /me", () => {
 
     expect((await send("GET", "/api/portal/me?workspaceId=ws_missing", {headers: {cookie: admin.cookie}})).json.workspaces).toEqual([])
     expect((await send("GET", `/api/portal/me?workspaceId=${ws}`, {headers: {cookie: stranger.cookie}})).json.workspaces).toEqual([])
+  })
+})
+
+describe("an Organization Admin's tools in the workspace portal", () => {
+  function portalWrite(who: Person, method: string, path: string, body: unknown) {
+    return send(method, path, {
+      headers: {cookie: who.cookie, origin: PORTAL_ORIGIN, "content-type": "application/json"},
+      body: JSON.stringify(body),
+    })
+  }
+
+  test("an Organization Admin's portal session makes a person an Owner through /api/portal/organization", async () => {
+    const owner = await portalPerson("p-owner")
+    const admin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+    const member = await portalPerson("p-member")
+    const ws = await workspaceWith(owner, {member})
+
+    const made = await portalWrite(admin, "POST", `/api/portal/organization/workspaces/${ws}/owners`, {mentraUserId: member.mentraUserId})
+    expect(made.status).toBe(200)
+    const members = await send("GET", `/api/portal/workspaces/${ws}/members`, {headers: {cookie: admin.cookie}})
+    const row = members.json.items.find((item: {mentraUserId: string}) => item.mentraUserId === member.mentraUserId)
+    expect(row.role).toBe("owner")
+
+  })
+
+  test("the portal's session reaches only the Admin tools routes: no operator keys, no new or listed workspaces", async () => {
+    const admin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+    expect((await send("GET", "/api/portal/organization/credentials", {headers: {cookie: admin.cookie}})).status).toBe(404)
+    expect((await portalWrite(admin, "POST", "/api/portal/organization/credentials", {name: "x", scopes: ["organization.incidents.read"]})).status).toBe(404)
+    expect((await send("GET", "/api/portal/organization/workspaces", {headers: {cookie: admin.cookie}})).status).toBe(404)
+    expect((await portalWrite(admin, "POST", "/api/portal/organization/workspaces", {name: "Elsewhere"})).status).toBe(404)
+    expect((await send("GET", "/api/portal/organization", {headers: {cookie: admin.cookie}})).status).toBe(404)
+  })
+
+  test("the workspace's own Owner is not an Organization Admin: 403 on every organization route", async () => {
+    const owner = await portalPerson("p-owner")
+    const member = await portalPerson("p-member")
+    const ws = await workspaceWith(owner, {member})
+
+    const made = await portalWrite(owner, "POST", `/api/portal/organization/workspaces/${ws}/owners`, {mentraUserId: member.mentraUserId})
+    expect(made.status).toBe(403)
+    const granted = await portalWrite(owner, "POST", `/api/portal/organization/workspaces/${ws}/license-grants`, {
+      product: "mentra.call.unlimited",
+      seats: 1,
+      endsAt: "2099-01-01",
+    })
+    expect(granted.status).toBe(403)
+    expect((await send("GET", `/api/portal/workspace-license-resets/${ws}`, {headers: {cookie: owner.cookie}})).status).toBe(403)
+  })
+
+  test("/me offers the license reset to an Organization Admin on dev and staging only", async () => {
+    const owner = await portalPerson("p-owner")
+    const admin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+    await workspaceWith(owner)
+    const reset = async (who: Person) => (await send("GET", "/api/portal/me", {headers: {cookie: who.cookie}})).json.organization.licenseReset
+
+    expect(await reset(admin)).toBe(false)
+    for (const environment of ["dev", "staging"]) {
+      restoreEnv()
+      restoreEnv = applyEnv({...TEST_ENV, CLOUD_CORE_FLEET_URL: `http://127.0.0.1:${fleet.port}`, CLOUD_CORE_FLEET_SECRET: SECRET, CLOUD_CORE_ENVIRONMENT: environment})
+      expect(await reset(admin)).toBe(true)
+      expect(await reset(owner)).toBe(false)
+    }
+    restoreEnv()
+    restoreEnv = applyEnv({...TEST_ENV, CLOUD_CORE_FLEET_URL: `http://127.0.0.1:${fleet.port}`, CLOUD_CORE_FLEET_SECRET: SECRET, CLOUD_CORE_ENVIRONMENT: "prod"})
+    expect(await reset(admin)).toBe(false)
   })
 })

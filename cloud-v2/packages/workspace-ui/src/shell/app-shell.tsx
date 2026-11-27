@@ -61,6 +61,11 @@ export type AppShellProps = {
   links?: readonly ExternalNavItem[];
   /** The person's own pages and actions, which the account menu offers above Sign out ("Billing"). */
   accountItems?: readonly NavItem[];
+  /**
+   * A strip across the very top of the frame, above the sidebar and the page, for something that holds on every
+   * page while it shows (the portal's Organization Admin ribbon). The host draws it; the shell gives it the width.
+   */
+  banner?: ReactNode;
   /** The page header. Without a title there is no header (a full-page message), only the mobile menu bar. */
   title?: ReactNode;
   description?: ReactNode;
@@ -91,6 +96,7 @@ export function AppShell({
   navLabel = "Workspace",
   links = [],
   accountItems = [],
+  banner,
   title,
   description,
   headerAction,
@@ -118,11 +124,14 @@ export function AppShell({
   );
 
   return (
-    <div className="bg-background text-foreground h-dvh overflow-hidden">
+    <div className="bg-background text-foreground flex h-dvh flex-col overflow-hidden">
+      {banner ? <div className="relative z-40 shrink-0">{banner}</div> : null}
+      <div className="relative min-h-0 flex-1">
       {mobileSidebarOpen ? (
         <button
           type="button"
-          className="fixed inset-0 z-20 bg-black/45 backdrop-blur-[4px] md:hidden"
+          // Above the banner too, so nothing behind the open drawer can be used.
+          className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[4px] md:hidden"
           aria-label="Close sidebar"
           onClick={() => setMobileSidebarOpen(false)}
         />
@@ -130,7 +139,7 @@ export function AppShell({
 
       <aside
         className={cn(
-          "bg-background fixed inset-y-0 left-0 z-30 flex w-[264px] flex-col border-r transition-transform duration-200 md:z-20 md:translate-x-0 md:shadow-none",
+          "bg-background absolute inset-y-0 left-0 z-[60] flex w-[264px] flex-col border-r transition-transform duration-200 md:z-20 md:translate-x-0 md:shadow-none",
           mobileSidebarOpen ? "shadow-dialog translate-x-0" : "-translate-x-full",
         )}
       >
@@ -216,7 +225,7 @@ export function AppShell({
         />
       </aside>
 
-      <div className="h-dvh overflow-y-auto overflow-x-hidden overscroll-contain md:pl-[264px]">
+      <div className="h-full overflow-y-auto overflow-x-hidden overscroll-contain md:pl-[264px]">
         {title ? (
           <header className="bg-background/90 sticky top-0 z-10 border-b backdrop-blur">
             <div className="mx-auto flex min-h-[68px] max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5 md:min-h-[84px] md:flex-nowrap md:px-8 md:py-4">
@@ -235,6 +244,7 @@ export function AppShell({
         )}
 
         <main className="mx-auto max-w-5xl px-4 py-6 sm:px-5 md:px-8 md:py-8">{children}</main>
+      </div>
       </div>
     </div>
   );
