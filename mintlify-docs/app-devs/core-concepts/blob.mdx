@@ -88,6 +88,29 @@ room than that. It changes as the phone fills
 up or frees space, so call `usage()` again before a large write rather than
 caching `quotaBytes`. A write past it fails with `BLOB_QUOTA_EXCEEDED`.
 
+### Cache
+
+Store a copy of something you can get again, such as a file from your server,
+with `cache: true`. Like a browser's HTTP cache, a cached blob doesn't count
+toward the quota: the phone keeps your miniapp's cached blobs within a budget
+(a quarter of the room they could use, at most 512 MB) and deletes the least
+recently read first. Reading a blob (`get`, `has`, `bytes`, a read stream,
+`share`, `upload`, or copying from it) counts as reading it; loading its `url`
+in your screen doesn't, so ask for the URL with `get` each time you show it.
+
+```typescript
+const meta = (await session.blob.get(key)) ?? (await session.blob.setFromUrl(key, url, { cache: true }));
+show(meta.url);
+```
+
+A deleted cached blob is simply absent: `get` is `null`, so download it again.
+An image whose file was deleted while your screen showed it fails to load: ask
+for it again in its `onerror`. Keep permanent only what isn't anywhere else yet,
+and once your server has it, make it cached without copying:
+`await session.blob.setCached(key, true)`. `setCached(key, false)` makes a
+cached blob permanent again, under the quota. The camera's photos are cached
+blobs.
+
 ## Large files: streaming
 
 For files past the in-memory caps, stream them. `createWriteStream` opens a
@@ -149,7 +172,8 @@ await reader.close();
 | `setFromUrl(key, url, opts?)` | `Promise<BlobMeta>` | Host downloads `url` to disk. `opts.headers` for auth. |
 | `upload(key, url, opts?)` | `Promise<{status}>` | Host sends the file to `url` (`PUT` by default, as a presigned upload URL expects). `opts.headers` for auth. Rejects on a non-2xx answer. |
 | `importFile(opts?)` | `Promise<BlobMeta \| null>` | OS file picker. `null` if cancelled. |
-| `copy(from, key)` | `Promise<BlobMeta>` | Copy the blob under `from` to `key` on the phone. The way to keep a camera photo, which expires. |
+| `copy(from, key, opts?)` | `Promise<BlobMeta>` | Copy the blob under `from` to `key` on the phone. The way to keep a camera photo, which is cached. |
+| `setCached(key, cached)` | `Promise<BlobMeta>` | Make a blob [cached](#cache) or permanent, without copying it. |
 | `createWriteStream(key, opts?)` | `Promise<BlobWriter>` | Streaming writer for large payloads. |
 | `get(key)` | `Promise<BlobMeta \| null>` | Metadata (incl. `uri`), or `null` if absent. |
 | `stat(key)` | `Promise<BlobMeta \| null>` | Alias of `get`. |
@@ -179,6 +203,7 @@ await reader.close();
 | `uri` | `string` | `file://` URI. Feed to `session.speaker.play` or `session.system.share`; they accept no other file. |
 | `url` | `string` | Where your miniapp's screen loads the file, as `<img src>` or `fetch`. Absent for a miniapp with no screen. It names the screen's current origin, so read it again rather than store it. |
 | `meta` | `Record<string, string \| number \| boolean>` | App-defined metadata persisted with the blob. |
+| `cached` | `boolean` | Set on a [cached](#cache) blob. |
 
 ## Size limits
 

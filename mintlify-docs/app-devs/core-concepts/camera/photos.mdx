@@ -21,7 +21,7 @@ registerMiniapp((session) => {
     if (!session.capabilities?.hasCamera) return;
     const photo = await session.camera.takePhoto();
     const bytes = await session.blob.bytes(photo.key);
-    if (!bytes) return; // the photo expired
+    if (!bytes) return; // the photo left the cache
     await fetch("https://example.com/photos", {
       method: "POST",
       headers: { "Content-Type": photo.mimeType },
@@ -49,7 +49,6 @@ const photo = await session.camera.takePhoto({ size: "high", sound: false });
 // photo.url        – loads in your miniapp's screen, e.g. <img src={photo.url}>
 // photo.mimeType   – e.g. "image/jpeg"
 // photo.size       – bytes
-// photo.expiresAt  – when the phone deletes it (Unix ms), 30 minutes after capture
 // photo.thumbnail  – a small copy: { key, url, width, height, mimeType }
 ```
 
@@ -74,10 +73,9 @@ The result is a `PhotoTaken`:
 |---|---|---|
 | `requestId` | `string` | Correlates the request with glasses status and phone logs. |
 | `key` | `string` | The photo's key in [`session.blob`](/app-devs/core-concepts/blob). |
-| `url` | `string \| undefined` | A URL your miniapp's own screen can load until the photo is deleted. |
+| `url` | `string \| undefined` | A URL your miniapp's own screen can load while the photo is on the phone. |
 | `mimeType` | `string` | MIME type of the image, e.g. `"image/jpeg"`. |
 | `size` | `number` | Image size in bytes. |
-| `expiresAt` | `number` | When the phone deletes the photo, as a Unix time in milliseconds. |
 | `thumbnail` | `PhotoThumbnail \| undefined` | A small copy of the photo, made on the phone (below). Absent if the photo couldn't be read as an image. |
 
 ### Thumbnails
@@ -85,7 +83,7 @@ The result is a `PhotoTaken`:
 A full photo decodes to tens of megabytes on a screen, so a list or timeline of photos should
 show their thumbnails. The phone makes one for every photo as it arrives: a JPEG at most 512 px on
 its long side, upright, about 20 to 40 KB. It is one of your miniapp's own files like the photo,
-under its own `key` in `session.blob`, and it is deleted with the photo.
+under its own `key` in `session.blob`, cached like the photo.
 
 ```tsx
 <img src={photo.thumbnail?.url ?? photo.url} width={photo.thumbnail?.width} loading="lazy" />
@@ -94,7 +92,7 @@ under its own `key` in `session.blob`, and it is deleted with the photo.
 | Field | Type | Description |
 |---|---|---|
 | `key` | `string` | The thumbnail's key in `session.blob`. To keep it past the photo, store a copy under a key of your own. |
-| `url` | `string \| undefined` | A URL your miniapp's own screen can load until the photo is deleted. |
+| `url` | `string \| undefined` | A URL your miniapp's own screen can load while the photo is on the phone. |
 | `width`, `height` | `number` | Its size in pixels. |
 | `mimeType` | `string` | `"image/jpeg"`. |
 
@@ -177,8 +175,9 @@ time; a new `warmUp()` replaces the previous one.
 
 ## Use the photo
 
-The photo is an ordinary `session.blob` entry that the phone deletes after 30
-minutes. It doesn't count toward your miniapp's storage limit.
+The photo is a [cached](/app-devs/core-concepts/blob#cache) `session.blob`
+entry: it doesn't count toward your miniapp's storage limit, and the phone
+deletes it once newer files fill your miniapp's cache.
 
 - **Send it somewhere.** Read the bytes in your background script and upload
   them yourself: `await session.blob.bytes(photo.key)`.
@@ -186,8 +185,8 @@ minutes. It doesn't count toward your miniapp's storage limit.
   The URL loads only in your miniapp's own screen, in development as once
   installed.
 - **Share it.** `await session.blob.share(photo.key)` opens the share sheet.
-- **Keep it.** Store a copy under a key of your own before it expires:
-  `await session.blob.set("saved/" + photo.requestId, bytes)`.
+- **Keep it.** Copy it under a key of your own:
+  `await session.blob.copy(photo.key, "saved/" + photo.requestId)`.
 
 ### Updating from uploaded photos
 

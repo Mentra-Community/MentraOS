@@ -95,8 +95,9 @@ export interface PhotoTaken {
   requestId: string
   /**
    * The photo's key in `session.blob`. Read it with `session.blob.bytes(key)`, for example to send to a
-   * backend with `fetch`. The photo is deleted at `expiresAt`; to keep it, copy it under a key of your
-   * own with `session.blob.copy(key, myKey)`: a file copy on the phone, with a `url` that doesn't expire.
+   * backend with `fetch`. The photo is a cached blob: the phone deletes it once newer files fill the
+   * miniapp's cache. To keep it, copy it under a key of your own with `session.blob.copy(key, myKey)`, a
+   * file copy on the phone, or make it permanent with `session.blob.setCached(key, false)`.
    */
   key: string
   /**
@@ -108,12 +109,10 @@ export interface PhotoTaken {
   mimeType: string
   /** The photo's size in bytes. */
   size: number
-  /** When the phone deletes the photo, as a Unix time in milliseconds: 30 minutes after capture. */
-  expiresAt: number
   /**
    * A small copy of the photo, made on the phone: a JPEG at most 512 px on its long side, upright,
    * about 20 to 40 KB. Show it in lists and timelines instead of the full photo, which a screen
-   * decodes to tens of megabytes. It is deleted with the photo; absent if the photo couldn't be read.
+   * decodes to tens of megabytes. A cached blob too; absent if the photo couldn't be read.
    */
   thumbnail?: PhotoThumbnail
 }
@@ -353,7 +352,12 @@ export class CameraModule {
   capture(options: CaptureOptions = {}): PhotoCapture {
     const photoId = mintPhotoId()
     const timeout = options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined
-    const started = quiet(this.session.sendRequest<void>({...this.photoRequest(options, "auto"), type: MiniappRequestType.PHOTO_CAPTURE, photoId}, timeout))
+    const started = quiet(
+      this.session.sendRequest<void>(
+        {...this.photoRequest(options, "auto"), type: MiniappRequestType.PHOTO_CAPTURE, photoId},
+        timeout,
+      ),
+    )
     return this.captureOf(photoId, started, options.preview === true, timeout)
   }
 
@@ -373,7 +377,11 @@ export class CameraModule {
     const cameraId = mintPhotoId()
     const timeout = options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined
     const opened = quiet(
-      this.session.sendRequest<void>({...this.photoRequest(options, "auto"), type: MiniappRequestType.CAMERA_OPEN, cameraId}),
+      this.session.sendRequest<void>({
+        ...this.photoRequest(options, "auto"),
+        type: MiniappRequestType.CAMERA_OPEN,
+        cameraId,
+      }),
     )
     let closing: Promise<void> | undefined
     /** The current trigger's subscriptions: the host stops a trigger when another starts or the session closes. */
@@ -425,7 +433,9 @@ export class CameraModule {
             offPhoto()
             stopped = started
               .catch(() => undefined)
-              .then(() => this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_CONTINUOUS_STOP, cameraId, runId}))
+              .then(() =>
+                this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_CONTINUOUS_STOP, cameraId, runId}),
+              )
             return stopped
           },
         }
@@ -436,16 +446,27 @@ export class CameraModule {
         // The host answers once the session's photos are released, which can take a while on Bluetooth.
         closing = opened
           .catch(() => undefined)
-          .then(() => this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_CLOSE, cameraId}, {timeoutMs: 180_000}))
+          .then(() =>
+            this.session.sendRequest<void>({type: MiniappRequestType.CAMERA_CLOSE, cameraId}, {timeoutMs: 180_000}),
+          )
         return closing
       },
     }
   }
 
   /** A capture's stages over the host's photo requests, once `started` says it exists there. */
-  private captureOf(photoId: string, started: Promise<void>, withPreview: boolean, timeout?: {timeoutMs: number}): PhotoCapture {
+  private captureOf(
+    photoId: string,
+    started: Promise<void>,
+    withPreview: boolean,
+    timeout?: {timeoutMs: number},
+  ): PhotoCapture {
     const stage = <T>(name: "captured" | "preview" | "photo") =>
-      quiet(started.then(() => this.session.sendRequest<T>({type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId, stage: name}, timeout)))
+      quiet(
+        started.then(() =>
+          this.session.sendRequest<T>({type: MiniappRequestType.PHOTO_CAPTURE_STAGE, photoId, stage: name}, timeout),
+        ),
+      )
     // Each stage is asked for when first awaited, once.
     let captured: Promise<void> | undefined
     let preview: Promise<PhotoPreview> | undefined
@@ -456,7 +477,8 @@ export class CameraModule {
         return (captured ??= stage<void>("captured"))
       },
       photo: () => (photo ??= stage<PhotoTaken>("photo")),
-      release: () => started.then(() => this.session.sendRequest<void>({type: MiniappRequestType.PHOTO_RELEASE, photoId})),
+      release: () =>
+        started.then(() => this.session.sendRequest<void>({type: MiniappRequestType.PHOTO_RELEASE, photoId})),
     }
     // Without `preview: true` the glasses send none, and the capture has no preview.
     if (!withPreview) return capture
@@ -465,7 +487,6 @@ export class CameraModule {
       get: () => (preview ??= stage<PhotoPreview>("preview")),
     }) as PhotoCaptureWithPreview
   }
-
 
   /**
    * Take a photo and upload it to Mentra's cloud, resolving to a short-lived signed URL.

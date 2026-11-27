@@ -79,7 +79,6 @@ describe("MockTransport", () => {
     const photo = await reply({type: MiniappRequestType.PHOTO, delivery: "local"}, "rid-1")
     expect(photo).toMatchObject({key: "photo/mock-photo", mimeType: "image/png", size: 68})
     expect(photo.url.startsWith("data:image/png;base64,")).toBe(true)
-    expect(photo.expiresAt).toBeGreaterThan(Date.now())
     expect("photoUrl" in photo).toBe(false)
 
     const opened = await reply({type: MiniappRequestType.BLOB_OPEN_READ, key: photo.key}, "rid-2")

@@ -1,7 +1,7 @@
 {
   "name": "@mentra/miniapp",
   "version": "3.5.0",
-  "apiLevel": 2,
+  "apiLevel": 3,
   "oldestApiLevel": 1,
   "description": "SDK for building MentraOS local miniapps (browser/WebView)",
   "author": "Mentra Labs",

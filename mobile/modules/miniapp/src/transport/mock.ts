@@ -28,7 +28,6 @@ const MOCK_PHOTO_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQ
 const MOCK_PHOTO_KEY = "photo/mock-photo"
 const MOCK_PHOTO_HANDLE = "mock-photo-read"
 const MOCK_PHOTO_BYTES = 68
-const MOCK_PHOTO_TTL_MS = 30 * 60 * 1000
 
 /**
  * Returns true if the current environment requested the mock transport
@@ -232,7 +231,6 @@ function syntheticDataFor(requestId: string, requestType: string, requestPayload
         url: dataUrl,
         mimeType: "image/png",
         size: MOCK_PHOTO_BYTES,
-        expiresAt: Date.now() + MOCK_PHOTO_TTL_MS,
       }
     }
 

@@ -196,6 +196,8 @@ export enum MiniappRequestType {
   BLOB_IMPORT = "miniapp_blob_import",
   /** Copy a stored blob under another key, host-side (no bytes cross the bridge). */
   BLOB_COPY = "miniapp_blob_copy",
+  /** Make a stored blob cached (outside the quota, evicted least recently read first) or permanent. */
+  BLOB_SET_CACHED = "miniapp_blob_set_cached",
   /** Share a stored blob from disk via the OS share sheet (no bytes cross the bridge). */
   BLOB_SHARE = "miniapp_blob_share",
 

@@ -56,9 +56,20 @@ export interface BlobMeta {
   url?: string
   /** App-defined metadata persisted with the blob. */
   meta?: Record<string, string | number | boolean>
+  /** A cached blob (see {@link BlobCacheOption.cache}). */
+  cached?: boolean
 }
 
-export interface BlobSetOptions {
+export interface BlobCacheOption {
+  /**
+   * Store a copy of something you can get again, such as a file from your server: it doesn't count toward the
+   * quota, and the phone deletes the least recently read cached blobs when the miniapp's cache is over its budget.
+   * A deleted one is simply absent (`get` is null): download it again. Default false: permanent, under the quota.
+   */
+  cache?: boolean
+}
+
+export interface BlobSetOptions extends BlobCacheOption {
   /** Default "application/octet-stream". */
   mimeType?: string
   name?: string
@@ -77,7 +88,7 @@ export interface BlobUploadOptions {
   headers?: Record<string, string>
 }
 
-export interface BlobImportOptions {
+export interface BlobImportOptions extends BlobCacheOption {
   /** Key to store under. Default: a generated key. */
   key?: string
   /** Restrict the picker to a MIME type, e.g. "application/pdf". */
@@ -225,6 +236,7 @@ export class BlobModule {
       name: opts.name,
       headers: opts.headers,
       meta: opts.meta,
+      cache: opts.cache,
     })
   }
 
@@ -253,6 +265,7 @@ export class BlobModule {
       key: opts.key,
       mimeType: opts.mimeType,
       meta: opts.meta,
+      cache: opts.cache,
     })
   }
 
@@ -264,17 +277,27 @@ export class BlobModule {
       mimeType: opts.mimeType,
       name: opts.name,
       meta: opts.meta,
+      cache: opts.cache,
     })
     return new BlobWriter(this.session, res.key)
   }
 
   /**
    * Copy the blob under `from` to `key`, on the phone: no bytes cross the bridge, so a photo copies in milliseconds.
-   * The copy is the miniapp's own, under its quota, and never expires: the way to keep a camera photo (which expires).
-   * Resolves to the copy's metadata, with its `url` for the screen.
+   * The copy is permanent unless `opts.cache`: the way to keep a camera photo, which is cached. Resolves to the
+   * copy's metadata, with its `url` for the screen.
    */
-  copy(from: string, key: string): Promise<BlobMeta> {
-    return this.session.sendRequest<BlobMeta>({type: MiniappRequestType.BLOB_COPY, from, key})
+  copy(from: string, key: string, opts: BlobCacheOption = {}): Promise<BlobMeta> {
+    return this.session.sendRequest<BlobMeta>({type: MiniappRequestType.BLOB_COPY, from, key, cache: opts.cache})
+  }
+
+  /**
+   * Make the blob under `key` cached (once your server has it) or permanent again, without copying it. Making it
+   * permanent counts it toward the quota and rejects with `BLOB_QUOTA_EXCEEDED` when it doesn't fit; rejects with
+   * `BLOB_NOT_FOUND` when absent.
+   */
+  setCached(key: string, cached: boolean): Promise<BlobMeta> {
+    return this.session.sendRequest<BlobMeta>({type: MiniappRequestType.BLOB_SET_CACHED, key, cached})
   }
 
   // ── read ─────────────────────────────────────────────────────────────────

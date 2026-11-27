@@ -54,7 +54,7 @@ import {wakeWordService} from "./WakeWordService"
 import micSessionManager, {MIC_SOURCE_CONFLICT, type MicSession} from "./MicSessionManager"
 import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, isVoiceCallPackage, type MicUseCase} from "./micPolicy"
 import {variantConfiguration, type MiniappVariant} from "./miniappVariant"
-import {BlobStore, EXPIRING_BLOB_TTL_MS} from "./BlobStore"
+import {BlobStore} from "./BlobStore"
 import {MiniappSystemActions} from "./MiniappSystemActions"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
@@ -136,11 +136,7 @@ import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./Minia
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import {isLocalBuildContext} from "./miniappBuildKind"
-import {
-  configureMiniappDataPartitions,
-  miniappDataSessionOf,
-  resolveMiniappDataPartition,
-} from "./miniappDataPartition"
+import {configureMiniappDataPartitions, miniappDataSessionOf, resolveMiniappDataPartition} from "./miniappDataPartition"
 import {sameCoreUrl} from "./fleet/coreUrl"
 import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
 import {installMiniapp, InstallMiniappError, type InstallMiniappErrorCode} from "./installMiniapp"
@@ -232,7 +228,6 @@ interface MiniappPhotoTaken {
   url?: string
   mimeType: string
   size: number
-  expiresAt: number
   thumbnail?: MiniappPhotoThumbnail
 }
 
@@ -1549,7 +1544,14 @@ class LocalMiniappRuntime {
         )
         break
       case MiniappRequestType.BLOB_COPY:
-        this.enqueueBlobRequest(packageName, requestId, () => this.blobStore.handleCopy(packageName, payload, requestId))
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleCopy(packageName, payload, requestId),
+        )
+        break
+      case MiniappRequestType.BLOB_SET_CACHED:
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleSetCached(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_GET:
         this.enqueueBlobRequest(packageName, requestId, () => this.blobStore.handleGet(packageName, payload, requestId))
@@ -1863,7 +1865,14 @@ class LocalMiniappRuntime {
         // the Mentra Apps before it answer NOT_PERMITTED.
         // telemetry: `session.telemetry.capture` reaches the workspace's Fleet Management (Phase 12).
         // videoPassthrough: the relay's native passthrough codecs exist on Android only.
-        hostFeatures: {captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true, telemetry: true, videoPassthrough: Platform.OS === "android"},
+        hostFeatures: {
+          captureAudio: true,
+          initReady: true,
+          transcriptionListeners: true,
+          miniappInstall: true,
+          telemetry: true,
+          videoPassthrough: Platform.OS === "android",
+        },
       },
       requestId,
     )
@@ -2135,7 +2144,8 @@ class LocalMiniappRuntime {
     if (!app) return
 
     const rawStreams = (payload.subscriptions ?? payload.streams) as
-      (string | ({rate?: string} & TranscriptionStreamEntry))[] | undefined
+      | (string | ({rate?: string} & TranscriptionStreamEntry))[]
+      | undefined
     // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
     // "location_stream" is the rate-bearing alias for "location_update".
     // The strictest rate wins when multiple `location_stream` entries appear
@@ -3927,35 +3937,31 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Take a photo that stays on the phone and hand it to the miniapp as an expiring blob:
-   * it reads the bytes with `session.blob` under `key` until `expiresAt`, and its screen shows it from `url`.
+   * Take a photo that stays on the phone and hand it to the miniapp as a cached blob:
+   * it reads the bytes with `session.blob` under `key`, and its screen shows it from `url`.
    */
   private async takeLocalPhoto(packageName: string, opts: PhotoOpts): Promise<MiniappPhotoTaken> {
     return this.keepPhotoForMiniapp(packageName, await phonePhotoCoordinator.takeLocalPhoto(packageName, opts))
   }
 
   /**
-   * Hand a photo file on the phone to the miniapp as an expiring blob (see takeLocalPhoto), and its
-   * thumbnail as another under `photo/<id>/thumbnail`, which expires and is deleted with the photo.
+   * Hand a photo file on the phone to the miniapp as a cached blob (see takeLocalPhoto), and its
+   * thumbnail as another under `photo/<id>/thumbnail`. The thumbnail goes first: a cached write may
+   * evict older ones to make room, and the photo is the one that must reach the miniapp.
    */
   private async keepPhotoForMiniapp(packageName: string, photo: LocalPhotoTaken): Promise<MiniappPhotoTaken> {
+    const key = `photo/${photo.requestId}`
     try {
-      const blob = this.blobStore.storeExpiringFile(
-        packageName,
-        `photo/${photo.requestId}`,
-        photo.fileUri,
-        photo.mimeType,
-      )
+      const thumbnail = photo.thumbnail && this.keepThumbnailForMiniapp(packageName, key, photo.thumbnail)
+      const blob = this.blobStore.storeCachedFile(packageName, key, photo.fileUri, photo.mimeType)
       // The screen's own origin serves the file.
       const url = blob.url
-      const thumbnail = photo.thumbnail && this.keepThumbnailForMiniapp(packageName, blob.key, photo.thumbnail)
       return {
         requestId: photo.requestId,
         key: blob.key,
         ...(url ? {url} : {}),
         mimeType: blob.mimeType,
         size: blob.bytes,
-        expiresAt: blob.expiresAt ?? Date.now() + EXPIRING_BLOB_TTL_MS,
         ...(thumbnail ? {thumbnail} : {}),
       }
     } catch (err) {
@@ -3977,14 +3983,12 @@ class LocalMiniappRuntime {
     thumbnail: LocalPhotoThumbnail,
   ): MiniappPhotoThumbnail | undefined {
     try {
-      const blob = this.blobStore.storeExpiringCompanion(
+      const blob = this.blobStore.storeCachedFile(
         packageName,
-        photoKey,
         `${photoKey}/thumbnail`,
         thumbnail.fileUri,
         thumbnail.mimeType,
       )
-      if (!blob) return undefined
       const url = blob.url
       return {
         key: blob.key,
@@ -4080,7 +4084,12 @@ class LocalMiniappRuntime {
       } else if (payload.stage === "preview") {
         this.sendResult(packageName, requestId, true, await capture.preview)
       } else {
-        this.sendResult(packageName, requestId, true, await this.keepPhotoForMiniapp(packageName, await capture.photo()))
+        this.sendResult(
+          packageName,
+          requestId,
+          true,
+          await this.keepPhotoForMiniapp(packageName, await capture.photo()),
+        )
         if (requestId) fleetEvents.photo({operationId: photoId, stage: "delivered"})
       }
     } catch (err) {
@@ -4154,7 +4163,11 @@ class LocalMiniappRuntime {
         // Starting a trigger stops the session's previous one.
         const trigger = entry.camera.continuous(this.photoOverrides(payload))
         trigger.onPhoto((capture) =>
-          this.sendToMiniapp(packageName, {type: MiniappResponseType.CAMERA_CONTINUOUS_PHOTO, runId, photoId: capture.photoId}),
+          this.sendToMiniapp(packageName, {
+            type: MiniappResponseType.CAMERA_CONTINUOUS_PHOTO,
+            runId,
+            photoId: capture.photoId,
+          }),
         )
         entry.run = {runId, trigger}
         this.sendResult(packageName, requestId, true)
@@ -4634,7 +4647,10 @@ class LocalMiniappRuntime {
     // Other joiners are not required to: without a session the BLE LC3 uplink is simply not
     // selected and the audio rides the WHIP capture path, exactly as it did before.
     const glassesSession = micSessionManager.hasGlassesSession(packageName)
-    const voiceCall = isVoiceCallPackage(packageName, this.connectedApps.get(packageName)?.installedManifest?.variant?.of)
+    const voiceCall = isVoiceCallPackage(
+      packageName,
+      this.connectedApps.get(packageName)?.installedManifest?.variant?.of,
+    )
     if (voiceCall && !glassesSession) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.MIC_SESSION_REQUIRED,
