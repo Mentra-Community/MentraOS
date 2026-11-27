@@ -1,6 +1,5 @@
 package com.mentra.glassesmedia.network
 
-import com.mentra.bluetoothsdk.hotspot.Ipv4Prefix
 import com.mentra.bluetoothsdk.hotspot.ScopedSoftApNetwork
 import com.mentra.bluetoothsdk.hotspot.NetworkFacts
 import android.content.Context
@@ -13,6 +12,10 @@ import org.webrtc.NetworkMonitorAutoDetect
 
 /**
  * Adds the scoped SoftAP network to libwebrtc's Android network inventory.
+ *
+ * Only the glasses' hotspot needs this. A Wi-Fi Direct group keeps the phone's own internet and
+ * libwebrtc reports it itself (`NetworkMonitorAutoDetect.setIncludeWifiDirect`), so on that link
+ * this detector passes the stock inventory through untouched.
  *
  * ## Why this exists
  *
@@ -239,6 +242,9 @@ internal constructor(
             scoped: () -> ScopedInterface?,
         ): Wired {
             val filter = ScopedNetworkObserver(downstream, scoped) { registry.includesInternet() }
+            // libwebrtc's own support for a Wi-Fi Direct group, which Android lists as no Network:
+            // the monitor reports the group's interface, unbound, as Wi-Fi. Read at construction.
+            NetworkMonitorAutoDetect.setIncludeWifiDirect(true)
             return Wired(NetworkMonitorAutoDetect(filter, context), scoped, filter)
         }
 
@@ -370,14 +376,7 @@ internal constructor(
             context: Context,
             scopedNetwork: ScopedSoftApNetwork,
         ): ScopedInterface? {
-            // A Wi-Fi Direct group has no Network: its subnet is a local route that unmarked sockets
-            // reach (nothing pins this process to another network), so handle 0 is right there.
-            // Handle 0 failed only on the SoftAP, a separate non-default Network; see the class doc.
-            scopedNetwork.wifiDirectInterface()?.let { name ->
-                val address = scopedNetwork.localIpv4()?.let { Ipv4Prefix.packIpv4(it) } ?: return null
-                val bytes = ByteArray(4) { i -> (address ushr (24 - 8 * i)).toByte() }
-                return ScopedInterface(name, 0L, listOf(bytes))
-            }
+            // Null on Wi-Fi Direct, which has no Network: libwebrtc sees that group by itself.
             val network = scopedNetwork.network() ?: return null
             val manager =
                 context.getSystemService(ConnectivityManager::class.java) ?: return null

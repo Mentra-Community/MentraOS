@@ -67,7 +67,6 @@ class PhoneWhipPublisher(
   private var client: OkHttpClient? = null
   private var resource: HttpUrl? = null
   private var posted = false
-  private var localSet = false
   private var connected = false
   private var failureSent = false
   private var lastTimestamp = 0L
@@ -134,7 +133,7 @@ class PhoneWhipPublisher(
           peer!!.addTransceiver(audioTrack, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
         }
         peer!!.createOffer(sdpObserver(onCreate = { offer ->
-          peer?.setLocalDescription(sdpObserver(onSet = { localSet = true; maybePost() }), offer)
+          peer?.setLocalDescription(sdpObserver(onSet = { post() }), offer)
         }), MediaConstraints())
         queue.postDelayed({ if (!connected && !closed.get()) fail("WHIP connection timed out") }, 35_000)
         passthrough?.let { bridge ->
@@ -219,9 +218,15 @@ class PhoneWhipPublisher(
     } catch (_: Exception) { buffer.release(); frameBusy.set(false) }
   }
 
-  private fun maybePost() {
+  /**
+   * POST the offer as soon as it is set, without waiting for candidates. The WHIP server is ICE-lite
+   * and its answer carries its own candidates, so this peer checks every local network against them
+   * and the one with a route out wins. Waiting for gathering to complete instead waited on STUN over
+   * links that have no internet, such as the glasses link, which never finishes.
+   */
+  private fun post() {
     val pc = peer ?: return
-    if (closed.get() || posted || !localSet || pc.iceGatheringState() != PeerConnection.IceGatheringState.COMPLETE) return
+    if (closed.get() || posted) return
     posted = true
     val http = client ?: return
     val request = Request.Builder().url(endpoint)
@@ -279,7 +284,7 @@ class PhoneWhipPublisher(
         else -> Unit
       }
     } }
-    override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) { queue.post { maybePost() } }
+    override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) = Unit
     override fun onSignalingChange(state: PeerConnection.SignalingState) = Unit
     override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
     override fun onIceCandidate(candidate: IceCandidate) = Unit

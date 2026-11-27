@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicReference
  *    and cannot be selected over the hotspot;
  *  - [com.mentra.glassesmedia.network.ScopedNetworkChangeDetector], so libwebrtc sees the hotspot at
  *    all — its stock monitor only watches internet-capable networks, and this one deliberately is
- *    not.
+ *    not. A Wi-Fi Direct group needs none of it: libwebrtc's monitor reports that one itself.
  *
  * Past the decoder nothing is special, so frames and PCM go through the shared [DecodedTrackRelay].
  *
@@ -341,9 +341,9 @@ class LocalWhipIngestSource(
     val scopedAddress = scopedNetwork?.localIpv4()
     // Real handle marks the ICE sockets onto the SoftAP. libwebrtc then advertises the default
     // route (cellular) as the candidate address. The glasses cannot reach that, so the answer they
-    // get is pinned to the scoped IP. No-op when gathering already told the truth.
+    // get is pinned to the scoped IP. Wi-Fi Direct gathers unmarked sockets that tell the truth.
     val pinned =
-      if (prefix != null && scopedAddress != null) {
+      if (prefix != null && scopedAddress != null && scopedNetwork?.keepsPhoneInternet() != true) {
         SoftApSdpGuard.pinHostAddresses(gatheredSdp, scopedAddress, prefix)
       } else {
         SoftApSdpGuard.PinResult(gatheredSdp, emptyList())
