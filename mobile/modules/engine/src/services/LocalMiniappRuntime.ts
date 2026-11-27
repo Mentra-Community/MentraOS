@@ -136,7 +136,11 @@ import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./Minia
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import {isLocalBuildContext} from "./miniappBuildKind"
-import {configureMiniappDataPartitions, miniappDataSessionOf, resolveMiniappDataPartition} from "./miniappDataPartition"
+import {
+  configureMiniappDataPartitions,
+  miniappDataSessionOf,
+  resolveMiniappDataPartition,
+} from "./miniappDataPartition"
 import {sameCoreUrl} from "./fleet/coreUrl"
 import {isHostTrustedSystemMiniapp, isSystemMiniappPackage} from "./SystemMiniappPolicy"
 import {installMiniapp, InstallMiniappError, type InstallMiniappErrorCode} from "./installMiniapp"
@@ -1544,9 +1548,7 @@ class LocalMiniappRuntime {
         )
         break
       case MiniappRequestType.BLOB_COPY:
-        this.enqueueBlobRequest(packageName, requestId, () =>
-          this.blobStore.handleCopy(packageName, payload, requestId),
-        )
+        this.enqueueBlobRequest(packageName, requestId, () => this.blobStore.handleCopy(packageName, payload, requestId))
         break
       case MiniappRequestType.BLOB_SET_CACHED:
         this.enqueueBlobRequest(packageName, requestId, () =>
@@ -1865,14 +1867,7 @@ class LocalMiniappRuntime {
         // the Mentra Apps before it answer NOT_PERMITTED.
         // telemetry: `session.telemetry.capture` reaches the workspace's Fleet Management (Phase 12).
         // videoPassthrough: the relay's native passthrough codecs exist on Android only.
-        hostFeatures: {
-          captureAudio: true,
-          initReady: true,
-          transcriptionListeners: true,
-          miniappInstall: true,
-          telemetry: true,
-          videoPassthrough: Platform.OS === "android",
-        },
+        hostFeatures: {captureAudio: true, initReady: true, transcriptionListeners: true, miniappInstall: true, telemetry: true, videoPassthrough: Platform.OS === "android"},
       },
       requestId,
     )
@@ -2144,8 +2139,7 @@ class LocalMiniappRuntime {
     if (!app) return
 
     const rawStreams = (payload.subscriptions ?? payload.streams) as
-      | (string | ({rate?: string} & TranscriptionStreamEntry))[]
-      | undefined
+      (string | ({rate?: string} & TranscriptionStreamEntry))[] | undefined
     // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
     // "location_stream" is the rate-bearing alias for "location_update".
     // The strictest rate wins when multiple `location_stream` entries appear
@@ -4084,12 +4078,7 @@ class LocalMiniappRuntime {
       } else if (payload.stage === "preview") {
         this.sendResult(packageName, requestId, true, await capture.preview)
       } else {
-        this.sendResult(
-          packageName,
-          requestId,
-          true,
-          await this.keepPhotoForMiniapp(packageName, await capture.photo()),
-        )
+        this.sendResult(packageName, requestId, true, await this.keepPhotoForMiniapp(packageName, await capture.photo()))
         if (requestId) fleetEvents.photo({operationId: photoId, stage: "delivered"})
       }
     } catch (err) {
@@ -4163,11 +4152,7 @@ class LocalMiniappRuntime {
         // Starting a trigger stops the session's previous one.
         const trigger = entry.camera.continuous(this.photoOverrides(payload))
         trigger.onPhoto((capture) =>
-          this.sendToMiniapp(packageName, {
-            type: MiniappResponseType.CAMERA_CONTINUOUS_PHOTO,
-            runId,
-            photoId: capture.photoId,
-          }),
+          this.sendToMiniapp(packageName, {type: MiniappResponseType.CAMERA_CONTINUOUS_PHOTO, runId, photoId: capture.photoId}),
         )
         entry.run = {runId, trigger}
         this.sendResult(packageName, requestId, true)
@@ -4647,10 +4632,7 @@ class LocalMiniappRuntime {
     // Other joiners are not required to: without a session the BLE LC3 uplink is simply not
     // selected and the audio rides the WHIP capture path, exactly as it did before.
     const glassesSession = micSessionManager.hasGlassesSession(packageName)
-    const voiceCall = isVoiceCallPackage(
-      packageName,
-      this.connectedApps.get(packageName)?.installedManifest?.variant?.of,
-    )
+    const voiceCall = isVoiceCallPackage(packageName, this.connectedApps.get(packageName)?.installedManifest?.variant?.of)
     if (voiceCall && !glassesSession) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.MIC_SESSION_REQUIRED,
