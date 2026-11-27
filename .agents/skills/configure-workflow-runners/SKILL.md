@@ -59,6 +59,29 @@ GitHub-hosted Linux label unless the user explicitly requests an exception.
 Do not fall back to GitHub-hosted macOS when the office runner is unavailable;
 report the missing runner access or toolchain and continue independent work.
 
+## Select Xcode in every self-hosted Mac job that builds
+
+In the monorepo, `.xcode-version` at the root names the Xcode CI builds with.
+Every job on a self-hosted Mac that checks out code and builds or tests with
+Xcode, CocoaPods or Swift (signed or unsigned builds, light jobs, release jobs)
+runs `.github/ci/select-xcode.sh` right after its checkout, before anything
+touches them. A Mac job with no checkout that never builds, such as
+`promotion_lab`, doesn't:
+
+```yaml
+      - name: Select the Xcode .xcode-version names
+        run: '"$GITHUB_WORKSPACE/.github/ci/select-xcode.sh"'
+```
+
+A sparse checkout must include `.github/ci` (root files such as
+`.xcode-version` come with any cone-mode checkout). The script sets
+`DEVELOPER_DIR` for the job and prints `xcodebuild -version`; don't hardcode
+`DEVELOPER_DIR`, an Xcode path or version in a workflow, and never install
+Xcode or run `xcode-select` from CI. GitHub-hosted macOS jobs in this public
+repository's own workflows keep their image's `DEVELOPER_DIR`. In the
+monorepo, the `maintain-mac-ci-runners` skill covers the Macs themselves:
+installing or upgrading Xcode, its license, and failures of this step.
+
 ## Check the complete workflow
 
 Inspect every job, runner matrix, input/default that supplies `runs-on`, and
