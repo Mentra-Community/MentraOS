@@ -134,6 +134,27 @@ gh workflow run coordinated-release.yml --ref dev -f dry_run=true
 
 Watch the run and confirm a job picks the new runner.
 
+### Giving an engineer access to a runner
+
+Runners are shared boxes, so nothing personal should be stored on them. The runner itself never needs a GitHub SSH key: Actions checks out with the job's `GITHUB_TOKEN`.
+
+**Shell access, preferred: Tailscale SSH.** `ENABLE_TAILSCALE=1` runs `tailscale up --ssh`, so anyone the tailnet ACL allows can `ssh <runner-user>@<runner>` with their Tailscale identity. No keys to hand out, and access ends when they leave the tailnet. The ACL needs an `ssh` rule letting your users reach `tag:ci` as the runner user. To turn it on after the fact on an existing box:
+
+```bash
+sudo tailscale up --ssh
+```
+
+**Shell access, fallback: authorized_keys.** If Tailscale SSH is off, append the engineer's public key (their `~/.ssh/id_ed25519.pub`) to the runner user's `~/.ssh/authorized_keys`. Remove the line when they no longer need access.
+
+**Git on the box: forward your agent, don't create a key.** Connect with `ssh -A` and git on the runner uses the key on your laptop. Nothing to add to GitHub and nothing to revoke later:
+
+```bash
+ssh -A <runner-user>@<runner>
+git -C ~/MentraOS pull   # authenticates as you, via your laptop's key
+```
+
+If you need a persistent identity on the box (for example a cron job that pushes), use a per-repo deploy key rather than a key tied to someone's personal account, and note it in this README so it gets rotated when people leave.
+
 ---
 
 ## Runner cleanup script
