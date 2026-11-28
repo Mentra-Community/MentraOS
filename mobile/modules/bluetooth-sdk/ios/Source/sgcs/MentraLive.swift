@@ -2667,6 +2667,7 @@ class MentraLive: NSObject, SGCManager {
             // The glasses' files name their request.
             json["deferred"] = true
             if request.preview { json["preview"] = true }
+            if request.queue { json["queue"] = true }
         } else if localFile {
             var transfer = BlePhotoTransfer(
                 bleImgId: bleImgId, requestId: request.requestId, webhookUrl: ""

@@ -295,6 +295,9 @@ public struct PhotoRequest {
     public let ispAnalogGain: String?
     /// `capturePhoto` only: the glasses send a small preview after the capture (`PhotoCapture.preview()`).
     public let preview: Bool
+    /// `capturePhoto` only: wait in the glasses camera's queue while another photo is being taken,
+    /// instead of being refused (`CAMERA_BUSY`); up to 10 wait. For back-to-back photos, not presses.
+    public let queue: Bool
 
     public init(
         requestId: String? = nil,
@@ -316,7 +319,8 @@ public struct PhotoRequest {
         ispAnalogGain: String? = nil,
         mode: PhotoMode = .photo,
         transferMethod: String = "auto",
-        preview: Bool = false
+        preview: Bool = false,
+        queue: Bool = false
     ) {
         self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
@@ -338,6 +342,7 @@ public struct PhotoRequest {
         self.mode = mode
         self.transferMethod = transferMethod
         self.preview = preview
+        self.queue = queue
     }
 
     public static func from(params: [String: Any]) throws -> PhotoRequest {
@@ -421,7 +426,8 @@ public struct PhotoRequest {
             ispAnalogGain: params["ispAnalogGain"] as? String,
             mode: PhotoMode(normalizedRawValue: params["mode"] as? String),
             transferMethod: transferMethod,
-            preview: params["preview"] as? Bool ?? false
+            preview: params["preview"] as? Bool ?? false,
+            queue: params["queue"] as? Bool ?? false
         )
     }
 
@@ -491,7 +497,8 @@ public struct PhotoRequest {
             ispAnalogGain: ispAnalogGain,
             mode: mode,
             transferMethod: transferMethod,
-            preview: preview ?? self.preview
+            preview: preview ?? self.preview,
+            queue: queue
         )
     }
 }

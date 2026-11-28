@@ -179,9 +179,12 @@ export interface CaptureOptions extends TakePhotoOptions {
 
 /** A camera session's continuous trigger ({@link CameraSession.continuous}). */
 export interface ContinuousCapture<C extends PhotoCapture = PhotoCapture> {
-  /** Each photo it takes on its own; release it when done. */
+  /** Each photo it took on its own, once the camera took it; release it when done. */
   onPhoto(handler: (capture: C) => void): () => void
-  /** Stop taking photos on their own. The session stays open: its link, camera and photos stay. */
+  /**
+   * Stop taking photos on their own; the one waiting for the camera is dropped, never taken. The
+   * session stays open: its link, camera and photos stay.
+   */
   stop(): Promise<void>
 }
 
@@ -189,7 +192,8 @@ export interface ContinuousCapture<C extends PhotoCapture = PhotoCapture> {
  * The glasses camera, opened for a stretch of work ({@link CameraModule.open}). From open to
  * {@link close} the Mentra App holds the glasses Wi-Fi link, so full photos come over it, and
  * keeps the camera warm, so each photo is taken at once. Every photo goes through the session the
- * same way, one at a time; its photos have a preview when the session asked for one.
+ * same way, in order; its photos have a preview when the session asked for one. Only the continuous
+ * trigger's next photo waits on the glasses while one is being taken.
  */
 export interface CameraSession<C extends PhotoCapture = PhotoCapture> {
   /** One photo (a tap), with these options over the session's, taken in the session's turn; resolves once started. */

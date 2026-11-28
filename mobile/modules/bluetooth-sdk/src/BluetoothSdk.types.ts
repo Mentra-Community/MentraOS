@@ -837,6 +837,12 @@ export type CapturePhotoParams = PhotoCaptureParams & {
    * `capture.preview`. Without it no preview is sent, and the capture has no `preview`.
    */
   preview?: boolean
+  /**
+   * Wait in the glasses camera's queue while another photo is being taken, instead of being refused
+   * (`CAMERA_BUSY`). Up to 10 wait; an 11th is refused. For back-to-back photos, such
+   * as a camera session's continuous trigger: a press should be refused, not taken late.
+   */
+  queue?: boolean
 }
 
 /** A photo uploaded where `webhookUrl` says, by the glasses over Wi-Fi or by the phone over Bluetooth. */
@@ -873,7 +879,8 @@ export type PhotoTaken = {
 
 /**
  * One photo kept on the phone, in stages. Any number can be in flight: the glasses refuse a capture
- * only while another one is being taken (`CAMERA_BUSY`), never because photos are being sent.
+ * only while another one is being taken (`CAMERA_BUSY`), never because photos are being sent;
+ * with `queue: true` it waits for the camera instead.
  */
 export interface PhotoCapture {
   readonly requestId: string

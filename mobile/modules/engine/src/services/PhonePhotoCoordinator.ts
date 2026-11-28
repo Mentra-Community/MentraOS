@@ -69,6 +69,8 @@ function normalizePhotoSize(value: unknown): PhotoSize {
 }
 
 export interface PhotoOpts {
+  /** Wait in the glasses camera's queue while another photo is taken, instead of `CAMERA_BUSY`: a camera session's trigger only. */
+  queue?: boolean
   /** Legacy cloud size names are normalized before the native take_photo command. */
   size?: PhotoSize | "small" | "large" | "full"
   mode?: "photo" | "text"
@@ -580,6 +582,7 @@ export class PhonePhotoCoordinator {
             appId: packageName,
             ...captureParams(opts, parsePhotoCompression(opts.compress)),
             preview: opts.preview === true,
+            ...(opts.queue ? {queue: true} : {}),
           }),
     )
     const stage = <T>(

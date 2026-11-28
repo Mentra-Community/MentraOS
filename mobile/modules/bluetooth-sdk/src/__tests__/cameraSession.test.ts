@@ -49,7 +49,7 @@ const setFast = (fast: "up" | "down") => {
   mockLink.listeners.forEach((listener) => listener({...mockLink.state}))
 }
 
-const {openCameraSession, PENDING_GUARD} = jest.requireActual<typeof import("../glasses-wifi/camera-session")>(
+const {openCameraSession, PENDING_GUARD, CAMERA_DEPTH} = jest.requireActual<typeof import("../glasses-wifi/camera-session")>(
   "../glasses-wifi/camera-session",
 )
 const settle = async () => {
@@ -153,8 +153,10 @@ describe("camera session", () => {
     await settle()
     expect(mockLink.opens).toBe(1)
     expect(taken.length).toBeGreaterThan(5)
-    expect(photos).toHaveLength(taken.length)
-    expect(taken[0].options).toEqual({sound: false, size: "large"})
+    // Each is handed out once the camera took it: only those still on the camera aren't yet.
+    expect(photos.length).toBeGreaterThanOrEqual(taken.length - CAMERA_DEPTH)
+    // Its photos wait on the glasses camera rather than being refused; a tap's don't (below).
+    expect(taken[0].options).toEqual({sound: false, size: "large", queue: true})
     run.stop()
     await session.close()
     expect(mockLink.closes).toBe(1)
@@ -172,6 +174,81 @@ describe("camera session", () => {
     expect(taken).toHaveLength(PENDING_GUARD + 1)
     taken.forEach((capture) => capture.release())
     await session.close()
+  })
+
+  /** Captures the test takes by hand: `shots[i]()` is the camera taking the i-th. */
+  function handCamera() {
+    const shots: Array<() => void> = []
+    const released: number[] = []
+    const options: object[] = []
+    const take = (asked: object, done: () => void) => {
+      options.push(asked)
+      const index = shots.length
+      let reject = (_error: Error) => {}
+      const captured = new Promise<void>((resolve, fail) => {
+        shots.push(resolve)
+        reject = fail
+      })
+      captured.catch(() => undefined)
+      return {
+        captured,
+        release: () => {
+          released.push(index)
+          reject(new Error("released"))
+          done()
+        },
+      }
+    }
+    return {shots, released, options, take}
+  }
+
+  it("continuous: the next photo waits on the glasses camera while one is being taken", async () => {
+    const {shots, take} = handCamera()
+    const session = openCameraSession(take, {sound: false}, "test")
+    const handed: unknown[] = []
+    session.continuous().onPhoto((capture) => handed.push(capture))
+    await settle()
+    // Nothing taken yet: the camera has the one being taken and the next, no more, and none is handed out.
+    expect(shots).toHaveLength(CAMERA_DEPTH)
+    expect(handed).toHaveLength(0)
+    shots[0]()
+    await settle()
+    expect(shots).toHaveLength(CAMERA_DEPTH + 1)
+    expect(handed).toHaveLength(1)
+    void session.close()
+  })
+
+  it("a photo asked for during the trigger waits until the camera is free, and isn't queued", async () => {
+    const {shots, options, take} = handCamera()
+    const session = openCameraSession(take, {sound: false}, "test")
+    session.continuous()
+    await settle()
+    const asked = session.capture({sound: true})
+    shots[0]()
+    await settle()
+    // The trigger's queued ones are still on the camera: the tap waits for them, and no more are queued.
+    expect(shots).toHaveLength(CAMERA_DEPTH)
+    for (const shot of shots.slice(1)) shot()
+    await asked
+    expect(options[CAMERA_DEPTH]).toEqual({sound: true})
+    void session.close()
+  })
+
+  it("continuous: stopping releases the photos the camera hasn't taken, and hands none of them out", async () => {
+    const {shots, released, take} = handCamera()
+    const session = openCameraSession(take, {sound: false}, "test")
+    const handed: unknown[] = []
+    const run = session.continuous()
+    run.onPhoto((capture) => handed.push(capture))
+    await settle()
+    shots[0]()
+    await settle()
+    run.stop()
+    await settle()
+    expect(handed).toHaveLength(1)
+    // The one taken is handed out; the rest on the camera are released.
+    expect(released).toEqual(Array.from({length: CAMERA_DEPTH}, (_, i) => i + 1))
+    void session.close()
   })
 
   it("continuous: waits while only Bluetooth is left and goes on when the fast link is back", async () => {

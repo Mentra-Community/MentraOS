@@ -839,7 +839,12 @@ NativeBluetoothSdkModule.capturePhoto = function (params: CapturePhotoParams): P
   const requestId =
     params.requestId?.trim() || `photo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   const started = quiet(
-    nativeCapturePhoto({...photoCaptureParamsForNative(params), requestId, ...(params.preview ? {preview: true} : {})}),
+    nativeCapturePhoto({
+      ...photoCaptureParamsForNative(params),
+      requestId,
+      ...(params.preview ? {preview: true} : {}),
+      ...(params.queue ? {queue: true} : {}),
+    }),
   )
   const stage = (name: "captured" | "preview" | "photo") =>
     quiet(started.then(() => nativePhotoCaptureStage(requestId, name)))

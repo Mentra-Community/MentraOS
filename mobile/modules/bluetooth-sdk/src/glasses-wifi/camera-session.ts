@@ -11,7 +11,8 @@ import {delay} from "./native"
  *
  * - `capture(options)`: one photo, for a person's tap or voice, taken in the session's turn.
  * - `continuous(options)`: photos back to back on their own, as fast as the camera takes them,
- *   until the trigger stops. An internal guard, which callers neither set nor see, holds it while
+ *   until the trigger stops. Each is handed out once the camera took it; stopping releases the
+ *   ones it hasn't, so none is taken after. An internal guard, which callers neither set nor see, holds it while
  *   the fast link is down or while {@link PENDING_GUARD} of the session's photos are still on the
  *   glasses (handed out and not released), so photos never pile up there behind Bluetooth.
  *
@@ -21,14 +22,26 @@ import {delay} from "./native"
 
 /** How many of a session's photos may stay on the glasses before its continuous trigger waits. */
 export const PENDING_GUARD = 12
+/**
+ * How many of the continuous trigger's captures the glasses camera has at once: the one being taken
+ * and the next ones, asked with `queue: true` so they wait in the camera's queue. The camera starts
+ * each the moment it is free and sets the pace itself. The phone refills when a `captured` status
+ * arrives, which took up to about 2.3 s over Bluetooth on the lab (air-2, Nov 2026) while photos came
+ * every 0.35 s at the fastest: 7 waiting cover that. The glasses let 10 wait. A photo asked for
+ * (`capture`) is not queued: it goes once the camera is free.
+ */
+export const CAMERA_DEPTH = 8
 /** How long a session waits before asking again for a fast link that could not come up. */
 const LINK_RETRY_MS = 30_000
 
 /** A session's continuous trigger: photos back to back until `stop()` or the session closes. */
 export interface ContinuousCapture<C> {
-  /** Each photo it takes, a capture like the session's `capture`; release it when done. */
+  /** Each photo it took, once the camera took it: a capture like the session's `capture`; release it when done. */
   onPhoto(handler: (capture: C) => void): () => void
-  /** Stop taking photos on their own. The session stays open: its link, camera and photos stay. Idempotent. */
+  /**
+   * Stop taking photos on their own: the ones the camera hasn't taken yet are released, so the
+   * glasses drop them. The session stays open: its link, camera and photos stay. Idempotent.
+   */
   stop(): void
 }
 
@@ -54,6 +67,8 @@ interface Trigger<O, C> {
   options: O
   stopped: boolean
   photoHandlers: Set<(capture: C) => void>
+  /** Its captures the camera hasn't taken yet. */
+  waiting: Set<C>
 }
 
 /**
@@ -61,7 +76,7 @@ interface Trigger<O, C> {
  * once that capture is released (the caller's `release()`, or the miniapp closing). `defaults` are
  * every photo's options; `warm`, when given, holds the camera warm while the session is open.
  */
-export function openCameraSession<O extends object, C extends {readonly captured: Promise<void>}>(
+export function openCameraSession<O extends object, C extends {readonly captured: Promise<void>; release(): unknown}>(
   take: (options: O, released: () => void) => C,
   defaults: O,
   consumer: string,
@@ -74,6 +89,8 @@ export function openCameraSession<O extends object, C extends {readonly captured
   let closed = false
   let wake = () => {}
   const drained: Array<() => void> = []
+  /** The captures on the camera, oldest first: each settles once the camera is done with it. */
+  const onCamera: Array<Promise<unknown>> = []
 
   const notify = <T>(handlers: Set<(value: T) => void>, value: T) => {
     for (const handler of handlers) {
@@ -137,6 +154,11 @@ export function openCameraSession<O extends object, C extends {readonly captured
 
   const loop = async () => {
     while (!closed) {
+      // A photo asked for waits until the camera is free; the trigger's next waits in its queue.
+      if (onCamera.length >= (asked.length > 0 ? 1 : CAMERA_DEPTH)) {
+        await onCamera.shift()
+        continue
+      }
       const next = asked.shift()
       if (!next && !triggerTakes()) {
         await new Promise<void>((resolve) => (wake = resolve))
@@ -144,7 +166,7 @@ export function openCameraSession<O extends object, C extends {readonly captured
       }
       const auto = next ? null : trigger
       let settled = false
-      const capture = take(next?.options ?? auto!.options, () => {
+      const capture = take(next ? next.options : ({...auto!.options, queue: true} as O), () => {
         if (settled) return
         settled = true
         pending--
@@ -153,9 +175,22 @@ export function openCameraSession<O extends object, C extends {readonly captured
       })
       pending++
       if (next) next.resolve(capture)
-      else notify(auto!.photoHandlers, capture)
+      else {
+        const current = auto!
+        current.waiting.add(capture)
+        capture.captured.then(
+          () => {
+            if (current.waiting.delete(capture)) notify(current.photoHandlers, capture)
+          },
+          (error) => {
+            if (!current.waiting.delete(capture)) return
+            console.warn(`[CameraSession] ${consumer}: a photo failed`, error)
+            void capture.release()
+          },
+        )
+      }
       // A capture the glasses refused leaves the camera free at once: wait a little before the next.
-      await capture.captured.catch(() => delay(500))
+      onCamera.push(capture.captured.catch(() => delay(500)))
     }
   }
 
@@ -166,6 +201,8 @@ export function openCameraSession<O extends object, C extends {readonly captured
   const stopTrigger = (current: Trigger<O, C>) => {
     current.stopped = true
     current.photoHandlers.clear()
+    for (const capture of current.waiting) void capture.release()
+    current.waiting.clear()
     if (trigger === current) trigger = null
   }
 
@@ -184,6 +221,7 @@ export function openCameraSession<O extends object, C extends {readonly captured
         options: {...defaults, ...options} as O,
         stopped: false,
         photoHandlers: new Set(),
+        waiting: new Set(),
       }
       trigger = current
       wake()

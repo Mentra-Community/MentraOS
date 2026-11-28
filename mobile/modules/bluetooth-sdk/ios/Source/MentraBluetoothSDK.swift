@@ -1265,7 +1265,8 @@ public final class MentraBluetoothSDK {
     }
 
     /// Take a photo that is kept on the phone, in stages: see `PhotoCapture`. Any number can be in
-    /// flight: the glasses refuse a capture only while another one is being taken (`CAMERA_BUSY`).
+    /// flight: the glasses refuse a capture only while another one is being taken (`CAMERA_BUSY`),
+    /// unless it asks to wait (`PhotoRequest.queue`).
     public func capturePhoto(_ request: PhotoRequest) throws -> PhotoCapture {
         let routed = nonBlankRequestId(request.requestId).map { request.withRequestId($0) }
             ?? request.withRequestId(generatedCameraRequestId("photo"))

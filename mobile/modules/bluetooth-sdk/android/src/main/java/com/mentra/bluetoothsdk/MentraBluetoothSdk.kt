@@ -1235,7 +1235,8 @@ class MentraBluetoothSdk private constructor(
 
     /**
      * Take a photo that is kept on the phone, in stages: see [PhotoCapture]. Any number can be in
-     * flight: the glasses refuse a capture only while another one is being taken (`CAMERA_BUSY`).
+     * flight: the glasses refuse a capture only while another one is being taken (`CAMERA_BUSY`),
+     * unless it asks to wait ([PhotoRequest.queue]).
      */
     fun capturePhoto(request: PhotoRequest): PhotoCapture {
         val routed =

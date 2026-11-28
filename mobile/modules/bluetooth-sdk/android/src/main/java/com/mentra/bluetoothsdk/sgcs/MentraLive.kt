@@ -7631,6 +7631,7 @@ class MentraLive : SGCManager() {
                 // The glasses keep it and name the files they send (preview if asked, then full photo).
                 json.put("deferred", true)
                 if (request.preview) json.put("preview", true)
+                if (request.queue) json.put("queue", true)
                 Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching deferred take_photo " + requestId)
                 sendJson(json, true)
                 return

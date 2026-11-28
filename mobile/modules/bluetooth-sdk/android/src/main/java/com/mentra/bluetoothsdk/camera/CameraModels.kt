@@ -236,6 +236,11 @@ data class PhotoRequest @JvmOverloads constructor(
     val transferMethod: String = "auto",
     /** `capturePhoto` only: the glasses send a small preview after the capture ([PhotoCapture.preview]). */
     val preview: Boolean = false,
+    /**
+     * `capturePhoto` only: wait in the glasses camera's queue while another photo is being taken,
+     * instead of being refused (`CAMERA_BUSY`); up to 10 wait. For back-to-back photos, not presses.
+     */
+    val queue: Boolean = false,
 ) {
     companion object {
         private fun transferMethodFromValue(value: Any?): String {
@@ -298,6 +303,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 ispDigitalGain = ispDigitalGain,
                 ispAnalogGain = ispAnalogGain,
                 preview = boolValue(values, "preview") ?: false,
+                queue = boolValue(values, "queue") ?: false,
             )
         }
 
