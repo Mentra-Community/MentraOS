@@ -433,6 +433,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       deploymentDefault: answer.deploymentDefault,
       latest: checkBuild(path, answer.latest, "the latest build"),
       versions: answer.versions === null ? null : answer.versions.map(entry => checkBuild(path, entry, "a version")),
+      ...(answer.configuration === undefined ? {} : {configuration: answer.configuration}),
       readAt,
     }
   }

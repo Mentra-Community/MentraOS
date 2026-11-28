@@ -684,6 +684,12 @@ describe("versions", () => {
     expect(fetches).toEqual([{url: NOTES_URL, claims: null}])
   })
 
+  test("answers the managed settings the latest build declares, as served", async () => {
+    const configuration = [{key: "modes", type: "list", setBy: ["workspace"], fields: [{key: "name", type: "string"}]}]
+    serve(NOTES_URL, listedManifest({configuration}))
+    expect((await versions(NOTES_URL)).configuration).toEqual(configuration)
+  })
+
   test("reads the URL every time, never Core's stored entry, and stores nothing", async () => {
     // Core registered 1.0.0, and holds that copy until a phone reports a newer version.
     serve(NOTES_URL, manifest())

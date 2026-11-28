@@ -578,6 +578,12 @@ const desiredStateEntryFields = {
   url: FleetMiniappUrl,
   /** The package the URL's manifest named when it was assigned. Display and matching only; the URL decides what installs. */
   packageName: FleetText,
+  /**
+   * The workspace's values for the miniapp (managed settings), sent only to a phone that asks with
+   * `?configuration=1` ({@link FLEET_DESIRED_STATE_CONFIGURATION_PARAM}). The phone checks them against the installed
+   * bundle's declaration (`mergeConfiguration`).
+   */
+  configuration: z.record(z.string(), z.unknown()).optional(),
 }
 
 /** An entry that takes the version its URL serves: the only kind a phone that did not ask for pins is sent. */
@@ -603,6 +609,20 @@ export const FleetDesiredStateSchema = desiredStateSchema(FleetDesiredStateEntry
 /** The query parameter, and its value, a phone sends on its desired-state request to be answered with pins: `?pins=1`. */
 export const FLEET_DESIRED_STATE_PINS_PARAM = "pins"
 export const FLEET_DESIRED_STATE_PINS_VALUE = "1"
+
+/** The query parameter, and its value, a phone sends to be answered with each entry's workspace configuration. */
+export const FLEET_DESIRED_STATE_CONFIGURATION_PARAM = "configuration"
+
+/** Whether a desired-state request's `configuration` parameter asks for configuration: exactly `1`. */
+export function fleetDesiredStateAsksForConfiguration(value: string | null | undefined): boolean {
+  return value === FLEET_DESIRED_STATE_PINS_VALUE
+}
+
+/** The same desired state without any entry's configuration, for a phone that did not ask for it. */
+export function fleetDesiredStateWithoutConfiguration<State extends FleetDesiredStateWithPins>(state: State): State {
+  if (state.status !== "managed") return state
+  return {...state, entries: state.entries.map(({configuration: _configuration, ...entry}) => entry)}
+}
 
 /** An assignment's pin: the version, and the SHA-256 it had when the admin chose it, in lowercase hex. */
 export const FleetAssignmentPinSchema = z
@@ -650,11 +670,12 @@ export function fleetDesiredStateWithoutPins(state: FleetDesiredStateWithPins): 
   if (state.status !== "managed") return state
   return {
     ...state,
-    entries: state.entries.map(({assignmentId, revision, url, packageName}) => ({
+    entries: state.entries.map(({assignmentId, revision, url, packageName, configuration}) => ({
       assignmentId,
       revision,
       url,
       packageName,
+      ...(configuration ? {configuration} : {}),
       selection: "latest" as const,
     })),
   }

@@ -825,6 +825,7 @@ export const REGISTRY_VERSIONS_UNREADABLE_REASONS: readonly RegistryVersionsUnre
  *   Core's deployment gives every phone (`GET /api/client/deployment`), which phones keep current from the
  *   deployment's own host whatever URL a workspace assigns;
  * - `unreadable`: Core has nothing to list, and why.
+ * `configuration` is the managed settings the latest build declares, which MFM checks before it uses them.
  * `readAt` is when Core answered, ISO 8601.
  */
 export type RegistryVersionsResponse =
@@ -836,6 +837,8 @@ export type RegistryVersionsResponse =
       deploymentDefault: boolean
       latest: RegistryMiniappBuild
       versions: RegistryMiniappBuild[] | null
+      /** The latest `miniapp.json`'s `configuration` (managed settings) as served, unchecked; null or absent when it has none (absent from a Core before managed settings). */
+      configuration?: unknown
       readAt: string
     }
   | {url: string; status: "unreadable"; reason: RegistryVersionsUnreadableReason; readAt: string}

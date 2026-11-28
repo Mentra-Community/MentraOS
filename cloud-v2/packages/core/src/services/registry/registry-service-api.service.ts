@@ -377,6 +377,9 @@ export async function readMiniappVersions(
         deploymentDefault: options.deploymentDefaults?.has(manifest.packageName) ?? false,
         latest: {version: manifest.version, url: manifest.bundle.url, sha256: manifest.bundle.sha256},
         versions: manifest.versions ? manifest.versions.map(build) : null,
+        ...((manifest as {configuration?: unknown}).configuration === undefined
+          ? {}
+          : {configuration: (manifest as {configuration?: unknown}).configuration}),
         readAt: new Date().toISOString(),
       }
     }
