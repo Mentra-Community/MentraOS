@@ -976,7 +976,7 @@ class LocalMiniappRuntime {
     if (next === this.visiblePackage) return
     const previous = this.visiblePackage
     this.visiblePackage = next
-    // UI_OPEN also fires during periodic foreground resync. Only the authoritative
+    // UI_OPEN also fires when the app returns to the foreground. Only the authoritative
     // selection/host-activity edge should trigger a miniapp's foreground redraw.
     if (previous && this.handshookApps.has(previous)) this.sendVisibilityChange(previous, "background")
     if (next && this.handshookApps.has(next)) {

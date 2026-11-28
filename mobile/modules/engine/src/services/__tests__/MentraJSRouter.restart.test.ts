@@ -251,7 +251,7 @@ async function fixture() {
 }
 
 for (const trigger of ["liveness", "exception"] as const) {
-  test(`${trigger} restart restores mounted UI and fresh auth without foreground resync`, async () => {
+  test(`${trigger} restart restores mounted UI and fresh auth with no reopen from the host`, async () => {
     const f = await fixture()
     try {
       expect(await f.page.mentra.request("auth:get")).toEqual({token: "fixture-token", userId: "fixture-user"})

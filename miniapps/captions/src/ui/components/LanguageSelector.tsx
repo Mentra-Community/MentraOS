@@ -21,8 +21,8 @@ export function LanguageSelector({
   onSave,
   onCancel,
 }: LanguageSelectorProps) {
-  // The picker is a draft, seeded once when it opens: the background resends the saved settings every few
-  // seconds (the host's foreground resync), and those must not undo a pick before Save.
+  // The picker is a draft, seeded once when it opens: the background resends the saved settings whenever the
+  // host re-announces its UI, and those must not undo a pick before Save.
   const [tempLanguage, setTempLanguage] = useState(currentLanguage)
   const [tempHints, setTempHints] = useState<string[]>(currentHints)
   const [searchQuery, setSearchQuery] = useState("")

@@ -39,7 +39,6 @@ import {getWebViewLoadErrorDiagnostics} from "./webViewLoadErrorDiagnostics"
 // Ready-handshake tuning (see readyTimerRef). Reloads only retry a page the shim reached late or not at all.
 const READY_TIMEOUT_MS = 5000
 const MAX_LOAD_ATTEMPTS = 10
-const UI_RESYNC_INTERVAL_MS = 10_000
 
 const NO_INSETS: MiniappSafeArea = {top: 0, bottom: 0, left: 0, right: 0}
 
@@ -228,24 +227,16 @@ export const MiniappView = forwardRef<MiniappViewHandle, MiniappViewProps>(funct
     report({state: "loading", attempt: 0})
   }, [clearReadyTimer, report])
 
-  // WebView injections can be missed while Android/iOS is resuming or when the
-  // host process thaws after a sleep/network interruption. The background
-  // runtime owns canonical state, so periodically re-announce the mounted UI
-  // while foregrounded; miniapps hydrate from their session.ui.onOpen snapshot.
+  // On return to the foreground, probe the background's liveness and re-announce the mounted UI:
+  // WebView frames can be missed while the app was suspended, and miniapps hydrate from their
+  // session.ui.onOpen snapshot.
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState) => {
       const prevState = appStateRef.current
       appStateRef.current = nextState
       if (prevState !== "active" && nextState === "active") refreshUiBinding("app-active", true, true)
     })
-    const intervalId = BgTimer.setInterval(() => {
-      if (!connectedRef.current || AppState.currentState !== "active") return
-      refreshUiBinding("foreground-resync", false)
-    }, UI_RESYNC_INTERVAL_MS)
-    return () => {
-      sub.remove()
-      BgTimer.clearInterval(intervalId)
-    }
+    return () => sub.remove()
   }, [refreshUiBinding])
 
   useImperativeHandle(
