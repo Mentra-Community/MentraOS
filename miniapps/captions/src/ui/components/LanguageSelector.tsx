@@ -1,6 +1,6 @@
 import {Search, X, Check} from "lucide-react"
 import type {CSSProperties} from "react"
-import {useState, useEffect} from "react"
+import {useState} from "react"
 
 import {AVAILABLE_LANGUAGES, getLanguageName, getFlagEmoji} from "../lib/languages"
 
@@ -21,17 +21,12 @@ export function LanguageSelector({
   onSave,
   onCancel,
 }: LanguageSelectorProps) {
+  // The picker is a draft, seeded once when it opens: the background resends the saved settings every few
+  // seconds (the host's foreground resync), and those must not undo a pick before Save.
   const [tempLanguage, setTempLanguage] = useState(currentLanguage)
   const [tempHints, setTempHints] = useState<string[]>(currentHints)
   const [searchQuery, setSearchQuery] = useState("")
   const [saving, setSaving] = useState(false)
-
-  // Reset temp state when props change (though this component will likely be mounted/unmounted)
-  useEffect(() => {
-    setTempLanguage(currentLanguage)
-    setTempHints(currentHints)
-    setSearchQuery("")
-  }, [currentLanguage, currentHints])
 
   const handleLanguageClick = (code: string) => {
     if (tempLanguage === code) {
