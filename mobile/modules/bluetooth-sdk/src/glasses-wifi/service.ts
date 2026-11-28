@@ -244,6 +244,14 @@ const purpose = (): native.JoinPurpose =>
 function bringUp(first: Holder | null): Promise<GlassesWifiBinding> {
   const attempt = (async () => {
     const report = (line: string) => first?.options.report?.(line)
+    // Asked here, once for every holder: a holder that never asked would get the hotspot for want of it.
+    if (!(await native.ensureWifiPermission()))
+      throw new GlassesWifiError(
+        "join",
+        Object.assign(new Error("Nearby devices permission is required to join the glasses' Wi-Fi"), {
+          code: "WIFI_PERMISSION_DENIED",
+        }),
+      )
     linkType = await chooseLink()
     console.log(`[GlassesWifi] Bringing up the ${linkType} link`)
     const joined = linkType === "wifi_direct" ? await joinWifiDirect(report) : await joinHotspot(first, report)

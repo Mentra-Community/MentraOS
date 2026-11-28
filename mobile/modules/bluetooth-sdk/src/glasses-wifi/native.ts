@@ -1,4 +1,4 @@
-import {Platform} from "react-native"
+import {PermissionsAndroid, Platform} from "react-native"
 
 // The service is this module's only caller; it reaches the native joins through it.
 // eslint-disable-next-line no-restricted-imports
@@ -25,6 +25,21 @@ const native = () => {
 }
 
 const requestId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`
+
+/**
+ * Android: the permission any join to the glasses' Wi-Fi needs (Nearby devices from Android 13, location before),
+ * asked for once when it isn't granted. Without it Wi-Fi Direct can't run, and the phone would fall back to the
+ * glasses' hotspot, which takes its Wi-Fi internet. Resolves to whether it's granted; true on iOS.
+ */
+export async function ensureWifiPermission(): Promise<boolean> {
+  if (Platform.OS !== "android") return true
+  const permission =
+    Number(Platform.Version) >= 33
+      ? PermissionsAndroid.PERMISSIONS.NEARBY_WIFI_DEVICES
+      : PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+  if (await PermissionsAndroid.check(permission)) return true
+  return (await PermissionsAndroid.request(permission)) === PermissionsAndroid.RESULTS.GRANTED
+}
 
 /** Android: whether the phone and the connected glasses can use the Wi-Fi Direct link now. Right after a connection
  * it waits for the glasses to say what they support. */

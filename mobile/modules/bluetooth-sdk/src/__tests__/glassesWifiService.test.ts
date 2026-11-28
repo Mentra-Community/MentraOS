@@ -16,6 +16,9 @@ const mockState = {
   statusListeners: new Set<(changed: {connection?: Connection}) => void>(),
   // The phone's one native join.
   wifiDirect: false,
+  // The Nearby devices permission, and how often the link asked for it.
+  permission: true,
+  permissionAsks: 0,
   directJoins: 0,
   joins: 0,
   joinAnswers: [] as Array<string | Error | Promise<string>>,
@@ -56,6 +59,10 @@ jest.mock("../glasses-wifi/native", () => ({
     return answer
   },
   wifiDirectAvailable: async () => mockState.wifiDirect,
+  ensureWifiPermission: async () => {
+    mockState.permissionAsks++
+    return mockState.permission
+  },
   joinWifiDirect: async () => {
     mockState.directJoins++
     return {ssid: "DIRECT-ML-abcd", localAddress: "192.168.43.50", gateway: "192.168.43.1"}
@@ -110,6 +117,8 @@ beforeEach(() => {
     joins: 0,
     directJoins: 0,
     wifiDirect: false,
+    permission: true,
+    permissionAsks: 0,
     joinAnswers: [],
     disconnects: 0,
     connection: {state: "connected", fullyBooted: true},
@@ -439,6 +448,21 @@ describe("the Wi-Fi Direct link", () => {
     await lingerOut()
     expect(mockState.commands).toEqual([])
     expect(mockState.disconnects).toBe(1)
+  })
+
+  test("the link asks for the Nearby devices permission itself; refused, it joins nothing", async () => {
+    mockState.wifiDirect = true
+    mockState.permission = false
+    await expect(holdGlassesWifi({consumer: "miniapp com.acme.docs"})).rejects.toMatchObject({
+      code: "WIFI_PERMISSION_DENIED",
+    })
+    expect(mockState.permissionAsks).toBe(1)
+    expect(mockState.directJoins + mockState.joins).toBe(0)
+    mockState.permission = true
+    const hold = await holdGlassesWifi({consumer: "miniapp com.acme.docs"})
+    expect(mockState.directJoins).toBe(1)
+    await hold.release()
+    await lingerOut()
   })
 
   test("a hotspot-off report does not end a Wi-Fi Direct link: starting the group stops the hotspot", async () => {
