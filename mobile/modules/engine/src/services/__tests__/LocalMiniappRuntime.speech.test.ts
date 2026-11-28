@@ -9,7 +9,7 @@ import {prepareTtsSentences} from "../TtsTextSanitizer"
 // Exercise the real handlers without booting the engine's native dependencies,
 // following LocalMiniappRuntime.mic.test.ts.
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
-const methods = ["handleSpeak", "cancelSpeech"]
+const methods = ["handleSpeak", "startNextSpeech", "cancelSpeech"]
   .map((name) => {
     const start = source.search(new RegExp(`^  private (?:async )?${name}\\(`, "m"))
     if (start < 0) throw new Error(`Missing runtime method ${name}`)
@@ -85,6 +85,7 @@ function createHost(options: {offlineAvailable?: boolean; cloudSpeak?: () => Pro
   )
   const host = new Host()
   host.speechRuns = new Map()
+  host.queuedSpeech = new Map()
   host.setSpeakerState = mock(() => {})
   host.sendResult = mock(() => {})
   return {host, plays, streams, ttsModelManager, ttsSpeak, audioPlaybackService}
@@ -107,7 +108,7 @@ describe("cloud speech streams into the PCM player", () => {
         sampleRate: 24000,
         volume: 0.6,
         jitterMs: 250,
-        stopOtherAudio: true,
+        stopOtherAudio: false,
         suppressCloudUplink: false,
       })
       await settle()
@@ -133,6 +134,30 @@ describe("cloud speech streams into the PCM player", () => {
     // The aborted stream's own completion can't send a second result.
     streams[0].complete("old", true, null, 300, "interrupted")
     expect(host.sendResult).toHaveBeenCalledTimes(1)
+  })
+
+  test("a sentence asked for while speaking waits for the one being said", async () => {
+    const {host, streams} = createHost()
+    await host.handleSpeak("com.example.speech", {text: "Done, report saved."}, "first")
+    const second = host.handleSpeak("com.example.speech", {text: "Next line."}, "second")
+    await settle()
+    expect(streams).toHaveLength(1)
+    streams[0].complete("first", true, null, 900, "completed")
+    await second
+    expect(streams.map((stream) => stream.request.requestId)).toEqual(["first", "second"])
+    expect(host.sendResult).toHaveBeenCalledWith("com.example.speech", "first", true, {completed: true, duration: 900}, undefined)
+  })
+
+  test("stopOtherAudio cuts off the sentence being said and the ones queued", async () => {
+    const {host, streams, audioPlaybackService} = createHost()
+    await host.handleSpeak("com.example.speech", {text: "Old answer."}, "old")
+    void host.handleSpeak("com.example.speech", {text: "Queued line."}, "queued")
+    await settle()
+    await host.handleSpeak("com.example.speech", {text: "New answer.", stopOtherAudio: true}, "new")
+    expect(audioPlaybackService.cancelPlayback).toHaveBeenCalledWith("old")
+    for (const id of ["old", "queued"])
+      expect(host.sendResult).toHaveBeenCalledWith("com.example.speech", id, true, {completed: false, duration: null}, undefined)
+    expect(streams.map((stream) => stream.request)).toMatchObject([{requestId: "old"}, {requestId: "new", stopOtherAudio: true}])
   })
 
   test("a connection lost mid-sentence ends speech with an error, not an offline restart", async () => {

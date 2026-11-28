@@ -296,6 +296,8 @@ interface SpeechRun {
   cancelled: boolean
   playbackRequestId?: string
   onCancelled?: () => void
+  /** Set while the run waits in its miniapp's queue; starts it. */
+  start?: () => void
 }
 
 type TranscriptionEventSource = "cloud" | "local"
@@ -740,6 +742,8 @@ class LocalMiniappRuntime {
   public onLivenessTimeout: ((packageName: string) => void) | null = null
 
   private speechRuns = new Map<string, SpeechRun>()
+  /** Speech a miniapp asked for while it was already speaking, said in order after it. */
+  private queuedSpeech = new Map<string, SpeechRun[]>()
   private runtimeSeq = 0
   private authSessionSeq = 0
 
@@ -2818,7 +2822,9 @@ class LocalMiniappRuntime {
     const voice = ((payload.voice_id ?? payload.voice) as string) || "default"
     const audioRequestId = requestId || `tts_${Date.now()}`
     const volume = typeof payload.volume === "number" ? payload.volume : 1.0
-    const stopOtherAudio = payload.stopOtherAudio !== false
+    // Opt-in barge-in: cut off this miniapp's own speech, said and queued, and
+    // other audio. Otherwise the sentence waits for the miniapp's earlier ones.
+    const stopOtherAudio = payload.stopOtherAudio === true
     const voiceSettings =
       payload.voice_settings && typeof payload.voice_settings === "object"
         ? (payload.voice_settings as Record<string, unknown>)
@@ -2826,9 +2832,7 @@ class LocalMiniappRuntime {
     const speed = typeof voiceSettings?.speed === "number" ? voiceSettings.speed : undefined
     const run: SpeechRun = {id: audioRequestId, cancelled: false}
 
-    this.cancelSpeech(packageName)
-    this.speechRuns.set(packageName, run)
-    this.setSpeakerState(packageName, "loading")
+    if (stopOtherAudio) this.cancelSpeech(packageName)
 
     let terminalSent = false
     const sendPlaybackResult = (
@@ -2871,8 +2875,20 @@ class LocalMiniappRuntime {
             }
           : undefined,
       )
+      if (ownsSpeakerState) this.startNextSpeech(packageName)
     }
     run.onCancelled = () => sendPlaybackResult(true, null, null, "tts playback stopped", false)
+
+    if (this.speechRuns.has(packageName)) {
+      await new Promise<void>((resolve) => {
+        run.start = resolve
+        this.queuedSpeech.set(packageName, [...(this.queuedSpeech.get(packageName) ?? []), run])
+      })
+      // Cancelled while queued: onCancelled already settled speak().
+      if (run.cancelled) return
+    }
+    this.speechRuns.set(packageName, run)
+    this.setSpeakerState(packageName, "loading")
 
     try {
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
@@ -3102,13 +3118,28 @@ class LocalMiniappRuntime {
     }
   }
 
+  /** Starts the miniapp's next queued sentence, once the one it was saying has ended. */
+  private startNextSpeech(packageName: string): void {
+    const queue = this.queuedSpeech.get(packageName)
+    const next = queue?.shift()
+    if (!queue?.length) this.queuedSpeech.delete(packageName)
+    if (!next) return
+    // Owns the speaker from now, so a sentence asked for meanwhile queues behind it.
+    this.speechRuns.set(packageName, next)
+    next.start?.()
+  }
+
+  /** Cuts off the miniapp's speech: the sentence it is saying and every one queued behind it. */
   private cancelSpeech(packageName: string): void {
-    const run = this.speechRuns.get(packageName)
-    if (!run) return
-    run.cancelled = true
+    const runs = [this.speechRuns.get(packageName), ...(this.queuedSpeech.get(packageName) ?? [])]
     this.speechRuns.delete(packageName)
-    if (run.playbackRequestId) audioPlaybackService.cancelPlayback(run.playbackRequestId)
-    run.onCancelled?.()
+    this.queuedSpeech.delete(packageName)
+    for (const run of runs) {
+      if (!run) continue
+      run.cancelled = true
+      if (run.playbackRequestId) audioPlaybackService.cancelPlayback(run.playbackRequestId)
+      run.onCancelled?.()
+    }
   }
 
   private async handleRgbLed(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {

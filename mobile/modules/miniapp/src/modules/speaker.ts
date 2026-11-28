@@ -11,7 +11,9 @@
  *   speaker.speak(text)        — send a SPEAK request. By default the phone
  *                                streams cloud TTS when connected and falls
  *                                back to its on-device voice; the
- *                                `processing` option picks the order.
+ *                                `processing` option picks the order. Each
+ *                                call waits for the earlier ones unless
+ *                                `stopOtherAudio` interrupts them.
  *                                Resolves when playback completes; rejects
  *                                with a TTS_* error code on failure.
  *   speaker.createStream(opts) — open a live PCM output stream (16-bit LE).
@@ -58,6 +60,12 @@ export interface SpeakOptions {
   voice_id?: string
   voice_settings?: Record<string, unknown>
   volume?: number
+  /**
+   * Interrupt instead of waiting. By default each `speak()` waits for this
+   * miniapp's earlier speech to finish, so three calls in a row say all three.
+   * `true` cuts off this miniapp's speech in progress and queued, and stops
+   * other audio, then speaks at once: for barge-in, such as a new answer.
+   */
   stopOtherAudio?: boolean
   /**
    * Normalize display-oriented markup and symbols into natural spoken words.
@@ -290,7 +298,8 @@ export class SpeakerModule {
   /**
    * Speak text through the phone, in the cloud or on-device as
    * `options.processing` says (default: cloud TTS when connected, then the
-   * on-device voice).
+   * on-device voice). Queued after this miniapp's earlier speech unless
+   * `options.stopOtherAudio` interrupts it.
    *
    * Rejects with a MiniappRequestError containing a `code` field on cloud-side
    * TTS failures: `TTS_TEXT_TOO_LONG`, `TTS_INVALID_VOICE`, `TTS_UPSTREAM_ERROR`.

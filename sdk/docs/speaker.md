@@ -125,7 +125,11 @@ interface SpeakOptions {
 }
 ```
 
-`stopOtherAudio` defaults to `false` on the wire.
+Speech queues: each `speak()` waits for this miniapp's earlier speech to
+finish, so calling it three times says all three. `stopOtherAudio: true`
+interrupts instead: it cuts off this miniapp's speech in progress and queued,
+stops other audio, and speaks at once. It defaults to `false`. An interrupted
+or stopped `speak()` resolves with `{completed: false}`.
 
 **Returns:** `SpeakResult`
 

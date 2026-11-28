@@ -91,12 +91,27 @@ if (!result.completed) {
 | `voice_id`           | `string?`                  | Voice to use.                                     |
 | `voice_settings`     | `Record<string, unknown>?` | Provider-specific voice tuning.                   |
 | `volume`             | `number?`                  | Playback volume.                                  |
-| `stopOtherAudio`     | `boolean?`                 | Stop other audio first. Defaults to `false`.      |
+| `stopOtherAudio`     | `boolean?`                 | Interrupt, don't queue. Defaults to `false`.      |
 | `enableSanitization` | `boolean?`                 | Normalize markup and symbols. Defaults to `true`. |
 | `processing`         | `SpeechProcessing?`        | Cloud or on-device. Defaults to `"preferCloud"`.  |
 
 `SpeakResult` has one field, `completed`: `true` if playback finished, `false`
 if it was interrupted.
+
+### Queued by default
+
+Each `speak()` waits for your miniapp's earlier speech to finish, so calling it
+three times in a row says all three sentences in order:
+
+```typescript
+void session.speaker.speak("Report saved.")
+void session.speaker.speak("Starting the next section.") // said after the first
+```
+
+To interrupt instead, as for a new answer that replaces the one being said,
+pass `stopOtherAudio: true`: it cuts off your miniapp's speech in progress and
+queued, stops other audio, and speaks at once. The cut-off calls resolve with
+`{completed: false}`. `speaker.stop()` also clears the queue.
 
 ### Cloud or on-device
 
