@@ -233,6 +233,16 @@ class MentraLiveOwnerLossPolicyTest {
     }
 
     @Test
+    fun automaticLinkStandsDownWhenPairingInfoShowsAnOpenWindow() {
+        fun open(explicit: Boolean = false, transfer: Boolean = true, committed: Boolean = false) =
+                MentraLiveOwnerLossPolicy.pairingInfoShowsOpenWindow(explicit, true, transfer, committed)
+        assertTrue(open())
+        assertFalse(open(explicit = true))
+        assertFalse(open(committed = true))
+        assertFalse(open(transfer = false))
+    }
+
+    @Test
     fun automaticReconnectStandsDownWhileTheSavedGlassesAdvertisePairingMode() {
         assertTrue(
                 MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect(

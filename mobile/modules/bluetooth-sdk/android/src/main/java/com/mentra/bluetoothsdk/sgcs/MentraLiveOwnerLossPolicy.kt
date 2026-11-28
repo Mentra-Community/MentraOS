@@ -153,6 +153,20 @@ internal object MentraLiveOwnerLossPolicy {
     ): Boolean = pairingMode && savedGlasses && !explicitPairing
 
     /**
+     * The same stand-down, read from the link instead of the advertisement. An automatic
+     * reconnect that dials the saved address directly never sees the pairing flag, but the
+     * glasses' `pairing_info` says it: ownership-transfer glasses leave `owner_committed` false
+     * while their window is open, and refuse this link with `0x14` after 3 s without
+     * `pair_select`. Reading it as the window's start stops the connect/refuse loop.
+     */
+    fun pairingInfoShowsOpenWindow(
+            explicitPairing: Boolean,
+            securePairingCapable: Boolean,
+            ownershipTransfer: Boolean,
+            ownerCommitted: Boolean,
+    ): Boolean = !explicitPairing && securePairingCapable && ownershipTransfer && !ownerCommitted
+
+    /**
      * A discovery scan neither lists nor connects to other secure glasses that are not in pairing
      * mode. The saved glasses are the exception: the pause watch scan has to read their trailer,
      * so a cleared pairing flag ends the pause and reconnects. Mirrors iOS, which skips this

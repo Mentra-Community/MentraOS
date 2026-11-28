@@ -167,6 +167,19 @@ enum MentraLiveConnectionAttemptPolicy {
         pairingMode && savedGlasses && !explicitPairing
     }
 
+    /// The same stand-down, read from the link instead of the advertisement: ownership-transfer
+    /// glasses leave `owner_committed` false while their window is open and refuse an automatic
+    /// link after 3 s without `pair_select`. Mirrors Android
+    /// `MentraLiveOwnerLossPolicy.pairingInfoShowsOpenWindow`.
+    static func pairingInfoShowsOpenWindow(
+        explicitPairing: Bool,
+        securePairingCapable: Bool,
+        ownershipTransfer: Bool,
+        ownerCommitted: Bool
+    ) -> Bool {
+        !explicitPairing && securePairingCapable && ownershipTransfer && !ownerCommitted
+    }
+
     /// Remaining pause after a process restart. A missing, expired, or implausible deadline (more
     /// than the pause that was persisted with it) returns 0 so the phone reconnects. Mirrors
     /// Android `MentraLiveOwnerLossPolicy.persistedYieldRemainingMs`.

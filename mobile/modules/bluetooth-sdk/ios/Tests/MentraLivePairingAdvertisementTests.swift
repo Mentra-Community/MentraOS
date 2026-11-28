@@ -284,6 +284,19 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         ))
     }
 
+    func testAutomaticLinkStandsDownWhenPairingInfoShowsAnOpenWindow() {
+        func open(explicit: Bool = false, transfer: Bool = true, committed: Bool = false) -> Bool {
+            MentraLiveConnectionAttemptPolicy.pairingInfoShowsOpenWindow(
+                explicitPairing: explicit, securePairingCapable: true,
+                ownershipTransfer: transfer, ownerCommitted: committed
+            )
+        }
+        XCTAssertTrue(open())
+        XCTAssertFalse(open(explicit: true))
+        XCTAssertFalse(open(committed: true))
+        XCTAssertFalse(open(transfer: false))
+    }
+
     func testPauseIsTheWindowPlusTheCloseMarginWithNo300sClamp() {
         typealias Policy = MentraLiveConnectionAttemptPolicy
         XCTAssertEqual(Policy.yieldMs(windowMs: 120_000), 150_000)

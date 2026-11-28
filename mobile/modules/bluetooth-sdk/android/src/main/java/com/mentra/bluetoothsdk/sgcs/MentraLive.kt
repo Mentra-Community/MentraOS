@@ -2188,6 +2188,9 @@ class MentraLive : SGCManager() {
         if (postGattLifecycle { enterPairingPause() }) return
         if (isKilled) return
         leaveGlassesLink()
+        // The automatic connect that ran into the window is over: Home must offer Connect
+        // glasses, not keep the connect spinner until the watch scan's first stop.
+        DeviceStore.apply("bluetooth", "searching", false)
         armPairingPauseTimer()
         startPairingWatchScan()
     }
@@ -4650,6 +4653,34 @@ class MentraLive : SGCManager() {
                 sessionPairingInfoSecure = secureCapable
                 // Ownership is the separate owner_committed bit, set after the BLE bond.
                 val ownerCommitted = json.optBoolean("owner_committed", false)
+                if (MentraLiveOwnerLossPolicy.pairingInfoShowsOpenWindow(
+                                explicitPairing = isExplicitPairingAttempt(),
+                                securePairingCapable = secureCapable,
+                                ownershipTransfer = json.optBoolean("ownership_transfer", false),
+                                ownerCommitted = ownerCommitted,
+                        )
+                ) {
+                    // A reconnect that joined an open window (it was not connected when the
+                    // window opened, so no entering_pairing_mode reached it): pause as for that
+                    // notice. The glasses keep this phone's keys, so this is never owner loss.
+                    val transition =
+                            MentraLivePairingStateStore.update("pairing_info_window_open") {
+                                it.onEnteringPairingMode(
+                                        windowMs = null,
+                                        windowId = null,
+                                        ownerRetained = true,
+                                        explicitAttempt = false,
+                                        deviceId = savedDeviceName,
+                                        nowMs = System.currentTimeMillis(),
+                                )
+                            }
+                    Bridge.log(
+                            "PAIRFLOW: pairing_info shows an open window on an automatic link " +
+                                    "effect=${transition.effect} (${transition.note})"
+                    )
+                    applyPairingTransition(transition)
+                    return
+                }
                 if (MentraLiveOwnerLossPolicy.pairingInfoConfirmsOwner(ownerCommitted)) {
                     securePairingConfirmed = true
                     if (awaitingSecurePairingConfirmation) {

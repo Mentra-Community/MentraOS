@@ -2073,6 +2073,9 @@ class MentraLive: NSObject, SGCManager {
     /// races the new phone for the single BLE slot. The watch scan only reads the advertisement.
     private func enterPairingPause() {
         leaveGlassesLink(reason: "pairing_mode")
+        // The automatic connect that ran into the window is over: Home must offer Connect
+        // glasses, not keep the connect spinner until the watch scan's first stop.
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searching", false)
         armPairingPauseTimer()
         startPairingWatchScan(reason: "pairing_pause")
     }
@@ -3818,6 +3821,30 @@ class MentraLive: NSObject, SGCManager {
             pairingInfoAutoAudio = json["auto_audio"] as? Bool ?? false
             rememberSecureFirmware(securePairingCapable)
             rememberFormerOwnerKeys(json["former_owner_keys"] as? Bool ?? false)
+            if MentraLiveConnectionAttemptPolicy.pairingInfoShowsOpenWindow(
+                explicitPairing: isExplicitPairingAttempt(),
+                securePairingCapable: securePairingCapable,
+                ownershipTransfer: json["ownership_transfer"] as? Bool ?? false,
+                ownerCommitted: ownerCommitted
+            ) {
+                // A reconnect that joined an open window (it was not connected when the window
+                // opened, so no entering_pairing_mode reached it): pause as for that notice. The
+                // glasses keep this phone's keys, so this is never owner loss.
+                let deviceId = connectedPeripheral?.name ?? UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME) ?? ""
+                let windowTransition = pairingStore.update("pairing_info_window_open") {
+                    $0.onEnteringPairingMode(
+                        windowMs: nil,
+                        windowId: nil,
+                        ownerRetained: true,
+                        explicitAttempt: false,
+                        deviceId: deviceId,
+                        nowMs: MentraLivePairingStateStore.nowMs()
+                    )
+                }
+                Bridge.log("PAIRFLOW: pairing_info shows an open window on an automatic link effect=\(windowTransition.effect)")
+                applyPairingTransition(windowTransition)
+                return
+            }
             if securePairingCapable {
                 pairingInfoSeenThisSession = true
                 cancelSecureFirmwareRefresh()
