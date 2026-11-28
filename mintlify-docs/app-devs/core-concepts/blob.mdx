@@ -67,8 +67,10 @@ const cover = await session.blob.setFromUrl(
   { mimeType: "image/jpeg" },
 );
 
-// OS file picker. Resolves to BlobMeta, or null if the user cancels.
+// OS file picker, limited to one type or to several. Resolves to BlobMeta (with
+// the file's own name), or null if the user cancels.
 const picked = await session.blob.importFile({ mimeType: "audio/wav" });
+const form = await session.blob.importFile({ mimeType: ["application/pdf", "text/csv"] });
 if (picked) {
   await session.speaker.play({ audioUrl: picked.uri });
 }

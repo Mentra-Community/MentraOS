@@ -84,6 +84,14 @@ mock.module("expo-file-system/legacy", () => ({
     return {status: url.includes("refused") ? 403 : 200}
   },
 }))
+/** What the document picker answers next: a file it copied into the cache, or a cancel. */
+let picked:
+  | {canceled: true}
+  | {canceled: false; assets: Array<{uri: string; name: string; mimeType?: string; size?: number}>} = {canceled: true}
+const pickerTypes: unknown[] = []
+mock.module("expo-document-picker", () => ({
+  getDocumentAsync: async (options: {type?: unknown}) => (pickerTypes.push(options.type), picked),
+}))
 mock.module("react-native-share", () => ({default: {open: async () => {}}}))
 mock.module("@mentra/crust", () => ({default: {canonicalFilePath: () => null}}))
 mock.module("@mentra/miniapp", () => ({
@@ -148,6 +156,28 @@ beforeEach(() => {
 afterEach(() => {
   clock.mockRestore()
   fs.rmSync(root, {recursive: true})
+})
+
+describe("importing a picked file", () => {
+  it("keeps the picker's cache copy under the key, with the file's own name; a cancel resolves to null", async () => {
+    const copy = path.join(Paths.cache, "DocumentPicker", "a1b2.xlsx")
+    fs.mkdirSync(path.dirname(copy), {recursive: true})
+    fs.writeFileSync(copy, Buffer.alloc(300, 1))
+    const xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    picked = {
+      canceled: false,
+      assets: [{uri: `file://${copy}`, name: "dvi-inspection.xlsx", mimeType: xlsx, size: 300}],
+    }
+    await store.handleImport(pkg, {key: "forms/m1", mimeType: ["application/pdf", xlsx]})
+    expect(last().result).toMatchObject({key: "forms/m1", name: "dvi-inspection.xlsx", mimeType: xlsx, bytes: 300})
+    expect(pickerTypes.at(-1)).toEqual(["application/pdf", xlsx])
+    // The cache copy became the blob.
+    expect(fs.existsSync(copy)).toBe(false)
+    picked = {canceled: true}
+    await store.handleImport(pkg, {key: "forms/m2"})
+    expect(last()).toMatchObject({ok: true, result: null})
+    expect(pickerTypes.at(-1)).toBe("*/*")
+  })
 })
 
 describe("cached blobs", () => {

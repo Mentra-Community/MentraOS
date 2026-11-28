@@ -91,8 +91,8 @@ export interface BlobUploadOptions {
 export interface BlobImportOptions extends BlobCacheOption {
   /** Key to store under. Default: a generated key. */
   key?: string
-  /** Restrict the picker to a MIME type, e.g. "application/pdf". */
-  mimeType?: string
+  /** Restrict the picker to a MIME type, e.g. "application/pdf", or to any of several. */
+  mimeType?: string | string[]
   meta?: Record<string, string | number | boolean>
 }
 

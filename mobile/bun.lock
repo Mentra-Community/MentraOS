@@ -56,6 +56,7 @@
         "expo-clipboard": "~55.0.13",
         "expo-constants": "~55.0.16",
         "expo-device": "~55.0.17",
+        "expo-document-picker": "~55.0.17",
         "expo-file-system": "~55.0.20",
         "expo-font": "~55.0.7",
         "expo-glass-effect": "~55.0.11",
@@ -283,6 +284,7 @@
         "expo-clipboard": "~55.0.13",
         "expo-constants": "~55.0.16",
         "expo-device": "~55.0.17",
+        "expo-document-picker": "~55.0.17",
         "expo-file-system": "~55.0.20",
         "expo-location": "~55.1.10",
         "expo-modules-core": "~55.0.25",
@@ -390,13 +392,13 @@
   "patchedDependencies": {
     "@dr.pogodin/react-native-fs@2.38.2": "patches/@dr.pogodin%2Freact-native-fs@2.38.2.patch",
     "expo-router@55.0.16": "patches/expo-router@55.0.16.patch",
+    "react-native-reanimated@4.2.1": "patches/react-native-reanimated@4.2.1.patch",
     "react-native-udp@4.1.7": "patches/react-native-udp@4.1.7.patch",
     "@livekit/react-native-webrtc@137.0.3": "patches/@livekit%2Freact-native-webrtc@137.0.3.patch",
     "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
-    "react-native-gesture-handler@2.30.1": "patches/react-native-gesture-handler@2.30.1.patch",
-    "react-native-reanimated@4.2.1": "patches/react-native-reanimated@4.2.1.patch",
-    "react-native-draggable-masonry@1.3.0": "patches/react-native-draggable-masonry@1.3.0.patch",
     "expo@55.0.26": "patches/expo@55.0.26.patch",
+    "react-native-gesture-handler@2.30.1": "patches/react-native-gesture-handler@2.30.1.patch",
+    "react-native-draggable-masonry@1.3.0": "patches/react-native-draggable-masonry@1.3.0.patch",
     "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch",
     "react-native@0.83.6": "patches/react-native@0.83.6.patch",
     "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
@@ -1759,6 +1761,8 @@
     "expo-constants": ["expo-constants@55.0.16", "", { "dependencies": { "@expo/env": "~2.1.2" }, "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-Z15/No94UHoogD+pulxjudGAeOHTEIWZgb/vnX48Wx5D+apWTeCbnKxQZZtGQlosvduYL5kaic2/W8U+NHfBQQ=="],
 
     "expo-device": ["expo-device@55.0.17", "", { "dependencies": { "ua-parser-js": "^0.7.33" }, "peerDependencies": { "expo": "*" } }, "sha512-ZcMrSeD0zWooosm5Bet5qluxUrhw+NPgcMmN6ySVF7cm4K8Bvh4KPogJePbI1qfhFAiJWcWeV9e/2uewb9ktfw=="],
+
+    "expo-document-picker": ["expo-document-picker@55.0.17", "", { "peerDependencies": { "expo": "*" } }, "sha512-tyrPB+k3lTI03umNP8cc912yZF7tgyo9v/+rEeW9h/u0fmMJAvegyaQl/YNW2MeKpjYa4+WwiLBGXVj54XHDog=="],
 
     "expo-file-system": ["expo-file-system@55.0.22", "", { "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-T5Rfv3vqcFyhVrl/tEEeglc/J8LJbcZQgC3TMT5jxzIgUgWmIgJEgncGYqB/YNXFgUTL2LiuCvqrU51Dzp83NQ=="],
 

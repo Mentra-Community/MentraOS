@@ -79,6 +79,7 @@ class File {
   static downloadFileAsync = mock(async (_url: string, target: File) => target)
 }
 mock.module("expo-file-system", () => ({Directory, File, Paths}))
+mock.module("expo-document-picker", () => ({getDocumentAsync: async () => ({canceled: true})}))
 mock.module("react-native-share", () => ({default: {open: shareOpen}}))
 mock.module("@mentra/miniapp", () => ({MiniappErrorCode: {BLOB_NOT_FOUND: "BLOB_NOT_FOUND"}}))
 mock.module("@mentra/crust", () => ({default: {canonicalFilePath: crustRealpath}}))

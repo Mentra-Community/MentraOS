@@ -60,6 +60,7 @@ const values = new Map<string, unknown>()
 const ok = (value: unknown) => ({is_ok: () => true, is_error: () => false, value})
 const missing = {is_ok: () => false, is_error: () => true}
 mock.module("expo-file-system", () => ({Directory, File, Paths}))
+mock.module("expo-document-picker", () => ({getDocumentAsync: async () => ({canceled: true})}))
 mock.module("react-native-share", () => ({default: {open: async () => {}}}))
 mock.module("@mentra/crust", () => ({default: {canonicalFilePath: () => null}}))
 mock.module("@mentra/miniapp", () => ({MiniappErrorCode: {BLOB_NOT_FOUND: "BLOB_NOT_FOUND"}}))

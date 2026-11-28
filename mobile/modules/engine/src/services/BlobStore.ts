@@ -10,7 +10,7 @@
  *   - chunked write/read (BLOB_CREATE/WRITE/COMMIT, BLOB_OPEN_READ/READ) so no
  *     single bridge message is large;
  *   - `setFromUrl` downloads a URL straight to disk (File.downloadFileAsync) and
- *     `importFile` runs the OS picker (File.pickFileAsync) — both keep bytes
+ *     `importFile` runs the OS picker (expo-document-picker) — both keep bytes
  *     entirely host-side;
  *   - `share` hands a stored file to the OS share sheet;
  *   - a blob written with `cache: true` is a copy of something the app can get again (a server file, a photo the
@@ -38,6 +38,7 @@
 
 import {Buffer} from "buffer"
 import Share from "react-native-share"
+import * as DocumentPicker from "expo-document-picker"
 import {Directory, File, Paths, type FileHandle} from "expo-file-system"
 
 import {MiniappErrorCode} from "@mentra/miniapp"
@@ -659,30 +660,38 @@ export class BlobStore {
 
   async handleImport(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     const key = (typeof payload.key === "string" && payload.key) || this.makeId()
-    const mimeFilter = payload.mimeType as string | undefined
+    const types = [payload.mimeType].flat().filter((type): type is string => typeof type === "string" && !!type)
 
-    let picked: File | File[] | null = null
+    // The picker copies the chosen file into the app's cache, with its own name: Android's picker hands out a
+    // content:// URI, which can't be copied as a file and whose last segment is an id, not the file's name.
+    let picked: DocumentPicker.DocumentPickerAsset | undefined
     try {
-      picked = await File.pickFileAsync(undefined, mimeFilter)
+      const result = await DocumentPicker.getDocumentAsync({
+        type: types.length ? types : "*/*",
+        copyToCacheDirectory: true,
+      })
+      picked = result.canceled ? undefined : result.assets[0]
     } catch (err) {
-      // Picker dismissed / cancelled (or unavailable) → resolve to null, not an error.
-      console.log(`${LOG_TAG}: blob import picker dismissed`, err)
+      // The picker unavailable: as a cancel, null rather than an error.
+      console.log(`${LOG_TAG}: blob import picker failed`, err)
+    }
+    if (!picked) {
       this.hooks.sendResult(packageName, requestId, true, null)
       return
     }
-    const file = Array.isArray(picked) ? picked[0] : picked
-    if (!file) {
-      this.hooks.sendResult(packageName, requestId, true, null)
-      return
-    }
+    const file = new File(picked.uri)
     try {
-      const size = file.size ?? 0
+      const size = picked.size ?? file.size ?? 0
       const cached = payload.cache === true
-      if (!cached && this.rejectOverQuota(packageName, requestId, this.usageWith(packageName, key, size))) return
+      if (!cached && this.rejectOverQuota(packageName, requestId, this.usageWith(packageName, key, size))) {
+        file.delete()
+        return
+      }
       const fileName = this.makeId()
-      file.copy(this.fileFor(packageName, fileName))
-      const name = basename(file.uri) || key
-      const mimeType = mimeFilter || file.type || inferMime(name) || OCTET
+      // The cache copy is ours: it becomes the blob.
+      file.move(this.fileFor(packageName, fileName))
+      const name = picked.name || basename(picked.uri) || key
+      const mimeType = picked.mimeType || inferMime(name) || types[0] || OCTET
       const meta = this.commitFile(
         packageName,
         key,

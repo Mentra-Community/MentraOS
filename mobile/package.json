@@ -106,6 +106,7 @@
     "expo-clipboard": "~55.0.13",
     "expo-constants": "~55.0.16",
     "expo-device": "~55.0.17",
+    "expo-document-picker": "~55.0.17",
     "expo-file-system": "~55.0.20",
     "expo-font": "~55.0.7",
     "expo-glass-effect": "~55.0.11",

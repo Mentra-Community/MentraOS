@@ -34,6 +34,7 @@
     "expo-constants": "~55.0.16",
     "expo-dev-client": "~55.0.34",
     "expo-device": "~55.0.17",
+    "expo-document-picker": "~55.0.17",
     "expo-file-system": "~55.0.20",
     "expo-linear-gradient": "~55.0.14",
     "expo-location": "~55.1.10",

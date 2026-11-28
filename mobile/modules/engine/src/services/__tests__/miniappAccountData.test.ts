@@ -47,6 +47,7 @@ class File {
   }
 }
 mock.module("expo-file-system", () => ({Directory, File, Paths}))
+mock.module("expo-document-picker", () => ({getDocumentAsync: async () => ({canceled: true})}))
 mock.module("react-native-share", () => ({default: {open: async () => {}}}))
 mock.module("@mentra/crust", () => ({default: {canonicalFilePath: () => null}}))
 mock.module("@mentra/miniapp", () => ({MiniappErrorCode: {BLOB_NOT_FOUND: "BLOB_NOT_FOUND"}}))
