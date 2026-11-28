@@ -6,7 +6,16 @@ const packageName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+$/
 const semanticVersion = z.string().refine((value) => semver.valid(value) === value)
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/i)
 const miniappConfigurationKey = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,63}$/)
-const miniappConfigurationValue = z.string().refine((value) => new TextEncoder().encode(value).byteLength <= 2_048)
+// Any JSON value but null: a string of at most 2 KiB, or a value of any other type, which the engine checks against
+// the miniapp's declaration (managed settings) and leaves out when it doesn't match. A later value type is kept, not
+// a reason to refuse the whole manifest.
+const miniappConfigurationValue = z.union([
+  z.string().refine((value) => new TextEncoder().encode(value).byteLength <= 2_048),
+  z.number(),
+  z.boolean(),
+  z.array(z.unknown()),
+  z.record(z.string(), z.unknown()),
+])
 const miniappConfiguration = z
   .record(miniappConfigurationKey, miniappConfigurationValue)
   .refine((value) => Object.keys(value).length <= 32, "Miniapp configuration may contain at most 32 entries")

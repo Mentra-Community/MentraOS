@@ -44,8 +44,11 @@ export interface MiniappConfigurationDeps {
     has(packageName: string, key: string): boolean
     store(packageName: string, key: string, bytes: Uint8Array, mimeType: string): Promise<void>
   }
-  /** The package's configuration may have changed: push it to the miniapp if it runs. */
-  notify(packageName: string): void
+  /**
+   * The package's configuration may have changed: push it to the miniapp if it runs. `recovered` names the files
+   * fetched again with no value changed, so the miniapp knows `file()` has them now.
+   */
+  notify(packageName: string, recovered?: string[]): void
 }
 
 /** Every `{sha256, type}` a set of values names: a file value is an object with its SHA-256. */
@@ -83,14 +86,17 @@ export function createMiniappConfiguration(deps: MiniappConfigurationDeps) {
   }
 
   /** Download each file the values name that the miniapp's store lacks; throws when one can't be had. */
-  async function fetchMissing(packageName: string, values: Record<string, unknown>): Promise<void> {
+  async function fetchMissing(packageName: string, values: Record<string, unknown>): Promise<string[]> {
+    const fetched: string[] = []
     for (const [sha256, mimeType] of filesIn(values)) {
       const blobKey = configurationFileKey(sha256)
       if (deps.files.has(packageName, blobKey)) continue
       const bytes = await deps.fetchFile(sha256)
       if ((await sha256Hex(bytes)) !== sha256) throw new Error(`configuration file ${sha256} does not match its hash`)
       await deps.files.store(packageName, blobKey, bytes, mimeType)
+      fetched.push(sha256)
     }
+    return fetched
   }
 
   function enqueue(packageName: string, work: () => Promise<void>): Promise<void> {
@@ -149,8 +155,8 @@ export function createMiniappConfiguration(deps: MiniappConfigurationDeps) {
       const values = workspaceLayer(packageName)
       if (!values || [...filesIn(values).keys()].every((sha) => deps.files.has(packageName, configurationFileKey(sha)))) return
       void enqueue(packageName, async () => {
-        await fetchMissing(packageName, values)
-        deps.notify(packageName)
+        const recovered = await fetchMissing(packageName, values)
+        if (recovered.length > 0) deps.notify(packageName, recovered)
       })
     },
   }

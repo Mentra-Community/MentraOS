@@ -55,6 +55,7 @@ import micSessionManager, {MIC_SOURCE_CONFLICT, type MicSession} from "./MicSess
 import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, isVoiceCallPackage, type MicUseCase} from "./micPolicy"
 import {variantConfiguration, type MiniappVariant} from "./miniappVariant"
 import {BlobStore} from "./BlobStore"
+import {createMiniappConfiguration, type MiniappConfiguration} from "./miniappConfiguration"
 import {MiniappSystemActions} from "./MiniappSystemActions"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
@@ -212,6 +213,8 @@ export interface InstalledMiniappManifest {
   }>
   /** The bundle's variant stamp, set only for a release the current deployment manages. */
   variant?: MiniappVariant
+  /** The managed settings it declares (`miniapp.json` `configuration`), unchecked. */
+  configuration?: unknown
 }
 
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
@@ -1155,6 +1158,50 @@ class LocalMiniappRuntime {
   }
 
   /**
+   * Managed miniapp settings: the layers a miniapp's configuration is merged from (`miniappConfiguration.ts`). Its
+   * files go in the miniapp's blob store; a change is pushed to the miniapp if it is connected.
+   */
+  public readonly configuration: MiniappConfiguration = createMiniappConfiguration({
+    store: () => (require("./fleet/fleetStorage") as typeof import("./fleet/fleetStorage")).getFleetStore(),
+    account: () => {
+      const session = cloudClientService.getCoreSession()
+      return session?.mentraUserId ? {coreUrl: session.coreUrl, mentraUserId: session.mentraUserId} : null
+    },
+    fetchFile: (sha256) => cloudClientService.core.fleet.configurationFile(sha256),
+    files: {
+      has: (packageName, key) => this.blobStore.hasBlob(packageName, key),
+      store: async (packageName, key, bytes, mimeType) => void this.blobStore.storeCachedBytes(packageName, key, bytes, mimeType),
+    },
+    notify: (packageName, recovered) => this.pushConfiguration(packageName, recovered),
+  })
+
+  /** The configuration fields of CONNECT_ACK and CONFIGURATION_UPDATE for the package as installed. */
+  private configurationOf(packageName: string, installedManifest: InstalledMiniappManifest | undefined) {
+    const deployment = variantConfiguration(getMiniappConfiguration(packageName), installedManifest?.variant)
+    const merged = this.configuration.merged(packageName, installedManifest, deployment)
+    if (merged.rejected.deployment || merged.rejected.workspace) {
+      console.warn(`[LocalMiniappRuntime] ${packageName}: configuration left out`, merged.rejected)
+    }
+    return {configuration: merged.values, configurationSources: merged.sources}
+  }
+
+  /** Send a connected miniapp its configuration as it is now, naming the files fetched again with no value changed. */
+  public pushConfiguration(packageName: string, recovered?: string[]): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || !this.handshookApps.has(packageName)) return
+    this.sendToMiniapp(packageName, {
+      type: MiniappResponseType.CONFIGURATION_UPDATE,
+      ...this.configurationOf(packageName, app.installedManifest),
+      ...(recovered?.length ? {configurationFiles: recovered} : {}),
+    })
+  }
+
+  /** Every connected miniapp's configuration, after the deployment's changed. */
+  public pushAllConfiguration(): void {
+    for (const packageName of this.connectedApps.keys()) this.pushConfiguration(packageName)
+  }
+
+  /**
    * Attach (or update) the installedManifest for an already-registered app.
    * Used when the manifest is fetched asynchronously (dev miniapps) after the
    * miniapp has already CONNECTed — preserves existing subscriptions.
@@ -1866,7 +1913,7 @@ class LocalMiniappRuntime {
         capabilities,
         permissions: declaredPermissions,
         visibility: this.currentVisiblePackage() === packageName ? "foreground" : "background",
-        configuration: variantConfiguration(getMiniappConfiguration(packageName), existing.installedManifest?.variant),
+        ...this.configurationOf(packageName, existing.installedManifest),
         // The SDK's HostFeatures. miniappInstall: system-list miniapps may call session.miniapps.install({url});
         // the Mentra Apps before it answer NOT_PERMITTED.
         // telemetry: `session.telemetry.capture` reaches the workspace's Fleet Management (Phase 12).
@@ -1877,6 +1924,7 @@ class LocalMiniappRuntime {
     )
     this.deliverInitialMiniappAuth(packageName, authPromise, 0)
     this.sendCloudStatusToMiniapp(packageName)
+    this.configuration.ensureFiles(packageName)
 
     // Handshake complete — unblock any launcher.waitForConnect() callers.
     this.handshookApps.add(packageName)

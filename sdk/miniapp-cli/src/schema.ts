@@ -142,6 +142,34 @@ export function generateSchema(): Record<string, unknown> {
           },
         },
       },
+      configuration: {
+        type: 'array',
+        description:
+          'Managed settings a deployment or a workspace admin may set, read with session.configuration. Values are read-only on the phone.',
+        items: {
+          type: 'object',
+          required: ['key', 'type'],
+          properties: {
+            key: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9._-]{0,63}$' },
+            type: { type: 'string', enum: ['string', 'url', 'number', 'boolean', 'choice', 'file', 'list'] },
+            label: { type: 'string' },
+            description: { type: 'string' },
+            setBy: {
+              type: 'array',
+              description: 'Who may set it besides the shipped default: deployment (the default), workspace, person. backendUrl is deployment only.',
+              items: { type: 'string', enum: ['deployment', 'workspace', 'person'] },
+            },
+            merge: { type: 'string', enum: ['replace', 'append'], description: 'For a list: append keeps every layer\'s items.' },
+            default: { description: 'The shipped value, used when no deployment or workspace sets one.' },
+            options: { type: 'array', items: { type: 'string' } },
+            accept: { type: 'array', items: { type: 'string' } },
+            maxBytes: { type: 'integer' },
+            maxLength: { type: 'integer' },
+            maxItems: { type: 'integer' },
+            fields: { type: 'array', description: 'For a list: the fields of each item.', items: { type: 'object' } },
+          },
+        },
+      },
       actions: {
         type: 'array',
         description: 'Actions other (system) miniapps can invoke via session.actions. Maps 1:1 onto MCP tools.',

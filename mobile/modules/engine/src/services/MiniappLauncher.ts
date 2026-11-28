@@ -506,6 +506,7 @@ class MiniappLauncher {
         audience?: unknown
       }>
       variant?: unknown
+      configuration?: unknown
     } | null
     const releaseIdentity = appRegistry.getReleaseIdentity(packageName, version)
     // A variant stamp counts only on a release the deployment's manifest pinned by digest.
@@ -525,6 +526,7 @@ class MiniappLauncher {
           permissions: manifest.permissions,
           hardwareRequirements: manifest.hardwareRequirements,
           actions: manifest.actions,
+          ...(manifest.configuration !== undefined ? {configuration: manifest.configuration} : {}),
           ...(variant ? {variant} : {}),
         }
       : undefined

@@ -145,11 +145,14 @@ export class Core {
      */
     report(batch: FleetReport, opts?: { signal?: AbortSignal; bearer?: string }): Promise<FleetReportOutcome>;
     /**
-     * `GET /api/client/fleet/desired-state?pins=1`, validated; entries may be pinned. Resolves only with a complete `managed` or `unmanaged` answer;
+     * `GET /api/client/fleet/desired-state?pins=1&configuration=1`, validated; entries may be pinned and carry their
+     * workspace's managed settings. Resolves only with a complete `managed` or `unmanaged` answer;
      * every failure rejects (`CoreRequestError`, `CoreResponseError`, `SessionChangedError`, auth errors, abort), so
      * none can be read as an empty set.
      */
     desiredState(opts?: AccountCallOptions): Promise<FleetDesiredStateWithPins>;
+    /** `GET /api/client/fleet/configuration-files/<sha256>`: a managed setting's file, its bytes unchecked. */
+    configurationFile(sha256: string, opts?: AccountCallOptions): Promise<Uint8Array>;
   };
   readonly workspaces: {
     /** `GET /api/client/workspaces/mine`. */
@@ -202,6 +205,7 @@ export class Core {
     this.fleet = {
       report: fleet.report.bind(fleet),
       desiredState: fleet.desiredState.bind(fleet),
+      configurationFile: fleet.configurationFile.bind(fleet),
     };
     this.workspaces = {
       mine: workspaces.mine.bind(workspaces),

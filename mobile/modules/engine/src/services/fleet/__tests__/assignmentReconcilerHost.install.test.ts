@@ -212,6 +212,7 @@ mock.module("../../LocalMiniappRuntime", () => ({
       hardwareCapabilities: {},
     }),
     installSession: () => 1,
+    configuration: {setWorkspace: async () => {}, workspacePackages: () => []},
   },
 }))
 mock.module("../../MiniappLauncher", () => ({miniappLauncher: {isRunning: (name: string) => running.has(name)}}))

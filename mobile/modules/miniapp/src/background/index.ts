@@ -189,7 +189,7 @@ export type {
 } from "../session"
 export type {AuthFetchOptions, AuthModule} from "../modules/auth"
 export {MiniappConfigurationError} from "../modules/configuration"
-export type {ConfigurationModule} from "../modules/configuration"
+export type {ConfigurationFile, ConfigurationModule, ConfigurationSource} from "../modules/configuration"
 export type {MiniappColorScheme} from "../globals"
 // Navigation — exported as a single block since the types reference each other.
 export type {

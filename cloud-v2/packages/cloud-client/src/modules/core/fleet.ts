@@ -1,4 +1,5 @@
 import {
+  FLEET_DESIRED_STATE_CONFIGURATION_PARAM,
   FLEET_DESIRED_STATE_PINS_PARAM,
   FLEET_DESIRED_STATE_PINS_VALUE,
   FLEET_NOT_INSTALLED,
@@ -13,10 +14,12 @@ import {AccountCaller, CoreResponseError, type AccountCallOptions, type CoreToke
 
 const FLEET_REPORT_PATH = "/api/client/fleet/report"
 /**
- * This client holds pins, so it asks for them: an answer to a request without `pins=1` names every pinned entry as
- * `latest`, for released phones that would reject a pinned one.
+ * This client holds pins and managed settings, so it asks for them: an answer to a request without `pins=1` names
+ * every pinned entry as `latest`, and one without `configuration=1` carries no entry's `configuration`, for released
+ * phones that would reject either.
  */
-const FLEET_DESIRED_STATE_PATH = `/api/client/fleet/desired-state?${FLEET_DESIRED_STATE_PINS_PARAM}=${FLEET_DESIRED_STATE_PINS_VALUE}`
+const FLEET_DESIRED_STATE_PATH = `/api/client/fleet/desired-state?${FLEET_DESIRED_STATE_PINS_PARAM}=${FLEET_DESIRED_STATE_PINS_VALUE}&${FLEET_DESIRED_STATE_CONFIGURATION_PARAM}=${FLEET_DESIRED_STATE_PINS_VALUE}`
+const FLEET_CONFIGURATION_FILE_PATH = "/api/client/fleet/configuration-files/"
 
 /** Core's whole-response error codes are short snake_case words; anything else is not safe to surface. */
 const ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
@@ -151,6 +154,26 @@ export class Fleet {
     throw new CoreResponseError(
       typeof status === "string" && status !== "managed" && status !== "unmanaged" ? "unknown_status" : "invalid_shape",
     )
+  }
+
+  /**
+   * The bytes of a file the account's workspace set as a miniapp's managed setting (`GET
+   * /api/client/fleet/configuration-files/<sha256>`, base64 in JSON). Rejects as `desiredState` does; the caller checks
+   * the bytes against the hash.
+   */
+  async configurationFile(sha256: string, opts?: AccountCallOptions): Promise<Uint8Array> {
+    if (!/^[0-9a-f]{64}$/.test(sha256)) throw new CoreResponseError("invalid_shape")
+    const body = await this.caller.run(
+      bearer =>
+        this.http.get<unknown>(`${FLEET_CONFIGURATION_FILE_PATH}${sha256}`, {bearer, ...(opts?.signal ? {signal: opts.signal} : {})}),
+      opts,
+    )
+    const data = (body as {data?: unknown} | null)?.data
+    if (typeof data !== "string") throw new CoreResponseError("invalid_shape")
+    const binary = atob(data)
+    const bytes = new Uint8Array(binary.length)
+    for (let at = 0; at < binary.length; at++) bytes[at] = binary.charCodeAt(at)
+    return bytes
   }
 
   /**

@@ -393,6 +393,19 @@ export class BlobStore {
     return this.commitFile(packageName, key, fileName, mimeType, undefined, undefined, true)
   }
 
+  /** Whether the package's store holds the blob now, its file included. */
+  hasBlob(packageName: string, key: string): boolean {
+    const meta = this.readMeta(packageName, key)
+    return meta !== null && meta !== undefined && this.fileFor(packageName, meta.fileName).exists
+  }
+
+  /** Publish bytes the host fetched for this miniapp as the cached blob for `key`. */
+  storeCachedBytes(packageName: string, key: string, bytes: Uint8Array, mimeType: string) {
+    const fileName = this.makeId()
+    this.fileFor(packageName, fileName).write(bytes)
+    return this.commitFile(packageName, key, fileName, mimeType, undefined, undefined, true)
+  }
+
   /** Delete a host-produced file that could not be stored. */
   discardFile(uri: string): void {
     try {

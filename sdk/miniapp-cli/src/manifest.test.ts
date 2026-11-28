@@ -325,4 +325,29 @@ describe('validateManifest', () => {
       expect(errors.some((e) => e.includes('items.type'))).toBe(true);
     });
   });
+
+  describe('configuration', () => {
+    test('accepts a list of records with a file field', () => {
+      const {valid} = validateManifest({
+        ...minimalValid,
+        configuration: [
+          {key: 'modes', type: 'list', setBy: ['workspace'], fields: [{key: 'name', type: 'string'}, {key: 'form', type: 'file'}]},
+        ],
+      });
+      expect(valid).toBe(true);
+    });
+
+    test('rejects a key declared twice and an unknown setter', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        configuration: [
+          {key: 'mode', type: 'string', setBy: ['admin']},
+          {key: 'mode', type: 'string'},
+        ],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('declared twice'))).toBe(true);
+      expect(errors.some((e) => e.includes('setBy'))).toBe(true);
+    });
+  });
 });

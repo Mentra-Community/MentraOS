@@ -24,7 +24,7 @@ const instantTimers: CloudClientTimers = {
   clearInterval: () => undefined,
 }
 
-const URL_ = "https://core.test/api/client/fleet/desired-state?pins=1"
+const URL_ = "https://core.test/api/client/fleet/desired-state?pins=1&configuration=1"
 const T = "2026-10-21T09:30:00Z"
 
 function jwt(sub: string): string {
@@ -99,7 +99,7 @@ const managed = (overrides: Record<string, unknown> = {}) => ({
 const unmanaged = {status: "unmanaged", revision: 6, generatedAt: T}
 
 describe("Fleet.desiredState request", () => {
-  test("is GET /api/client/fleet/desired-state?pins=1 with the signed-in account's token", async () => {
+  test("is GET /api/client/fleet/desired-state?pins=1&configuration=1 with the signed-in account's token", async () => {
     const {fleet, requests, auth} = setup(() => json(200, managed()))
     await fleet.desiredState()
     expect(requests).toEqual([{url: URL_, method: "GET", authorization: `Bearer ${auth.tokenOf("account-a")}`}])

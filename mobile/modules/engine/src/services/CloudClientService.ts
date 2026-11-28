@@ -1027,6 +1027,11 @@ export const cloudClientService = {
         return getCoreClient().fleet.report(...args)
       },
 
+      /** A managed setting's file from the signed-in account's workspace, its bytes unchecked. */
+      configurationFile(sha256: string) {
+        return getCoreClient().fleet.configurationFile(sha256)
+      },
+
       /**
        * Sends a Fleet batch as `expected` and only as it. The current client must have been built for the same Core
        * as `expected.coreUrl` (compared the way Fleet partitions compare Core URLs, so another spelling of one Core

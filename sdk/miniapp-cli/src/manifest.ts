@@ -130,6 +130,49 @@ export interface MiniappManifestV1 {
   type?: "standard" | "background";
   /** Actions other (system) miniapps can invoke via session.actions. */
   actions?: ManifestAction[];
+  /**
+   * Managed settings: what a deployment or a workspace admin may set, read with session.configuration. Each entry has
+   * a key, a type (string, url, number, boolean, choice, file, or list of records of those), who may set it (`setBy`,
+   * deployment only by default), and an optional shipped `default`. The Mentra App checks values against it.
+   */
+  configuration?: unknown[];
+}
+
+const CONFIGURATION_KEY_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/;
+const CONFIGURATION_FIELD_TYPES = ['string', 'url', 'number', 'boolean', 'choice', 'file'];
+const CONFIGURATION_SETTERS = ['deployment', 'workspace', 'person'];
+
+/** The shape of `configuration`; the Mentra App checks values and defaults in full (@mentra/cloud-protocol). */
+function validateConfiguration(configuration: unknown, errors: string[]): void {
+  if (!Array.isArray(configuration)) {
+    errors.push('configuration must be an array of settings');
+    return;
+  }
+  const keys = new Set<string>();
+  const checkField = (field: unknown, at: string, list: boolean) => {
+    if (typeof field !== 'object' || field === null) return void errors.push(`${at} must be an object`);
+    const f = field as Record<string, unknown>;
+    if (typeof f.key !== 'string' || !CONFIGURATION_KEY_RE.test(f.key)) errors.push(`${at}.key must match ${CONFIGURATION_KEY_RE}`);
+    const types = list ? [...CONFIGURATION_FIELD_TYPES, 'list'] : CONFIGURATION_FIELD_TYPES;
+    if (typeof f.type !== 'string' || !types.includes(f.type)) errors.push(`${at}.type must be one of ${types.join(', ')}`);
+    if (f.type === 'choice' && (!Array.isArray(f.options) || f.options.length === 0)) errors.push(`${at}.options must list the choices`);
+    if (f.type === 'list') {
+      if (!Array.isArray(f.fields) || f.fields.length === 0) errors.push(`${at}.fields must list the fields of an item`);
+      else f.fields.forEach((inner, j) => checkField(inner, `${at}.fields[${j}]`, false));
+    }
+  };
+  configuration.forEach((entry, i) => {
+    const at = `configuration[${i}]`;
+    checkField(entry, at, true);
+    const e = (entry ?? {}) as Record<string, unknown>;
+    if (typeof e.key === 'string') {
+      if (keys.has(e.key)) errors.push(`${at}.key ${e.key} is declared twice`);
+      keys.add(e.key);
+    }
+    if (e.setBy !== undefined && (!Array.isArray(e.setBy) || e.setBy.some((s) => !CONFIGURATION_SETTERS.includes(s as string)))) {
+      errors.push(`${at}.setBy must list some of ${CONFIGURATION_SETTERS.join(', ')}`);
+    }
+  });
 }
 
 const ACTION_ID_RE = /^[a-z][a-z0-9_]*$/;
@@ -349,6 +392,8 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
       });
     }
   }
+
+  if (m.configuration !== undefined) validateConfiguration(m.configuration, errors);
 
   return { valid: errors.length === 0, errors };
 }

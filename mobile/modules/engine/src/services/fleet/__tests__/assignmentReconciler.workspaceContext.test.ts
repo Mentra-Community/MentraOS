@@ -143,6 +143,8 @@ function start(): AssignmentReconciler {
       isAccessRevoked: () => false,
       dismissUpdatePrompt: () => {},
       setWorkspaceContext: (s, workspaceId) => partitions.setFleetWorkspace(s, workspaceId),
+      setWorkspaceConfiguration: () => {},
+      configuredPackages: () => [],
     },
   })
   return reconciler

@@ -144,6 +144,10 @@ export interface ManagedMiniappPort {
   dismissUpdatePrompt(packageName: string): void
   /** The data and development context for this account: the workspace it belongs to, or none. */
   setWorkspaceContext(session: ReconcilerSession, workspaceId: string | null): void
+  /** The workspace's managed settings for the package, or null for none (`miniappConfiguration.ts`). */
+  setWorkspaceConfiguration(packageName: string, values: Record<string, unknown> | null, session: ReconcilerSession): void
+  /** Every package holding the workspace's managed settings, whichever account's. */
+  configuredPackages(): string[]
 }
 
 export interface ReconcilerTimers {
@@ -497,6 +501,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     }
     // Before anything is installed or withdrawn, so that the updater and the installer hold what this answer pins.
     writePins(byPackage, current, workspace)
+    writeConfiguration(byPackage, current)
 
     await withdrawUndesired(byPackage, desired.revision, gen)
     for (const entry of duplicates) {
@@ -546,6 +551,17 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
   /** The phone left its workspace: the workspace's pins go with its grants, before the next answer arrives. */
   function clearPins(): void {
     for (const packageName of miniapps.fleetPinnedPackages()) miniapps.setFleetPin(packageName, null)
+    for (const packageName of miniapps.configuredPackages()) miniapps.setWorkspaceConfiguration(packageName, null, session!)
+  }
+
+  /** Make the phone's workspace settings this answer's: each entry's, and none for every other package. */
+  function writeConfiguration(byPackage: Map<string, FleetDesiredStateEntryWithPins>, current: ReconcilerSession): void {
+    for (const packageName of miniapps.configuredPackages()) {
+      if (!byPackage.get(packageName)?.configuration) miniapps.setWorkspaceConfiguration(packageName, null, current)
+    }
+    for (const [packageName, entry] of byPackage) {
+      if (entry.configuration) miniapps.setWorkspaceConfiguration(packageName, entry.configuration, current)
+    }
   }
 
   async function withdrawUndesired(

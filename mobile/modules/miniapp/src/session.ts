@@ -22,7 +22,7 @@ import {Transport} from "./transport/types"
 import {CameraModule} from "./modules/camera"
 import {AuthModule} from "./modules/auth"
 import {CloudModule} from "./modules/cloud"
-import {ConfigurationModule} from "./modules/configuration"
+import {ConfigurationModule, type ConfigurationSource} from "./modules/configuration"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
 import {EventManager, type TranscriptionEventRoute, type UnsubscribeFn} from "./modules/events"
@@ -119,8 +119,13 @@ export interface ConnectAckPayload {
   permissions?: PermissionRecord
   /** Miniapp-scoped backend auth. Never a Core or runtime token. */
   auth?: MiniappAuthState
-  /** Optional read-only configuration supplied to this exact package by the host. */
-  configuration?: Readonly<Record<string, string>>
+  /**
+   * Read-only configuration (managed settings) for this exact package: its declared keys merged from the shipped,
+   * deployment and workspace layers, or a deployment's strings for a bundle that declares none.
+   */
+  configuration?: Readonly<Record<string, unknown>>
+  /** The layer each key's value came from. Absent on Mentra Apps before managed settings. */
+  configurationSources?: Readonly<Record<string, ConfigurationSource>>
   /** Host-advertised optional features. Absent on older Mentra Apps. */
   hostFeatures?: HostFeatures
 }
@@ -250,6 +255,7 @@ type SessionEmitterEvents = {
   meetingStill: (event: import("./modules/meeting").MeetingStillProgressEvent) => void
   continuousPhoto: (event: {runId: string; photoId: string}) => void
   auth: (auth: MiniappAuthState) => void
+  configuration: (changed: string[]) => void
 }
 
 // The default preserves the pre-channel-registry behavior for code that creates
@@ -336,7 +342,8 @@ export class MiniappSession<TChannels extends object = any> {
   private readonly connectTimeoutMs: number
   private readonly emitter = new EventEmitter<SessionEmitterEvents>()
   private authState: MiniappAuthState | null = null
-  private configurationState: Readonly<Record<string, string>> = {}
+  private configurationState: Readonly<Record<string, unknown>> = {}
+  private configurationSources: Readonly<Record<string, ConfigurationSource>> = {}
   private readonly authWaiters = new Set<{
     minTtlMs: number
     resolve: (auth: MiniappAuthState) => void
@@ -461,8 +468,13 @@ export class MiniappSession<TChannels extends object = any> {
   }
 
   /** @internal — immutable package configuration received in CONNECT_ACK. */
-  _getConfiguration(): Readonly<Record<string, string>> {
+  _getConfiguration(): Readonly<Record<string, unknown>> {
     return {...this.configurationState}
+  }
+
+  /** @internal — the layer each configuration key came from. */
+  _getConfigurationSources(): Readonly<Record<string, ConfigurationSource>> {
+    return {...this.configurationSources}
   }
 
   /**
@@ -863,7 +875,7 @@ export class MiniappSession<TChannels extends object = any> {
           this.applyAuth(ack.auth)
           if (!this.userId) this.userId = ack.auth.mentraUserId
         }
-        this.configurationState = Object.freeze({...ack.configuration})
+        this.applyConfiguration(ack.configuration, ack.configurationSources, false)
         // Populate the manifest-declared permission cache. Older runtimes
         // that don't send `permissions` leave the all-false default in place
         // — `hasPermission` getters will simply return false.
@@ -882,6 +894,16 @@ export class MiniappSession<TChannels extends object = any> {
           this.applyAuth(next)
           if (!this.userId) this.userId = next.mentraUserId
         }
+        return
+      }
+
+      case MiniappResponseType.CONFIGURATION_UPDATE: {
+        this.applyConfiguration(
+          payload.configuration as Record<string, unknown> | undefined,
+          payload.configurationSources as Record<string, ConfigurationSource> | undefined,
+          true,
+          payload.configurationFiles as string[] | undefined,
+        )
         return
       }
 
@@ -1144,6 +1166,29 @@ export class MiniappSession<TChannels extends object = any> {
    * only when the record actually changed. Sanitizes incoming objects to
    * the v3 PermissionType union.
    */
+  /** Keep the host's configuration; on a push, name the keys whose value or layer changed to `configuration` handlers. */
+  private applyConfiguration(
+    next: Record<string, unknown> | undefined,
+    sources: Record<string, ConfigurationSource> | undefined,
+    notify: boolean,
+    recovered: string[] = [],
+  ): void {
+    const before = this.configurationState
+    const beforeSources = this.configurationSources
+    this.configurationState = Object.freeze({...next})
+    this.configurationSources = Object.freeze({...sources})
+    if (!notify) return
+    const keys = new Set([...Object.keys(before), ...Object.keys(this.configurationState)])
+    const changed = [...keys].filter(
+      (key) =>
+        JSON.stringify(before[key]) !== JSON.stringify(this.configurationState[key]) ||
+        beforeSources[key] !== this.configurationSources[key] ||
+        // A file this key names is back in the blob store: `file()` has it now.
+        recovered.some((sha256) => JSON.stringify(this.configurationState[key] ?? null).includes(sha256)),
+    )
+    if (changed.length > 0) this.emitter.emit("configuration", changed)
+  }
+
   private applyPermissions(next: Partial<PermissionRecord>): void {
     let changed = false
     const updated: PermissionRecord = {...this._permissions}

@@ -19,7 +19,7 @@ export interface DeploymentManagedMiniapp {
   sha256: string
 }
 
-export type DeploymentMiniappConfiguration = Record<string, Record<string, string>>
+export type DeploymentMiniappConfiguration = Record<string, Record<string, unknown>>
 
 export interface DeploymentManifest {
   schemaVersion: 1

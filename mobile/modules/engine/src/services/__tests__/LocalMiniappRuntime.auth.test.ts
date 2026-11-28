@@ -14,6 +14,7 @@ const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url
 const methods = [
   "updateVisibility",
   "handleConnect",
+  "configurationOf",
   "requestMiniappAuth",
   "refreshMiniappAuth",
   "handleAuthRefresh",
@@ -176,6 +177,11 @@ function fixture() {
     error?: {code: string; message: string},
   ) => results.push({requestId, ok, auth: data?.auth, error})
   host.sendCloudStatusToMiniapp = () => {}
+  // A bundle without a declaration reads the deployment's strings as they are (miniappConfiguration.ts).
+  host.configuration = {
+    merged: (_packageName: string, _manifest: unknown, deployment: Record<string, unknown>) => ({values: deployment, sources: {}, rejected: {}}),
+    ensureFiles: () => {},
+  }
   host.flushConnectWaiters = () => {}
 
   /** registerApp: a respawned miniapp replaces the old entry and drops its timers. */

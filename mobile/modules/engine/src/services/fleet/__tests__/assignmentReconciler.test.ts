@@ -149,6 +149,8 @@ let contexts: string[]
 let management: FleetManagementState[]
 /** The Fleet pins the phone holds, by package. */
 let pins: Map<string, FleetMiniappPin>
+/** The workspace's managed settings the phone holds, by package. */
+let configured: Map<string, Record<string, unknown>>
 /** What each URL lists in `versions`, for the resolution to pick a pinned version from. */
 let listed: Map<string, {version: string; sha256: string}[]>
 
@@ -254,6 +256,11 @@ function start(): AssignmentReconciler {
         prompts.get(pkg)?.("not_shown")
       },
       setWorkspaceContext: (s, ws) => contexts.push(`${s.mentraUserId}:${ws ?? "none"}`),
+      setWorkspaceConfiguration: (pkg, values) => {
+        if (values) configured.set(pkg, values)
+        else configured.delete(pkg)
+      },
+      configuredPackages: () => [...configured.keys()],
     },
   })
   return reconciler
@@ -315,6 +322,7 @@ beforeEach(() => {
   contexts = []
   management = []
   pins = new Map()
+  configured = new Map()
   listed = new Map()
   serve("1.0.0")
 })
@@ -1249,5 +1257,21 @@ describe("pins", () => {
       await timers.advance(TRIGGER_JITTER_MS)
       expect(fetches).toBe(0)
     })
+  })
+})
+
+describe("managed settings", () => {
+  test("an entry's settings are the phone's, and go when an answer leaves them out", async () => {
+    serve("1.0.0")
+    const withSettings = managed(1, [{}])
+    if (withSettings.status === "managed") withSettings.entries[0] = {...withSettings.entries[0]!, configuration: {defaultMode: "DVI"}}
+    answer = async () => withSettings
+    const r = await startAndSettle()
+    expect(configured.get(notes)).toEqual({defaultMode: "DVI"})
+
+    answer = async () => managed(2, [{}])
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(configured.has(notes)).toBe(false)
   })
 })

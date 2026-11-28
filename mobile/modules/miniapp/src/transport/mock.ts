@@ -63,7 +63,9 @@ export interface MockTransportOptions {
   /** Suppress the [mock-transport] console logs. Default false. */
   silent?: boolean
   /** Package-scoped host configuration returned in CONNECT_ACK. */
-  configuration?: Readonly<Record<string, string>>
+  configuration?: Readonly<Record<string, unknown>>
+  /** The layer each configuration key came from, returned in CONNECT_ACK. */
+  configurationSources?: Readonly<Record<string, string>>
 }
 
 export class MockTransport implements Transport {
@@ -74,7 +76,8 @@ export class MockTransport implements Transport {
   private readonly authToken: string
   private readonly packageName: string | null
   private readonly silent: boolean
-  private readonly configuration: Readonly<Record<string, string>>
+  private readonly configuration: Readonly<Record<string, unknown>>
+  private readonly configurationSources: Readonly<Record<string, string>>
 
   constructor(options: MockTransportOptions = {}) {
     this.userId = options.userId ?? "mock-user"
@@ -82,6 +85,7 @@ export class MockTransport implements Transport {
     this.packageName = options.packageName ?? null
     this.silent = options.silent === true
     this.configuration = {...(options.configuration ?? {})}
+    this.configurationSources = {...(options.configurationSources ?? {})}
   }
 
   async open(): Promise<void> {
@@ -159,6 +163,7 @@ export class MockTransport implements Transport {
       visibility: "foreground",
       colorScheme: "light",
       configuration: {...this.configuration},
+      configurationSources: {...this.configurationSources},
       auth: {
         mentraUserId: this.userId,
         oemId: "mock",
@@ -169,6 +174,12 @@ export class MockTransport implements Transport {
     const envelope: MiniappEnvelope = {payload: ackPayload}
     this.log(`-> CONNECT_ACK userId=${this.userId} pkg=${incomingPackage}`)
     // Deliver asynchronously so it doesn't fire during the same tick as send().
+    queueMicrotask(() => this.messageHandler?.(serializeEnvelope(envelope)))
+  }
+
+  /** Deliver a push from the host, as the Mentra App sends one with no requestId (tests). */
+  push(payload: Record<string, unknown>): void {
+    const envelope: MiniappEnvelope = {payload}
     queueMicrotask(() => this.messageHandler?.(serializeEnvelope(envelope)))
   }
 

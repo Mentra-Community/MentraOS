@@ -246,6 +246,23 @@ describe("resolveDeploymentCandidate", () => {
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
+  it("keeps a miniapp configuration value of a type other than string for the engine to check", async () => {
+    const modes = [{name: "DVI", photos: "auto"}]
+    const fetch = jest.fn(async () =>
+      response(
+        JSON.stringify(
+          manifest({
+            systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
+            miniapps: {defaults: [], managed: [], configuration: {"com.mentra.settings": {modes}}},
+          }),
+        ),
+      ),
+    )
+
+    const candidate = await resolveDeploymentCandidate(WORKSPACE, {fetch})
+    expect(candidate.manifest.miniapps.configuration["com.mentra.settings"]).toEqual({modes})
+  })
+
   it("rejects cross-origin, duplicate, and SYSTEM-overlapping managed miniapps", async () => {
     const entry = {
       packageName: "com.example.remoteassist",

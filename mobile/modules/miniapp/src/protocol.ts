@@ -368,6 +368,13 @@ export enum MiniappResponseType {
    */
   AUTH_UPDATE = "miniapp_auth_update",
 
+  /**
+   * Push: the package's configuration (managed settings) changed, a layer's values or the files they name having
+   * arrived. Carries the whole merged `configuration` and its `configurationSources`, as CONNECT_ACK does, and
+   * `configurationFiles`, the SHA-256 of files fetched again (evicted from the blob cache) with no value changed.
+   */
+  CONFIGURATION_UPDATE = "miniapp_configuration_update",
+
   /** Reply to PING. SDK auto-handles this; developers never see it. */
   PONG = "miniapp_pong",
 

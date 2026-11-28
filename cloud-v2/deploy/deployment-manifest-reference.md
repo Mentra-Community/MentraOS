@@ -400,16 +400,27 @@ Core, `GET /api/client/deployment`, rather than from a manifest.
 
 ## Miniapp configuration
 
-`miniapps.configuration` is a package-name map of string-to-string maps. It
-defaults to `{}` and is independent of installation: it can configure both
-approved system miniapps and managed userland miniapps.
+`miniapps.configuration` is a package-name map of key-to-value maps: the
+deployment's layer of each miniapp's managed settings. It defaults to `{}` and
+is independent of installation: it can configure both approved system miniapps
+and managed userland miniapps.
+
+A miniapp declares what can be set in its `miniapp.json` `configuration`: each
+key's type (string, url, number, boolean, choice, file, or a list of records),
+who may set it (`setBy`: the deployment by default, a workspace admin in
+Mentra Portal, the person), and an optional shipped `default`. The Mentra App
+merges the layers per key: a workspace's value, else the deployment's, else the
+default; a list declared with `"merge": "append"` keeps every layer's items.
+Only declared keys reach a miniapp that declares any, and a value that doesn't
+match its declaration is left out. A miniapp without a declaration receives the
+deployment's string values as they are.
 
 | Part | Constraint |
 | --- | --- |
 | Package map | At most 100 packages; package names use the same regex as managed entries. |
 | Each package's map | At most 32 entries and at most 16 KiB of UTF-8 JSON when serialized. |
 | Each key | `^[A-Za-z][A-Za-z0-9._-]{0,63}$`: 1–64 characters, starting with a letter. |
-| Each value | String of at most 2,048 UTF-8 bytes. Numbers, booleans, objects, arrays, and `null` are invalid; an empty string is allowed. |
+| Each value | A string of at most 2,048 UTF-8 bytes (an empty string is allowed), or a number, boolean, object or array, which the miniapp's declaration checks. `null` is invalid. Mentra Apps before 3.5 accept strings only and reject a manifest with any other value, so use other types once every phone runs 3.5 or later. |
 
 With a non-null system allowlist, each configured package must appear either
 in that allowlist or in `miniapps.managed`. Otherwise enrollment is rejected.
@@ -417,8 +428,10 @@ With a null system allowlist, the resolver does not perform that membership
 check. Configuration still does not install or approve a miniapp.
 
 Only the named package receives its configuration. The Mentra Miniapp SDK
-exposes asynchronous `session.configuration.get(key)`, `require(key)`, and
-`getAll()` methods. Most miniapps do not read these values. A miniapp that
+exposes asynchronous `session.configuration.get(key)`, `require(key)`,
+`getAll()` and `source(key)` (which layer a value came from), `file(value)` for
+a file value's blob, and `onChange(handler)` when a value changes while the
+miniapp runs. Most miniapps do not read these values. A miniapp that
 supports an optional backend override can explicitly choose it:
 
 ```ts

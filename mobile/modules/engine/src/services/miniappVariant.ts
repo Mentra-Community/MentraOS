@@ -50,8 +50,8 @@ export function honoredMiniappVariant(
 
 /** The package configuration a bundle receives: its stamped backend wins over the manifest's map. */
 export function variantConfiguration(
-  configuration: Record<string, string>,
+  configuration: Record<string, unknown>,
   variant: MiniappVariant | undefined,
-): Record<string, string> {
+): Record<string, unknown> {
   return variant?.backendUrl ? {...configuration, backendUrl: variant.backendUrl} : configuration
 }

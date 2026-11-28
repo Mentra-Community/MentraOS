@@ -64,8 +64,11 @@ export const engine = {
   configure,
   /** Merge host-UI seams on a running runtime (scan overlay, wifi setup, …). */
   updateUiSeams,
-  /** Replace a workspace's miniapp catalog on a running runtime. */
-  updateMiniappPolicy,
+  /** Replace a workspace's miniapp catalog on a running runtime; running miniapps get their configuration again. */
+  updateMiniappPolicy(policy: Parameters<typeof updateMiniappPolicy>[0]) {
+    updateMiniappPolicy(policy)
+    localMiniappRuntime.pushAllConfiguration()
+  },
   /** Start the runtime: mark started + construct/connect the cloud client + begin
    * syncing device settings to the glasses. */
   async start() {

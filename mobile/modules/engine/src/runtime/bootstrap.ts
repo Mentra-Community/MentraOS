@@ -93,7 +93,7 @@ export interface IslandConfigValues {
    */
   hostAgeRating?: string | null
   /** Optional per-package configuration supplied by the host deployment. */
-  miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   /** Deployment-scoped key for the persisted Core refresh token. */
   cloudAuthStorageKey?: string
   /** Deployment-pinned Mentra Live OTA manifest; explicit null disables remote OTA. */
@@ -316,7 +316,7 @@ export function isDevMiniappAllowed(packageName: string): boolean {
 }
 
 /** Read a defensive package-scoped configuration snapshot. */
-export function getMiniappConfiguration(packageName: string): Record<string, string> {
+export function getMiniappConfiguration(packageName: string): Record<string, unknown> {
   const configuration = options?.config?.miniappConfiguration?.[packageName]
   return configuration ? {...configuration} : {}
 }

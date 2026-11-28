@@ -55,7 +55,7 @@ export function cloudConfigValues(): {
       deploymentOrigin: string
     }>
   }
-  miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   cloudDebugScope?: string
   resolveCloudEndpoints?: () => {core: string; runtime: string}
   cloudAuthStorageKey?: string

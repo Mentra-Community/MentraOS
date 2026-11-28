@@ -145,6 +145,11 @@ export function classifyAssignmentInstallError(error: unknown): {kind: ManagedIn
   }
 }
 
+// The runtime holds the miniapps' configuration (managed settings). It loads when the reconciler first writes a
+// workspace's values, so this module doesn't load the whole runtime where it is imported, in tests among them.
+const miniappConfiguration = () =>
+  (require("../LocalMiniappRuntime") as typeof import("../LocalMiniappRuntime")).default.configuration
+
 const miniapps: ManagedMiniappPort = {
   // The resolution reads the package's pin, which the reconciler writes before it resolves.
   resolve: (url) => resolveMiniappUrl(url, undefined, miniappPins.pinFor),
@@ -170,6 +175,9 @@ const miniapps: ManagedMiniappPort = {
   isAccessRevoked: (packageName) => appRegistry.isMiniappAccessRevoked(packageName),
   dismissUpdatePrompt: dismissRunningUpdatePrompt,
   setWorkspaceContext: (session, workspaceId) => setFleetWorkspace(session, workspaceId),
+  setWorkspaceConfiguration: (packageName, values, session) =>
+    void miniappConfiguration().setWorkspace(packageName, values, session),
+  configuredPackages: () => miniappConfiguration().workspacePackages(),
 }
 
 let reconciler: AssignmentReconciler | null = null
