@@ -12,8 +12,9 @@ func nonBlankRequestId(_ requestId: String?) -> String? {
 
 /// A photo's size. `auto` is the largest photo that arrives in about 2 seconds on the link it is
 /// sent over, which the glasses decide when they send it: 1280x960 over Bluetooth, the full sensor
-/// over the glasses Wi-Fi link. The others are the same on every link. Glasses from before `auto`
-/// take it as `medium`.
+/// over the glasses Wi-Fi link. The others: `low` is 640x480, `medium` 1280x960, `high` 2560x1920
+/// and `max` the full sensor, 4032x3024, except that over Bluetooth `high` arrives at 1600x1200 and
+/// `max` at 1920x1440. Glasses from before `auto` take it as `medium`.
 public enum PhotoSize: String {
     case auto
     case low

@@ -54,8 +54,9 @@ const photo = await session.camera.takePhoto({ size: "high", sound: false });
 
 The default `size`, `"auto"`, is the largest photo that arrives in about 2 seconds on the link it
 comes over, which the glasses decide when they send it: 1280×960 at JPEG quality 60 over Bluetooth,
-the full sensor (4032×3024) over the glasses Wi-Fi link. A fixed `size` is the same on every link,
-and a larger one takes longer over Bluetooth. Glasses from before `auto` take it as `"medium"`.
+the full sensor (4032×3024) over the glasses Wi-Fi link. A fixed `size` is `low` 640×480, `medium`
+1280×960, `high` 2560×1920 and `max` 4032×3024, except that over Bluetooth `high` arrives at
+1600×1200 and `max` at 1920×1440; a larger one takes longer over Bluetooth. Glasses from before `auto` take it as `"medium"`.
 
 All options are optional. The defaults are listed below.
 

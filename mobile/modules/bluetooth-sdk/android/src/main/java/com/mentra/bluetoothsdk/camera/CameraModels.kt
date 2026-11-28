@@ -12,7 +12,9 @@ internal fun nonBlankRequestId(requestId: String?): String? =
 /**
  * A photo's size. [AUTO] is the largest photo that arrives in about 2 seconds on the link it is
  * sent over, which the glasses decide when they send it: 1280x960 over Bluetooth, the full sensor
- * over the glasses Wi-Fi link. The others are the same on every link. Glasses from before [AUTO]
+ * over the glasses Wi-Fi link. [LOW] is 640x480, [MEDIUM] 1280x960, [HIGH] 2560x1920 and [MAX]
+ * the full sensor, 4032x3024, except that over Bluetooth [HIGH] arrives at 1600x1200 and [MAX] at
+ * 1920x1440. Glasses from before [AUTO]
  * take it as [MEDIUM].
  */
 enum class PhotoSize(val value: String) {
