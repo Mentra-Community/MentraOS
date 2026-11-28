@@ -6537,11 +6537,13 @@ class LocalMiniappRuntime {
         // the retry backoff (or a full manual reconnect).
         this.redriveMiniappAuthDelivery()
       }
-      // A disconnect can hand cloud Captions back to the shared native model.
-      // Recompute ownership on both disconnect and reconnect.
-      this.updateCloudSubscriptions()
       this.broadcastCloudStatus()
     })
+    // Routing reads isConnected(), which flips after the status event: a disconnect recomputed on the
+    // status still saw the cloud up, and the reconnect attempts that followed changed no status, so
+    // on-device transcription waited minutes for an unrelated event. The connection's own change
+    // hands listeners to the on-device model at once, and back on reconnect.
+    cloudClientService.onConnectionChange(() => this.updateCloudSubscriptions())
     sttModelManager.onSelectionChanged(() => this.updateCloudSubscriptions())
     // Routing compares each listener's language with the picked model's, so read
     // the saved Speech-page choice now, not only once on-device speech is needed.
