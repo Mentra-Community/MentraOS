@@ -1182,6 +1182,7 @@ struct ViewState {
         pendingController = ""
         defaultController = controller.type
         searching = false
+        searchingController = false
 
         // save the default_controller now that we're connected:
         Bridge.saveSetting("default_controller", defaultController)
@@ -1996,6 +1997,10 @@ struct ViewState {
         // if the pending wearable is a controller, don't disconnect, use the controller manager to connect
         if ControllerTypes.ALL.contains(pendingWearable) {
             controller?.disconnect()
+            // controller can be nil here: during R1 pairing, disconnectController() runs just before this
+            // call and clears it. Re-create it (as connectDevice does) so connectById is not a silent no-op.
+            initController(pendingWearable)
+            searchingController = true
             controller?.connectById(name)
             return
         }
